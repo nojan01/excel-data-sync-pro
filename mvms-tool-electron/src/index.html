@@ -563,7 +563,7 @@
         .status.error {
             background: rgba(244, 67, 54, 0.2);
             border: 1px solid var(--error);
-            color: var,--error;
+            color: var(--error);
         }
         
         .status.info {
@@ -1524,7 +1524,7 @@
             targetStartColumn: document.getElementById('targetStartColumn'),
             
             // Search
-            searchInput: document.getElementById('searchInput',
+            searchInput: document.getElementById('searchInput'),
             btnSearch: document.getElementById('btnSearch'),
             btnNewRow: document.getElementById('btnNewRow'),
             searchResultsInfo: document.getElementById('searchResultsInfo'),
@@ -1534,7 +1534,7 @@
             newRowForm: document.getElementById('newRowForm'),
             newRowFlag: document.getElementById('newRowFlag'),
             newRowComment: document.getElementById('newRowComment'),
-            btnCloseNewRow: document.getElementById('btnCloseNewRow'),
+            btnCloseNewRow: document.getElementById('btnCloseNewRow',
             btnAddNewRowToQueue: document.getElementById('btnAddNewRowToQueue'),
             btnTransferNewRowDirect: document.getElementById('btnTransferNewRowDirect'),
             
@@ -2543,7 +2543,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextIndex].focus();
+                            cells[nextString].focus();
                         }
                     }
                 });
@@ -2997,6 +2997,212 @@
                 console.error('Fehler bei Neuer Monat:', err);
                 showStatus(elements.transferStatus, 'Fehler: ' + err.message, 'error');
             }
+        }
+        
+        // ==================== Data Explorer ====================
+        const explorerState = {
+            data: [], filteredData: [], headers: [], hiddenColumns: new Set(),
+            searchTerm: '', filters: [], fileName: '', filePath: '', sheets: [], selectedSheet: ''
+        };
+        
+        const FILTER_OPERATIONS = {
+            contains: (v, t) => v.includes(t), equals: (v, t) => v === t,
+            startsWith: (v, t) => v.startsWith(t), endsWith: (v, t) => v.endsWith(t)
+        };
+        
+        async function openDataExplorer() {
+            elements.dataExplorerModal.classList.remove('hidden');
+            explorerState.filters = [];
+            document.getElementById('explorerFilters').innerHTML = '';
+            updateExplorerFilterButtons();
+            if (state.file2.data && state.file2.data.length > 0) {
+                explorerState.fileName = state.file2.name || 'Zieldatei';
+                explorerState.filePath = state.file2.filePath || '';
+                explorerState.sheets = state.file2.sheets || [];
+                explorerState.selectedSheet = state.file2.selectedSheet || '';
+                explorerState.headers = [...state.file2.headers];
+                explorerState.data = state.file2.data.map(row => [...row]);
+                explorerState.filteredData = [...explorerState.data];
+                explorerState.hiddenColumns.clear();
+                elements.explorerFileName.textContent = explorerState.fileName;
+                updateExplorerSheetDropdown();
+                updateColumnToggles();
+                renderExplorerTable();
+            } else {
+                explorerState.data = []; explorerState.filteredData = []; explorerState.headers = [];
+                explorerState.hiddenColumns.clear(); explorerState.fileName = '';
+                elements.explorerFileName.textContent = 'Keine Datei geladen';
+                elements.explorerTableHead.innerHTML = '';
+                elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>';
+                elements.explorerResultCount.textContent = 'Keine Daten geladen.';
+                elements.explorerSheetSelect.innerHTML = '<option value="">-- Datei laden --</option>';
+                document.getElementById('columnToggles').innerHTML = '';
+            }
+            if (elements.explorerSearch) elements.explorerSearch.value = '';
+            explorerState.searchTerm = '';
+        }
+        
+        function closeDataExplorer() { elements.dataExplorerModal.classList.add('hidden'); }
+        
+        function updateExplorerSheetDropdown() {
+            elements.explorerSheetSelect.innerHTML = '';
+            explorerState.sheets.forEach(sheet => {
+                const opt = document.createElement('option');
+                opt.value = sheet; opt.textContent = sheet;
+                if (sheet === explorerState.selectedSheet) opt.selected = true;
+                elements.explorerSheetSelect.appendChild(opt);
+            });
+        }
+        
+        function updateColumnToggles() {
+            const container = document.getElementById('columnToggles');
+            if (!container) return;
+            container.innerHTML = '';
+            explorerState.headers.forEach((header, idx) => {
+                const isHidden = explorerState.hiddenColumns.has(idx);
+                const toggle = document.createElement('div');
+                toggle.className = `column-toggle ${isHidden ? 'hidden-col' : ''}`;
+                toggle.innerHTML = `<input type="checkbox" id="colToggle_${idx}" ${!isHidden ? 'checked' : ''}><label for="colToggle_${idx}">${header || 'Spalte ' + getColumnLetter(idx + 1)}</label>`;
+                toggle.querySelector('input').addEventListener('change', (e) => toggleExplorerColumn(idx, !e.target.checked));
+                container.appendChild(toggle);
+            });
+        }
+        
+        function toggleExplorerColumn(colIndex, hide) {
+            if (hide) explorerState.hiddenColumns.add(colIndex);
+            else explorerState.hiddenColumns.delete(colIndex);
+            updateColumnToggles(); renderExplorerTable();
+        }
+        window.toggleExplorerColumn = toggleExplorerColumn;
+        
+        function showAllExplorerColumns() { explorerState.hiddenColumns.clear(); updateColumnToggles(); renderExplorerTable(); }
+        function hideAllExplorerColumns() { explorerState.headers.forEach((_, idx) => { if (idx > 0) explorerState.hiddenColumns.add(idx); }); updateColumnToggles(); renderExplorerTable(); }
+        function toggleColumnPanel() { const panel = document.getElementById('columnTogglePanel'); if (panel) panel.style.display = panel.style.display === 'none' || panel.style.display === '' ? 'flex' : 'none'; }
+        
+        function filterExplorerData() {
+            const searchTerm = explorerState.searchTerm.trim();
+            const hasWildcards = searchTerm.includes('*') || searchTerm.includes('?');
+            const activeFilters = explorerState.filters.filter(f => f.column && f.value.trim() !== '');
+            if (!searchTerm && activeFilters.length === 0) { explorerState.filteredData = [...explorerState.data]; }
+            else {
+                let searchRegex = null, lowerSearchTerm = searchTerm.toLowerCase();
+                if (hasWildcards) {
+                    let escaped = searchTerm.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+                    escaped = escaped.replace(/\*/g, '.*').replace(/\?/g, '.');
+                    searchRegex = new RegExp(escaped, 'i');
+                }
+                explorerState.filteredData = explorerState.data.filter(row => {
+                    if (searchTerm) {
+                        let found = false;
+                        for (const cell of row) {
+                            const cellStr = String(cell ?? '');
+                            if (hasWildcards) { if (searchRegex.test(cellStr)) { found = true; break; } }
+                            else { if (cellStr.toLowerCase().includes(lowerSearchTerm)) { found = true; break; } }
+                        }
+                        if (!found) return false;
+                    }
+                    return activeFilters.every(filter => {
+                        const colIndex = explorerState.headers.indexOf(filter.column);
+                        if (colIndex === -1) return true;
+                        const cellValue = String(row[colIndex] ?? '').toLowerCase();
+                        const testValue = filter.value.trim().toLowerCase();
+                        const operation = FILTER_OPERATIONS[filter.operator] || FILTER_OPERATIONS.contains;
+                        return operation(cellValue, testValue);
+                    });
+                });
+            }
+            renderExplorerTable(); updateExplorerFilterButtons();
+        }
+        
+        function addExplorerFilter(initialValues) {
+            const template = document.getElementById('explorerFilterTemplate');
+            if (!template) return;
+            const clone = template.content.firstElementChild.cloneNode(true);
+            const columnSelect = clone.querySelector('.filter-column');
+            const operatorSelect = clone.querySelector('.filter-operator');
+            const valueInput = clone.querySelector('.filter-value');
+            const removeButton = clone.querySelector('.remove-filter');
+            const filter = { id: 'f-' + Math.random().toString(36).slice(2), column: initialValues?.column || '', operator: initialValues?.operator || 'contains', value: initialValues?.value || '', element: clone };
+            columnSelect.innerHTML = '<option value="">Spalte wählen</option>';
+            explorerState.headers.forEach(header => { const opt = document.createElement('option'); opt.value = header; opt.textContent = header || '(leer)'; columnSelect.appendChild(opt); });
+            if (filter.column) columnSelect.value = filter.column;
+            operatorSelect.value = filter.operator; valueInput.value = filter.value;
+            columnSelect.addEventListener('change', () => { filter.column = columnSelect.value; filterExplorerData(); });
+            operatorSelect.addEventListener('change', () => { filter.operator = operatorSelect.value; filterExplorerData(); });
+            valueInput.addEventListener('input', () => { filter.value = valueInput.value; filterExplorerData(); });
+            removeButton.addEventListener('click', () => { clone.remove(); explorerState.filters = explorerState.filters.filter(f => f.id !== filter.id); filterExplorerData(); });
+            document.getElementById('explorerFilters').appendChild(clone);
+            explorerState.filters.push(filter); updateExplorerFilterButtons();
+        }
+        
+        function clearExplorerFilters() { document.getElementById('explorerFilters').innerHTML = ''; explorerState.filters = []; filterExplorerData(); }
+        function updateExplorerFilterButtons() { const btn = document.getElementById('btnClearExplorerFilters'); if (btn) btn.disabled = explorerState.filters.length === 0; }
+        
+        function renderExplorerTable() {
+            if (explorerState.headers.length === 0) {
+                elements.explorerTableHead.innerHTML = '';
+                elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">Keine Daten</td></tr>';
+                elements.explorerResultCount.textContent = 'Keine Daten.'; return;
+            }
+            const visibleIndices = []; explorerState.headers.forEach((_, idx) => { if (!explorerState.hiddenColumns.has(idx)) visibleIndices.push(idx); });
+            let headerHtml = '<tr>'; visibleIndices.forEach(idx => { const header = explorerState.headers[idx]; headerHtml += `<th title="Klicken zum Ausblenden" style="cursor: pointer;" onclick="toggleExplorerColumn(${idx}, true)">${escapeHtml(header || 'Spalte ' + getColumnLetter(idx + 1))}</th>`; }); headerHtml += '</tr>';
+            elements.explorerTableHead.innerHTML = headerHtml;
+            let bodyHtml = ''; explorerState.filteredData.forEach(row => { bodyHtml += '<tr>'; visibleIndices.forEach(colIndex => { const cell = row[colIndex]; bodyHtml += '<td>' + escapeHtml(String(cell ?? '')) + '</td>'; }); bodyHtml += '</tr>'; });
+            elements.explorerTableBody.innerHTML = bodyHtml || '<tr><td colspan="' + visibleIndices.length + '" style="text-align: center; padding: 20px;">Keine Treffer</td></tr>';
+            const total = explorerState.data.length, visible = explorerState.filteredData.length, hiddenCount = explorerState.hiddenColumns.size;
+            let info = total === 0 ? 'Keine Daten vorhanden.' : visible + ' von ' + total + ' Zeilen';
+            if (hiddenCount > 0) info += ' | ' + hiddenCount + ' Spalte(n) ausgeblendet';
+            elements.explorerResultCount.textContent = info;
+        }
+        
+        async function loadExplorerFile() {
+            if (!isElectron) return;
+            const filePath = await window.electronAPI.openFileDialog({ title: 'Excel-Datei für Datenexplorer öffnen', filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }] });
+            if (!filePath) return;
+            const result = await window.electronAPI.readExcelFile(filePath);
+            if (!result.success) { elements.explorerStatus.textContent = 'Fehler: ' + result.error; elements.explorerStatus.style.color = 'var(--error)'; return; }
+            explorerState.fileName = result.fileName; explorerState.filePath = filePath; explorerState.sheets = result.sheets;
+            explorerState.selectedSheet = result.sheets[0] || ''; explorerState.hiddenColumns = new Set();
+            elements.explorerFileName.textContent = result.fileName; updateExplorerSheetDropdown();
+            
+            // WICHTIG: Jetzt auch das erste Sheet laden, um die Daten anzuzeigen
+            if (explorerState.selectedSheet) {
+                await loadExplorerSheet(explorerState.selectedSheet);
+            }
+        }
+        
+        async function loadExplorerSheet(sheetName) {
+            if (!sheetName) return;
+            explorerState.selectedSheet = sheetName; explorerState.hiddenColumns.clear();
+            if (isElectron && explorerState.filePath) {
+                const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName);
+                if (!result.success) return;
+                explorerState.headers = result.headers; explorerState.data = result.data.slice(1); explorerState.filteredData = result.data.slice(1);
+                explorerState.searchTerm = ''; explorerState.filters = []; document.getElementById('explorerFilters').innerHTML = '';
+                updateExplorerFilterButtons(); updateColumnToggles(); renderExplorerTable();
+                elements.explorerStatus.textContent = 'Sheet: ' + sheetName; elements.explorerStatus.style.color = 'var(--success)';
+            }
+        }
+        
+        function exportExplorerData() {
+            if (explorerState.filteredData.length === 0) { elements.explorerStatus.textContent = 'Keine Daten zum Export'; elements.explorerStatus.style.color = 'var(--error)'; return; }
+            const visibleIndices = []; explorerState.headers.forEach((_, idx) => { if (!explorerState.hiddenColumns.has(idx)) visibleIndices.push(idx); });
+            const visibleHeaders = visibleIndices.map(idx => explorerState.headers[idx]);
+            const visibleData = explorerState.filteredData.map(row => visibleIndices.map(idx => row[idx]));
+            if (isElectron) exportExplorerElectron(visibleHeaders, visibleData);
+            else { elements.explorerStatus.textContent = 'Export nur im Electron-Modus'; elements.explorerStatus.style.color = 'var(--warning)'; }
+        }
+        
+        async function exportExplorerElectron(headers, data) {
+            try {
+                const defaultName = explorerState.fileName ? explorerState.fileName.replace(/\.[^.]+$/, '') + '-export.xlsx' : 'export.xlsx';
+                const savePath = await window.electronAPI.saveFileDialog({ title: 'Daten exportieren', defaultPath: defaultName, filters: [{ name: 'Excel Dateien', extensions: ['xlsx'] }] });
+                if (!savePath) return;
+                const exportRows = data.map(row => { const rowData = {}; headers.forEach((header, colIdx) => { rowData[header || 'Spalte' + (colIdx + 1)] = row[colIdx] || ''; }); return rowData; });
+                const result = await window.electronAPI.exportData({ filePath: savePath, sheetName: explorerState.selectedSheet || 'Export', headers: headers, rows: exportRows });
+                if (result && result.success) { elements.explorerStatus.textContent = 'Export gespeichert: ' + savePath; elements.explorerStatus.style.color = 'var(--success)'; }
+                else { elements.explorerStatus.textContent = 'Fehler: ' + (result?.error || 'Unbekannt'); elements.explorerStatus.style.color = 'var(--error)'; }
+            } catch (e) { elements.explorerStatus.textContent = 'Fehler: ' + e.message; elements.explorerStatus.style.color = 'var(--error)'; }
         }
         
         // ==================== Electron-Specific Functions ====================
