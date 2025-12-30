@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Konfiguration
     saveConfig: (filePath, config) => ipcRenderer.invoke('config:save', { filePath, config }),
     loadConfig: (filePath) => ipcRenderer.invoke('config:load', filePath),
+    loadConfigFromAppDir: () => ipcRenderer.invoke('config:loadFromAppDir'),
     
     // App-Infos
     getAppPath: () => ipcRenderer.invoke('app:getPath')

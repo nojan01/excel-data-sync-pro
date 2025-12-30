@@ -192,9 +192,13 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                 newRow.getCell(2).value = row.comment;
             }
             
-            // Daten ab Startspalte
+            // Daten ab Startspalte - row.data ist ein Objekt mit Index als Key
             if (row.data && row.flag !== 'leer') {
-                row.data.forEach((value, index) => {
+                // Iteriere über die Objekt-Keys
+                const dataKeys = Object.keys(row.data);
+                dataKeys.forEach(key => {
+                    const index = parseInt(key);
+                    const value = row.data[key];
                     if (value !== null && value !== undefined && value !== '') {
                         newRow.getCell(startColumn + index).value = value;
                     }
@@ -309,9 +313,46 @@ ipcMain.handle('config:load', async (event, filePath) => {
 
 // App-Pfad ermitteln (für Config im Programmordner)
 ipcMain.handle('app:getPath', async (event) => {
+    // Bei portable EXE: Ordner der EXE
+    // Bei Entwicklung: App-Ordner
+    const exePath = app.getPath('exe');
+    const exeDir = path.dirname(exePath);
+    
     return {
         appPath: app.getAppPath(),
         userData: app.getPath('userData'),
-        exe: app.getPath('exe')
+        exe: exePath,
+        exeDir: exeDir
     };
+});
+
+// Automatisch config.json im Programmordner suchen
+ipcMain.handle('config:loadFromAppDir', async (event) => {
+    try {
+        // Verschiedene mögliche Pfade für config.json
+        const exePath = app.getPath('exe');
+        const exeDir = path.dirname(exePath);
+        
+        const possiblePaths = [
+            path.join(exeDir, 'config.json'),              // Neben der EXE
+            path.join(app.getAppPath(), 'config.json'),    // Im App-Ordner
+            path.join(process.cwd(), 'config.json')        // Im Arbeitsverzeichnis
+        ];
+        
+        for (const configPath of possiblePaths) {
+            if (fs.existsSync(configPath)) {
+                console.log('?? config.json gefunden:', configPath);
+                const content = fs.readFileSync(configPath, 'utf8');
+                return { 
+                    success: true, 
+                    config: JSON.parse(content),
+                    path: configPath
+                };
+            }
+        }
+        
+        return { success: false, error: 'Keine config.json im Programmordner gefunden' };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
 });

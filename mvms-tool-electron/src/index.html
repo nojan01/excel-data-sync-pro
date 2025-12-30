@@ -1368,7 +1368,7 @@
         <div class="modal modal-large" style="max-width: 95vw; width: 1400px; max-height: 90vh; min-width: 600px; min-height: 400px;">
             <div class="modal-header">
                 <div class="modal-title">📊 Datenexplorer - <span id="explorerFileName">Keine Datei geladen</span></div>
-                <button class="modal-close" id="btnCloseExplorer2">&times;</button>
+                <button class="modal-close" id="btnCloseExplorerX">&times;</button>
             </div>
             <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px; padding: 15px; overflow: hidden; flex: 1;">
                 <!-- Explorer Controls -->
@@ -1430,7 +1430,7 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" id="btnCloseExplorer2">Schließen</button>
+                <button class="btn btn-secondary" id="btnCloseExplorerFooter">Schließen</button>
             </div>
         </div>
     </div>
@@ -2535,7 +2535,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextInterval].focus();
+                            cells[nextIndex].focus();
                         }
                     }
                 });
@@ -2830,6 +2830,7 @@
             }
             
             const rows = state.transferQueue.map(item => {
+                // Konvertiere item.data (Array) zu rowData (Objekt mit Index als Key)
                 const rowData = {};
                 state.mapping.sourceColumns.forEach((srcColIndex, i) => {
                     rowData[i] = item.data[srcColIndex] || '';
@@ -3361,7 +3362,7 @@
                 
                 explorerState.headers = result.headers;
                 explorerState.data = result.data.slice(1);
-                explorerState.filteredData = [...explorerState.data];
+                explorerState.filteredData = result.data.slice(1);
                 explorerState.searchTerm = '';
                 
                 explorerState.filters = [];
@@ -3456,6 +3457,16 @@
                 elements.selectSheet2.onchange = (e) => loadSheet2Electron(e.target.value);
                 elements.btnExportPS.onclick = transferQueueToExcel;
                 elements.btnExportPS.innerHTML = '✅ Direkt übertragen';
+                
+                // Template laden für Electron
+                elements.btnLoadTemplate.onclick = loadTemplateElectron;
+                
+                // Config Import/Export für Electron
+                elements.btnImportConfig.onclick = loadConfigFromAppDirOrDialog;
+                elements.btnExportConfig.onclick = exportConfig;
+                
+                // Automatisch config.json aus Programmordner laden beim Start
+                await autoLoadConfig();
             }
             
             // Mapping Modal
@@ -3486,7 +3497,8 @@
             
             // Data Explorer
             elements.btnDataExplorer.onclick = openDataExplorer;
-            document.getElementById('btnCloseExplorer2').onclick = closeDataExplorer;
+            document.getElementById('btnCloseExplorerX').onclick = closeDataExplorer;
+            document.getElementById('btnCloseExplorerFooter').onclick = closeDataExplorer;
             document.getElementById('btnExplorerOpenFile').onclick = loadExplorerFile;
             document.getElementById('btnExplorerExport').onclick = exportExplorerData;
             document.getElementById('btnToggleColumns').onclick = toggleColumnPanel;
@@ -3528,6 +3540,147 @@
             elements.helpModal.onclick = (e) => { if (e.target === elements.helpModal) elements.helpModal.classList.add('hidden'); };
             
             console.log('✅ App initialisiert');
+        }
+        
+        // Template laden für Electron
+        async function loadTemplateElectron() {
+            const filePath = await window.electronAPI.openFileDialog({
+                title: 'Template-Datei öffnen',
+                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
+            });
+            if (!filePath) return;
+            
+            try {
+                // Datei als Base64 lesen für spätere Verwendung
+                const result = await window.electronAPI.readExcelFile(filePath);
+                if (result.success) {
+                    // Template-Pfad speichern
+                    state.template.name = result.fileName;
+                    state.template.filePath = filePath;
+                    
+                    elements.templateInfo.textContent = result.fileName;
+                    elements.btnNewMonth.disabled = false;
+                    
+                    showStatus(elements.transferStatus, `✓ Template geladen: ${result.fileName}`, 'success');
+                }
+            } catch (e) {
+                showStatus(elements.transferStatus, `Fehler: ${e.message}`, 'error');
+            }
+        }
+        
+        // Automatisch config.json aus Programmordner laden
+        async function autoLoadConfig() {
+            if (!isElectron) return;
+            
+            try {
+                const result = await window.electronAPI.loadConfigFromAppDir();
+                if (result.success && result.config) {
+                    await applyLoadedConfig(result.config);
+                    console.log('📁 config.json automatisch geladen:', result.path);
+                    showStatus(elements.transferStatus, `✓ config.json automatisch geladen`, 'success');
+                }
+            } catch (e) {
+                console.log('Keine config.json im Programmordner gefunden');
+            }
+        }
+        
+        // Geladene Konfiguration anwenden
+        async function applyLoadedConfig(config) {
+            // Mapping übernehmen
+            if (config.mapping) {
+                state.mapping = config.mapping;
+            }
+            
+            // Dateipfade laden (falls vorhanden)
+            if (config.file1Path) {
+                try {
+                    const result = await window.electronAPI.readExcelFile(config.file1Path);
+                    if (result.success) {
+                        state.file1.name = result.fileName;
+                        state.file1.filePath = result.filePath;
+                        state.file1.sheets = result.sheets;
+                        state.file1.workbook = { SheetNames: result.sheets };
+                        
+                        elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+                        elements.selectSheet1.disabled = false;
+                        elements.file1Info.textContent = `✓ ${result.fileName}`;
+                        elements.file1Info.classList.add('loaded');
+                        
+                        // Sheet auswählen
+                        const sheetToSelect = config.file1SheetName && result.sheets.includes(config.file1SheetName) 
+                            ? config.file1SheetName 
+                            : result.sheets[0];
+                        elements.selectSheet1.value = sheetToSelect;
+                        await loadSheet1Electron(sheetToSelect);
+                    }
+                } catch (e) {
+                    console.warn('Quelldatei konnte nicht geladen werden:', e);
+                    elements.file1Info.textContent = `⚠️ ${config.file1Name || 'Datei nicht gefunden'}`;
+                    elements.file1Info.style.color = 'var(--warning)';
+                }
+            }
+            
+            if (config.file2Path) {
+                try {
+                    const result = await window.electronAPI.readExcelFile(config.file2Path);
+                    if (result.success) {
+                        state.file2.name = result.fileName;
+                        state.file2.filePath = result.filePath;
+                        state.file2.sheets = result.sheets;
+                        state.file2.workbook = { SheetNames: result.sheets };
+                        
+                        elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+                        elements.selectSheet2.disabled = false;
+                        elements.file2Info.textContent = `✓ ${result.fileName}`;
+                        elements.file2Info.classList.add('loaded');
+                        
+                        // Sheet auswählen
+                        const sheetToSelect = config.file2SheetName && result.sheets.includes(config.file2SheetName) 
+                            ? config.file2SheetName 
+                            : result.sheets[0];
+                        elements.selectSheet2.value = sheetToSelect;
+                        await loadSheet2Electron(sheetToSelect);
+                    }
+                } catch (e) {
+                    console.warn('Zieldatei konnte nicht geladen werden:', e);
+                    elements.file2Info.textContent = `⚠️ ${config.file2Name || 'Datei nicht gefunden'}`;
+                    elements.file2Info.style.color = 'var(--warning)';
+                }
+            }
+            
+            updateMappingInfo();
+            updateMappingPreview();
+            checkReadyState();
+            saveConfig();
+        }
+        
+        // Config aus Programmordner oder per Dialog laden
+        async function loadConfigFromAppDirOrDialog() {
+            if (!isElectron) return;
+            
+            // Zuerst versuchen aus Programmordner zu laden
+            const autoResult = await window.electronAPI.loadConfigFromAppDir();
+            if (autoResult.success && autoResult.config) {
+                await applyLoadedConfig(autoResult.config);
+                showStatus(elements.transferStatus, `✓ config.json geladen: ${autoResult.path}`, 'success');
+                return;
+            }
+            
+            // Falls nicht gefunden: Datei-Dialog öffnen
+            const filePath = await window.electronAPI.openFileDialog({
+                title: 'Konfiguration laden',
+                filters: [{ name: 'JSON Dateien', extensions: ['json'] }]
+            });
+            
+            if (!filePath) return;
+            
+            const result = await window.electronAPI.loadConfig(filePath);
+            if (result.success && result.config) {
+                await applyLoadedConfig(result.config);
+                showStatus(elements.transferStatus, `✓ config.json geladen: ${filePath}`, 'success');
+            } else {
+                showStatus(elements.transferStatus, `❌ Fehler: ${result.error}`, 'error');
+            }
         }
         
         // App starten
