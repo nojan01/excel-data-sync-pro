@@ -2193,8 +2193,1100 @@
             return div.innerHTML;
         }
         
+        function escapeRegex(string) {
+            return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+        
+        // ==================== New Row Functions ====================
+        function addNewRowToQueue() {
+            const data = getNewRowData();
+            const flag = elements.newRowFlag.value;
+            const comment = elements.newRowComment.value;
+            const checkValue = data[state.mapping.duplicateCheckColumn] || '';
+            
+            state.transferQueue.push({
+                data: data,
+                flag: flag,
+                comment: comment,
+                checkValue: checkValue,
+                isManual: true
+            });
+            
+            updateQueueDisplay();
+            showStatus(elements.transferStatus, '✅ Neue Zeile zur Warteschlange hinzugefügt!', 'success');
+            
+            // Felder leeren für nächste Eingabe
+            state.mapping.sourceColumns.forEach((colIndex, i) => {
+                const field = document.getElementById(`newRowField_${i}`);
+                if (field) field.value = '';
+            });
+            elements.newRowComment.value = '';
+            
+            const firstField = document.getElementById('newRowField_0');
+            if (firstField) firstField.focus();
+        }
+        
+        function transferNewRowDirect() {
+            const data = getNewRowData();
+            const flag = elements.newRowFlag.value;
+            const comment = elements.newRowComment.value;
+            
+            if (!state.file2.workbook && !state.file2.filePath) {
+                showStatus(elements.transferStatus, 'Keine Zieldatei geladen', 'error');
+                return;
+            }
+            
+            const newRow = new Array(Math.max(
+                state.file2.headers.length,
+                state.mapping.targetStartColumn + state.mapping.sourceColumns.length
+            )).fill('');
+            
+            newRow[0] = flag;
+            newRow[1] = comment;
+            
+            state.mapping.sourceColumns.forEach((srcColIndex, i) => {
+                const targetColIndex = state.mapping.targetStartColumn - 1 + i;
+                newRow[targetColIndex] = data[srcColIndex] || '';
+            });
+            
+            state.file2.data.push(newRow);
+            updateWorkbook();
+            
+            state.history.unshift({
+                time: new Date().toLocaleTimeString(),
+                flag: flag,
+                searchValue: '(Manuelle Eingabe)',
+                preview: data[state.mapping.duplicateCheckColumn] || '(Neue Zeile)'
+            });
+            if (state.history.length > 20) state.history = state.history.slice(0, 20);
+            updateHistoryDisplay();
+            
+            showStatus(elements.transferStatus, '✅ Neue Zeile direkt übertragen!', 'success');
+            
+            state.mapping.sourceColumns.forEach((colIndex, i) => {
+                const field = document.getElementById(`newRowField_${i}`);
+                if (field) field.value = '';
+            });
+            elements.newRowComment.value = '';
+            
+            const firstField = document.getElementById('newRowField_0');
+            if (firstField) firstField.focus();
+            
+            saveConfig();
+        }
+        
+        // ==================== Search ====================
+        function wildcardToRegex(pattern) {
+            let escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+            escaped = escaped.replace(/\*/g, '.*');
+            escaped = escaped.replace(/\?/g, '.');
+            return new RegExp('^' + escaped + '$', 'i');
+        }
+        
+        function search() {
+            const query = elements.searchInput.value.trim();
+            if (!query || !state.file1.data.length) return;
+            
+            const hasWildcards = query.includes('*') || query.includes('?');
+            
+            state.searchResults = [];
+            
+            if (hasWildcards) {
+                const regex = wildcardToRegex(query);
+                state.file1.data.forEach((row, rowIndex) => {
+                    for (let col of row) {
+                        if (col && regex.test(String(col))) {
+                            state.searchResults.push({ rowIndex: rowIndex, data: row });
+                            break;
+                        }
+                    }
+                });
+            } else {
+                const lowerQuery = query.toLowerCase();
+                state.file1.data.forEach((row, rowIndex) => {
+                    for (let col of row) {
+                        if (col && String(col).toLowerCase().includes(lowerQuery)) {
+                            state.searchResults.push({ rowIndex: rowIndex, data: row });
+                            break;
+                        }
+                    }
+                });
+            }
+            
+            displaySearchResults(query, hasWildcards);
+        }
+        
+        function displaySearchResults(query, hasWildcards = false) {
+            state.selectedRows = [];
+            
+            if (state.searchResults.length === 0) {
+                elements.searchResultsInfo.innerHTML = `Keine Treffer für "<strong>${escapeHtml(query)}</strong>"`;
+                elements.emptyState.style.display = 'flex';
+                elements.resultsTableContainer.style.display = 'none';
+                elements.transferPanel.classList.add('hidden');
+                return;
+            }
+            
+            const wildcardInfo = hasWildcards ? ' (Platzhalter)' : '';
+            elements.searchResultsInfo.innerHTML = `<strong>${state.searchResults.length}</strong> Treffer für "<strong>${escapeHtml(query)}</strong>"${wildcardInfo}`;
+            
+            elements.emptyState.style.display = 'none';
+            elements.resultsTableContainer.style.display = 'block';
+            
+            let headerHtml = '<tr><th style="width: 40px;"><input type="checkbox" id="selectAllCheckbox" title="Alle auswählen"></th>';
+            state.file1.headers.forEach((header, i) => {
+                headerHtml += `<th>${escapeHtml(header || `Spalte ${getColumnLetter(i + 1)}`)}</th>`;
+            });
+            headerHtml += '</tr>';
+            elements.resultsTableHead.innerHTML = headerHtml;
+            
+            let bodyHtml = '';
+            state.searchResults.forEach((result, i) => {
+                bodyHtml += `<tr data-index="${i}">`;
+                bodyHtml += `<td><input type="checkbox" class="row-checkbox" data-index="${i}" onclick="event.stopPropagation()"></td>`;
+                state.file1.headers.forEach((_, colIndex) => {
+                    const cell = result.data[colIndex];
+                    const cellStr = String(cell ?? '');
+                    bodyHtml += `<td contenteditable="true" data-row="${i}" data-col="${colIndex}" data-original="${escapeHtml(cellStr)}" onclick="event.stopPropagation()">${escapeHtml(cellStr)}</td>`;
+                });
+                bodyHtml += '</tr>';
+            });
+            elements.resultsTableBody.innerHTML = bodyHtml;
+            
+            document.querySelectorAll('#resultsTableBody td[contenteditable]').forEach(td => {
+                td.addEventListener('input', function() {
+                    const original = this.dataset.original;
+                    const current = this.textContent;
+                    this.classList.toggle('edited', original !== current);
+                });
+                td.addEventListener('focus', function() {
+                    const rowIndex = parseInt(this.dataset.row);
+                    if (!state.selectedRows.includes(rowIndex)) {
+                        toggleRowSelection(rowIndex, true);
+                    }
+                });
+                td.addEventListener('keydown', function(e) {
+                    if (e.key === 'Tab') {
+                        e.preventDefault();
+                        const cells = Array.from(document.querySelectorAll('#resultsTableBody td[contenteditable]'));
+                        const currentIndex = cells.indexOf(this);
+                        const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
+                        if (cells[nextIndex]) {
+                            cells[nextElement].focus();
+                        }
+                    }
+                });
+            });
+            
+            document.getElementById('selectAllCheckbox').addEventListener('change', (e) => {
+                selectAllRows(e.target.checked);
+            });
+            
+            document.querySelectorAll('.row-checkbox').forEach(cb => {
+                cb.addEventListener('change', (e) => {
+                    toggleRowSelection(parseInt(e.target.dataset.index), e.target.checked);
+                });
+            });
+            
+            toggleRowSelection(0, true);
+            elements.transferPanel.classList.remove('hidden');
+        }
+        
+        function getEditedRowData(rowIndex) {
+            const cells = document.querySelectorAll(`#resultsTableBody td[data-row="${rowIndex}"]`);
+            const data = [];
+            cells.forEach(cell => {
+                const colIndex = parseInt(cell.dataset.col);
+                data[colIndex] = cell.textContent;
+            });
+            return data;
+        }
+        
+        function isRowEdited(rowIndex) {
+            const cells = document.querySelectorAll(`#resultsTableBody td[data-row="${rowIndex}"].edited`);
+            return cells.length > 0;
+        }
+        
+        function toggleRowSelection(index, forceState) {
+            const checkbox = document.querySelector(`.row-checkbox[data-index="${index}"]`);
+            const tr = document.querySelector(`#resultsTableBody tr[data-index="${index}"]`);
+            
+            if (!checkbox || !tr) return;
+            
+            const isSelected = forceState !== undefined ? forceState : !checkbox.checked;
+            checkbox.checked = isSelected;
+            tr.classList.toggle('selected', isSelected);
+            
+            if (isSelected) {
+                if (!state.selectedRows.includes(index)) {
+                    state.selectedRows.push(index);
+                }
+            } else {
+                state.selectedRows = state.selectedRows.filter(i => i !== index);
+            }
+            
+            document.getElementById('selectedCount').textContent = state.selectedRows.length;
+            
+            const allCheckbox = document.getElementById('selectAllCheckbox');
+            const allCheckboxes = document.querySelectorAll('.row-checkbox');
+            const checkedCount = document.querySelectorAll('.row-checkbox:checked').length;
+            if (allCheckbox) {
+                allCheckbox.checked = checkedCount === allCheckboxes.length;
+                allCheckbox.indeterminate = checkedCount > 0 && checkedCount < allCheckboxes.length;
+            }
+            
+            if (state.selectedRows.length > 0) {
+                state.selectedRow = state.searchResults[state.selectedRows[state.selectedRows.length - 1]];
+            } else {
+                state.selectedRow = null;
+            }
+        }
+        
+        function selectAllRows(selected) {
+            document.querySelectorAll('.row-checkbox').forEach((cb, i) => {
+                toggleRowSelection(i, selected);
+            });
+        }
+        
+        // ==================== Transfer ====================
+        function checkForDuplicate(value) {
+            if (!value || !state.file2.data.length) return null;
+            
+            const valueStr = String(value).toLowerCase().trim();
+            
+            for (let i = 0; i < state.file2.data.length; i++) {
+                const row = state.file2.data[i];
+                for (let j = state.mapping.targetStartColumn - 1; j < row.length; j++) {
+                    if (row[j] && String(row[j]).toLowerCase().trim() === valueStr) {
+                        return { rowIndex: i + 2, value: row[j] };
+                    }
+                }
+            }
+            return null;
+        }
+        
+        function transferSelectedDirect() {
+            if (state.selectedRows.length === 0 || (!state.file2.workbook && !state.file2.filePath)) {
+                showStatus(elements.transferStatus, 'Bitte wählen Sie mindestens eine Zeile aus', 'error');
+                return;
+            }
+            
+            const flag = elements.transferFlag.value;
+            const comment = elements.transferComment.value;
+            let transferredCount = 0;
+            let editedCount = 0;
+            let duplicatesFound = [];
+            
+            for (const rowIndex of state.selectedRows) {
+                const row = state.searchResults[rowIndex];
+                if (!row) continue;
+                
+                const rowData = getEditedRowData(rowIndex);
+                const wasEdited = isRowEdited(rowIndex);
+                if (wasEdited) editedCount++;
+                
+                const checkValue = rowData[state.mapping.duplicateCheckColumn];
+                
+                if (checkValue) {
+                    const duplicate = checkForDuplicate(checkValue);
+                    if (duplicate) {
+                        duplicatesFound.push({ value: checkValue, row: duplicate.rowIndex });
+                    }
+                }
+                
+                const newRow = new Array(Math.max(
+                    state.file2.headers.length,
+                    state.mapping.targetStartColumn + state.mapping.sourceColumns.length
+                )).fill('');
+                
+                newRow[0] = flag;
+                newRow[1] = comment;
+                
+                state.mapping.sourceColumns.forEach((srcColIndex, i) => {
+                    const targetColIndex = state.mapping.targetStartColumn - 1 + i;
+                    newRow[targetColIndex] = rowData[srcColIndex] || '';
+                });
+                
+                state.file2.data.push(newRow);
+                transferredCount++;
+                
+                state.history.unshift({
+                    time: new Date().toLocaleTimeString(),
+                    flag: flag,
+                    searchValue: elements.searchInput.value,
+                    preview: String(rowData[0] || '').substring(0, 30)
+                });
+            }
+            
+            updateWorkbook();
+            
+            if (state.history.length > 20) state.history.length = 20;
+            updateHistoryDisplay();
+            saveConfig();
+            
+            let message = `✓ ${transferredCount} Zeile(n) direkt übertragen!`;
+            let status = 'success';
+            if (editedCount > 0) {
+                message += ` (${editedCount} bearbeitet ✏️)`;
+            }
+            if (duplicatesFound.length > 0) {
+                message += ` ⚠️ ${duplicatesFound.length} Duplikat(e)!`;
+                status = 'warning';
+            }
+            
+            showStatus(elements.transferStatus, message, status);
+            
+            selectAllRows(false);
+            elements.transferComment.value = '';
+            elements.searchInput.value = '';
+            elements.searchInput.focus();
+        }
+        
+        // ==================== Queue Functions ====================
+        function addToQueue() {
+            if (state.selectedRows.length === 0) {
+                showStatus(elements.transferStatus, 'Bitte wählen Sie mindestens eine Zeile aus', 'error');
+                return;
+            }
+            
+            const flag = elements.transferFlag.value;
+            const comment = elements.transferComment.value;
+            
+            let addedCount = 0;
+            let editedCount = 0;
+            let skippedQueue = 0;
+            const duplicatesFound = [];
+            
+            for (const rowIndex of state.selectedRows) {
+                const row = state.searchResults[rowIndex];
+                if (!row) continue;
+                
+                const rowData = getEditedRowData(rowIndex);
+                const wasEdited = isRowEdited(rowIndex);
+                if (wasEdited) editedCount++;
+                
+                const checkValue = rowData[state.mapping.duplicateCheckColumn];
+                
+                const rowAlreadyInQueue = state.transferQueue.some(item => item.rowIndex === row.rowIndex);
+                if (rowAlreadyInQueue) {
+                    skippedQueue++;
+                    continue;
+                }
+                
+                if (checkValue) {
+                    const duplicate = checkForDuplicate(checkValue);
+                    if (duplicate) {
+                        duplicatesFound.push({ value: checkValue, row: duplicate.rowIndex });
+                    }
+                }
+                
+                state.transferQueue.push({
+                    data: [...rowData],
+                    rowIndex: row.rowIndex,
+                    flag: flag,
+                    comment: comment,
+                    checkValue: checkValue,
+                    wasEdited: wasEdited
+                });
+                addedCount++;
+            }
+            
+            updateQueueDisplay();
+            elements.transferComment.value = '';
+            
+            let message = `✓ ${addedCount} Zeile(n) zur Warteschlange hinzugefügt`;
+            let status = 'success';
+            
+            if (editedCount > 0) {
+                message += ` (${editedCount} bearbeitet ✏️)`;
+            }
+            if (skippedQueue > 0) {
+                message += ` (${skippedQueue} bereits vorhanden)`;
+            }
+            if (duplicatesFound.length > 0) {
+                message += ` ⚠️ ${duplicatesFound.length} Duplikat(e) in Zieldatei!`;
+                status = 'warning';
+            }
+            
+            showStatus(elements.transferStatus, message, status);
+            
+            selectAllRows(false);
+            elements.searchInput.value = '';
+            elements.searchInput.focus();
+        }
+        
+        function removeFromQueue(index) {
+            state.transferQueue.splice(index, 1);
+            updateQueueDisplay();
+        }
+        
+        function clearQueue() {
+            if (state.transferQueue.length > 0 && 
+                !confirm(`Warteschlange mit ${state.transferQueue.length} Zeilen wirklich leeren?`)) {
+                return;
+            }
+            state.transferQueue = [];
+            updateQueueDisplay();
+        }
+        
+        function updateQueueDisplay() {
+            elements.queueCount.textContent = state.transferQueue.length;
+            elements.btnClearQueue.disabled = state.transferQueue.length === 0;
+            elements.btnExportPS.disabled = state.transferQueue.length === 0 || (!state.file2.workbook && !state.file2.filePath);
+            
+            if (state.transferQueue.length === 0) {
+                elements.queueList.innerHTML = '<div class="queue-empty">Keine Zeilen in der Warteschlange</div>';
+                return;
+            }
+            
+            let html = '';
+            state.transferQueue.forEach((item, index) => {
+                const preview = String(item.checkValue || item.data[0] || '').substring(0, 40);
+                const editedBadge = item.wasEdited ? '<span class="queue-item-edited" title="Bearbeitet">✏️</span>' : '';
+                html += `
+                    <div class="queue-item" style="display: flex; gap: 10px; padding: 8px; background: var(--bg-light); border-radius: 4px; margin-bottom: 5px; align-items: center;">
+                        <span style="background: var(--primary); color: white; padding: 2px 8px; border-radius: 3px; font-weight: bold;">${item.flag}</span>
+                        ${editedBadge}
+                        <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(String(item.data))}">${escapeHtml(preview)}</span>
+                        ${item.comment ? `<span style="color: var(--text-muted); font-size: 12px;" title="${escapeHtml(item.comment)}">${escapeHtml(item.comment.substring(0, 20))}</span>` : ''}
+                        <button class="btn btn-secondary btn-sm" onclick="removeFromQueue(${index})" title="Entfernen">✕</button>
+                    </div>`;
+            });
+            elements.queueList.innerHTML = html;
+        }
+        
+        async function transferQueueToExcel() {
+            if (state.transferQueue.length === 0) {
+                showStatus(elements.transferStatus, 'Keine Zeilen in der Warteschlange', 'error');
+                return;
+            }
+            
+            if (!state.file2.filePath) {
+                showStatus(elements.transferStatus, 'Keine Zieldatei ausgewählt', 'error');
+                return;
+            }
+            
+            const rows = state.transferQueue.map(item => {
+                const rowData = {};
+                state.mapping.sourceColumns.forEach((srcColIndex, i) => {
+                    rowData[i] = item.data[srcColIndex] || '';
+                });
+                return {
+                    flag: item.flag,
+                    comment: item.comment,
+                    data: rowData
+                };
+            });
+            
+            const result = await window.electronAPI.insertExcelRows({
+                filePath: state.file2.filePath,
+                sheetName: state.file2.selectedSheet,
+                rows: rows,
+                startColumn: state.mapping.targetStartColumn
+            });
+            
+            if (result.success) {
+                state.transferQueue.forEach(item => {
+                    state.history.unshift({
+                        time: new Date().toLocaleTimeString(),
+                        flag: item.flag,
+                        searchValue: item.checkValue,
+                        preview: String(item.checkValue || item.data[0] || '').substring(0, 30)
+                    });
+                });
+                if (state.history.length > 20) state.history = state.history.slice(0, 20);
+                updateHistoryDisplay();
+                
+                state.transferQueue = [];
+                updateQueueDisplay();
+                
+                await loadSheet2Electron(state.file2.selectedSheet);
+                
+                showStatus(elements.transferStatus, `✅ ${result.insertedCount} Zeile(n) direkt in Excel eingefügt!`, 'success');
+            } else {
+                showStatus(elements.transferStatus, `❌ Fehler: ${result.error}`, 'error');
+            }
+        }
+        
+        // ==================== Template & New Month ====================
+        function loadTemplate(file) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                try {
+                    const arrayBuffer = e.target.result;
+                    const base64 = btoa(
+                        new Uint8Array(arrayBuffer)
+                            .reduce((data, byte) => data + String.fromCharCode(byte), '')
+                    );
+                    
+                    state.template.data = base64;
+                    state.template.name = file.name;
+                    
+                    elements.templateInfo.textContent = file.name;
+                    elements.btnNewMonth.disabled = false;
+                    
+                    showStatus(elements.transferStatus, `✓ Template geladen: ${file.name}`, 'success');
+                } catch (err) {
+                    showStatus(elements.transferStatus, 'Fehler beim Laden des Templates: ' + err.message, 'error');
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+        
+        function openNewMonthModal() {
+            if (!state.template.data) {
+                showStatus(elements.transferStatus, 'Kein Template geladen! Bitte in Konfiguration laden.', 'error');
+                return;
+            }
+            
+            const now = new Date();
+            const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+            const monthStr = nextMonth.toISOString().substring(0, 7);
+            
+            const templateBase = state.template.name.replace(/\.xlsx?$/i, '');
+            const suggestedName = `${templateBase}_${monthStr}.xlsx`;
+            
+            elements.newMonthFilename.value = suggestedName;
+            elements.newMonthTemplateName.textContent = state.template.name;
+            elements.newMonthModal.classList.remove('hidden');
+            elements.newMonthFilename.focus();
+            elements.newMonthFilename.select();
+        }
+        
+        function closeNewMonthModal() {
+            elements.newMonthModal.classList.add('hidden');
+        }
+        
+        async function confirmNewMonth() {
+            const newFilename = elements.newMonthFilename.value.trim();
+            if (!newFilename) {
+                showStatus(elements.transferStatus, 'Bitte Dateinamen eingeben', 'error');
+                return;
+            }
+            
+            const finalFilename = newFilename.endsWith('.xlsx') ? newFilename : newFilename + '.xlsx';
+            
+            try {
+                const binaryString = atob(state.template.data);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+                const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                
+                downloadBlob(blob, finalFilename);
+                
+                await loadWorkbookFromBase64(state.template.data, finalFilename, 2, state.file2.selectedSheet);
+                
+                state.transferQueue = [];
+                updateQueueDisplay();
+                
+                closeNewMonthModal();
+                showStatus(elements.transferStatus, 
+                    `✅ Neue Monatsdatei "${finalFilename}" erstellt und als Datei 2 geladen!<br>
+                    <strong>Bitte die heruntergeladene Datei in den Zielordner verschieben!</strong>`, 'success');
+                
+                saveConfig();
+            } catch (err) {
+                console.error('Fehler bei Neuer Monat:', err);
+                showStatus(elements.transferStatus, 'Fehler: ' + err.message, 'error');
+            }
+        }
+        
+        // ==================== Data Explorer ====================
+        const explorerState = {
+            data: [],
+            filteredData: [],
+            headers: [],
+            hiddenColumns: new Set(),
+            searchTerm: '',
+            fileName: '',
+            filePath: '',
+            sheets: [],
+            selectedSheet: ''
+        };
+        
+        async function openDataExplorer() {
+            elements.dataExplorerModal.classList.remove('hidden');
+            
+            if (state.file2.data && state.file2.data.length > 0) {
+                explorerState.fileName = state.file2.name || 'Zieldatei';
+                explorerState.filePath = state.file2.filePath || '';
+                explorerState.sheets = state.file2.sheets || [];
+                explorerState.selectedSheet = state.file2.selectedSheet || '';
+                explorerState.headers = [...state.file2.headers];
+                explorerState.data = state.file2.data.map(row => [...row]);
+                explorerState.filteredData = [...explorerState.data];
+                explorerState.hiddenColumns.clear();
+                
+                elements.explorerFileName.textContent = explorerState.fileName;
+                updateExplorerSheetDropdown();
+                updateColumnToggles();
+                renderExplorerTable();
+            } else {
+                explorerState.data = [];
+                explorerState.filteredData = [];
+                explorerState.headers = [];
+                explorerState.hiddenColumns.clear();
+                explorerState.fileName = '';
+                elements.explorerFileName.textContent = 'Keine Datei geladen';
+                elements.explorerTableHead.innerHTML = '';
+                elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>';
+                elements.explorerResultCount.textContent = 'Keine Daten geladen.';
+                elements.explorerSheetSelect.innerHTML = '<option value="">-- Datei laden --</option>';
+                document.getElementById('columnToggles').innerHTML = '';
+            }
+            
+            if (elements.explorerSearch) elements.explorerSearch.value = '';
+            explorerState.searchTerm = '';
+        }
+        
+        function closeDataExplorer() {
+            elements.dataExplorerModal.classList.add('hidden');
+        }
+        
+        function updateExplorerSheetDropdown() {
+            elements.explorerSheetSelect.innerHTML = '';
+            explorerState.sheets.forEach(sheet => {
+                const option = document.createElement('option');
+                option.value = sheet;
+                option.textContent = sheet;
+                if (sheet === explorerState.selectedSheet) option.selected = true;
+                elements.explorerSheetSelect.appendChild(option);
+            });
+        }
+        
+        function updateColumnToggles() {
+            const container = document.getElementById('columnToggles');
+            if (!container) return;
+            
+            container.innerHTML = '';
+            explorerState.headers.forEach((header, idx) => {
+                const isHidden = explorerState.hiddenColumns.has(idx);
+                const toggle = document.createElement('div');
+                toggle.className = `column-toggle ${isHidden ? 'hidden-col' : ''}`;
+                toggle.innerHTML = `
+                    <input type="checkbox" id="colToggle_${idx}" ${!isHidden ? 'checked' : ''}>
+                    <label for="colToggle_${idx}" title="${header || `Spalte ${getColumnLetter(idx + 1)}`}">${header || `Spalte ${getColumnLetter(idx + 1)}`}</label>
+                `;
+                toggle.querySelector('input').addEventListener('change', (e) => {
+                    toggleExplorerColumn(idx, !e.target.checked);
+                });
+                container.appendChild(toggle);
+            });
+        }
+        
+        function toggleExplorerColumn(colIndex, hide) {
+            if (hide) {
+                explorerState.hiddenColumns.add(colIndex);
+            } else {
+                explorerState.hiddenColumns.delete(colIndex);
+            }
+            updateColumnToggles();
+            renderExplorerTable();
+        }
+        window.toggleExplorerColumn = toggleExplorerColumn;
+        
+        function showAllExplorerColumns() {
+            explorerState.hiddenColumns.clear();
+            updateColumnToggles();
+            renderExplorerTable();
+        }
+        
+        function hideAllExplorerColumns() {
+            explorerState.headers.forEach((_, idx) => {
+                if (idx > 0) explorerState.hiddenColumns.add(idx);
+            });
+            updateColumnToggles();
+            renderExplorerTable();
+        }
+        
+        function toggleColumnPanel() {
+            const panel = document.getElementById('columnTogglePanel');
+            if (panel) {
+                panel.classList.toggle('hidden');
+            }
+        }
+        
+        function filterExplorerData() {
+            const searchTerm = explorerState.searchTerm.toLowerCase().trim();
+            
+            if (!searchTerm) {
+                explorerState.filteredData = [...explorerState.data];
+            } else {
+                explorerState.filteredData = explorerState.data.filter(row => {
+                    return row.some(cell => 
+                        String(cell ?? '').toLowerCase().includes(searchTerm)
+                    );
+                });
+            }
+            
+            renderExplorerTable();
+        }
+        
+        function renderExplorerTable() {
+            if (explorerState.headers.length === 0) {
+                elements.explorerTableHead.innerHTML = '';
+                elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">Keine Daten</td></tr>';
+                elements.explorerResultCount.textContent = 'Keine Daten.';
+                return;
+            }
+            
+            const visibleIndices = [];
+            explorerState.headers.forEach((_, idx) => {
+                if (!explorerState.hiddenColumns.has(idx)) {
+                    visibleIndices.push(idx);
+                }
+            });
+            
+            let headerHtml = '<tr>';
+            visibleIndices.forEach(idx => {
+                const header = explorerState.headers[idx];
+                headerHtml += `<th title="Klicken zum Ausblenden" style="cursor: pointer;" onclick="toggleExplorerColumn(${idx}, true)">${escapeHtml(header || `Spalte ${getColumnLetter(idx + 1)}`)}</th>`;
+            });
+            headerHtml += '</tr>';
+            elements.explorerTableHead.innerHTML = headerHtml;
+            
+            let bodyHtml = '';
+            explorerState.filteredData.forEach((row) => {
+                bodyHtml += '<tr>';
+                visibleIndices.forEach(colIndex => {
+                    const cell = row[colIndex];
+                    const cellStr = String(cell ?? '');
+                    bodyHtml += `<td>${escapeHtml(cellStr)}</td>`;
+                });
+                bodyHtml += '</tr>';
+            });
+            elements.explorerTableBody.innerHTML = bodyHtml || '<tr><td colspan="' + visibleIndices.length + '" style="text-align: center; padding: 20px;">Keine Treffer</td></tr>';
+            
+            const total = explorerState.data.length;
+            const visible = explorerState.filteredData.length;
+            const hiddenCount = explorerState.hiddenColumns.size;
+            let info = total === 0 ? 'Keine Daten vorhanden.' : `${visible} von ${total} Zeilen`;
+            if (hiddenCount > 0) {
+                info += ` | ${hiddenCount} Spalte(n) ausgeblendet`;
+            }
+            elements.explorerResultCount.textContent = info;
+        }
+        
+        async function loadExplorerFile() {
+            if (isElectron) {
+                const filePath = await window.electronAPI.openFileDialog({
+                    title: 'Excel-Datei für Datenexplorer öffnen',
+                    filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
+                });
+                if (!filePath) return;
+                
+                const result = await window.electronAPI.readExcelFile(filePath);
+                if (!result.success) {
+                    elements.explorerStatus.textContent = `❌ ${result.error}`;
+                    elements.explorerStatus.style.color = 'var(--error)';
+                    return;
+                }
+                
+                explorerState.fileName = result.fileName;
+                explorerState.filePath = result.filePath;
+                explorerState.sheets = result.sheets;
+                explorerState.selectedSheet = result.sheets[0] || '';
+                explorerState.headers = [...result.headers];
+                explorerState.data = result.data.map(row => [...row]);
+                explorerState.filteredData = [...explorerState.data];
+                explorerState.hiddenColumns.clear();
+                
+                elements.explorerFileName.textContent = result.fileName;
+                updateExplorerSheetDropdown();
+                updateColumnToggles();
+                renderExplorerTable();
+                
+                elements.explorerStatus.textContent = `✓ ${result.fileName} geladen`;
+                elements.explorerStatus.style.color = 'var(--success)';
+            }
+        }
+        
+        async function loadExplorerSheet(sheetName) {
+            if (!sheetName) return;
+            
+            explorerState.selectedSheet = sheetName;
+            explorerState.hiddenColumns.clear();
+            
+            if (isElectron && explorerState.filePath) {
+                const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName);
+                if (!result.success) {
+                    elements.explorerStatus.textContent = `❌ ${result.error}`;
+                    elements.explorerStatus.style.color = 'var(--error)';
+                    return;
+                }
+                explorerState.headers = result.headers;
+                explorerState.data = result.data.slice(1);
+                explorerState.filteredData = [...explorerState.data];
+                explorerState.searchTerm = '';
+                if (elements.explorerSearch) elements.explorerSearch.value = '';
+                
+                updateColumnToggles();
+                renderExplorerTable();
+                elements.explorerStatus.textContent = `✓ ${sheetName} geladen`;
+                elements.explorerStatus.style.color = 'var(--success)';
+            }
+        }
+        
+        function exportExplorerData() {
+            if (explorerState.filteredData.length === 0) {
+                elements.explorerStatus.textContent = 'Keine Daten zum Export';
+                elements.explorerStatus.style.color = 'var(--error)';
+                return;
+            }
+            
+            const visibleIndices = [];
+            explorerState.headers.forEach((_, idx) => {
+                if (!explorerState.hiddenColumns.has(idx)) {
+                    visibleIndices.push(idx);
+                }
+            });
+            
+            const visibleHeaders = visibleIndices.map(idx => explorerState.headers[idx]);
+            const visibleData = explorerState.filteredData.map(row => 
+                visibleIndices.map(idx => row[idx])
+            );
+            
+            if (isElectron) {
+                exportExplorerElectron(visibleHeaders, visibleData);
+                return;
+            }
+            
+            elements.explorerStatus.textContent = 'Export nur im Electron-Modus verfügbar';
+            elements.explorerStatus.style.color = 'var(--warning)';
+        }
+        
+        async function exportExplorerElectron(visibleHeaders, visibleData) {
+            try {
+                const defaultName = explorerState.fileName ? explorerState.fileName.replace(/\.[^.]+$/, '') + '-export.xlsx' : 'export.xlsx';
+                const savePath = await window.electronAPI.saveFileDialog({
+                    title: 'Daten exportieren',
+                    defaultPath: defaultName,
+                    filters: [{ name: 'Excel Dateien', extensions: ['xlsx'] }]
+                });
+                
+                if (!savePath) return;
+                
+                const exportRows = visibleData.map((row) => {
+                    const rowData = {};
+                    visibleHeaders.forEach((header, colIdx) => {
+                        rowData[header || `Spalte${colIdx + 1}`] = row[colIdx] || '';
+                    });
+                    return rowData;
+                });
+                
+                const result = await window.electronAPI.exportData({
+                    filePath: savePath,
+                    sheetName: explorerState.selectedSheet || 'Export',
+                    headers: visibleHeaders,
+                    rows: exportRows
+                });
+                
+                if (result.success) {
+                    elements.explorerStatus.textContent = `✓ Export: ${savePath} (${visibleHeaders.length} Spalten)`;
+                    elements.explorerStatus.style.color = 'var(--success)';
+                } else {
+                    elements.explorerStatus.textContent = `❌ ${result.error}`;
+                    elements.explorerStatus.style.color = 'var(--error)';
+                }
+            } catch (e) {
+                elements.explorerStatus.textContent = `❌ ${e.message}`;
+                elements.explorerStatus.style.color = 'var(--error)';
+            }
+        }
+        
+        // ==================== Electron-Specific Functions ====================
+        async function loadFile1Electron() {
+            const filePath = await window.electronAPI.openFileDialog({
+                title: 'Quelldatei öffnen',
+                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
+            });
+            if (!filePath) return;
+            
+            const result = await window.electronAPI.readExcelFile(filePath);
+            if (!result.success) {
+                showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
+                return;
+            }
+            
+            state.file1.name = result.fileName;
+            state.file1.filePath = result.filePath;
+            state.file1.sheets = result.sheets;
+            state.file1.workbook = { SheetNames: result.sheets };
+            
+            elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+            elements.selectSheet1.disabled = false;
+            elements.file1Info.textContent = `✓ ${result.fileName}`;
+            elements.file1Info.classList.add('loaded');
+            
+            await loadSheet1Electron(result.sheets[0]);
+        }
+        
+        async function loadSheet1Electron(sheetName) {
+            const result = await window.electronAPI.readExcelSheet(state.file1.filePath, sheetName);
+            if (!result.success) return;
+            
+            state.file1.selectedSheet = sheetName;
+            state.file1.headers = result.headers;
+            state.file1.data = result.data.slice(1);
+            
+            if (state.mapping.sourceColumns.length === 0) {
+                state.mapping.sourceColumns = state.file1.headers.map((_, i) => i);
+            }
+            
+            updateMappingInfo();
+            updateMappingPreview();
+            checkReadyState();
+        }
+        
+        async function loadFile2Electron() {
+            const filePath = await window.electronAPI.openFileDialog({
+                title: 'Zieldatei öffnen',
+                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
+            });
+            if (!filePath) return;
+            
+            const result = await window.electronAPI.readExcelFile(filePath);
+            if (!result.success) {
+                showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
+                return;
+            }
+            
+            state.file2.name = result.fileName;
+            state.file2.filePath = result.filePath;
+            state.file2.sheets = result.sheets;
+            state.file2.workbook = { SheetNames: result.sheets };
+            
+            elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+            elements.selectSheet2.disabled = false;
+            elements.file2Info.textContent = `✓ ${result.fileName}`;
+            elements.file2Info.classList.add('loaded');
+            
+            await loadSheet2Electron(result.sheets[0]);
+        }
+        
+        async function loadSheet2Electron(sheetName) {
+            const result = await window.electronAPI.readExcelSheet(state.file2.filePath, sheetName);
+            if (!result.success) return;
+            
+            state.file2.selectedSheet = sheetName;
+            state.file2.headers = result.headers;
+            state.file2.data = result.data.slice(1);
+            
+            elements.btnNewMonth.disabled = false;
+            elements.btnExportPS.disabled = state.transferQueue.length === 0;
+            checkReadyState();
+        }
+        
+        // ==================== Initialize App ====================
+        async function initApp() {
+            try { await initDB(); } catch (e) { console.warn('IndexedDB nicht verfügbar'); }
+            loadConfig();
+            updateMappingPreview();
+            checkReadyState();
+            
+            // Electron-Modus Event-Handler
+            if (isElectron) {
+                elements.btnLoadFile1.onclick = loadFile1Electron;
+                elements.btnLoadFile2.onclick = loadFile2Electron;
+                elements.selectSheet1.onchange = (e) => loadSheet1Electron(e.target.value);
+                elements.selectSheet2.onchange = (e) => loadSheet2Electron(e.target.value);
+                elements.btnExportPS.onclick = transferQueueToExcel;
+                elements.btnExportPS.innerHTML = '✅ Direkt übertragen';
+            } else {
+                // Browser-Modus (Fallback)
+                elements.btnLoadFile1.onclick = () => elements.fileInput1.click();
+                elements.btnLoadFile2.onclick = () => elements.fileInput2.click();
+                elements.fileInput1.onchange = (e) => e.target.files[0] && processFile(e.target.files[0], 1);
+                elements.fileInput2.onchange = (e) => e.target.files[0] && processFile(e.target.files[0], 2);
+                elements.selectSheet1.onchange = (e) => selectSheet1(e.target.value);
+                elements.selectSheet2.onchange = (e) => selectSheet2(e.target.value);
+            }
+            
+            // Mapping Modal
+            elements.btnConfigMapping.onclick = openMappingModal;
+            document.getElementById('btnCloseMappingModal').onclick = closeMappingModal;
+            document.getElementById('btnCancelMapping').onclick = closeMappingModal;
+            document.getElementById('btnSaveMapping').onclick = saveMapping;
+            document.getElementById('btnAddMapping').onclick = addMappingColumn;
+            
+            // Suche
+            elements.btnSearch.onclick = search;
+            elements.searchInput.onkeydown = (e) => { if (e.key === 'Enter') search(); };
+            
+            // Neue Zeile Panel
+            elements.btnNewRow.onclick = openNewRowPanel;
+            elements.btnCloseNewRow.onclick = closeNewRowPanel;
+            elements.btnAddNewRowToQueue.onclick = addNewRowToQueue;
+            elements.btnTransferNewRowDirect.onclick = transferNewRowDirect;
+            
+            // Transfer Panel
+            elements.btnAddToQueue.onclick = addToQueue;
+            elements.btnTransferDirect.onclick = transferSelectedDirect;
+            document.getElementById('btnSelectAll').onclick = () => selectAllRows(true);
+            
+            // Queue Panel
+            elements.btnClearQueue.onclick = clearQueue;
+            elements.btnNewMonth.onclick = openNewMonthModal;
+            
+            // Data Explorer
+            elements.btnDataExplorer.onclick = openDataExplorer;
+            document.getElementById('btnCloseDataExplorer').onclick = closeDataExplorer;
+            document.getElementById('btnCloseExplorer2').onclick = closeDataExplorer;
+            document.getElementById('btnExplorerOpenFile').onclick = loadExplorerFile;
+            document.getElementById('btnExplorerExport').onclick = exportExplorerData;
+            document.getElementById('btnToggleColumns').onclick = toggleColumnPanel;
+            document.getElementById('btnShowAllColumns').onclick = showAllExplorerColumns;
+            document.getElementById('btnHideAllColumns').onclick = hideAllExplorerColumns;
+            elements.explorerSearch.oninput = (e) => { explorerState.searchTerm = e.target.value; filterExplorerData(); };
+            elements.explorerSheetSelect.onchange = (e) => loadExplorerSheet(e.target.value);
+            elements.dataExplorerModal.onclick = (e) => { if (e.target === elements.dataExplorerModal) closeDataExplorer(); };
+            
+            // Template
+            elements.btnLoadTemplate.onclick = () => elements.templateInput.click();
+            elements.templateInput.onchange = (e) => e.target.files[0] && loadTemplate(e.target.files[0]);
+            
+            // Neuer Monat Modal
+            document.getElementById('btnCloseNewMonthModal').onclick = closeNewMonthModal;
+            document.getElementById('btnCancelNewMonth').onclick = closeNewMonthModal;
+            document.getElementById('btnConfirmNewMonth').onclick = confirmNewMonth;
+            
+            // Config Import/Export
+            elements.btnExportConfig.onclick = exportConfig;
+            elements.btnImportConfig.onclick = () => elements.configInput.click();
+            elements.configInput.onchange = (e) => e.target.files[0] && importConfig(e.target.files[0]);
+            
+            // Hilfe Modal
+            elements.btnHelp.onclick = () => elements.helpModal.classList.remove('hidden');
+            document.getElementById('btnCloseHelpModal').onclick = () => elements.helpModal.classList.add('hidden');
+            document.getElementById('btnCloseHelp').onclick = () => elements.helpModal.classList.add('hidden');
+            
+            // Sidebar Toggle
+            document.getElementById('sidebarToggle').onclick = () => document.getElementById('sidebar').classList.toggle('collapsed');
+            
+            // Tastenkürzel
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'F1') { e.preventDefault(); elements.helpModal.classList.toggle('hidden'); }
+                if (e.key === 'Escape') {
+                    elements.mappingModal.classList.add('hidden');
+                    elements.newMonthModal.classList.add('hidden');
+                    elements.helpModal.classList.add('hidden');
+                    elements.dataExplorerModal.classList.add('hidden');
+                }
+                if (e.ctrlKey && e.key === 'o') { e.preventDefault(); elements.configInput.click(); }
+            });
+            
+            // Modal-Overlay Click zum Schließen
+            elements.mappingModal.onclick = (e) => { if (e.target === elements.mappingModal) closeMappingModal(); };
+            elements.newMonthModal.onclick = (e) => { if (e.target === elements.newMonthModal) closeNewMonthModal(); };
+            elements.helpModal.onclick = (e) => { if (e.target === elements.helpModal) elements.helpModal.classList.add('hidden'); };
+            
+            console.log('✅ App initialisiert');
+        }
+        
         // App starten
-        console.log('✅ App wird initialisiert...');
+        initApp();
     </script>
 </body>
 </html>
