@@ -56,8 +56,12 @@ app.on('activate', () => {
 
 // Datei oeffnen Dialog
 ipcMain.handle('dialog:openFile', async (event, options) => {
-    // WICHTIG: mainWindow als Parent verwenden UND modal=true setzen
-    // Das verhindert den Vollbild-Bug bei Portable EXE
+    // WICHTIG: Fenster in den Vordergrund holen und sicherstellen dass es nicht minimiert ist
+    if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+    }
+    
     const result = await dialog.showOpenDialog(mainWindow, {
         title: options.title || 'Datei oeffnen',
         filters: options.filters || [
@@ -73,8 +77,12 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
 
 // Datei speichern Dialog
 ipcMain.handle('dialog:saveFile', async (event, options) => {
-    // WICHTIG: mainWindow als Parent verwenden
-    // Das verhindert den Vollbild-Bug bei Portable EXE
+    // WICHTIG: Fenster in den Vordergrund holen und sicherstellen dass es nicht minimiert ist
+    if (mainWindow) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.focus();
+    }
+    
     const result = await dialog.showSaveDialog(mainWindow, {
         title: options.title || 'Datei speichern',
         defaultPath: options.defaultPath,
