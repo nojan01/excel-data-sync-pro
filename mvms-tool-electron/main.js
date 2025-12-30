@@ -3,7 +3,7 @@ const path = require('path');
 const ExcelJS = require('exceljs');
 const fs = require('fs');
 
-let mainWindow;
+let mainWindow = null;
 
 // ============================================
 // FENSTER ERSTELLEN
@@ -34,6 +34,11 @@ function createWindow() {
     
     // Menueleiste ausblenden (optional)
     mainWindow.setMenuBarVisibility(false);
+    
+    // Fenster-Referenz aufräumen wenn geschlossen
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+    });
 }
 
 app.whenReady().then(createWindow);
@@ -51,48 +56,74 @@ app.on('activate', () => {
 });
 
 // ============================================
-// DATEI-DIALOGE
+// DATEI-DIALOGE - WICHTIG: Immer mit mainWindow als Parent!
 // ============================================
 
 // Datei oeffnen Dialog
 ipcMain.handle('dialog:openFile', async (event, options) => {
-    // WICHTIG: Fenster in den Vordergrund holen und sicherstellen dass es nicht minimiert ist
-    if (mainWindow) {
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.focus();
+    // Sicherstellen dass mainWindow existiert und nicht zerstört ist
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        console.error('mainWindow nicht verfügbar für Dialog');
+        return null;
     }
     
-    const result = await dialog.showOpenDialog(mainWindow, {
-        title: options.title || 'Datei oeffnen',
-        filters: options.filters || [
-            { name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] },
-            { name: 'Alle Dateien', extensions: ['*'] }
-        ],
-        properties: ['openFile']
-    });
+    // Fenster vorbereiten
+    if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+    }
+    mainWindow.focus();
     
-    if (result.canceled) return null;
-    return result.filePaths[0];
+    try {
+        const result = await dialog.showOpenDialog(mainWindow, {
+            title: options.title || 'Datei oeffnen',
+            filters: options.filters || [
+                { name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] },
+                { name: 'Alle Dateien', extensions: ['*'] }
+            ],
+            properties: ['openFile']
+        });
+        
+        if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+            return null;
+        }
+        return result.filePaths[0];
+    } catch (err) {
+        console.error('Dialog Fehler:', err);
+        return null;
+    }
 });
 
 // Datei speichern Dialog
 ipcMain.handle('dialog:saveFile', async (event, options) => {
-    // WICHTIG: Fenster in den Vordergrund holen und sicherstellen dass es nicht minimiert ist
-    if (mainWindow) {
-        if (mainWindow.isMinimized()) mainWindow.restore();
-        mainWindow.focus();
+    // Sicherstellen dass mainWindow existiert und nicht zerstört ist
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        console.error('mainWindow nicht verfügbar für Dialog');
+        return null;
     }
     
-    const result = await dialog.showSaveDialog(mainWindow, {
-        title: options.title || 'Datei speichern',
-        defaultPath: options.defaultPath,
-        filters: options.filters || [
-            { name: 'Excel-Dateien', extensions: ['xlsx'] }
-        ]
-    });
+    // Fenster vorbereiten
+    if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+    }
+    mainWindow.focus();
     
-    if (result.canceled) return null;
-    return result.filePath;
+    try {
+        const result = await dialog.showSaveDialog(mainWindow, {
+            title: options.title || 'Datei speichern',
+            defaultPath: options.defaultPath,
+            filters: options.filters || [
+                { name: 'Excel-Dateien', extensions: ['xlsx'] }
+            ]
+        });
+        
+        if (result.canceled || !result.filePath) {
+            return null;
+        }
+        return result.filePath;
+    } catch (err) {
+        console.error('Dialog Fehler:', err);
+        return null;
+    }
 });
 
 // ============================================
