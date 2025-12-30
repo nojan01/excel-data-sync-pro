@@ -328,15 +328,23 @@ ipcMain.handle('config:loadFromAppDir', async (event) => {
         const exePath = app.getPath('exe');
         const exeDir = path.dirname(exePath);
         
+        // Bei portable EXE: Der Ordner wo die EXE liegt
+        // Bei Entwicklung: Der Projekt-Ordner
         const possiblePaths = [
-            path.join(exeDir, 'config.json'),
-            path.join(app.getAppPath(), 'config.json'),
-            path.join(process.cwd(), 'config.json')
+            path.join(exeDir, 'config.json'),                          // Neben der EXE (portable)
+            path.join(exeDir, '..', 'config.json'),                    // Ein Ordner höher
+            path.join(app.getAppPath(), 'config.json'),                // Im App-Ordner (Entwicklung)
+            path.join(app.getAppPath(), '..', 'config.json'),          // Übergeordnet von App
+            path.join(process.cwd(), 'config.json'),                   // Im Arbeitsverzeichnis
+            path.join(__dirname, 'config.json'),                       // Im main.js Ordner
+            path.join(__dirname, '..', 'config.json')                  // Übergeordnet von main.js
         ];
         
+        console.log('Suche config.json in folgenden Pfaden:');
         for (const configPath of possiblePaths) {
+            console.log(' -', configPath, fs.existsSync(configPath) ? '? GEFUNDEN' : '?');
             if (fs.existsSync(configPath)) {
-                console.log('config.json gefunden:', configPath);
+                console.log('? config.json gefunden:', configPath);
                 const content = fs.readFileSync(configPath, 'utf8');
                 return { 
                     success: true, 
@@ -346,8 +354,10 @@ ipcMain.handle('config:loadFromAppDir', async (event) => {
             }
         }
         
+        console.log('? Keine config.json gefunden');
         return { success: false, error: 'Keine config.json im Programmordner gefunden' };
     } catch (error) {
+        console.error('Fehler beim Laden der config.json:', error);
         return { success: false, error: error.message };
     }
 });
