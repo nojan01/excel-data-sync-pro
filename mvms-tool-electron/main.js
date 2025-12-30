@@ -63,6 +63,7 @@ app.on('activate', () => {
 
 // Hilfsfunktion um Fenster für Dialog vorzubereiten
 async function prepareWindowForDialog() {
+    //console.log('prepareWindowForDialog - Start');
     if (!mainWindow || mainWindow.isDestroyed()) {
         console.error('mainWindow nicht verfügbar für Dialog');
         return false;
@@ -73,22 +74,49 @@ async function prepareWindowForDialog() {
         mainWindow.restore();
     }
     
-    // Fenster in den Vordergrund bringen (wichtig unter Windows!)
+    // WICHTIG: Fenster temporär "always on top" setzen
+    // Dies verhindert, dass der Dialog hinter dem Fenster erscheint
+    const wasAlwaysOnTop = mainWindow.isAlwaysOnTop();
+    if (!wasAlwaysOnTop) {
+        mainWindow.setAlwaysOnTop(true);
+    }
+    
+    // Fenster in den Vordergrund bringen
     mainWindow.show();
     mainWindow.focus();
     
     // Kurze Verzögerung um sicherzustellen, dass das Fenster bereit ist
-    // Dies hilft bei Timing-Problemen unter Windows
-    await new Promise(resolve => setTimeout(resolve, 50));
+    await new Promise(resolve => setTimeout(resolve, 100));
     
+    // Always on top wieder zurücksetzen (nach dem Dialog wird dies erneut aufgerufen)
+    if (!wasAlwaysOnTop) {
+        mainWindow.setAlwaysOnTop(false);
+    }
+    
+    //console.log('prepareWindowForDialog - Ende');
     return true;
 }
 
 // Datei oeffnen Dialog
 ipcMain.handle('dialog:openFile', async (event, options) => {
-    if (!(await prepareWindowForDialog())) {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        console.error('mainWindow nicht verfügbar für Dialog');
         return null;
     }
+    
+    // Fenster vorbereiten
+    if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+    }
+    
+    // Temporär always on top setzen um Dialog-Problem zu vermeiden
+    const wasAlwaysOnTop = mainWindow.isAlwaysOnTop();
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.show();
+    mainWindow.focus();
+    
+    // Kurze Pause für Windows
+    await new Promise(resolve => setTimeout(resolve, 100));
     
     try {
         const result = await dialog.showOpenDialog(mainWindow, {
@@ -100,21 +128,45 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
             properties: ['openFile']
         });
         
+        // Always on top zurücksetzen
+        if (!wasAlwaysOnTop) {
+            mainWindow.setAlwaysOnTop(false);
+        }
+        
         if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
             return null;
         }
         return result.filePaths[0];
     } catch (err) {
         console.error('Dialog Fehler:', err);
+        // Always on top zurücksetzen auch bei Fehler
+        if (!wasAlwaysOnTop) {
+            mainWindow.setAlwaysOnTop(false);
+        }
         return null;
     }
 });
 
 // Datei speichern Dialog
 ipcMain.handle('dialog:saveFile', async (event, options) => {
-    if (!(await prepareWindowForDialog())) {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        console.error('mainWindow nicht verfügbar für Dialog');
         return null;
     }
+    
+    // Fenster vorbereiten
+    if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+    }
+    
+    // Temporär always on top setzen um Dialog-Problem zu vermeiden
+    const wasAlwaysOnTop = mainWindow.isAlwaysOnTop();
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.show();
+    mainWindow.focus();
+    
+    // Kurze Pause für Windows
+    await new Promise(resolve => setTimeout(resolve, 100));
     
     try {
         const result = await dialog.showSaveDialog(mainWindow, {
@@ -125,12 +177,21 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
             ]
         });
         
+        // Always on top zurücksetzen
+        if (!wasAlwaysOnTop) {
+            mainWindow.setAlwaysOnTop(false);
+        }
+        
         if (result.canceled || !result.filePath) {
             return null;
         }
         return result.filePath;
     } catch (err) {
         console.error('Dialog Fehler:', err);
+        // Always on top zurücksetzen auch bei Fehler
+        if (!wasAlwaysOnTop) {
+            mainWindow.setAlwaysOnTop(false);
+        }
         return null;
     }
 });
