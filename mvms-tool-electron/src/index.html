@@ -677,6 +677,71 @@
             gap: 10px;
         }
         
+        /* Mapping List Styles */
+        .mapping-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .mapping-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            background: var(--bg-light);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+        
+        .mapping-item select {
+            flex: 1;
+            padding: 8px 10px;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-size: 14px;
+            min-width: 150px;
+        }
+        
+        .mapping-item select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .mapping-arrow {
+            color: var(--primary-light);
+            font-size: 18px;
+            font-weight: bold;
+            padding: 0 5px;
+        }
+        
+        .mapping-target {
+            color: var(--text-muted);
+            font-size: 13px;
+            min-width: 150px;
+        }
+        
+        .mapping-remove {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 6px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .mapping-remove:hover {
+            background: var(--error);
+            border-color: var(--error);
+            color: white;
+        }
+        
         /* Column Visibility Control */
         .column-toggle-container {
             display: flex;
@@ -2434,7 +2499,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextIndex].focus();
+                            cells[nextInterval].focus();
                         }
                     }
                 });
