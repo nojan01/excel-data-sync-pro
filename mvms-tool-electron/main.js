@@ -58,44 +58,8 @@ app.on('activate', () => {
 });
 
 // ============================================
-// DATEI-DIALOGE - WICHTIG: Immer mit mainWindow als Parent!
+// DATEI-DIALOGE - Windows-Workaround für Dialog-Problem
 // ============================================
-
-// Hilfsfunktion um Fenster für Dialog vorzubereiten
-async function prepareWindowForDialog() {
-    //console.log('prepareWindowForDialog - Start');
-    if (!mainWindow || mainWindow.isDestroyed()) {
-        console.error('mainWindow nicht verfügbar für Dialog');
-        return false;
-    }
-    
-    // Fenster vorbereiten - wichtig für modale Dialoge unter Windows
-    if (mainWindow.isMinimized()) {
-        mainWindow.restore();
-    }
-    
-    // WICHTIG: Fenster temporär "always on top" setzen
-    // Dies verhindert, dass der Dialog hinter dem Fenster erscheint
-    const wasAlwaysOnTop = mainWindow.isAlwaysOnTop();
-    if (!wasAlwaysOnTop) {
-        mainWindow.setAlwaysOnTop(true);
-    }
-    
-    // Fenster in den Vordergrund bringen
-    mainWindow.show();
-    mainWindow.focus();
-    
-    // Kurze Verzögerung um sicherzustellen, dass das Fenster bereit ist
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
-    // Always on top wieder zurücksetzen (nach dem Dialog wird dies erneut aufgerufen)
-    if (!wasAlwaysOnTop) {
-        mainWindow.setAlwaysOnTop(false);
-    }
-    
-    //console.log('prepareWindowForDialog - Ende');
-    return true;
-}
 
 // Datei oeffnen Dialog
 ipcMain.handle('dialog:openFile', async (event, options) => {
@@ -108,18 +72,12 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
     if (mainWindow.isMinimized()) {
         mainWindow.restore();
     }
-    
-    // Temporär always on top setzen um Dialog-Problem zu vermeiden
-    const wasAlwaysOnTop = mainWindow.isAlwaysOnTop();
-    mainWindow.setAlwaysOnTop(true);
-    mainWindow.show();
     mainWindow.focus();
     
-    // Kurze Pause für Windows
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
     try {
-        const result = await dialog.showOpenDialog(mainWindow, {
+        // WICHTIG: Unter Windows kann es helfen, den Dialog OHNE Parent zu öffnen
+        // wenn es Probleme mit der Anzeige gibt
+        const result = await dialog.showOpenDialog({
             title: options.title || 'Datei oeffnen',
             filters: options.filters || [
                 { name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] },
@@ -128,9 +86,9 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
             properties: ['openFile']
         });
         
-        // Always on top zurücksetzen
-        if (!wasAlwaysOnTop) {
-            mainWindow.setAlwaysOnTop(false);
+        // Nach Dialog: Hauptfenster wieder fokussieren
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.focus();
         }
         
         if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
@@ -139,10 +97,6 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
         return result.filePaths[0];
     } catch (err) {
         console.error('Dialog Fehler:', err);
-        // Always on top zurücksetzen auch bei Fehler
-        if (!wasAlwaysOnTop) {
-            mainWindow.setAlwaysOnTop(false);
-        }
         return null;
     }
 });
@@ -158,18 +112,11 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
     if (mainWindow.isMinimized()) {
         mainWindow.restore();
     }
-    
-    // Temporär always on top setzen um Dialog-Problem zu vermeiden
-    const wasAlwaysOnTop = mainWindow.isAlwaysOnTop();
-    mainWindow.setAlwaysOnTop(true);
-    mainWindow.show();
     mainWindow.focus();
     
-    // Kurze Pause für Windows
-    await new Promise(resolve => setTimeout(resolve, 100));
-    
     try {
-        const result = await dialog.showSaveDialog(mainWindow, {
+        // WICHTIG: Unter Windows kann es helfen, den Dialog OHNE Parent zu öffnen
+        const result = await dialog.showSaveDialog({
             title: options.title || 'Datei speichern',
             defaultPath: options.defaultPath,
             filters: options.filters || [
@@ -177,9 +124,9 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
             ]
         });
         
-        // Always on top zurücksetzen
-        if (!wasAlwaysOnTop) {
-            mainWindow.setAlwaysOnTop(false);
+        // Nach Dialog: Hauptfenster wieder fokussieren
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.focus();
         }
         
         if (result.canceled || !result.filePath) {
@@ -188,10 +135,6 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
         return result.filePath;
     } catch (err) {
         console.error('Dialog Fehler:', err);
-        // Always on top zurücksetzen auch bei Fehler
-        if (!wasAlwaysOnTop) {
-            mainWindow.setAlwaysOnTop(false);
-        }
         return null;
     }
 });
