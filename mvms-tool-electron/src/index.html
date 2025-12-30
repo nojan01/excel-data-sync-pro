@@ -1252,36 +1252,40 @@
     
     <!-- Help Modal -->
     <div class="modal-overlay hidden" id="helpModal">
-        <div class="modal">
+        <div class="modal" style="max-width: 800px;">
             <div class="modal-header">
                 <div class="modal-title">❓ Hilfe - MVMS-Vertragslisten aktualisieren</div>
                 <button class="modal-close" id="btnCloseHelpModal">&times;</button>
             </div>
             <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
-                <h3 style="margin-bottom: 10px;">Anleitung</h3>
+                <h3 style="margin-bottom: 10px;">🚀 Schnellstart</h3>
                 <ol style="line-height: 2; padding-left: 20px; margin-bottom: 20px;">
-                    <li><strong>Quelldatei laden:</strong> Klicken Sie auf "Quelldatei laden" und wählen Sie die Excel-Datei, aus der Zeilen kopiert werden sollen.</li>
-                    <li><strong>Arbeitsblatt wählen:</strong> Wählen Sie das gewünschte Arbeitsblatt aus der Dropdown-Liste.</li>
+                    <li><strong>Quelldatei laden:</strong> Klicken Sie auf "📂 Quelldatei laden" und wählen Sie die Excel-Datei, aus der Zeilen kopiert werden sollen.</li>
                     <li><strong>Zieldatei laden:</strong> Laden Sie die Excel-Datei, in die die Zeilen eingefügt werden sollen.</li>
-                    <li><strong>Spalten konfigurieren:</strong> Legen Sie fest, welche Spalten kopiert werden und die Spalte für Duplikat-Prüfung.</li>
-                    <li><strong>Suchen:</strong> Geben Sie eine Seriennummer oder Text ein. Wildcards: <code>*</code> = beliebig viele Zeichen, <code>?</code> = genau ein Zeichen.</li>
-                    <li><strong>Zeilen auswählen:</strong> Klicken Sie auf Zeilen oder nutzen Sie die Checkboxen für Multi-Select.</li>
-                    <li><strong>Flag & Kommentar:</strong> Setzen Sie Flag (A=Add, D=Delete, C=Change) und optional einen Kommentar.</li>
-                    <li><strong>Warteschlange:</strong> Mit "Zur Warteschlange" sammeln Sie mehrere Zeilen.</li>
-                    <li><strong>Neue Zeile:</strong> Mit "➕ Neue Zeile" können Sie manuell Zeilen eingeben (auch Leerzeilen).</li>
-                    <li><strong>Export zur Zieldatei:</strong> Exportiert Warteschlange als JSON, dann PowerShell-Skript ausführen.</li>
-                    <li><strong>Neue Monatsdatei:</strong> Kopiert das Template und setzt es als neue Datei 2.</li>
+                    <li><strong>Spalten konfigurieren:</strong> Legen Sie fest, welche Spalten kopiert werden sollen.</li>
+                    <li><strong>Suchen & Übertragen:</strong> Suchen Sie nach Zeilen und übertragen Sie diese zur Zieldatei.</li>
                 </ol>
                 
-                <h3 style="margin-bottom: 10px;">PowerShell-Workflow</h3>
-                <ol style="line-height: 2; padding-left: 20px; margin-bottom: 20px">
-                    <li>Zeilen auswählen und zur Warteschlange hinzufügen</li>
-                    <li>"📤 Export zur Zieldatei" klicken → JSON wird heruntergeladen</li>
-                    <li>PowerShell-Befehl ausführen (wird angezeigt)</li>
-                    <li>Für neuen Monat: "📅 Neue Monatsdatei" erstellt Kopie vom Template</li>
-                </ol>
+                <h3 style="margin-bottom: 10px;">📂 Dateien laden</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    <strong>Quelldatei (Datei 1):</strong> Die Excel-Datei, aus der Sie Daten kopieren möchten.<br>
+                    <strong>Zieldatei (Datei 2):</strong> Die Excel-Datei, in die die Daten eingefügt werden.<br>
+                    Nach dem Laden können Sie das gewünschte Arbeitsblatt auswählen.
+                </p>
                 
-                <h3 style="margin-bottom: 10px;">Wildcard-Suche</h3>
+                <h3 style="margin-bottom: 10px;">🔗 Spalten-Zuordnung</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Klicken Sie auf "⚙️ Spalten konfigurieren" um festzulegen:<br>
+                    • <strong>Start-Spalte:</strong> Ab welcher Spalte die Daten in Datei 2 eingefügt werden (Spalte 1+2 = Flag & Kommentar)<br>
+                    • <strong>Duplikat-Prüfung:</strong> Welche Spalte zur Erkennung von Duplikaten verwendet wird<br>
+                    • <strong>Zu kopierende Spalten:</strong> Welche Spalten aus Datei 1 übertragen werden
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">🔍 Suche</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Geben Sie einen Suchbegriff ein und drücken Sie Enter oder klicken Sie auf "🔍 Suchen".<br>
+                    Die Suche durchsucht alle Spalten der Quelldatei.
+                </p>
                 <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin-bottom: 20px;">
                     <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">*</code>
                     <span>Beliebig viele Zeichen (z.B. <code>ABC*</code>, <code>*123*</code>)</span>
@@ -1289,36 +1293,68 @@
                     <span>Genau ein Zeichen (z.B. <code>A?C</code> findet ABC, ADC, ...)</span>
                 </div>
                 
-                <h3 style="margin-bottom: 10px;">Tastenkürzel</h3>
-                <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 20px;">
-                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Strg+O</kbd>
-                    <span>Konfiguration laden</span>
+                <h3 style="margin-bottom: 10px;">✏️ Suchergebnisse bearbeiten</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Die Zellen in den Suchergebnissen sind <strong>direkt editierbar</strong>!<br>
+                    Klicken Sie in eine Zelle und ändern Sie den Wert. Bearbeitete Zellen werden gelb markiert.<br>
+                    Die Änderungen werden beim Übertragen zur Zieldatei übernommen.
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📤 Übertragung</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    <strong>Flag:</strong> A (Add), D (Delete), C (Change) oder Leerzeile<br>
+                    <strong>Kommentar:</strong> Optionaler Text für Spalte 2<br>
+                    <strong>Zur Warteschlange:</strong> Sammelt mehrere Zeilen für gemeinsame Übertragung<br>
+                    <strong>Direkt übertragen:</strong> Fügt die Zeilen sofort zur Warteschlange und überträgt
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📋 Warteschlange</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Die Warteschlange zeigt alle zur Übertragung vorgemerkten Zeilen.<br>
+                    <strong>✅ Direkt übertragen:</strong> Schreibt alle Zeilen direkt in die Excel-Zieldatei<br>
+                    <strong>🗑️ Leeren:</strong> Entfernt alle Zeilen aus der Warteschlange
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">➕ Neue Zeile manuell erstellen</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Mit "➕ Neue Zeile" können Sie Zeilen manuell eingeben, ohne sie in der Quelldatei suchen zu müssen.<br>
+                    Ideal für Leerzeilen oder Daten, die nicht in der Quelldatei vorhanden sind.
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📊 Datenexplorer</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Der Datenexplorer ermöglicht es, Excel-Dateien zu öffnen, zu durchsuchen und zu filtern:<br>
+                    • <strong>Volltextsuche:</strong> Durchsucht alle Spalten<br>
+                    • <strong>Spaltenfilter:</strong> Filtern nach bestimmten Spalten mit verschiedenen Operatoren<br>
+                    • <strong>Spalten ein-/ausblenden:</strong> Nur relevante Spalten anzeigen<br>
+                    • <strong>Export:</strong> Gefilterte Daten als neue Excel-Datei speichern
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">💾 Konfiguration</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    <strong>config.json laden:</strong> Lädt eine gespeicherte Konfiguration (Spalten-Zuordnung, Dateipfade)<br>
+                    <strong>config.json speichern:</strong> Speichert die aktuelle Konfiguration für späteren Zugriff<br>
+                    💡 Ideal für Teams: Eine config.json auf dem Netzlaufwerk für alle Nutzer!
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">⌨️ Tastenkürzel</h3>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin-bottom: 20px;">
                     <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">F1</kbd>
-                    <span>Diese Hilfe</span>
+                    <span>Diese Hilfe öffnen/schließen</span>
                     <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Enter</kbd>
-                    <span>Suche starten</span>
+                    <span>Suche starten (im Suchfeld)</span>
                     <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Esc</kbd>
                     <span>Dialog schließen</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Tab</kbd>
+                    <span>Zur nächsten Zelle in den Suchergebnissen</span>
                 </div>
                 
-                <h3 style="margin: 20px 0 10px;">Konfiguration (Netzwerklaufwerk)</h3>
+                <h3 style="margin-bottom: 10px;">⚠️ Wichtige Hinweise</h3>
                 <p style="color: var(--text-muted); line-height: 1.6;">
-                    <strong>1.</strong> Einmal "config.json speichern" im Programmordner.<br>
-                    <strong>2.</strong> Alle Nutzer: "📂 config.json laden" um dieselbe Konfiguration zu verwenden.<br>
-                    <strong>3.</strong> Änderungen werden automatisch im Browser gespeichert.
-                </p>
-                
-                <h3 style="margin: 20px 0 10px;">Hinweise</h3>
-                <p style="color: var(--text-muted); line-height: 1.6;">
-                    • Dateien werden in den Download-Ordner gespeichert → dann verschieben<br>
-                    • Datei 2 muss in Excel geschlossen sein<br>
-                    • Pulsierender 💾-Button = ungespeicherte Änderungen
-                </p>
-                
-                <h3 style="margin: 20px 0 10px;">💡 Tipp: Speicherort wählen</h3>
-                <p style="color: var(--text-muted); line-height: 1.6;">
-                    In Chrome können Sie einstellen, dass bei jedem Download der Speicherort abgefragt wird:<br>
-                    <strong>chrome://settings/downloads</strong> → "Vor dem Download von Dateien nach dem Speicherort fragen" aktivieren
+                    • Die Zieldatei (Datei 2) muss in Excel <strong>geschlossen</strong> sein, bevor Sie übertragen<br>
+                    • Duplikate werden automatisch erkannt und als Warnung angezeigt<br>
+                    • Änderungen werden direkt in die Excel-Datei geschrieben (kein separater Export nötig)<br>
+                    • Die Sidebar kann mit dem ◀ Button eingeklappt werden
                 </p>
             </div>
             <div class="modal-footer">
