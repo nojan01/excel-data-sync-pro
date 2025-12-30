@@ -56,9 +56,9 @@ app.on('activate', () => {
 
 // Datei oeffnen Dialog
 ipcMain.handle('dialog:openFile', async (event, options) => {
-    // mainWindow als Parent verwenden um Vollbild-Bug zu vermeiden
-    const parentWindow = BrowserWindow.getFocusedWindow() || mainWindow;
-    const result = await dialog.showOpenDialog(parentWindow, {
+    // WICHTIG: mainWindow als Parent verwenden UND modal=true setzen
+    // Das verhindert den Vollbild-Bug bei Portable EXE
+    const result = await dialog.showOpenDialog(mainWindow, {
         title: options.title || 'Datei oeffnen',
         filters: options.filters || [
             { name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] },
@@ -73,9 +73,9 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
 
 // Datei speichern Dialog
 ipcMain.handle('dialog:saveFile', async (event, options) => {
-    // mainWindow als Parent verwenden um Vollbild-Bug zu vermeiden
-    const parentWindow = BrowserWindow.getFocusedWindow() || mainWindow;
-    const result = await dialog.showSaveDialog(parentWindow, {
+    // WICHTIG: mainWindow als Parent verwenden
+    // Das verhindert den Vollbild-Bug bei Portable EXE
+    const result = await dialog.showSaveDialog(mainWindow, {
         title: options.title || 'Datei speichern',
         defaultPath: options.defaultPath,
         filters: options.filters || [
