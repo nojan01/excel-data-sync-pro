@@ -328,17 +328,27 @@ ipcMain.handle('config:loadFromAppDir', async (event) => {
         const exePath = app.getPath('exe');
         const exeDir = path.dirname(exePath);
         
+        // PORTABLE EXE FIX: Bei portable Apps ist process.env.PORTABLE_EXECUTABLE_DIR gesetzt
+        const portableDir = process.env.PORTABLE_EXECUTABLE_DIR || '';
+        
         // Bei portable EXE: Der Ordner wo die EXE liegt
         // Bei Entwicklung: Der Projekt-Ordner
-        const possiblePaths = [
-            path.join(exeDir, 'config.json'),                          // Neben der EXE (portable)
+        const possiblePaths = [];
+        
+        // Portable EXE: Der Ordner wo die portable EXE gestartet wurde (WICHTIG!)
+        if (portableDir) {
+            possiblePaths.push(path.join(portableDir, 'config.json'));
+        }
+        
+        possiblePaths.push(
+            path.join(exeDir, 'config.json'),                          // Neben der EXE
             path.join(exeDir, '..', 'config.json'),                    // Ein Ordner höher
             path.join(app.getAppPath(), 'config.json'),                // Im App-Ordner (Entwicklung)
             path.join(app.getAppPath(), '..', 'config.json'),          // Übergeordnet von App
             path.join(process.cwd(), 'config.json'),                   // Im Arbeitsverzeichnis
             path.join(__dirname, 'config.json'),                       // Im main.js Ordner
             path.join(__dirname, '..', 'config.json')                  // Übergeordnet von main.js
-        ];
+        );
         
         // Durchsuchte Pfade für Debug-Ausgabe sammeln
         const searchedPaths = possiblePaths.map(p => ({
@@ -346,6 +356,14 @@ ipcMain.handle('config:loadFromAppDir', async (event) => {
             exists: fs.existsSync(p)
         }));
         
+        console.log('=== CONFIG.JSON SUCHE ===');
+        console.log('PORTABLE_EXECUTABLE_DIR:', portableDir || '(nicht gesetzt)');
+        console.log('exePath:', exePath);
+        console.log('exeDir:', exeDir);
+        console.log('process.cwd():', process.cwd());
+        console.log('app.getAppPath():', app.getAppPath());
+        console.log('__dirname:', __dirname);
+        console.log('');
         console.log('Suche config.json in folgenden Pfaden:');
         searchedPaths.forEach(p => {
             console.log(' -', p.path, p.exists ? '? GEFUNDEN' : '?');
