@@ -1920,8 +1920,8 @@
                     const filesIncluded = (config.file1Data ? 1 : 0) + (config.file2Data ? 1 : 0);
                     
                     showStatus(elements.transferStatus, 
-                        `✓ Konfiguration importiert! (${mappingCount} Spalten, ${filesIncluded} Datei(en), vom ${date})`, 'success);
-                    
+                        `✓ Konfiguration importiert! (${mappingCount} Spalten, ${filesIncluded} Datei(en), vom ${date})`, 'success');
+
                     elements.mappingInfo.textContent = `${mappingCount} Spalte(n) konfiguriert`;
                     
                 } catch (err) {
