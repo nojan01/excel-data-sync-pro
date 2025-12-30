@@ -639,14 +639,17 @@
         /* Column Visibility Control */
         .column-toggle-container {
             display: flex;
+            flex-direction: row;
             flex-wrap: wrap;
-            gap: 6px;
-            padding: 10px;
+            gap: 8px;
+            padding: 15px;
             background: var(--bg-light);
             border-radius: 6px;
             margin-bottom: 10px;
-            max-height: 120px;
+            min-height: 80px;
+            max-height: 250px;
             overflow-y: auto;
+            border: 1px solid var(--border);
         }
         
         .column-toggle {
@@ -1223,7 +1226,6 @@
         <div class="modal modal-large" style="max-width: 95vw; width: 1400px; max-height: 90vh; min-width: 600px; min-height: 400px;">
             <div class="modal-header">
                 <div class="modal-title">📊 Datenexplorer - <span id="explorerFileName">Keine Datei geladen</span></div>
-                <button class="modal-close" id="btnCloseDataExplorer">&times;</button>
             </div>
             <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px; padding: 15px; overflow: hidden; flex: 1;">
                 <!-- Explorer Controls -->
@@ -1250,12 +1252,12 @@
                 </div>
                 
                 <!-- Column Visibility Panel (initially hidden) -->
-                <div class="column-toggle-container hidden" id="columnTogglePanel">
-                    <div style="width: 100%; margin-bottom: 5px; display: flex; gap: 10px;">
+                <div id="columnTogglePanel" style="display: none; flex-direction: column; gap: 10px; padding: 15px; background: var(--bg-light); border-radius: 6px; margin-bottom: 10px; border: 1px solid var(--border);">
+                    <div style="display: flex; gap: 10px; margin-bottom: 5px;">
                         <button class="btn btn-secondary btn-sm" id="btnShowAllColumns">Alle anzeigen</button>
                         <button class="btn btn-secondary btn-sm" id="btnHideAllColumns">Alle ausblenden</button>
                     </div>
-                    <div id="columnToggles" style="display: flex; flex-wrap: wrap; gap: 6px; width: 100%;"></div>
+                    <div id="columnToggles" style="display: flex; flex-wrap: wrap; gap: 8px; max-height: 200px; overflow-y: auto;"></div>
                 </div>
                 
                 <!-- Results Info -->
@@ -2513,8 +2515,8 @@
                 state.history.unshift({
                     time: new Date().toLocaleTimeString(),
                     flag: flag,
-                    searchValue: elements.searchInput.value,
-                    preview: String(rowData[0] || '').substring(0, 30)
+                    searchValue: '(Manuelle Eingabe)',
+                    preview: data[state.mapping.duplicateCheckColumn] || '(Neue Zeile)'
                 });
             }
             
@@ -2707,7 +2709,6 @@
                 showStatus(elements.transferStatus, `❌ Fehler: ${result.error}`, 'error');
             }
         }
-        
         // ==================== Template & New Month ====================
         function loadTemplate(file) {
             const reader = new FileReader();
@@ -2904,7 +2905,12 @@
         function toggleColumnPanel() {
             const panel = document.getElementById('columnTogglePanel');
             if (panel) {
-                panel.classList.toggle('hidden');
+                if (panel.style.display === 'none' || panel.style.display === '') {
+                    panel.style.display = 'flex';
+                    panel.style.flexDirection = 'column';
+                } else {
+                    panel.style.display = 'none';
+                }
             }
         }
         
@@ -2988,20 +2994,13 @@
                 explorerState.filePath = result.filePath;
                 explorerState.sheets = result.sheets;
                 explorerState.selectedSheet = result.sheets[0] || '';
-                explorerState.headers = result.headers;
-                explorerState.data = result.data.slice(1);
-                explorerState.filteredData = explorerState.data;
                 explorerState.hiddenColumns.clear();
                 
                 elements.explorerFileName.textContent = result.fileName;
                 updateExplorerSheetDropdown();
-                updateColumnToggles();
-                renderExplorerTable();
                 
                 // Lade das erste Sheet um die Daten zu bekommen
-                if (result.sheets.length > 0) {
-                    await loadExplorerSheet(result.sheets[0]);
-                }
+                await loadExplorerSheet(result.sheets[0]);
                 
                 elements.explorerStatus.textContent = `✓ ${result.fileName} geladen`;
                 elements.explorerStatus.style.color = 'var(--success)';
@@ -3016,16 +3015,12 @@
             
             if (isElectron && explorerState.filePath) {
                 const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName);
-                if (!result.success) {
-                    elements.explorerStatus.textContent = `❌ ${result.error}`;
-                    elements.explorerStatus.style.color = 'var(--error)';
-                    return;
-                }
-                explorerState.headers = result.headers;
+                if (!result.success) return;
+                
                 explorerState.data = result.data.slice(1);
                 explorerState.filteredData = explorerState.data;
                 explorerState.searchTerm = '';
-                if (elements.explorerSearch) elements.explorerSearch.value = '';
+                explorerState.headers = result.headers;
                 
                 updateColumnToggles();
                 renderExplorerTable();
@@ -3237,7 +3232,6 @@
             
             // Data Explorer
             elements.btnDataExplorer.onclick = openDataExplorer;
-            document.getElementById('btnCloseDataExplorer').onclick = closeDataExplorer;
             document.getElementById('btnCloseExplorer2').onclick = closeDataExplorer;
             document.getElementById('btnExplorerOpenFile').onclick = loadExplorerFile;
             document.getElementById('btnExplorerExport').onclick = exportExplorerData;
