@@ -1601,7 +1601,7 @@
         // ==================== Local Storage ====================
         const STORAGE_KEY = 'mvmcVertragslistenConfig';
         const LAST_EXPORT_KEY = 'mvmcVertragslistenLastExport';
-        const DB_NAME = 'MVMCVertragslistenDB';
+        const DB_NAME = 'MVMCVertragsListenDB';
         const DB_VERSION = 1;
         let db = null;
         
@@ -3267,12 +3267,22 @@
         
         async function loadConfigFromAppDirOrDialog() {
             if (!isElectron) return;
-            try { const autoResult = await window.electronAPI.loadConfigFromAppDir(); if (autoResult && autoResult.success && autoResult.config) { await applyLoadedConfig(autoResult.config); showStatus(elements.transferStatus, `✓ config.json automatisch geladen: ${autoResult.path}`, 'success'); return; } } catch (e) { console.log('Keine config.json im Programmordner gefunden'); }
-            const filePath = await window.electronAPI.openFileDialog({ title: 'Konfiguration laden', filters: [{ name: 'JSON Dateien', extensions: ['json'] }] });
+            
+            // Immer Dialog öffnen - der Button ist für manuelles Laden gedacht
+            const filePath = await window.electronAPI.openFileDialog({ 
+                title: 'Konfiguration laden', 
+                filters: [{ name: 'JSON Dateien', extensions: ['json'] }] 
+            });
+            
             if (!filePath) return;
+            
             const result = await window.electronAPI.loadConfig(filePath);
-            if (result.success && result.config) { await applyLoadedConfig(result.config); showStatus(elements.transferStatus, `✓ config.json geladen: ${filePath}`, 'success'); }
-            else { showStatus(elements.transferStatus, `❌ Fehler: ${result.error}`, 'error'); }
+            if (result.success && result.config) { 
+                await applyLoadedConfig(result.config); 
+                showStatus(elements.transferStatus, `✓ config.json geladen: ${filePath}`, 'success'); 
+            } else { 
+                showStatus(elements.transferStatus, `❌ Fehler: ${result.error}`, 'error'); 
+            }
         }
         
         // ==================== Initialize App ====================

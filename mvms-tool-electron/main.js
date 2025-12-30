@@ -18,6 +18,8 @@ function createWindow() {
         maximizable: true,
         title: 'MVMS-Tool',
         icon: path.join(__dirname, 'assets', 'icon.ico'),
+        // WICHTIG: Frame aktiviert lassen für korrektes Dialog-Verhalten
+        frame: true,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -59,19 +61,34 @@ app.on('activate', () => {
 // DATEI-DIALOGE - WICHTIG: Immer mit mainWindow als Parent!
 // ============================================
 
-// Datei oeffnen Dialog
-ipcMain.handle('dialog:openFile', async (event, options) => {
-    // Sicherstellen dass mainWindow existiert und nicht zerstört ist
+// Hilfsfunktion um Fenster für Dialog vorzubereiten
+async function prepareWindowForDialog() {
     if (!mainWindow || mainWindow.isDestroyed()) {
         console.error('mainWindow nicht verfügbar für Dialog');
-        return null;
+        return false;
     }
     
-    // Fenster vorbereiten
+    // Fenster vorbereiten - wichtig für modale Dialoge unter Windows
     if (mainWindow.isMinimized()) {
         mainWindow.restore();
     }
+    
+    // Fenster in den Vordergrund bringen (wichtig unter Windows!)
+    mainWindow.show();
     mainWindow.focus();
+    
+    // Kurze Verzögerung um sicherzustellen, dass das Fenster bereit ist
+    // Dies hilft bei Timing-Problemen unter Windows
+    await new Promise(resolve => setTimeout(resolve, 50));
+    
+    return true;
+}
+
+// Datei oeffnen Dialog
+ipcMain.handle('dialog:openFile', async (event, options) => {
+    if (!(await prepareWindowForDialog())) {
+        return null;
+    }
     
     try {
         const result = await dialog.showOpenDialog(mainWindow, {
@@ -95,17 +112,9 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
 
 // Datei speichern Dialog
 ipcMain.handle('dialog:saveFile', async (event, options) => {
-    // Sicherstellen dass mainWindow existiert und nicht zerstört ist
-    if (!mainWindow || mainWindow.isDestroyed()) {
-        console.error('mainWindow nicht verfügbar für Dialog');
+    if (!(await prepareWindowForDialog())) {
         return null;
     }
-    
-    // Fenster vorbereiten
-    if (mainWindow.isMinimized()) {
-        mainWindow.restore();
-    }
-    mainWindow.focus();
     
     try {
         const result = await dialog.showSaveDialog(mainWindow, {
