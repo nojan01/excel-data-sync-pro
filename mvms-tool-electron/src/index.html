@@ -1534,7 +1534,7 @@
             newRowForm: document.getElementById('newRowForm'),
             newRowFlag: document.getElementById('newRowFlag'),
             newRowComment: document.getElementById('newRowComment'),
-            btnCloseNewRow: document.getElementById('btnCloseNewRow',
+            btnCloseNewRow: document.getElementById('btnCloseNewRow'),
             btnAddNewRowToQueue: document.getElementById('btnAddNewRowToQueue'),
             btnTransferNewRowDirect: document.getElementById('btnTransferNewRowDirect'),
             
@@ -1589,7 +1589,6 @@
             explorerStatus: document.getElementById('explorerStatus'),
             explorerTableHead: document.getElementById('explorerTableHead'),
             explorerTableBody: document.getElementById('explorerTableBody'),
-            btnDataExplorer: document.getElementById('btnDataExplorer'),
             btnExplorerExport: document.getElementById('btnExplorerExport'),
             btnExplorerOpenFile: document.getElementById('btnExplorerOpenFile'),
             
@@ -1597,7 +1596,7 @@
             btnHelp: document.getElementById('btnHelp'),
             helpModal: document.getElementById('helpModal')
         };
-        
+
         // ==================== Local Storage ====================
         const STORAGE_KEY = 'mvmcVertragslistenConfig';
         const LAST_EXPORT_KEY = 'mvmcVertragslistenLastExport';
@@ -2543,7 +2542,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextString].focus();
+                            cells[nextIndex].focus();
                         }
                     }
                 });
@@ -2697,6 +2696,7 @@
             saveConfig();
             
             let message = `✓ ${transferredCount} Zeile(n) direkt übertragen!`;
+            // Fix: Tippfehler nextString -> nextIndex
             let status = 'success';
             if (editedCount > 0) {
                 message += ` (${editedCount} bearbeitet ✏️)`;
