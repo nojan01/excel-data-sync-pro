@@ -1147,6 +1147,9 @@
                     <button class="btn btn-secondary" id="btnSelectAll" style="margin-left: auto;">
                         ☑️ Alle auswählen
                     </button>
+                    <button class="btn btn-secondary" id="btnDeselectAll">
+                        ☐ Alles abwählen
+                    </button>
                 </div>
                 <div id="transferStatus"></div>
             </div>
@@ -2540,7 +2543,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextValue].focus();
+                            cells[nextIndex].focus();
                         }
                     }
                 });
@@ -3247,7 +3250,7 @@
             });
             if (!filePath) return;
             
-            const result = await window.electronAPI.readExcelFile(filePath);
+            const result = await window.eelectronAPI.readExcelFile(filePath);
             if (!result.success) {
                 showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
                 return;
@@ -3495,6 +3498,7 @@
             elements.btnAddToQueue.onclick = addToQueue;
             elements.btnTransferDirect.onclick = transferSelectedDirect;
             document.getElementById('btnSelectAll').onclick = () => selectAllRows(true);
+            document.getElementById('btnDeselectAll').onclick = () => selectAllRows(false);
             
             // Queue Panel
             elements.btnClearQueue.onclick = clearQueue;
