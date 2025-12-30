@@ -400,47 +400,27 @@ ipcMain.handle('config:loadFromAppDir', async (event) => {
         const exePath = app.getPath('exe');
         const exeDir = path.dirname(exePath);
         
-        // PORTABLE EXE FIX: Bei portable Apps ist process.env.PORTABLE_EXECUTABLE_DIR gesetzt
+        // PORTABLE EXE: Der Ordner wo die portable EXE gestartet wurde
         const portableDir = process.env.PORTABLE_EXECUTABLE_DIR || '';
         
-        // Bei portable EXE: Der Ordner wo die EXE liegt
-        // Bei Entwicklung: Der Projekt-Ordner
+        // Nur die wichtigsten Pfade prüfen (optimiert)
         const possiblePaths = [];
         
-        // Portable EXE: Der Ordner wo die portable EXE gestartet wurde (WICHTIG!)
+        // 1. Portable EXE: Neben der EXE
         if (portableDir) {
             possiblePaths.push(path.join(portableDir, 'config.json'));
         }
         
-        possiblePaths.push(
-            path.join(exeDir, 'config.json'),                          // Neben der EXE
-            path.join(exeDir, '..', 'config.json'),                    // Ein Ordner höher
-            path.join(app.getAppPath(), 'config.json'),                // Im App-Ordner (Entwicklung)
-            path.join(app.getAppPath(), '..', 'config.json'),          // Übergeordnet von App
-            path.join(process.cwd(), 'config.json'),                   // Im Arbeitsverzeichnis
-            path.join(__dirname, 'config.json'),                       // Im main.js Ordner
-            path.join(__dirname, '..', 'config.json')                  // Übergeordnet von main.js
-        );
+        // 2. Neben der EXE (Standard)
+        possiblePaths.push(path.join(exeDir, 'config.json'));
         
-        // Durchsuchte Pfade für Debug-Ausgabe sammeln
-        const searchedPaths = possiblePaths.map(p => ({
-            path: p,
-            exists: fs.existsSync(p)
-        }));
+        // 3. Im Entwicklungsmodus: Projektordner
+        if (process.argv.includes('--dev') || !app.isPackaged) {
+            possiblePaths.push(path.join(__dirname, 'config.json'));
+            possiblePaths.push(path.join(process.cwd(), 'config.json'));
+        }
         
-        console.log('=== CONFIG.JSON SUCHE ===');
-        console.log('PORTABLE_EXECUTABLE_DIR:', portableDir || '(nicht gesetzt)');
-        console.log('exePath:', exePath);
-        console.log('exeDir:', exeDir);
-        console.log('process.cwd():', process.cwd());
-        console.log('app.getAppPath():', app.getAppPath());
-        console.log('__dirname:', __dirname);
-        console.log('');
-        console.log('Suche config.json in folgenden Pfaden:');
-        searchedPaths.forEach(p => {
-            console.log(' -', p.path, p.exists ? '? GEFUNDEN' : '?');
-        });
-        
+        // Schnelle Suche - bei erstem Treffer abbrechen
         for (const configPath of possiblePaths) {
             if (fs.existsSync(configPath)) {
                 console.log('? config.json gefunden:', configPath);
@@ -448,17 +428,15 @@ ipcMain.handle('config:loadFromAppDir', async (event) => {
                 return { 
                     success: true, 
                     config: JSON.parse(content),
-                    path: configPath,
-                    searchedPaths: searchedPaths
+                    path: configPath
                 };
             }
         }
         
-        console.log('? Keine config.json gefunden');
+        // Keine config.json gefunden - kein Fehler, nur Info
         return { 
             success: false, 
-            error: 'Keine config.json im Programmordner gefunden',
-            searchedPaths: searchedPaths
+            error: 'Keine config.json gefunden'
         };
     } catch (error) {
         console.error('Fehler beim Laden der config.json:', error);
