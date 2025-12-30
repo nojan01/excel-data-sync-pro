@@ -16,10 +16,14 @@ function createWindow() {
         minHeight: 600,
         resizable: true,
         maximizable: true,
+        fullscreenable: true,
+        fullscreen: false,  // Explizit kein Vollbild
+        simpleFullscreen: false,  // Kein einfacher Vollbildmodus
         title: 'MVMS-Tool',
         icon: path.join(__dirname, 'assets', 'icon.ico'),
-        // WICHTIG: Frame aktiviert lassen für korrektes Dialog-Verhalten
         frame: true,
+        // Wichtig für korrekte Dialog-Darstellung
+        useContentSize: false,
         webPreferences: {
             nodeIntegration: false,
             contextIsolation: true,
@@ -75,10 +79,12 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
     mainWindow.focus();
     
     try {
-        // WICHTIG: Unter Windows kann es helfen, den Dialog OHNE Parent zu öffnen
-        // wenn es Probleme mit der Anzeige gibt
+        // Standard-Pfad setzen (hilft bei Dialog-Größenproblemen unter Windows)
+        const defaultPath = options.defaultPath || app.getPath('documents');
+        
         const result = await dialog.showOpenDialog({
             title: options.title || 'Datei oeffnen',
+            defaultPath: defaultPath,
             filters: options.filters || [
                 { name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] },
                 { name: 'Alle Dateien', extensions: ['*'] }
@@ -115,10 +121,12 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
     mainWindow.focus();
     
     try {
-        // WICHTIG: Unter Windows kann es helfen, den Dialog OHNE Parent zu öffnen
+        // Standard-Pfad setzen falls nicht angegeben
+        const defaultPath = options.defaultPath || app.getPath('documents');
+        
         const result = await dialog.showSaveDialog({
             title: options.title || 'Datei speichern',
-            defaultPath: options.defaultPath,
+            defaultPath: defaultPath,
             filters: options.filters || [
                 { name: 'Excel-Dateien', extensions: ['xlsx'] }
             ]
