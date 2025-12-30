@@ -2930,11 +2930,11 @@
                     
                     if (!savePath) return;
                     
-                    // Template kopieren
+                    // Template kopieren - sheetName kann null sein, main.js nimmt dann das erste Sheet
                     const result = await window.electronAPI.copyExcelFile({
                         sourcePath: state.template.filePath,
                         targetPath: savePath,
-                        sheetName: state.file2.selectedSheet || state.template.name,
+                        sheetName: null, // null = erstes verfügbares Sheet verwenden
                         keepHeader: true
                     });
                     
@@ -2956,7 +2956,10 @@
                         elements.file2Info.textContent = `✓ ${loadResult.fileName}`;
                         elements.file2Info.classList.add('loaded');
                         
-                        await loadSheet2Electron(loadResult.sheets[0]);
+                        // Erstes Sheet laden
+                        if (loadResult.sheets.length > 0) {
+                            await loadSheet2Electron(loadResult.sheets[0]);
+                        }
                     }
                     
                     state.transferQueue = [];
@@ -3166,8 +3169,6 @@
             explorerState.fileName = result.fileName; explorerState.filePath = filePath; explorerState.sheets = result.sheets;
             explorerState.selectedSheet = result.sheets[0] || ''; explorerState.hiddenColumns = new Set();
             elements.explorerFileName.textContent = result.fileName; updateExplorerSheetDropdown();
-            
-            // WICHTIG: Jetzt auch das erste Sheet laden, um die Daten anzuzeigen
             if (explorerState.selectedSheet) {
                 await loadExplorerSheet(explorerState.selectedSheet);
             }
@@ -3206,7 +3207,7 @@
                 else { elements.explorerStatus.textContent = 'Fehler: ' + (result?.error || 'Unbekannt'); elements.explorerStatus.style.color = 'var(--error)'; }
             } catch (e) { elements.explorerStatus.textContent = 'Fehler: ' + e.message; elements.explorerStatus.style.color = 'var(--error)'; }
         }
-        
+
         // ==================== Electron-Specific Functions ====================
         async function loadFile1Electron() {
             const filePath = await window.electronAPI.openFileDialog({ title: 'Quelldatei öffnen', filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }] });

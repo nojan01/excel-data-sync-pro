@@ -226,12 +226,22 @@ ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetNa
         const workbook = new ExcelJS.Workbook();
         await workbook.xlsx.readFile(sourcePath);
         
-        const worksheet = workbook.getWorksheet(sheetName);
+        // Wenn sheetName angegeben und existiert, nutze dieses Sheet
+        // Ansonsten nimm das erste Sheet
+        let worksheet = null;
+        if (sheetName) {
+            worksheet = workbook.getWorksheet(sheetName);
+        }
         if (!worksheet) {
-            return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
+            // Erstes verfuegbares Sheet nehmen
+            worksheet = workbook.worksheets[0];
         }
         
-        // Zeilen loeschen (ausser Header)
+        if (!worksheet) {
+            return { success: false, error: 'Keine Worksheets in der Template-Datei gefunden' };
+        }
+        
+        // Zeilen loeschen (ausser Header) wenn gewuenscht
         if (keepHeader) {
             const rowCount = worksheet.rowCount;
             for (let i = rowCount; i > 1; i--) {
