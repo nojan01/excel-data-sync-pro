@@ -1765,9 +1765,14 @@
                     config.file2Path = state.file2.filePath;
                     config.file2Name = state.file2.name;
                 }
+                // Template-Pfad speichern
+                if (state.template.filePath) {
+                    config.templatePath = state.template.filePath;
+                    config.templateName = state.template.name;
+                }
             }
             
-            // Template speichern (falls vorhanden)
+            // Template speichern (falls vorhanden) - für Browser-Modus als Base64
             if (state.template.data) {
                 config.templateData = state.template.data;
                 config.templateName = state.template.name;
@@ -2535,7 +2540,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextIndex].focus();
+                            cells[nextValue].focus();
                         }
                     }
                 });
@@ -3646,6 +3651,30 @@
                     elements.file2Info.textContent = `⚠️ ${config.file2Name || 'Datei nicht gefunden'}`;
                     elements.file2Info.style.color = 'var(--warning)';
                 }
+            }
+            
+            // Template-Pfad laden (falls vorhanden)
+            if (config.templatePath) {
+                try {
+                    const result = await window.electronAPI.readExcelFile(config.templatePath);
+                    if (result.success) {
+                        state.template.name = result.fileName;
+                        state.template.filePath = config.templatePath;
+                        elements.templateInfo.textContent = result.fileName;
+                        elements.btnNewMonth.disabled = false;
+                        console.log('📄 Template geladen:', result.fileName);
+                    }
+                } catch (e) {
+                    console.warn('Template konnte nicht geladen werden:', e);
+                    elements.templateInfo.textContent = `⚠️ ${config.templateName || 'Template nicht gefunden'}`;
+                    elements.templateInfo.style.color = 'var(--warning)';
+                }
+            } else if (config.templateData && config.templateName) {
+                // Fallback: Template aus Base64-Daten laden (Browser-Modus)
+                state.template.data = config.templateData;
+                state.template.name = config.templateName;
+                elements.templateInfo.textContent = config.templateName;
+                elements.btnNewMonth.disabled = false;
             }
             
             updateMappingInfo();
