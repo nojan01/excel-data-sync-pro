@@ -2544,7 +2544,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextNode].focus();
+                            cells[nextIndex].focus();
                         }
                     }
                 });
@@ -3248,7 +3248,7 @@
         }
         
         async function loadTemplateElectron() {
-            const filePath = await window.electronAPI.openFileDialog({ title: 'Template-Datei öffnen', filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }] });
+            const filePath = await window.eelectronAPI.openFileDialog({ title: 'Template-Datei öffnen', filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }] });
             if (!filePath) return;
             try {
                 const result = await window.electronAPI.readExcelFile(filePath);

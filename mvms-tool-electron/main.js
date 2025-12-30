@@ -56,8 +56,9 @@ app.on('activate', () => {
 
 // Datei oeffnen Dialog
 ipcMain.handle('dialog:openFile', async (event, options) => {
-    // WICHTIG: null statt mainWindow verhindert Cursor-Bug unter Windows
-    const result = await dialog.showOpenDialog(null, {
+    // mainWindow als Parent verwenden um Vollbild-Bug zu vermeiden
+    const parentWindow = BrowserWindow.getFocusedWindow() || mainWindow;
+    const result = await dialog.showOpenDialog(parentWindow, {
         title: options.title || 'Datei oeffnen',
         filters: options.filters || [
             { name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] },
@@ -72,8 +73,9 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
 
 // Datei speichern Dialog
 ipcMain.handle('dialog:saveFile', async (event, options) => {
-    // WICHTIG: null statt mainWindow verhindert Cursor-Bug unter Windows
-    const result = await dialog.showSaveDialog(null, {
+    // mainWindow als Parent verwenden um Vollbild-Bug zu vermeiden
+    const parentWindow = BrowserWindow.getFocusedWindow() || mainWindow;
+    const result = await dialog.showSaveDialog(parentWindow, {
         title: options.title || 'Datei speichern',
         defaultPath: options.defaultPath,
         filters: options.filters || [
