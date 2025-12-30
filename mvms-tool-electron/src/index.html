@@ -2543,7 +2543,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextIndex].focus();
+                            cells[nextElement].focus();
                         }
                     }
                 });
@@ -3100,19 +3100,44 @@
         }
         
         function filterExplorerData() {
-            const searchTerm = explorerState.searchTerm.toLowerCase().trim();
+            const searchTerm = explorerState.searchTerm.trim();
+            const hasWildcards = searchTerm.includes('*') || searchTerm.includes('?');
             const activeFilters = explorerState.filters.filter(f => f.column && f.value.trim() !== '');
             
             if (!searchTerm && activeFilters.length === 0) {
                 explorerState.filteredData = [...explorerState.data];
             } else {
+                // Erstelle Regex für Wildcard-Suche oder normale Suche
+                let searchRegex = null;
+                let lowerSearchTerm = searchTerm.toLowerCase();
+                
+                if (hasWildcards) {
+                    // Konvertiere Wildcards zu Regex
+                    let escaped = searchTerm.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+                    escaped = escaped.replace(/\*/g, '.*');
+                    escaped = escaped.replace(/\?/g, '.');
+                    searchRegex = new RegExp(escaped, 'i');
+                }
+                
                 explorerState.filteredData = explorerState.data.filter(row => {
-                    // Volltextsuche
+                    // Volltextsuche mit Wildcard-Unterstützung
                     if (searchTerm) {
-                        const rowText = row.map(cell => String(cell ?? '').toLowerCase()).join(' ');
-                        if (!rowText.includes(searchTerm)) {
-                            return false;
+                        let found = false;
+                        for (const cell of row) {
+                            const cellStr = String(cell ?? '');
+                            if (hasWildcards) {
+                                if (searchRegex.test(cellStr)) {
+                                    found = true;
+                                    break;
+                                }
+                            } else {
+                                if (cellStr.toLowerCase().includes(lowerSearchTerm)) {
+                                    found = true;
+                                    break;
+                                }
+                            }
                         }
+                        if (!found) return false;
                     }
                     
                     // Spaltenfilter anwenden
@@ -3234,12 +3259,7 @@
             state.file1.headers = result.headers;
             state.file1.data = result.data.slice(1);
             
-            if (state.mapping.sourceColumns.length === 0) {
-                state.mapping.sourceColumns = state.file1.headers.map((_, i) => i);
-            }
-            
-            updateMappingInfo();
-            updateMappingPreview();
+            saveConfig();
             checkReadyState();
         }
         
@@ -3250,7 +3270,7 @@
             });
             if (!filePath) return;
             
-            const result = await window.eelectronAPI.readExcelFile(filePath);
+            const result = await window.electronAPI.readExcelFile(filePath);
             if (!result.success) {
                 showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
                 return;
@@ -3346,15 +3366,15 @@
                 explorerState.filePath = result.filePath;
                 explorerState.sheets = result.sheets;
                 explorerState.selectedSheet = result.sheets[0] || '';
-                explorerState.hiddenColumns = new Set();
+                explorerState.headers = [...result.headers];
+                explorerState.data = result.data.map(row => [...row]);
+                explorerState.filteredData = [...explorerState.data];
+                explorerState.hiddenColumns.clear();
                 
                 elements.explorerFileName.textContent = result.fileName;
                 updateExplorerSheetDropdown();
-                
-                await loadExplorerSheet(result.sheets[0]);
-                
-                elements.explorerStatus.textContent = 'Geladen: ' + result.fileName;
-                elements.explorerStatus.style.color = 'var(--success)';
+                updateColumnToggles();
+                renderExplorerTable();
             }
         }
         
