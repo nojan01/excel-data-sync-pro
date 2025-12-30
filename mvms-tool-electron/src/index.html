@@ -2372,7 +2372,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextElement].focus();
+                            cells[nextIndex].focus();
                         }
                     }
                 });
@@ -2988,15 +2988,20 @@
                 explorerState.filePath = result.filePath;
                 explorerState.sheets = result.sheets;
                 explorerState.selectedSheet = result.sheets[0] || '';
-                explorerState.headers = [...result.headers];
-                explorerState.data = result.data.map(row => [...row]);
-                explorerState.filteredData = [...explorerState.data];
+                explorerState.headers = result.headers;
+                explorerState.data = result.data.slice(1);
+                explorerState.filteredData = explorerState.data;
                 explorerState.hiddenColumns.clear();
                 
                 elements.explorerFileName.textContent = result.fileName;
                 updateExplorerSheetDropdown();
                 updateColumnToggles();
                 renderExplorerTable();
+                
+                // Lade das erste Sheet um die Daten zu bekommen
+                if (result.sheets.length > 0) {
+                    await loadExplorerSheet(result.sheets[0]);
+                }
                 
                 elements.explorerStatus.textContent = `✓ ${result.fileName} geladen`;
                 elements.explorerStatus.style.color = 'var(--success)';
@@ -3018,7 +3023,7 @@
                 }
                 explorerState.headers = result.headers;
                 explorerState.data = result.data.slice(1);
-                explorerState.filteredData = [...explorerState.data];
+                explorerState.filteredData = explorerState.data;
                 explorerState.searchTerm = '';
                 if (elements.explorerSearch) elements.explorerSearch.value = '';
                 
