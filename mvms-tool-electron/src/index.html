@@ -2696,6 +2696,17 @@
             saveConfig();
             
             let message = `✓ ${transferredCount} Zeile(n) direkt übertragen!`;
+            // added debug logging for transferred data
+            let debugData = 'Übertragene Daten:<br>';
+            state.selectedRows.forEach(rowIndex => {
+                const row = state.searchResults[rowIndex];
+                if (row) {
+                    const rowData = getEditedRowData(rowIndex);
+                    debugData += `- ${JSON.stringify(rowData)}<br>`;
+                }
+            });
+            console.log('Übertragene Daten:', debugData);
+            
             let status = 'success';
             if (editedCount > 0) {
                 message += ` (${editedCount} bearbeitet ✏️)`;
@@ -3160,11 +3171,11 @@
             if (!filePath) return;
             const result = await window.electronAPI.readExcelFile(filePath);
             if (!result.success) { elements.explorerStatus.textContent = 'Fehler: ' + result.error; elements.explorerStatus.style.color = 'var(--error)'; return; }
-            explorerState.fileName = result.fileName; explorerState.filePath = result.filePath; explorerState.sheets = result.sheets;
+            explorerState.fileName = result.fileName; explorerState.filePath = filePath; explorerState.sheets = result.sheets;
             explorerState.selectedSheet = result.sheets[0] || ''; explorerState.hiddenColumns = new Set();
             elements.explorerFileName.textContent = result.fileName; updateExplorerSheetDropdown();
-            await loadExplorerSheet(result.sheets[0]);
-            elements.explorerStatus.textContent = 'Geladen: ' + result.fileName; elements.explorerStatus.style.color = 'var(--success)';
+            updateColumnToggles();
+            renderExplorerTable();
         }
         
         async function loadExplorerSheet(sheetName) {
@@ -3286,14 +3297,27 @@
                 
                 // Automatisch config.json aus Programmordner laden beim Start
                 try {
+                    console.log('🔍 Suche config.json...');
                     const autoResult = await window.electronAPI.loadConfigFromAppDir();
+                    console.log('📁 Ergebnis:', autoResult);
+                    
+                    // Zeige durchsuchte Pfade in der Konsole
+                    if (autoResult.searchedPaths) {
+                        console.log('📂 Durchsuchte Pfade:');
+                        autoResult.searchedPaths.forEach(p => {
+                            console.log(`   ${p.exists ? '✓' : '✗'} ${p.path}`);
+                        });
+                    }
+                    
                     if (autoResult && autoResult.success && autoResult.config) {
                         await applyLoadedConfig(autoResult.config);
                         console.log('✓ config.json automatisch geladen:', autoResult.path);
                         showStatus(elements.transferStatus, `✓ config.json automatisch geladen: ${autoResult.path}`, 'success');
+                    } else {
+                        console.log('✗ Keine config.json gefunden:', autoResult?.error || 'Unbekannter Fehler');
                     }
                 } catch (e) {
-                    console.log('Keine config.json im Programmordner gefunden');
+                    console.log('❌ Fehler beim Laden der config.json:', e);
                 }
             }
             

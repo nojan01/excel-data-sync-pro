@@ -340,22 +340,36 @@ ipcMain.handle('config:loadFromAppDir', async (event) => {
             path.join(__dirname, '..', 'config.json')                  // Übergeordnet von main.js
         ];
         
+        // Sammle Info über alle Pfade für Debug-Ausgabe
+        const searchedPaths = possiblePaths.map(p => ({
+            path: p,
+            exists: fs.existsSync(p)
+        }));
+        
         console.log('Suche config.json in folgenden Pfaden:');
+        searchedPaths.forEach(p => {
+            console.log(' -', p.path, p.exists ? '? GEFUNDEN' : '?');
+        });
+        
         for (const configPath of possiblePaths) {
-            console.log(' -', configPath, fs.existsSync(configPath) ? '? GEFUNDEN' : '?');
             if (fs.existsSync(configPath)) {
                 console.log('? config.json gefunden:', configPath);
                 const content = fs.readFileSync(configPath, 'utf8');
                 return { 
                     success: true, 
                     config: JSON.parse(content),
-                    path: configPath
+                    path: configPath,
+                    searchedPaths: searchedPaths  // Für Debug in DevTools
                 };
             }
         }
         
         console.log('? Keine config.json gefunden');
-        return { success: false, error: 'Keine config.json im Programmordner gefunden' };
+        return { 
+            success: false, 
+            error: 'Keine config.json im Programmordner gefunden',
+            searchedPaths: searchedPaths  // Für Debug in DevTools
+        };
     } catch (error) {
         console.error('Fehler beim Laden der config.json:', error);
         return { success: false, error: error.message };
