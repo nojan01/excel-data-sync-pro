@@ -2346,7 +2346,7 @@
         
         function getNewRowData() {
             // Sammle alle Werte aus den Eingabefeldern
-            const data = new Array(Math.max(...state.mapping.sourceColumns) + 1).fill('');
+            const data = new Array(Math.max(...state.mapping.sourceColumns) + 1).fill(''); 
             
             state.mapping.sourceColumns.forEach((colIndex, i) => {
                 const field = document.getElementById(`newRowField_${i}`);
@@ -3174,8 +3174,11 @@
             explorerState.fileName = result.fileName; explorerState.filePath = filePath; explorerState.sheets = result.sheets;
             explorerState.selectedSheet = result.sheets[0] || ''; explorerState.hiddenColumns = new Set();
             elements.explorerFileName.textContent = result.fileName; updateExplorerSheetDropdown();
-            updateColumnToggles();
-            renderExplorerTable();
+            
+            // WICHTIG: Jetzt auch das erste Sheet laden, um die Daten anzuzeigen
+            if (explorerState.selectedSheet) {
+                await loadExplorerSheet(explorerState.selectedSheet);
+            }
         }
         
         async function loadExplorerSheet(sheetName) {
