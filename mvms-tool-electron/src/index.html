@@ -2543,7 +2543,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextElement].focus();
+                            cells[nextIndex].focus();
                         }
                     }
                 });
@@ -2880,33 +2880,9 @@
             }
         }
         
-        // ==================== Template & New Month ====================
-        function loadTemplate(file) {
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                try {
-                    const arrayBuffer = e.target.result;
-                    const base64 = btoa(
-                        new Uint8Array(arrayBuffer)
-                            .reduce((data, byte) => data + String.fromCharCode(byte), '')
-                    );
-                    
-                    state.template.data = base64;
-                    state.template.name = file.name;
-                    
-                    elements.templateInfo.textContent = file.name;
-                    elements.btnNewMonth.disabled = false;
-                    
-                    showStatus(elements.transferStatus, `✓ Template geladen: ${file.name}`, 'success');
-                } catch (err) {
-                    showStatus(elements.transferStatus, 'Fehler beim Laden des Templates: ' + err.message, 'error');
-                }
-            };
-            reader.readAsArrayBuffer(file);
-        }
-        
         function openNewMonthModal() {
-            if (!state.template.data) {
+            // Im Electron-Modus: Prüfe auf filePath, im Browser-Modus: auf data
+            if (!state.template.data && !state.template.filePath) {
                 showStatus(elements.transferStatus, 'Kein Template geladen! Bitte in Konfiguration laden.', 'error');
                 return;
             }
@@ -2927,6 +2903,7 @@
         
         function closeNewMonthModal() {
             elements.newMonthModal.classList.add('hidden');
+            elements.newMonthFilename.value = '';
         }
         
         async function confirmNewMonth() {
@@ -2938,6 +2915,62 @@
             
             const finalFilename = newFilename.endsWith('.xlsx') ? newFilename : newFilename + '.xlsx';
             
+            // Im Electron-Modus: Verwende Electron-API zum Kopieren
+            if (isElectron && state.template.filePath) {
+                try {
+                    // Speicherort für neue Datei wählen
+                    const savePath = await window.electronAPI.saveFileDialog({
+                        title: 'Neue Monatsdatei speichern',
+                        defaultPath: finalFilename,
+                        filters: [{ name: 'Excel Dateien', extensions: ['xlsx'] }]
+                    });
+                    
+                    if (!savePath) return;
+                    
+                    // Template kopieren
+                    const result = await window.electronAPI.copyExcelFile({
+                        sourcePath: state.template.filePath,
+                        targetPath: savePath,
+                        sheetName: state.file2.selectedSheet || state.template.name,
+                        keepHeader: true
+                    });
+                    
+                    if (!result.success) {
+                        showStatus(elements.transferStatus, `❌ Fehler: ${result.error}`, 'error');
+                        return;
+                    }
+                    
+                    // Neue Datei als Datei 2 laden
+                    const loadResult = await window.electronAPI.readExcelFile(savePath);
+                    if (loadResult.success) {
+                        state.file2.name = loadResult.fileName;
+                        state.file2.filePath = savePath;
+                        state.file2.sheets = loadResult.sheets;
+                        state.file2.workbook = { SheetNames: loadResult.sheets };
+                        
+                        elements.selectSheet2.innerHTML = loadResult.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+                        elements.selectSheet2.disabled = false;
+                        elements.file2Info.textContent = `✓ ${loadResult.fileName}`;
+                        elements.file2Info.classList.add('loaded');
+                        
+                        await loadSheet2Electron(loadResult.sheets[0]);
+                    }
+                    
+                    state.transferQueue = [];
+                    updateQueueDisplay();
+                    
+                    closeNewMonthModal();
+                    showStatus(elements.transferStatus, `✅ Neue Monatsdatei erstellt: ${savePath}`, 'success');
+                    saveConfig();
+                    
+                } catch (err) {
+                    console.error('Fehler bei Neuer Monat:', err);
+                    showStatus(elements.transferStatus, 'Fehler: ' + err.message, 'error');
+                }
+                return;
+            }
+            
+            // Browser-Modus: Original-Logik mit Base64
             try {
                 const binaryString = atob(state.template.data);
                 const bytes = new Uint8Array(binaryString.length);
@@ -2967,34 +3000,20 @@
         
         // ==================== Data Explorer ====================
         const explorerState = {
-            data: [],
-            filteredData: [],
-            headers: [],
-            hiddenColumns: new Set(),
-            searchTerm: '',
-            filters: [],
-            fileName: '',
-            filePath: '',
-            sheets: [],
-            selectedSheet: ''
+            data: [], filteredData: [], headers: [], hiddenColumns: new Set(),
+            searchTerm: '', filters: [], fileName: '', filePath: '', sheets: [], selectedSheet: ''
         };
         
-        // Filter-Operatoren
         const FILTER_OPERATIONS = {
-            contains: (value, testValue) => value.includes(testValue),
-            equals: (value, testValue) => value === testValue,
-            startsWith: (value, testValue) => value.startsWith(testValue),
-            endsWith: (value, testValue) => value.endsWith(testValue)
+            contains: (v, t) => v.includes(t), equals: (v, t) => v === t,
+            startsWith: (v, t) => v.startsWith(t), endsWith: (v, t) => v.endsWith(t)
         };
         
         async function openDataExplorer() {
             elements.dataExplorerModal.classList.remove('hidden');
-            
-            // Filter zurücksetzen
             explorerState.filters = [];
             document.getElementById('explorerFilters').innerHTML = '';
             updateExplorerFilterButtons();
-            
             if (state.file2.data && state.file2.data.length > 0) {
                 explorerState.fileName = state.file2.name || 'Zieldatei';
                 explorerState.filePath = state.file2.filePath || '';
@@ -3004,17 +3023,13 @@
                 explorerState.data = state.file2.data.map(row => [...row]);
                 explorerState.filteredData = [...explorerState.data];
                 explorerState.hiddenColumns.clear();
-                
                 elements.explorerFileName.textContent = explorerState.fileName;
                 updateExplorerSheetDropdown();
                 updateColumnToggles();
                 renderExplorerTable();
             } else {
-                explorerState.data = [];
-                explorerState.filteredData = [];
-                explorerState.headers = [];
-                explorerState.hiddenColumns.clear();
-                explorerState.fileName = '';
+                explorerState.data = []; explorerState.filteredData = []; explorerState.headers = [];
+                explorerState.hiddenColumns.clear(); explorerState.fileName = '';
                 elements.explorerFileName.textContent = 'Keine Datei geladen';
                 elements.explorerTableHead.innerHTML = '';
                 elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>';
@@ -3022,129 +3037,72 @@
                 elements.explorerSheetSelect.innerHTML = '<option value="">-- Datei laden --</option>';
                 document.getElementById('columnToggles').innerHTML = '';
             }
-            
             if (elements.explorerSearch) elements.explorerSearch.value = '';
             explorerState.searchTerm = '';
         }
         
-        function closeDataExplorer() {
-            elements.dataExplorerModal.classList.add('hidden');
-        }
+        function closeDataExplorer() { elements.dataExplorerModal.classList.add('hidden'); }
         
         function updateExplorerSheetDropdown() {
             elements.explorerSheetSelect.innerHTML = '';
             explorerState.sheets.forEach(sheet => {
-                const option = document.createElement('option');
-                option.value = sheet;
-                option.textContent = sheet;
-                if (sheet === explorerState.selectedSheet) option.selected = true;
-                elements.explorerSheetSelect.appendChild(option);
+                const opt = document.createElement('option');
+                opt.value = sheet; opt.textContent = sheet;
+                if (sheet === explorerState.selectedSheet) opt.selected = true;
+                elements.explorerSheetSelect.appendChild(opt);
             });
         }
         
         function updateColumnToggles() {
             const container = document.getElementById('columnToggles');
             if (!container) return;
-            
             container.innerHTML = '';
             explorerState.headers.forEach((header, idx) => {
                 const isHidden = explorerState.hiddenColumns.has(idx);
                 const toggle = document.createElement('div');
                 toggle.className = `column-toggle ${isHidden ? 'hidden-col' : ''}`;
-                toggle.innerHTML = `
-                    <input type="checkbox" id="colToggle_${idx}" ${!isHidden ? 'checked' : ''}>
-                    <label for="colToggle_${idx}" title="${header || `Spalte ${getColumnLetter(idx + 1)}`}">${header || `Spalte ${getColumnLetter(idx + 1)}`}</label>
-                `;
-                toggle.querySelector('input').addEventListener('change', (e) => {
-                    toggleExplorerColumn(idx, !e.target.checked);
-                });
+                toggle.innerHTML = `<input type="checkbox" id="colToggle_${idx}" ${!isHidden ? 'checked' : ''}><label for="colToggle_${idx}">${header || 'Spalte ' + getColumnLetter(idx + 1)}</label>`;
+                toggle.querySelector('input').addEventListener('change', (e) => toggleExplorerColumn(idx, !e.target.checked));
                 container.appendChild(toggle);
             });
         }
         
         function toggleExplorerColumn(colIndex, hide) {
-            if (hide) {
-                explorerState.hiddenColumns.add(colIndex);
-            } else {
-                explorerState.hiddenColumns.delete(colIndex);
-            }
-            updateColumnToggles();
-            renderExplorerTable();
+            if (hide) explorerState.hiddenColumns.add(colIndex);
+            else explorerState.hiddenColumns.delete(colIndex);
+            updateColumnToggles(); renderExplorerTable();
         }
         window.toggleExplorerColumn = toggleExplorerColumn;
         
-        function showAllExplorerColumns() {
-            explorerState.hiddenColumns.clear();
-            updateColumnToggles();
-            renderExplorerTable();
-        }
-        
-        function hideAllExplorerColumns() {
-            explorerState.headers.forEach((_, idx) => {
-                if (idx > 0) explorerState.hiddenColumns.add(idx);
-            });
-            updateColumnToggles();
-            renderExplorerTable();
-        }
-        
-        function toggleColumnPanel() {
-            const panel = document.getElementById('columnTogglePanel');
-            if (panel) {
-                if (panel.style.display === 'none' || panel.style.display === '') {
-                    panel.style.display = 'flex';
-                    panel.style.flexDirection = 'column';
-                } else {
-                    panel.style.display = 'none';
-                }
-            }
-        }
+        function showAllExplorerColumns() { explorerState.hiddenColumns.clear(); updateColumnToggles(); renderExplorerTable(); }
+        function hideAllExplorerColumns() { explorerState.headers.forEach((_, idx) => { if (idx > 0) explorerState.hiddenColumns.add(idx); }); updateColumnToggles(); renderExplorerTable(); }
+        function toggleColumnPanel() { const panel = document.getElementById('columnTogglePanel'); if (panel) panel.style.display = panel.style.display === 'none' || panel.style.display === '' ? 'flex' : 'none'; }
         
         function filterExplorerData() {
             const searchTerm = explorerState.searchTerm.trim();
             const hasWildcards = searchTerm.includes('*') || searchTerm.includes('?');
             const activeFilters = explorerState.filters.filter(f => f.column && f.value.trim() !== '');
-            
-            if (!searchTerm && activeFilters.length === 0) {
-                explorerState.filteredData = [...explorerState.data];
-            } else {
-                // Erstelle Regex für Wildcard-Suche oder normale Suche
-                let searchRegex = null;
-                let lowerSearchTerm = searchTerm.toLowerCase();
-                
+            if (!searchTerm && activeFilters.length === 0) { explorerState.filteredData = [...explorerState.data]; }
+            else {
+                let searchRegex = null, lowerSearchTerm = searchTerm.toLowerCase();
                 if (hasWildcards) {
-                    // Konvertiere Wildcards zu Regex
                     let escaped = searchTerm.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-                    escaped = escaped.replace(/\*/g, '.*');
-                    escaped = escaped.replace(/\?/g, '.');
+                    escaped = escaped.replace(/\*/g, '.*').replace(/\?/g, '.');
                     searchRegex = new RegExp(escaped, 'i');
                 }
-                
                 explorerState.filteredData = explorerState.data.filter(row => {
-                    // Volltextsuche mit Wildcard-Unterstützung
                     if (searchTerm) {
                         let found = false;
                         for (const cell of row) {
                             const cellStr = String(cell ?? '');
-                            if (hasWildcards) {
-                                if (searchRegex.test(cellStr)) {
-                                    found = true;
-                                    break;
-                                }
-                            } else {
-                                if (cellStr.toLowerCase().includes(lowerSearchTerm)) {
-                                    found = true;
-                                    break;
-                                }
-                            }
+                            if (hasWildcards) { if (searchRegex.test(cellStr)) { found = true; break; } }
+                            else { if (cellStr.toLowerCase().includes(lowerSearchTerm)) { found = true; break; } }
                         }
                         if (!found) return false;
                     }
-                    
-                    // Spaltenfilter anwenden
                     return activeFilters.every(filter => {
                         const colIndex = explorerState.headers.indexOf(filter.column);
                         if (colIndex === -1) return true;
-                        
                         const cellValue = String(row[colIndex] ?? '').toLowerCase();
                         const testValue = filter.value.trim().toLowerCase();
                         const operation = FILTER_OPERATIONS[filter.operator] || FILTER_OPERATIONS.contains;
@@ -3152,332 +3110,169 @@
                     });
                 });
             }
-            
-            renderExplorerTable();
-            updateExplorerFilterButtons();
+            renderExplorerTable(); updateExplorerFilterButtons();
         }
         
         function addExplorerFilter(initialValues) {
             const template = document.getElementById('explorerFilterTemplate');
             if (!template) return;
-            
             const clone = template.content.firstElementChild.cloneNode(true);
             const columnSelect = clone.querySelector('.filter-column');
             const operatorSelect = clone.querySelector('.filter-operator');
             const valueInput = clone.querySelector('.filter-value');
             const removeButton = clone.querySelector('.remove-filter');
-            
-            const filter = {
-                id: crypto.randomUUID ? crypto.randomUUID() : 'f-' + Math.random().toString(36).slice(2),
-                column: initialValues?.column || '',
-                operator: initialValues?.operator || 'contains',
-                value: initialValues?.value || '',
-                element: clone
-            };
-            
-            // Spalten-Dropdown füllen
+            const filter = { id: 'f-' + Math.random().toString(36).slice(2), column: initialValues?.column || '', operator: initialValues?.operator || 'contains', value: initialValues?.value || '', element: clone };
             columnSelect.innerHTML = '<option value="">Spalte wählen</option>';
-            explorerState.headers.forEach(header => {
-                const option = document.createElement('option');
-                option.value = header;
-                option.textContent = header || '(leer)';
-                columnSelect.appendChild(option);
-            });
+            explorerState.headers.forEach(header => { const opt = document.createElement('option'); opt.value = header; opt.textContent = header || '(leer)'; columnSelect.appendChild(opt); });
             if (filter.column) columnSelect.value = filter.column;
-            operatorSelect.value = filter.operator;
-            valueInput.value = filter.value;
-            
-            // Event-Handler
-            columnSelect.addEventListener('change', () => {
-                filter.column = columnSelect.value;
-                filterExplorerData();
-            });
-            operatorSelect.addEventListener('change', () => {
-                filter.operator = operatorSelect.value;
-                filterExplorerData();
-            });
-            valueInput.addEventListener('input', () => {
-                filter.value = valueInput.value;
-                filterExplorerData();
-            });
-            removeButton.addEventListener('click', () => {
-                clone.remove();
-                explorerState.filters = explorerState.filters.filter(f => f.id !== filter.id);
-                filterExplorerData();
-            });
-            
+            operatorSelect.value = filter.operator; valueInput.value = filter.value;
+            columnSelect.addEventListener('change', () => { filter.column = columnSelect.value; filterExplorerData(); });
+            operatorSelect.addEventListener('change', () => { filter.operator = operatorSelect.value; filterExplorerData(); });
+            valueInput.addEventListener('input', () => { filter.value = valueInput.value; filterExplorerData(); });
+            removeButton.addEventListener('click', () => { clone.remove(); explorerState.filters = explorerState.filters.filter(f => f.id !== filter.id); filterExplorerData(); });
             document.getElementById('explorerFilters').appendChild(clone);
-            explorerState.filters.push(filter);
-            updateExplorerFilterButtons();
+            explorerState.filters.push(filter); updateExplorerFilterButtons();
         }
         
-        function clearExplorerFilters() {
-            document.getElementById('explorerFilters').innerHTML = '';
-            explorerState.filters = [];
-            filterExplorerData();
-        }
+        function clearExplorerFilters() { document.getElementById('explorerFilters').innerHTML = ''; explorerState.filters = []; filterExplorerData(); }
+        function updateExplorerFilterButtons() { const btn = document.getElementById('btnClearExplorerFilters'); if (btn) btn.disabled = explorerState.filters.length === 0; }
         
-        function updateExplorerFilterButtons() {
-            const clearBtn = document.getElementById('btnClearExplorerFilters');
-            if (clearBtn) {
-                clearBtn.disabled = explorerState.filters.length === 0;
+        function renderExplorerTable() {
+            if (explorerState.headers.length === 0) {
+                elements.explorerTableHead.innerHTML = '';
+                elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">Keine Daten</td></tr>';
+                elements.explorerResultCount.textContent = 'Keine Daten.'; return;
             }
+            const visibleIndices = []; explorerState.headers.forEach((_, idx) => { if (!explorerState.hiddenColumns.has(idx)) visibleIndices.push(idx); });
+            let headerHtml = '<tr>'; visibleIndices.forEach(idx => { const header = explorerState.headers[idx]; headerHtml += `<th title="Klicken zum Ausblenden" style="cursor: pointer;" onclick="toggleExplorerColumn(${idx}, true)">${escapeHtml(header || 'Spalte ' + getColumnLetter(idx + 1))}</th>`; }); headerHtml += '</tr>';
+            elements.explorerTableHead.innerHTML = headerHtml;
+            let bodyHtml = ''; explorerState.filteredData.forEach(row => { bodyHtml += '<tr>'; visibleIndices.forEach(colIndex => { const cell = row[colIndex]; bodyHtml += '<td>' + escapeHtml(String(cell ?? '')) + '</td>'; }); bodyHtml += '</tr>'; });
+            elements.explorerTableBody.innerHTML = bodyHtml || '<tr><td colspan="' + visibleIndices.length + '" style="text-align: center; padding: 20px;">Keine Treffer</td></tr>';
+            const total = explorerState.data.length, visible = explorerState.filteredData.length, hiddenCount = explorerState.hiddenColumns.size;
+            let info = total === 0 ? 'Keine Daten vorhanden.' : visible + ' von ' + total + ' Zeilen';
+            if (hiddenCount > 0) info += ' | ' + hiddenCount + ' Spalte(n) ausgeblendet';
+            elements.explorerResultCount.textContent = info;
+        }
+        
+        async function loadExplorerFile() {
+            if (!isElectron) return;
+            const filePath = await window.electronAPI.openFileDialog({ title: 'Excel-Datei für Datenexplorer öffnen', filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }] });
+            if (!filePath) return;
+            const result = await window.electronAPI.readExcelFile(filePath);
+            if (!result.success) { elements.explorerStatus.textContent = 'Fehler: ' + result.error; elements.explorerStatus.style.color = 'var(--error)'; return; }
+            explorerState.fileName = result.fileName; explorerState.filePath = result.filePath; explorerState.sheets = result.sheets;
+            explorerState.selectedSheet = result.sheets[0] || ''; explorerState.hiddenColumns = new Set();
+            elements.explorerFileName.textContent = result.fileName; updateExplorerSheetDropdown();
+            await loadExplorerSheet(result.sheets[0]);
+            elements.explorerStatus.textContent = 'Geladen: ' + result.fileName; elements.explorerStatus.style.color = 'var(--success)';
+        }
+        
+        async function loadExplorerSheet(sheetName) {
+            if (!sheetName) return;
+            explorerState.selectedSheet = sheetName; explorerState.hiddenColumns.clear();
+            if (isElectron && explorerState.filePath) {
+                const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName);
+                if (!result.success) return;
+                explorerState.headers = result.headers; explorerState.data = result.data.slice(1); explorerState.filteredData = result.data.slice(1);
+                explorerState.searchTerm = ''; explorerState.filters = []; document.getElementById('explorerFilters').innerHTML = '';
+                updateExplorerFilterButtons(); updateColumnToggles(); renderExplorerTable();
+                elements.explorerStatus.textContent = 'Sheet: ' + sheetName; elements.explorerStatus.style.color = 'var(--success)';
+            }
+        }
+        
+        function exportExplorerData() {
+            if (explorerState.filteredData.length === 0) { elements.explorerStatus.textContent = 'Keine Daten zum Export'; elements.explorerStatus.style.color = 'var(--error)'; return; }
+            const visibleIndices = []; explorerState.headers.forEach((_, idx) => { if (!explorerState.hiddenColumns.has(idx)) visibleIndices.push(idx); });
+            const visibleHeaders = visibleIndices.map(idx => explorerState.headers[idx]);
+            const visibleData = explorerState.filteredData.map(row => visibleIndices.map(idx => row[idx]));
+            if (isElectron) exportExplorerElectron(visibleHeaders, visibleData);
+            else { elements.explorerStatus.textContent = 'Export nur im Electron-Modus'; elements.explorerStatus.style.color = 'var(--warning)'; }
+        }
+        
+        async function exportExplorerElectron(headers, data) {
+            try {
+                const defaultName = explorerState.fileName ? explorerState.fileName.replace(/\.[^.]+$/, '') + '-export.xlsx' : 'export.xlsx';
+                const savePath = await window.electronAPI.saveFileDialog({ title: 'Daten exportieren', defaultPath: defaultName, filters: [{ name: 'Excel Dateien', extensions: ['xlsx'] }] });
+                if (!savePath) return;
+                const exportRows = data.map(row => { const rowData = {}; headers.forEach((header, colIdx) => { rowData[header || 'Spalte' + (colIdx + 1)] = row[colIdx] || ''; }); return rowData; });
+                const result = await window.electronAPI.exportData({ filePath: savePath, sheetName: explorerState.selectedSheet || 'Export', headers: headers, rows: exportRows });
+                if (result && result.success) { elements.explorerStatus.textContent = 'Export gespeichert: ' + savePath; elements.explorerStatus.style.color = 'var(--success)'; }
+                else { elements.explorerStatus.textContent = 'Fehler: ' + (result?.error || 'Unbekannt'); elements.explorerStatus.style.color = 'var(--error)'; }
+            } catch (e) { elements.explorerStatus.textContent = 'Fehler: ' + e.message; elements.explorerStatus.style.color = 'var(--error)'; }
         }
         
         // ==================== Electron-Specific Functions ====================
         async function loadFile1Electron() {
-            const filePath = await window.electronAPI.openFileDialog({
-                title: 'Quelldatei öffnen',
-                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
-            });
+            const filePath = await window.electronAPI.openFileDialog({ title: 'Quelldatei öffnen', filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }] });
             if (!filePath) return;
-            
             const result = await window.electronAPI.readExcelFile(filePath);
-            if (!result.success) {
-                showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
-                return;
-            }
-            
-            state.file1.name = result.fileName;
-            state.file1.filePath = result.filePath;
-            state.file1.sheets = result.sheets;
-            state.file1.workbook = { SheetNames: result.sheets };
-            
+            if (!result.success) { showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error'); return; }
+            state.file1.name = result.fileName; state.file1.filePath = result.filePath; state.file1.sheets = result.sheets; state.file1.workbook = { SheetNames: result.sheets };
             elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
-            elements.selectSheet1.disabled = false;
-            elements.file1Info.textContent = `✓ ${result.fileName}`;
-            elements.file1Info.classList.add('loaded');
-            
+            elements.selectSheet1.disabled = false; elements.file1Info.textContent = `✓ ${result.fileName}`; elements.file1Info.classList.add('loaded');
             await loadSheet1Electron(result.sheets[0]);
         }
         
         async function loadSheet1Electron(sheetName) {
             const result = await window.electronAPI.readExcelSheet(state.file1.filePath, sheetName);
             if (!result.success) return;
-            
-            state.file1.selectedSheet = sheetName;
-            state.file1.headers = result.headers;
-            state.file1.data = result.data.slice(1);
-            
-            saveConfig();
-            checkReadyState();
+            state.file1.selectedSheet = sheetName; state.file1.headers = result.headers; state.file1.data = result.data.slice(1);
+            if (state.mapping.sourceColumns.length === 0) state.mapping.sourceColumns = state.file1.headers.map((_, i) => i);
+            updateMappingInfo(); updateMappingPreview(); checkReadyState(); saveConfig();
         }
         
         async function loadFile2Electron() {
-            const filePath = await window.electronAPI.openFileDialog({
-                title: 'Zieldatei öffnen',
-                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
-            });
+            const filePath = await window.electronAPI.openFileDialog({ title: 'Zieldatei öffnen', filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }] });
             if (!filePath) return;
-            
             const result = await window.electronAPI.readExcelFile(filePath);
-            if (!result.success) {
-                showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
-                return;
-            }
-            
-            state.file2.name = result.fileName;
-            state.file2.filePath = result.filePath;
-            state.file2.sheets = result.sheets;
-            state.file2.workbook = { SheetNames: result.sheets };
-            
+            if (!result.success) { showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error'); return; }
+            state.file2.name = result.fileName; state.file2.filePath = result.filePath; state.file2.sheets = result.sheets; state.file2.workbook = { SheetNames: result.sheets };
             elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
-            elements.selectSheet2.disabled = false;
-            elements.file2Info.textContent = `✓ ${result.fileName}`;
-            elements.file2Info.classList.add('loaded');
-            
+            elements.selectSheet2.disabled = false; elements.file2Info.textContent = `✓ ${result.fileName}`; elements.file2Info.classList.add('loaded');
             await loadSheet2Electron(result.sheets[0]);
         }
         
         async function loadSheet2Electron(sheetName) {
             const result = await window.electronAPI.readExcelSheet(state.file2.filePath, sheetName);
             if (!result.success) return;
-            
-            state.file2.selectedSheet = sheetName;
-            state.file2.headers = result.headers;
-            state.file2.data = result.data.slice(1);
-            
-            elements.btnNewMonth.disabled = false;
-            elements.btnExportPS.disabled = state.transferQueue.length === 0;
-            checkReadyState();
+            state.file2.selectedSheet = sheetName; state.file2.headers = result.headers; state.file2.data = result.data.slice(1);
+            elements.btnNewMonth.disabled = false; elements.btnExportPS.disabled = state.transferQueue.length === 0;
+            checkReadyState(); saveConfig();
         }
         
-        function renderExplorerTable() {
-            if (explorerState.headers.length === 0) {
-                elements.explorerTableHead.innerHTML = '';
-                elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">Keine Daten</td></tr>';
-                elements.explorerResultCount.textContent = 'Keine Daten.';
-                return;
-            }
-            
-            const visibleIndices = [];
-            explorerState.headers.forEach((_, idx) => {
-                if (!explorerState.hiddenColumns.has(idx)) {
-                    visibleIndices.push(idx);
-                }
-            });
-            
-            let headerHtml = '<tr>';
-            visibleIndices.forEach(idx => {
-                const header = explorerState.headers[idx];
-                headerHtml += `<th title="Klicken zum Ausblenden" style="cursor: pointer;" onclick="toggleExplorerColumn(${idx}, true)">${escapeHtml(header || 'Spalte ' + getColumnLetter(idx + 1))}</th>`;
-            });
-            headerHtml += '</tr>';
-            elements.explorerTableHead.innerHTML = headerHtml;
-            
-            let bodyHtml = '';
-            explorerState.filteredData.forEach((row) => {
-                bodyHtml += '<tr>';
-                visibleIndices.forEach(colIndex => {
-                    const cell = row[colIndex];
-                    const cellStr = String(cell ?? '');
-                    bodyHtml += '<td>' + escapeHtml(cellStr) + '</td>';
-                });
-                bodyHtml += '</tr>';
-            });
-            elements.explorerTableBody.innerHTML = bodyHtml || '<tr><td colspan="' + visibleIndices.length + '" style="text-align: center; padding: 20px;">Keine Treffer</td></tr>';
-            
-            const total = explorerState.data.length;
-            const visible = explorerState.filteredData.length;
-            const hiddenCount = explorerState.hiddenColumns.size;
-            let info = total === 0 ? 'Keine Daten vorhanden.' : visible + ' von ' + total + ' Zeilen';
-            if (hiddenCount > 0) {
-                info += ' | ' + hiddenCount + ' Spalte(n) ausgeblendet';
-            }
-            elements.explorerResultCount.textContent = info;
-        }
-        
-        async function loadExplorerFile() {
-            if (isElectron) {
-                const filePath = await window.electronAPI.openFileDialog({
-                    title: 'Excel-Datei für Datenexplorer öffnen',
-                    filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
-                });
-                if (!filePath) return;
-                
-                const result = await window.electronAPI.readExcelFile(filePath);
-                if (!result.success) {
-                    elements.explorerStatus.textContent = 'Fehler: ' + result.error;
-                    elements.explorerStatus.style.color = 'var(--error)';
-                    return;
-                }
-                
-                explorerState.fileName = result.fileName;
-                explorerState.filePath = result.filePath;
-                explorerState.sheets = result.sheets;
-                explorerState.selectedSheet = result.sheets[0] || '';
-                explorerState.headers = [...result.headers];
-                explorerState.data = result.data.map(row => [...row]);
-                explorerState.filteredData = [...explorerState.data];
-                explorerState.hiddenColumns.clear();
-                
-                elements.explorerFileName.textContent = result.fileName;
-                updateExplorerSheetDropdown();
-                updateColumnToggles();
-                renderExplorerTable();
-            }
-        }
-        
-        async function loadExplorerSheet(sheetName) {
-            if (!sheetName) return;
-            
-            explorerState.selectedSheet = sheetName;
-            explorerState.hiddenColumns.clear();
-            
-            if (isElectron && explorerState.filePath) {
-                const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName);
-                if (!result.success) return;
-                
-                explorerState.headers = result.headers;
-                explorerState.data = result.data.slice(1);
-                explorerState.filteredData = result.data.slice(1);
-                explorerState.searchTerm = '';
-                
-                explorerState.filters = [];
-                document.getElementById('explorerFilters').innerHTML = '';
-                updateExplorerFilterButtons();
-                
-                updateColumnToggles();
-                renderExplorerTable();
-                elements.explorerStatus.textContent = 'Sheet: ' + sheetName;
-                elements.explorerStatus.style.color = 'var(--success)';
-            }
-        }
-        
-        function exportExplorerData() {
-            if (explorerState.filteredData.length === 0) {
-                elements.explorerStatus.textContent = 'Keine Daten zum Export';
-                elements.explorerStatus.style.color = 'var(--error)';
-                return;
-            }
-            
-            const visibleIndices = [];
-            explorerState.headers.forEach((_, idx) => {
-                if (!explorerState.hiddenColumns.has(idx)) {
-                    visibleIndices.push(idx);
-                }
-            });
-            
-            const visibleHeaders = visibleIndices.map(idx => explorerState.headers[idx]);
-            const visibleData = explorerState.filteredData.map(row => 
-                visibleIndices.map(idx => row[idx])
-            );
-            
-            if (isElectron) {
-                exportExplorerElectron(visibleHeaders, visibleData);
-            } else {
-                elements.explorerStatus.textContent = 'Export nur im Electron-Modus';
-                elements.explorerStatus.style.color = 'var(--warning)';
-            }
-        }
-        
-        async function exportExplorerElectron(headers, data) {
+        async function loadTemplateElectron() {
+            const filePath = await window.electronAPI.openFileDialog({ title: 'Template-Datei öffnen', filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }] });
+            if (!filePath) return;
             try {
-                const defaultName = explorerState.fileName ? explorerState.fileName.replace(/\.[^.]+$/, '') + '-export.xlsx' : 'export.xlsx';
-                const savePath = await window.electronAPI.saveFileDialog({
-                    title: 'Daten exportieren',
-                    defaultPath: defaultName,
-                    filters: [{ name: 'Excel Dateien', extensions: ['xlsx'] }]
-                });
-                
-                if (!savePath) return;
-                
-                const exportRows = data.map((row) => {
-                    const rowData = {};
-                    headers.forEach((header, colIdx) => {
-                        rowData[header || 'Spalte' + (colIdx + 1)] = row[colIdx] || '';
-                    });
-                    return rowData;
-                });
-                
-                const result = await window.electronAPI.exportData({
-                    filePath: savePath,
-                    sheetName: explorerState.selectedSheet || 'Export',
-                    headers: headers,
-                    rows: exportRows
-                });
-                
-                if (result.success) {
-                    elements.explorerStatus.textContent = 'Export gespeichert: ' + savePath;
-                    elements.explorerStatus.style.color = 'var(--success)';
-                } else {
-                    elements.explorerStatus.textContent = 'Fehler: ' + result.error;
-                    elements.explorerStatus.style.color = 'var(--error)';
-                }
-            } catch (e) {
-                elements.explorerStatus.textContent = 'Fehler: ' + e.message;
-                elements.explorerStatus.style.color = 'var(--error)';
-            }
+                const result = await window.electronAPI.readExcelFile(filePath);
+                if (result.success) { state.template.name = result.fileName; state.template.filePath = filePath; elements.templateInfo.textContent = result.fileName; elements.btnNewMonth.disabled = false; showStatus(elements.transferStatus, `✓ Template geladen: ${result.fileName}`, 'success'); }
+            } catch (e) { showStatus(elements.transferStatus, `Fehler: ${e.message}`, 'error'); }
+        }
+        
+        async function applyLoadedConfig(config) {
+            if (config.mapping) state.mapping = config.mapping;
+            if (config.file1Path) { try { const result = await window.electronAPI.readExcelFile(config.file1Path); if (result.success) { state.file1.name = result.fileName; state.file1.filePath = result.filePath; state.file1.sheets = result.sheets; state.file1.workbook = { SheetNames: result.sheets }; elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join(''); elements.selectSheet1.disabled = false; elements.file1Info.textContent = `✓ ${result.fileName}`; elements.file1Info.classList.add('loaded'); const sheetToSelect = config.file1SheetName && result.sheets.includes(config.file1SheetName) ? config.file1SheetName : result.sheets[0]; elements.selectSheet1.value = sheetToSelect; await loadSheet1Electron(sheetToSelect); } } catch (e) { console.warn('Quelldatei konnte nicht geladen werden:', e); elements.file1Info.textContent = `⚠️ ${config.file1Name || 'Datei nicht gefunden'}`; elements.file1Info.style.color = 'var(--warning)'; } }
+            if (config.file2Path) { try { const result = await window.electronAPI.readExcelFile(config.file2Path); if (result.success) { state.file2.name = result.fileName; state.file2.filePath = result.filePath; state.file2.sheets = result.sheets; state.file2.workbook = { SheetNames: result.sheets }; elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join(''); elements.selectSheet2.disabled = false; elements.file2Info.textContent = `✓ ${result.fileName}`; elements.file2Info.classList.add('loaded'); const sheetToSelect = config.file2SheetName && result.sheets.includes(config.file2SheetName) ? config.file2SheetName : result.sheets[0]; elements.selectSheet2.value = sheetToSelect; await loadSheet2Electron(sheetToSelect); } } catch (e) { console.warn('Zieldatei konnte nicht geladen werden:', e); elements.file2Info.textContent = `⚠️ ${config.file2Name || 'Datei nicht gefunden'}`; elements.file2Info.style.color = 'var(--warning)'; } }
+            if (config.templatePath) { try { const result = await window.electronAPI.readExcelFile(config.templatePath); if (result.success) { state.template.name = result.fileName; state.template.filePath = config.templatePath; elements.templateInfo.textContent = result.fileName; elements.btnNewMonth.disabled = false; } } catch (e) { elements.templateInfo.textContent = `⚠️ ${config.templateName || 'Template nicht gefunden'}`; elements.templateInfo.style.color = 'var(--warning)'; } }
+            else if (config.templateData && config.templateName) { state.template.data = config.templateData; state.template.name = config.templateName; elements.templateInfo.textContent = config.templateName; elements.btnNewMonth.disabled = false; }
+            updateMappingInfo(); updateMappingPreview(); checkReadyState(); saveConfig();
+        }
+        
+        async function loadConfigFromAppDirOrDialog() {
+            if (!isElectron) return;
+            try { const autoResult = await window.electronAPI.loadConfigFromAppDir(); if (autoResult && autoResult.success && autoResult.config) { await applyLoadedConfig(autoResult.config); showStatus(elements.transferStatus, `✓ config.json geladen: ${autoResult.path}`, 'success'); return; } } catch (e) { console.log('Keine config.json im Programmordner'); }
+            const filePath = await window.electronAPI.openFileDialog({ title: 'Konfiguration laden', filters: [{ name: 'JSON Dateien', extensions: ['json'] }] });
+            if (!filePath) return;
+            const result = await window.electronAPI.loadConfig(filePath);
+            if (result.success && result.config) { await applyLoadedConfig(result.config); showStatus(elements.transferStatus, `✓ config.json geladen: ${filePath}`, 'success'); }
+            else { showStatus(elements.transferStatus, `❌ Fehler: ${result.error}`, 'error'); }
         }
         
         // ==================== Initialize App ====================
         async function initApp() {
             try { await initDB(); } catch (e) { console.warn('IndexedDB nicht verfügbar'); }
-            loadConfig();
-            updateMappingPreview();
-            checkReadyState();
+            loadConfig(); updateMappingPreview(); checkReadyState();
             
-            // Electron-Modus Event-Handler
             if (isElectron) {
                 elements.btnLoadFile1.onclick = loadFile1Electron;
                 elements.btnLoadFile2.onclick = loadFile2Electron;
@@ -3485,46 +3280,33 @@
                 elements.selectSheet2.onchange = (e) => loadSheet2Electron(e.target.value);
                 elements.btnExportPS.onclick = transferQueueToExcel;
                 elements.btnExportPS.innerHTML = '✅ Direkt übertragen';
-                
-                // Template laden für Electron
                 elements.btnLoadTemplate.onclick = loadTemplateElectron;
-                
-                // Config Import/Export für Electron
                 elements.btnImportConfig.onclick = loadConfigFromAppDirOrDialog;
                 elements.btnExportConfig.onclick = exportConfig;
-                
-                // Automatisch config.json aus Programmordner laden beim Start
-                await autoLoadConfig();
             }
             
-            // Mapping Modal
             elements.btnConfigMapping.onclick = openMappingModal;
             document.getElementById('btnCloseMappingModal').onclick = closeMappingModal;
             document.getElementById('btnCancelMapping').onclick = closeMappingModal;
             document.getElementById('btnSaveMapping').onclick = saveMapping;
             document.getElementById('btnAddMapping').onclick = addMappingColumn;
             
-            // Suche
             elements.btnSearch.onclick = search;
             elements.searchInput.onkeydown = (e) => { if (e.key === 'Enter') search(); };
             
-            // Neue Zeile Panel
             elements.btnNewRow.onclick = openNewRowPanel;
             elements.btnCloseNewRow.onclick = closeNewRowPanel;
             elements.btnAddNewRowToQueue.onclick = addNewRowToQueue;
             elements.btnTransferNewRowDirect.onclick = transferNewRowDirect;
             
-            // Transfer Panel
             elements.btnAddToQueue.onclick = addToQueue;
             elements.btnTransferDirect.onclick = transferSelectedDirect;
             document.getElementById('btnSelectAll').onclick = () => selectAllRows(true);
             document.getElementById('btnDeselectAll').onclick = () => selectAllRows(false);
             
-            // Queue Panel
             elements.btnClearQueue.onclick = clearQueue;
             elements.btnNewMonth.onclick = openNewMonthModal;
             
-            // Data Explorer
             elements.btnDataExplorer.onclick = openDataExplorer;
             document.getElementById('btnCloseExplorerX').onclick = closeDataExplorer;
             document.getElementById('btnCloseExplorerFooter').onclick = closeDataExplorer;
@@ -3539,31 +3321,21 @@
             elements.explorerSheetSelect.onchange = (e) => loadExplorerSheet(e.target.value);
             elements.dataExplorerModal.onclick = (e) => { if (e.target === elements.dataExplorerModal) closeDataExplorer(); };
             
-            // Hilfe Modal
             elements.btnHelp.onclick = () => elements.helpModal.classList.remove('hidden');
             document.getElementById('btnCloseHelpModal').onclick = () => elements.helpModal.classList.add('hidden');
             document.getElementById('btnCloseHelp').onclick = () => elements.helpModal.classList.add('hidden');
             
-            // New Month Modal
             document.getElementById('btnCloseNewMonthModal').onclick = closeNewMonthModal;
             document.getElementById('btnCancelNewMonth').onclick = closeNewMonthModal;
             document.getElementById('btnConfirmNewMonth').onclick = confirmNewMonth;
             
-            // Sidebar Toggle
             document.getElementById('sidebarToggle').onclick = () => document.getElementById('sidebar').classList.toggle('collapsed');
             
-            // Tastenkürzel
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'F1') { e.preventDefault(); elements.helpModal.classList.toggle('hidden'); }
-                if (e.key === 'Escape') {
-                    elements.mappingModal.classList.add('hidden');
-                    elements.newMonthModal.classList.add('hidden');
-                    elements.helpModal.classList.add('hidden');
-                    elements.dataExplorerModal.classList.add('hidden');
-                }
+                if (e.key === 'Escape') { elements.mappingModal.classList.add('hidden'); elements.newMonthModal.classList.add('hidden'); elements.helpModal.classList.add('hidden'); elements.dataExplorerModal.classList.add('hidden'); }
             });
             
-            // Modal-Overlay Click zum Schließen
             elements.mappingModal.onclick = (e) => { if (e.target === elements.mappingModal) closeMappingModal(); };
             elements.newMonthModal.onclick = (e) => { if (e.target === elements.newMonthModal) closeNewMonthModal(); };
             elements.helpModal.onclick = (e) => { if (e.target === elements.helpModal) elements.helpModal.classList.add('hidden'); };
@@ -3571,172 +3343,6 @@
             console.log('✅ App initialisiert');
         }
         
-        // Template laden für Electron
-        async function loadTemplateElectron() {
-            const filePath = await window.electronAPI.openFileDialog({
-                title: 'Template-Datei öffnen',
-                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
-            });
-            if (!filePath) return;
-            
-            try {
-                // Datei als Base64 lesen für spätere Verwendung
-                const result = await window.electronAPI.readExcelFile(filePath);
-                if (result.success) {
-                    // Template-Pfad speichern
-                    state.template.name = result.fileName;
-                    state.template.filePath = filePath;
-                    
-                    elements.templateInfo.textContent = result.fileName;
-                    elements.btnNewMonth.disabled = false;
-                    
-                    showStatus(elements.transferStatus, `✓ Template geladen: ${result.fileName}`, 'success');
-                }
-            } catch (e) {
-                showStatus(elements.transferStatus, `Fehler: ${e.message}`, 'error');
-            }
-        }
-        
-        // Automatisch config.json aus Programmordner laden
-        async function autoLoadConfig() {
-            if (!isElectron) return;
-            
-            try {
-                const result = await window.electronAPI.loadConfigFromAppDir();
-                if (result.success && result.config) {
-                    await applyLoadedConfig(result.config);
-                    console.log('📁 config.json automatisch geladen:', result.path);
-                    showStatus(elements.transferStatus, `✓ config.json automatisch geladen`, 'success');
-                }
-            } catch (e) {
-                console.log('Keine config.json im Programmordner gefunden');
-            }
-        }
-        
-        // Geladene Konfiguration anwenden
-        async function applyLoadedConfig(config) {
-            // Mapping übernehmen
-            if (config.mapping) {
-                state.mapping = config.mapping;
-            }
-            
-            // Dateipfade laden (falls vorhanden)
-            if (config.file1Path) {
-                try {
-                    const result = await window.electronAPI.readExcelFile(config.file1Path);
-                    if (result.success) {
-                        state.file1.name = result.fileName;
-                        state.file1.filePath = result.filePath;
-                        state.file1.sheets = result.sheets;
-                        state.file1.workbook = { SheetNames: result.sheets };
-                        
-                        elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
-                        elements.selectSheet1.disabled = false;
-                        elements.file1Info.textContent = `✓ ${result.fileName}`;
-                        elements.file1Info.classList.add('loaded');
-                        
-                        // Sheet auswählen
-                        const sheetToSelect = config.file1SheetName && result.sheets.includes(config.file1SheetName) 
-                            ? config.file1SheetName 
-                            : result.sheets[0];
-                        elements.selectSheet1.value = sheetToSelect;
-                        await loadSheet1Electron(sheetToSelect);
-                    }
-                } catch (e) {
-                    console.warn('Quelldatei konnte nicht geladen werden:', e);
-                    elements.file1Info.textContent = `⚠️ ${config.file1Name || 'Datei nicht gefunden'}`;
-                    elements.file1Info.style.color = 'var(--warning)';
-                }
-            }
-            
-            if (config.file2Path) {
-                try {
-                    const result = await window.electronAPI.readExcelFile(config.file2Path);
-                    if (result.success) {
-                        state.file2.name = result.fileName;
-                        state.file2.filePath = result.filePath;
-                        state.file2.sheets = result.sheets;
-                        state.file2.workbook = { SheetNames: result.sheets };
-                        
-                        elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
-                        elements.selectSheet2.disabled = false;
-                        elements.file2Info.textContent = `✓ ${result.fileName}`;
-                        elements.file2Info.classList.add('loaded');
-                        
-                        // Sheet auswählen
-                        const sheetToSelect = config.file2SheetName && result.sheets.includes(config.file2SheetName) 
-                            ? config.file2SheetName 
-                            : result.sheets[0];
-                        elements.selectSheet2.value = sheetToSelect;
-                        await loadSheet2Electron(sheetToSelect);
-                    }
-                } catch (e) {
-                    console.warn('Zieldatei konnte nicht geladen werden:', e);
-                    elements.file2Info.textContent = `⚠️ ${config.file2Name || 'Datei nicht gefunden'}`;
-                    elements.file2Info.style.color = 'var(--warning)';
-                }
-            }
-            
-            // Template-Pfad laden (falls vorhanden)
-            if (config.templatePath) {
-                try {
-                    const result = await window.electronAPI.readExcelFile(config.templatePath);
-                    if (result.success) {
-                        state.template.name = result.fileName;
-                        state.template.filePath = config.templatePath;
-                        elements.templateInfo.textContent = result.fileName;
-                        elements.btnNewMonth.disabled = false;
-                        console.log('📄 Template geladen:', result.fileName);
-                    }
-                } catch (e) {
-                    console.warn('Template konnte nicht geladen werden:', e);
-                    elements.templateInfo.textContent = `⚠️ ${config.templateName || 'Template nicht gefunden'}`;
-                    elements.templateInfo.style.color = 'var(--warning)';
-                }
-            } else if (config.templateData && config.templateName) {
-                // Fallback: Template aus Base64-Daten laden (Browser-Modus)
-                state.template.data = config.templateData;
-                state.template.name = config.templateName;
-                elements.templateInfo.textContent = config.templateName;
-                elements.btnNewMonth.disabled = false;
-            }
-            
-            updateMappingInfo();
-            updateMappingPreview();
-            checkReadyState();
-            saveConfig();
-        }
-        
-        // Config aus Programmordner oder per Dialog laden
-        async function loadConfigFromAppDirOrDialog() {
-            if (!isElectron) return;
-            
-            // Zuerst versuchen aus Programmordner zu laden
-            const autoResult = await window.electronAPI.loadConfigFromAppDir();
-            if (autoResult.success && autoResult.config) {
-                await applyLoadedConfig(autoResult.config);
-                showStatus(elements.transferStatus, `✓ config.json geladen: ${autoResult.path}`, 'success');
-                return;
-            }
-            
-            // Falls nicht gefunden: Datei-Dialog öffnen
-            const filePath = await window.electronAPI.openFileDialog({
-                title: 'Konfiguration laden',
-                filters: [{ name: 'JSON Dateien', extensions: ['json'] }]
-            });
-            
-            if (!filePath) return;
-            
-            const result = await window.electronAPI.loadConfig(filePath);
-            if (result.success && result.config) {
-                await applyLoadedConfig(result.config);
-                showStatus(elements.transferStatus, `✓ config.json geladen: ${filePath}`, 'success');
-            } else {
-                showStatus(elements.transferStatus, `❌ Fehler: ${result.error}`, 'error');
-            }
-        }
-        
-        // App starten
         initApp();
     </script>
 </body>
