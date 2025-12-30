@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Sichere API für das Frontend bereitstellen
+// Sichere API fuer das Frontend bereitstellen
 contextBridge.exposeInMainWorld('electronAPI', {
     // Dialoge
     openFileDialog: (options) => ipcRenderer.invoke('dialog:openFile', options),

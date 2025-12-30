@@ -25,17 +25,14 @@ function createWindow() {
         }
     });
 
-    // Fenster maximieren für bessere Übersicht
-    // mainWindow.maximize();
-
     mainWindow.loadFile('src/index.html');
     
-    // DevTools öffnen (nur während Entwicklung)
+    // DevTools oeffnen (nur waehrend Entwicklung)
     if (process.argv.includes('--dev')) {
         mainWindow.webContents.openDevTools();
     }
     
-    // Menüleiste ausblenden (optional)
+    // Menueleiste ausblenden (optional)
     mainWindow.setMenuBarVisibility(false);
 }
 
@@ -54,18 +51,14 @@ app.on('activate', () => {
 });
 
 // ============================================
-// DATEI-DIALOGE (mit Cursor-Fix)
+// DATEI-DIALOGE
 // ============================================
 
-// Datei öffnen Dialog
+// Datei oeffnen Dialog
 ipcMain.handle('dialog:openFile', async (event, options) => {
-    // Fokus vor dem Dialog sicherstellen
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.focus();
-    }
-    
-    const result = await dialog.showOpenDialog(mainWindow, {
-        title: options.title || 'Datei öffnen',
+    // WICHTIG: null statt mainWindow verhindert Cursor-Bug unter Windows
+    const result = await dialog.showOpenDialog(null, {
+        title: options.title || 'Datei oeffnen',
         filters: options.filters || [
             { name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] },
             { name: 'Alle Dateien', extensions: ['*'] }
@@ -73,45 +66,20 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
         properties: ['openFile']
     });
     
-    // Fokus nach dem Dialog zurücksetzen (Cursor-Fix für Windows)
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.focus();
-        // Kurze Verzögerung um sicherzustellen, dass der Fokus korrekt gesetzt wird
-        setTimeout(() => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.focus();
-            }
-        }, 100);
-    }
-    
     if (result.canceled) return null;
     return result.filePaths[0];
 });
 
 // Datei speichern Dialog
 ipcMain.handle('dialog:saveFile', async (event, options) => {
-    // Fokus vor dem Dialog sicherstellen
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.focus();
-    }
-    
-    const result = await dialog.showSaveDialog(mainWindow, {
+    // WICHTIG: null statt mainWindow verhindert Cursor-Bug unter Windows
+    const result = await dialog.showSaveDialog(null, {
         title: options.title || 'Datei speichern',
         defaultPath: options.defaultPath,
         filters: options.filters || [
             { name: 'Excel-Dateien', extensions: ['xlsx'] }
         ]
     });
-    
-    // Fokus nach dem Dialog zurücksetzen (Cursor-Fix für Windows)
-    if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.focus();
-        setTimeout(() => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-                mainWindow.focus();
-            }
-        }, 100);
-    }
     
     if (result.canceled) return null;
     return result.filePath;
@@ -164,7 +132,7 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
                 rowData[colNumber - 1] = cell.text || '';
             });
             
-            // Zeilen auffüllen bis zur maximalen Spaltenanzahl
+            // Zeilen auffuellen bis zur maximalen Spaltenanzahl
             while (rowData.length < headers.length) {
                 rowData.push('');
             }
@@ -182,7 +150,7 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
     }
 });
 
-// Zeilen in Excel einfügen (MIT Formatierungserhalt!)
+// Zeilen in Excel einfuegen (MIT Formatierungserhalt!)
 ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, startColumn }) => {
     try {
         const workbook = new ExcelJS.Workbook();
@@ -207,7 +175,7 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             }
         });
         
-        // Neue Zeilen einfügen
+        // Neue Zeilen einfuegen
         let insertedCount = 0;
         for (const row of rows) {
             const newRowNum = lastRow + insertedCount + 1;
@@ -225,7 +193,6 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             
             // Daten ab Startspalte - row.data ist ein Objekt mit Index als Key
             if (row.data && row.flag !== 'leer') {
-                // Iteriere über die Objekt-Keys
                 const dataKeys = Object.keys(row.data);
                 dataKeys.forEach(key => {
                     const index = parseInt(key);
@@ -245,7 +212,7 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         
         return { 
             success: true, 
-            message: `${insertedCount} Zeile(n) eingefügt`,
+            message: `${insertedCount} Zeile(n) eingefuegt`,
             insertedCount: insertedCount
         };
     } catch (error) {
@@ -253,7 +220,7 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
     }
 });
 
-// Datei kopieren (für "Neuer Monat")
+// Datei kopieren (fuer "Neuer Monat")
 ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetName, keepHeader }) => {
     try {
         const workbook = new ExcelJS.Workbook();
@@ -264,7 +231,7 @@ ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetNa
             return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
         }
         
-        // Zeilen löschen (außer Header)
+        // Zeilen loeschen (ausser Header)
         if (keepHeader) {
             const rowCount = worksheet.rowCount;
             for (let i = rowCount; i > 1; i--) {
@@ -280,7 +247,7 @@ ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetNa
     }
 });
 
-// Daten exportieren (für Datenexplorer)
+// Daten exportieren (fuer Datenexplorer)
 ipcMain.handle('excel:exportData', async (event, { filePath, sheetName, headers, rows }) => {
     try {
         const workbook = new ExcelJS.Workbook();
@@ -342,10 +309,8 @@ ipcMain.handle('config:load', async (event, filePath) => {
     }
 });
 
-// App-Pfad ermitteln (für Config im Programmordner)
+// App-Pfad ermitteln (fuer Config im Programmordner)
 ipcMain.handle('app:getPath', async (event) => {
-    // Bei portable EXE: Ordner der EXE
-    // Bei Entwicklung: App-Ordner
     const exePath = app.getPath('exe');
     const exeDir = path.dirname(exePath);
     
@@ -360,19 +325,18 @@ ipcMain.handle('app:getPath', async (event) => {
 // Automatisch config.json im Programmordner suchen
 ipcMain.handle('config:loadFromAppDir', async (event) => {
     try {
-        // Verschiedene mögliche Pfade für config.json
         const exePath = app.getPath('exe');
         const exeDir = path.dirname(exePath);
         
         const possiblePaths = [
-            path.join(exeDir, 'config.json'),              // Neben der EXE
-            path.join(app.getAppPath(), 'config.json'),    // Im App-Ordner
-            path.join(process.cwd(), 'config.json')        // Im Arbeitsverzeichnis
+            path.join(exeDir, 'config.json'),
+            path.join(app.getAppPath(), 'config.json'),
+            path.join(process.cwd(), 'config.json')
         ];
         
         for (const configPath of possiblePaths) {
             if (fs.existsSync(configPath)) {
-                console.log('?? config.json gefunden:', configPath);
+                console.log('config.json gefunden:', configPath);
                 const content = fs.readFileSync(configPath, 'utf8');
                 return { 
                     success: true, 
