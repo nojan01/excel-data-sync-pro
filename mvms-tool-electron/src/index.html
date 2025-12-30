@@ -3217,7 +3217,7 @@
             const result = await window.electronAPI.readExcelSheet(state.file1.filePath, sheetName);
             if (!result.success) return;
             state.file1.selectedSheet = sheetName; state.file1.headers = result.headers; state.file1.data = result.data.slice(1);
-            if (state.mapping.sourceColumns.length === 0) state mapping.sourceColumns = state.file1.headers.map((_, i) => i);
+            if (state.mapping.sourceColumns.length === 0) state.mapping.sourceColumns = state.file1.headers.map((_, i) => i);
             updateMappingInfo(); updateMappingPreview(); checkReadyState(); saveConfig();
         }
         
