@@ -54,11 +54,16 @@ app.on('activate', () => {
 });
 
 // ============================================
-// DATEI-DIALOGE
+// DATEI-DIALOGE (mit Cursor-Fix)
 // ============================================
 
 // Datei öffnen Dialog
 ipcMain.handle('dialog:openFile', async (event, options) => {
+    // Fokus vor dem Dialog sicherstellen
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.focus();
+    }
+    
     const result = await dialog.showOpenDialog(mainWindow, {
         title: options.title || 'Datei öffnen',
         filters: options.filters || [
@@ -68,12 +73,28 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
         properties: ['openFile']
     });
     
+    // Fokus nach dem Dialog zurücksetzen (Cursor-Fix für Windows)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.focus();
+        // Kurze Verzögerung um sicherzustellen, dass der Fokus korrekt gesetzt wird
+        setTimeout(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.focus();
+            }
+        }, 100);
+    }
+    
     if (result.canceled) return null;
     return result.filePaths[0];
 });
 
 // Datei speichern Dialog
 ipcMain.handle('dialog:saveFile', async (event, options) => {
+    // Fokus vor dem Dialog sicherstellen
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.focus();
+    }
+    
     const result = await dialog.showSaveDialog(mainWindow, {
         title: options.title || 'Datei speichern',
         defaultPath: options.defaultPath,
@@ -81,6 +102,16 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
             { name: 'Excel-Dateien', extensions: ['xlsx'] }
         ]
     });
+    
+    // Fokus nach dem Dialog zurücksetzen (Cursor-Fix für Windows)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.focus();
+        setTimeout(() => {
+            if (mainWindow && !mainWindow.isDestroyed()) {
+                mainWindow.focus();
+            }
+        }, 100);
+    }
     
     if (result.canceled) return null;
     return result.filePath;
