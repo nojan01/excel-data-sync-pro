@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "MVMS-Vertragslisten Tool",
   "main": "main.js",
+  "license": "MIT",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
@@ -37,7 +38,6 @@
     }
   },
   "author": "Norbert Jander",
-  "license": "MIT",
   "devDependencies": {
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
