@@ -3380,21 +3380,17 @@
             elements.dataExplorerModal.onclick = (e) => { if (e.target === elements.dataExplorerModal) closeDataExplorer(); };
             
             // Verhindere Scroll-Durchgang beim Datenexplorer-Modal
-            elements.dataExplorerModal.addEventListener('wheel', (e) => {
-                const tableContainer = document.getElementById('explorerTableContainer');
-                if (tableContainer && tableContainer.contains(e.target)) {
-                    // Scroll im Tabellencontainer erlauben, aber nicht darüber hinaus
-                    const { scrollTop, scrollHeight, clientHeight } = tableContainer;
-                    const atTop = scrollTop === 0 && e.deltaY < 0;
-                    const atBottom = scrollTop + clientHeight >= scrollHeight && e.deltaY > 0;
-                    if (atTop || atBottom) {
-                        e.preventDefault();
-                    }
-                } else {
-                    // Außerhalb des Tabellencontainers: Scroll verhindern
-                    e.preventDefault();
+            elements.dataExplorerModal.addEventListener('mousedown', (e) => {
+                // Merke, ob der Klick auf dem Overlay begann
+                elements.dataExplorerModal._clickStartedOnOverlay = (e.target === elements.dataExplorerModal);
+            });
+            elements.dataExplorerModal.addEventListener('mouseup', (e) => {
+                // Nur schließen, wenn sowohl mousedown als auch mouseup auf dem Overlay waren
+                if (elements.dataExplorerModal._clickStartedOnOverlay && e.target === elements.dataExplorerModal) {
+                    closeDataExplorer();
                 }
-            }, { passive: false });
+                elements.dataExplorerModal._clickStartedOnOverlay = false;
+            });
             
             elements.btnHelp.onclick = () => elements.helpModal.classList.remove('hidden');
             document.getElementById('btnCloseHelpModal').onclick = () => elements.helpModal.classList.add('hidden');
