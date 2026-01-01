@@ -234,17 +234,37 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
         }
         
-        // Letzte nicht-leere Zeile finden
+        // Erste leere Zeile finden (ab Zeile 2, da Zeile 1 = Header)
+        // Eine Zeile gilt als leer, wenn Spalte A (Flag) UND die Startspalte leer sind
+        let insertRow = 2;  // Start bei Zeile 2 (nach Header)
+        
         const usedRange = worksheet.usedRange();
-        let lastRow = 1;
         if (usedRange) {
-            lastRow = usedRange.endCell().rowNumber();
+            const endRow = usedRange.endCell().rowNumber();
+            
+            // Suche die erste wirklich leere Zeile
+            for (let row = 2; row <= endRow + 1; row++) {
+                const flagCell = worksheet.cell(row, 1).value();
+                const dataCell = worksheet.cell(row, startColumn).value();
+                
+                // Zeile ist leer wenn beide Zellen leer sind
+                const flagEmpty = flagCell === undefined || flagCell === null || flagCell === '';
+                const dataEmpty = dataCell === undefined || dataCell === null || dataCell === '';
+                
+                if (flagEmpty && dataEmpty) {
+                    insertRow = row;
+                    break;
+                }
+                insertRow = row + 1;  // Falls keine leere Zeile gefunden, am Ende einfügen
+            }
         }
+        
+        console.log(`Einfügen ab Zeile: ${insertRow}`);
         
         // Neue Zeilen einfuegen
         let insertedCount = 0;
         for (const row of rows) {
-            const newRowNum = lastRow + insertedCount + 1;
+            const newRowNum = insertRow + insertedCount;
             
             // Flag in Spalte A
             if (row.flag && row.flag !== 'leer') {
@@ -276,8 +296,9 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         
         return { 
             success: true, 
-            message: `${insertedCount} Zeile(n) eingefuegt`,
-            insertedCount: insertedCount
+            message: `${insertedCount} Zeile(n) ab Zeile ${insertRow} eingefuegt`,
+            insertedCount: insertedCount,
+            startRow: insertRow
         };
     } catch (error) {
         return { success: false, error: error.message };
