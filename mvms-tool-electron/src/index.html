@@ -2395,8 +2395,8 @@
                     // Template laden (falls vorhanden)
                     if (config.templateData) {
                         state.template.data = config.templateData;
-                        state.template.name = config.templateName;
-                        elements.templateInfo.textContent = config.templateName;
+                        state.template.name = config.template.name;
+                        elements.templateInfo.textContent = config.template.name;
                         elements.btnNewMonth.disabled = false;
                     }
                     
@@ -2901,13 +2901,6 @@
             }
         }
         
-        function selectAllRows(selected) {
-            document.querySelectorAll('.row-checkbox').forEach((cb, i) => {
-                toggleRowSelection(i, selected);
-            });
-        }
-        
-        // Make functions available globally
         window.removeFromQueue = removeFromQueue;
         window.toggleRowSelection = toggleRowSelection;
 
@@ -3631,13 +3624,16 @@
             if (isElectron) {
                 const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName);
                 if (!result.success) {
-                    showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
+                    elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                     return;
                 }
                 
                 explorerState.selectedSheet = sheetName;
                 explorerState.headers = result.headers;
                 explorerState.data = result.data.slice(1);
+                // Alle Spalten standardmäßig sichtbar machen
+                explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
+                explorerState.filteredData = [...explorerState.data];
                 
                 renderExplorerTable();
                 updateColumnToggles();
@@ -3851,19 +3847,21 @@
                 return;
             }
             
-            if (!filename.endsWith('.xlsx')) {
-                elements.newMonthFilename.value = filename + '.xlsx';
-            }
+            const finalFilename = filename.endsWith('.xlsx') ? filename : filename + '.xlsx';
             
             if (isElectron && state.template.filePath) {
                 const savePath = await window.electronAPI.saveFileDialog({
                     title: 'Neue Monatsdatei speichern',
-                    defaultPath: elements.newMonthFilename.value,
+                    defaultPath: finalFilename,
                     filters: [{ name: 'Excel', extensions: ['xlsx'] }]
                 });
                 
                 if (savePath) {
-                    const result = await window.electronAPI.copyFile(state.template.filePath, savePath);
+                    // Verwende copyExcelFile (wie in preload.js definiert)
+                    const result = await window.electronAPI.copyExcelFile({
+                        sourcePath: state.template.filePath,
+                        targetPath: savePath
+                    });
                     
                     if (result.success) {
                         closeNewMonthModal();
@@ -3922,14 +3920,6 @@
                     const autoResult = await window.electronAPI.loadConfigFromAppDir();
                     console.log('📁 Ergebnis:', autoResult);
                     
-                    // Zeige durchsuchte Pfade in der Konsole
-                    if (autoResult.searchedPaths) {
-                        console.log('📂 Durchsuchte Pfade:');
-                        autoResult.searchedPaths.forEach(p => {
-                            console.log(`   ${p.exists ? '✓' : '✗'} ${p.path}`);
-                        });
-                    }
-                    
                     if (autoResult && autoResult.success && autoResult.config) {
                         await applyLoadedConfig(autoResult.config);
                         console.log('✓ config.json automatisch geladen:', autoResult.path);
@@ -3972,24 +3962,10 @@
             document.getElementById('btnToggleColumns').onclick = toggleColumnPanel;
             document.getElementById('btnShowAllColumns').onclick = showAllExplorerColumns;
             document.getElementById('btnHideAllColumns').onclick = hideAllExplorerColumns;
-            document.getElementById('btnAddExplorerFilter').onclick = () => addExplorerFilter();
+            document.getElementById('btnAddExplorerFilter').onclick = addExplorerFilter;
             document.getElementById('btnClearExplorerFilters').onclick = clearExplorerFilters;
             elements.explorerSearch.oninput = (e) => { explorerState.searchTerm = e.target.value; filterExplorerData(); };
             elements.explorerSheetSelect.onchange = (e) => loadExplorerSheet(e.target.value);
-            elements.dataExplorerModal.onclick = (e) => { if (e.target === elements.dataExplorerModal) closeDataExplorer(); };
-            
-            // Verhindere Scroll-Durchgang beim Datenexplorer-Modal
-            elements.dataExplorerModal.addEventListener('mousedown', (e) => {
-                // Merke, ob der Klick auf dem Overlay begann
-                elements.dataExplorerModal._clickStartedOnOverlay = (e.target === elements.dataExplorerModal);
-            });
-            elements.dataExplorerModal.addEventListener('mouseup', (e) => {
-                // Nur schließen, wenn sowohl mousedown als auch mouseup auf dem Overlay waren
-                if (elements.dataExplorerModal._clickStartedOnOverlay && e.target === elements.dataExplorerModal) {
-                    closeDataExplorer();
-                }
-                elements.dataExplorerModal._clickStartedOnOverlay = false;
-            });
             
             elements.btnHelp.onclick = () => elements.helpModal.classList.remove('hidden');
             document.getElementById('btnCloseHelpModal').onclick = () => elements.helpModal.classList.add('hidden');
@@ -4003,12 +3979,13 @@
             
             document.addEventListener('keydown', (e) => {
                 if (e.key === 'F1') { e.preventDefault(); elements.helpModal.classList.toggle('hidden'); }
-                if (e.key === 'Escape') { elements.mappingModal.classList.add('hidden'); elements.newMonthModal.classList.add('hidden'); elements.helpModal.classList.add('hidden'); elements.dataExplorerModal.classList.add('hidden'); }
+                if (e.key === 'Escape') { 
+                    elements.mappingModal.classList.add('hidden'); 
+                    elements.newMonthModal.classList.add('hidden'); 
+                    elements.helpModal.classList.add('hidden'); 
+                    elements.dataExplorerModal.classList.add('hidden'); 
+                }
             });
-            
-            elements.mappingModal.onclick = (e) => { if (e.target === elements.mappingModal) closeMappingModal(); };
-            elements.newMonthModal.onclick = (e) => { if (e.target === elements.newMonthModal) closeNewMonthModal(); };
-            elements.helpModal.onclick = (e) => { if (e.target === elements.helpModal) elements.helpModal.classList.add('hidden'); };
             
             // Übersetze alle Elemente sofort nach dem Initialisieren
             applyTranslations();
