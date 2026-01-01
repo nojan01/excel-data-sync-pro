@@ -1,6 +1,6 @@
 {
   "name": "mvms-tool",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "description": "MVMS-Vertragslisten Tool",
   "main": "main.js",
   "license": "MIT",

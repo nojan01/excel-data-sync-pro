@@ -25,6 +25,17 @@
             --info: #2196f3;
         }
         
+        /* Light Theme */
+        body.light-theme {
+            --bg-dark: #f5f5f5;
+            --bg-medium: #ffffff;
+            --bg-light: #e8e8e8;
+            --bg-lighter: #d0d0d0;
+            --text: #1e1e1e;
+            --text-muted: #666666;
+            --border: #cccccc;
+        }
+        
         * {
             box-sizing: border-box;
             margin: 0;
@@ -1019,6 +1030,27 @@
                 <button class="sidebar-toggle" id="sidebarToggle" title="Sidebar ein-/ausklappen">◀</button>
             </div>
             <div class="sidebar-content">
+                <!-- Einstellungen: Sprache & Theme -->
+                <div class="config-section">
+                    <div class="config-section-title" data-i18n="settings">⚙️ Einstellungen</div>
+                    <div class="config-group" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 100px;">
+                            <label class="config-label" data-i18n="language">Sprache</label>
+                            <select class="config-select" id="selectLanguage" style="width: 100%;">
+                                <option value="de">🇩🇪 Deutsch</option>
+                                <option value="en">🇬🇧 English</option>
+                            </select>
+                        </div>
+                        <div style="flex: 1; min-width: 100px;">
+                            <label class="config-label" data-i18n="theme">Design</label>
+                            <select class="config-select" id="selectTheme" style="width: 100%;">
+                                <option value="dark" data-i18n="themeDark">🌙 Dunkel</option>
+                                <option value="light" data-i18n="themeLight">☀️ Hell</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- Datei 1 - Quelle -->
                 <div class="config-section">
                     <div class="config-section-title">📄 Datei 1 (Quelle)</div>
@@ -1222,7 +1254,7 @@
     
     <!-- Footer -->
     <footer style="background: var(--bg-medium); border-top: 1px solid var(--border); padding: 8px 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
-        © Norbert Jander 2025 · v1.0.0
+        © Norbert Jander 2025 · v1.0.4
     </footer>
     
     <!-- Mapping Modal -->
@@ -1503,6 +1535,254 @@
             console.log('🚀 Electron-Modus aktiv');
         } else {
             console.log('🌐 Browser-Modus aktiv');
+        }
+        
+        // ============================================
+        // INTERNATIONALIZATION (i18n)
+        // ============================================
+        const translations = {
+            de: {
+                // Header
+                appTitle: 'MVMS-Vertragslisten aktualisieren',
+                loadConfig: '📂 config.json laden',
+                saveConfig: '💾 config.json speichern',
+                help: '❓ Hilfe',
+                
+                // Sidebar
+                configuration: 'Konfiguration',
+                settings: '⚙️ Einstellungen',
+                language: 'Sprache',
+                theme: 'Design',
+                themeDark: '🌙 Dunkel',
+                themeLight: '☀️ Hell',
+                
+                // Files
+                file1Source: '📄 Datei 1 (Quelle)',
+                file2Target: '📄 Datei 2 (Ziel)',
+                loadSourceFile: '📂 Quelldatei laden',
+                loadTargetFile: '📂 Zieldatei laden',
+                noFileLoaded: 'Keine Datei geladen',
+                worksheet: 'Arbeitsblatt:',
+                loadFileFirst: '-- Erst Datei laden --',
+                
+                // Mapping
+                columnMapping: '🔗 Spalten-Zuordnung',
+                configureColumns: '⚙️ Spalten konfigurieren',
+                loadBothFiles: 'Laden Sie beide Dateien',
+                columnsConfigured: 'Spalte(n) konfiguriert',
+                
+                // Template
+                monthTemplate: '📄 Monats-Template',
+                loadTemplate: '📂 Template laden',
+                noTemplateLoaded: 'Kein Template geladen',
+                templateHint: 'Leere Excel-Vorlage für "📅 Neue Monatsdatei"',
+                
+                // History
+                lastTransfers: '📋 Letzte Übertragungen',
+                noTransfersYet: 'Noch keine Übertragungen',
+                
+                // Search
+                searchPlaceholder: 'Suche... (Platzhalter: * = beliebig, ? = ein Zeichen)',
+                search: '🔍 Suchen',
+                newRow: '➕ Neue Zeile',
+                
+                // Results
+                readyToStart: 'Bereit zum Starten',
+                instructions: '1. Laden Sie die Quelldatei (Datei 1)<br>2. Laden Sie die Zieldatei (Datei 2)<br>3. Konfigurieren Sie die Spalten-Zuordnung<br>4. Suchen Sie nach Zeilen und übertragen Sie diese',
+                noResults: 'Keine Treffer für',
+                results: 'Treffer für',
+                
+                // Transfer
+                prepareTransfer: '📤 Zeile(n) zur Übertragung vorbereiten',
+                selected: 'ausgewählt',
+                flag: 'Spalte 1 - Flag:',
+                comment: 'Spalte 2 - Kommentar:',
+                commentPlaceholder: 'Freier Text...',
+                addToQueue: '➕ Markierte zur Warteschlange',
+                transferDirect: '➡️ Markierte direkt übertragen',
+                selectAll: '☑️ Alle auswählen',
+                deselectAll: '☐ Alles abwählen',
+                
+                // Queue
+                queue: '📋 Warteschlange',
+                rows: 'Zeilen',
+                clear: '🗑️ Leeren',
+                directTransfer: '✅ Direkt übertragen',
+                dataExplorer: '📊 Datenexplorer',
+                newMonthFile: '📅 Neue Monatsdatei',
+                noRowsInQueue: 'Keine Zeilen in der Warteschlange',
+                
+                // New Row
+                createNewRow: '✏️ Neue Zeile erstellen',
+                close: '✕ Schließen',
+                toQueue: '➕ Zur Warteschlange',
+                transferDirectly: '➡️ Direkt übertragen',
+                
+                // Messages
+                noTargetFile: 'Keine Zieldatei geladen',
+                selectAtLeastOne: 'Bitte wählen Sie mindestens eine Zeile aus',
+                rowsTransferred: 'Zeile(n) direkt übertragen!',
+                rowsAdded: 'Zeile(n) zur Warteschlange hinzugefügt',
+                edited: 'bearbeitet',
+                duplicates: 'Duplikat(e)',
+                configFirst: 'Bitte zuerst Spalten konfigurieren',
+                
+                // Footer
+                copyright: '© Norbert Jander 2025 · v1.0.4'
+            },
+            en: {
+                // Header
+                appTitle: 'MVMS Contract Lists Update',
+                loadConfig: '📂 Load config.json',
+                saveConfig: '💾 Save config.json',
+                help: '❓ Help',
+                
+                // Sidebar
+                configuration: 'Configuration',
+                settings: '⚙️ Settings',
+                language: 'Language',
+                theme: 'Theme',
+                themeDark: '🌙 Dark',
+                themeLight: '☀️ Light',
+                
+                // Files
+                file1Source: '📄 File 1 (Source)',
+                file2Target: '📄 File 2 (Target)',
+                loadSourceFile: '📂 Load Source File',
+                loadTargetFile: '📂 Load Target File',
+                noFileLoaded: 'No file loaded',
+                worksheet: 'Worksheet:',
+                loadFileFirst: '-- Load file first --',
+                
+                // Mapping
+                columnMapping: '🔗 Column Mapping',
+                configureColumns: '⚙️ Configure Columns',
+                loadBothFiles: 'Load both files',
+                columnsConfigured: 'column(s) configured',
+                
+                // Template
+                monthTemplate: '📄 Month Template',
+                loadTemplate: '📂 Load Template',
+                noTemplateLoaded: 'No template loaded',
+                templateHint: 'Empty Excel template for "📅 New Month File"',
+                
+                // History
+                lastTransfers: '📋 Recent Transfers',
+                noTransfersYet: 'No transfers yet',
+                
+                // Search
+                searchPlaceholder: 'Search... (Wildcards: * = any, ? = one character)',
+                search: '🔍 Search',
+                newRow: '➕ New Row',
+                
+                // Results
+                readyToStart: 'Ready to Start',
+                instructions: '1. Load the source file (File 1)<br>2. Load the target file (File 2)<br>3. Configure the column mapping<br>4. Search for rows and transfer them',
+                noResults: 'No results for',
+                results: 'results for',
+                
+                // Transfer
+                prepareTransfer: '📤 Prepare row(s) for transfer',
+                selected: 'selected',
+                flag: 'Column 1 - Flag:',
+                comment: 'Column 2 - Comment:',
+                commentPlaceholder: 'Free text...',
+                addToQueue: '➕ Add to Queue',
+                transferDirect: '➡️ Transfer Directly',
+                selectAll: '☑️ Select All',
+                deselectAll: '☐ Deselect All',
+                
+                // Queue
+                queue: '📋 Queue',
+                rows: 'Rows',
+                clear: '🗑️ Clear',
+                directTransfer: '✅ Transfer Now',
+                dataExplorer: '📊 Data Explorer',
+                newMonthFile: '📅 New Month File',
+                noRowsInQueue: 'No rows in queue',
+                
+                // New Row
+                createNewRow: '✏️ Create New Row',
+                close: '✕ Close',
+                toQueue: '➕ To Queue',
+                transferDirectly: '➡️ Transfer Directly',
+                
+                // Messages
+                noTargetFile: 'No target file loaded',
+                selectAtLeastOne: 'Please select at least one row',
+                rowsTransferred: 'row(s) transferred directly!',
+                rowsAdded: 'row(s) added to queue',
+                edited: 'edited',
+                duplicates: 'duplicate(s)',
+                configFirst: 'Please configure columns first',
+                
+                // Footer
+                copyright: '© Norbert Jander 2025 · v1.0.4'
+            }
+        };
+        
+        let currentLanguage = localStorage.getItem('mvmsLanguage') || 'de';
+        let currentTheme = localStorage.getItem('mvmsTheme') || 'dark';
+        
+        function t(key) {
+            return translations[currentLanguage]?.[key] || translations['de'][key] || key;
+        }
+        
+        function applyTranslations() {
+            // Update all elements with data-i18n attribute
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                if (el.tagName === 'INPUT' && el.placeholder) {
+                    el.placeholder = t(key);
+                } else {
+                    el.textContent = t(key);
+                }
+            });
+            
+            // Update specific elements
+            document.querySelector('.logo span').textContent = t('appTitle');
+            document.getElementById('btnImportConfig').innerHTML = t('loadConfig');
+            document.getElementById('btnExportConfig').innerHTML = t('saveConfig');
+            document.getElementById('btnHelp').innerHTML = t('help');
+            document.querySelector('.sidebar-header-text').textContent = t('configuration');
+            document.getElementById('searchInput').placeholder = t('searchPlaceholder');
+            document.getElementById('btnSearch').innerHTML = t('search');
+            document.getElementById('btnNewRow').innerHTML = t('newRow');
+            document.querySelector('.empty-state-title').textContent = t('readyToStart');
+            document.querySelector('.empty-state-text').innerHTML = t('instructions');
+            document.querySelector('footer').innerHTML = t('copyright');
+            
+            // Queue panel
+            document.getElementById('btnClearQueue').innerHTML = t('clear');
+            document.getElementById('btnDataExplorer').innerHTML = t('dataExplorer');
+            document.getElementById('btnNewMonth').innerHTML = t('newMonthFile');
+            
+            // Transfer panel
+            document.getElementById('btnAddToQueue').innerHTML = t('addToQueue');
+            document.getElementById('btnTransferDirect').innerHTML = t('transferDirect');
+            document.getElementById('btnSelectAll').innerHTML = t('selectAll');
+            document.getElementById('btnDeselectAll').innerHTML = t('deselectAll');
+            
+            // Theme dropdown options
+            document.querySelector('#selectTheme option[value="dark"]').textContent = t('themeDark');
+            document.querySelector('#selectTheme option[value="light"]').textContent = t('themeLight');
+        }
+        
+        function setLanguage(lang) {
+            currentLanguage = lang;
+            localStorage.setItem('mvmsLanguage', lang);
+            document.documentElement.lang = lang;
+            applyTranslations();
+        }
+        
+        function setTheme(theme) {
+            currentTheme = theme;
+            localStorage.setItem('mvmsTheme', theme);
+            if (theme === 'light') {
+                document.body.classList.add('light-theme');
+            } else {
+                document.body.classList.remove('light-theme');
+            }
         }
         
         // ==================== State ====================
@@ -2558,7 +2838,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextIndex].focus();
+                            cells[nextEntity].focus();
                         }
                     }
                 });
@@ -3222,7 +3502,7 @@
         
         async function loadExplorerSheet(sheetName) {
             if (!sheetName) return;
-            explorerState.selectedSheet = sheetName; explorerState.hiddenColumns.clear();
+            explorerState.selectedSheet = sheetName; explorerState.hiddenColumns = new Set();
             if (isElectron && explorerState.filePath) {
                 const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName);
                 if (!result.success) return;
@@ -3392,6 +3672,14 @@
         }
         // ==================== Initialize App ====================
         async function initApp() {
+            // Initialize theme and language first
+            setTheme(currentTheme);
+            setLanguage(currentLanguage);
+            document.getElementById('selectLanguage').value = currentLanguage;
+            document.getElementById('selectTheme').value = currentTheme;
+            document.getElementById('selectLanguage').onchange = (e) => setLanguage(e.target.value);
+            document.getElementById('selectTheme').onchange = (e) => setTheme(e.target.value);
+            
             try { await initDB(); } catch (e) { console.warn('IndexedDB nicht verfügbar'); }
             loadConfig(); updateMappingPreview(); checkReadyState();
             
