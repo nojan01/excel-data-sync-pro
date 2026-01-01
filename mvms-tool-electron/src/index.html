@@ -2495,7 +2495,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextIndex].focus();
+                            cells[nextElement].focus();
                         }
                     }
                 });
@@ -2598,6 +2598,40 @@
             
             const flag = elements.transferFlag.value;
             const comment = elements.transferComment.value;
+            
+            // Im Electron-Modus: Zur Warteschlange hinzufügen und direkt übertragen
+            if (isElectron && state.file2.filePath) {
+                // Zeilen zur Warteschlange hinzufügen
+                for (const rowIndex of state.selectedRows) {
+                    const row = state.searchResults[rowIndex];
+                    if (!row) continue;
+                    
+                    const rowData = getEditedRowData(rowIndex);
+                    const checkValue = rowData[state.mapping.duplicateCheckColumn];
+                    
+                    state.transferQueue.push({
+                        data: [...rowData],
+                        rowIndex: row.rowIndex,
+                        flag: flag,
+                        comment: comment,
+                        checkValue: checkValue,
+                        wasEdited: isRowEdited(rowIndex)
+                    });
+                }
+                
+                updateQueueDisplay();
+                
+                // Direkt übertragen
+                transferQueueToExcel();
+                
+                selectAllRows(false);
+                elements.transferComment.value = '';
+                elements.searchInput.value = '';
+                elements.searchInput.focus();
+                return;
+            }
+            
+            // Browser-Modus: Original-Logik
             let transferredCount = 0;
             let editedCount = 0;
             let duplicatesFound = [];
@@ -2622,7 +2656,7 @@
                 const newRow = new Array(Math.max(
                     state.file2.headers.length,
                     state.mapping.targetStartColumn + state.mapping.sourceColumns.length
-                )).fill('');;
+                )).fill('');
                 
                 newRow[0] = flag;
                 newRow[1] = comment;
@@ -2635,11 +2669,10 @@
                 state.file2.data.push(newRow);
                 transferredCount++;
                 
-                // FIX: Verwende rowData statt data
                 state.history.unshift({
                     time: new Date().toLocaleTimeString(),
                     flag: flag,
-                    searchValue: '(Manuelle Eingabe)',
+                    searchValue: checkValue,
                     preview: rowData[state.mapping.duplicateCheckColumn] || '(Neue Zeile)'
                 });
             }
@@ -2651,8 +2684,6 @@
             saveConfig();
             
             let message = `✓ ${transferredCount} Zeile(n) direkt übertragen!`;
-
-// Fix: Tippfehler nextString -> nextIndex
             let status = 'success';
             if (editedCount > 0) {
                 message += ` (${editedCount} bearbeitet ✏️)`;
