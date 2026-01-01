@@ -2494,7 +2494,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextElement].focus();
+                            cells[nextIndex].focus();
                         }
                     }
                 });
@@ -2974,29 +2974,23 @@
             explorerState.filters = [];
             document.getElementById('explorerFilters').innerHTML = '';
             updateExplorerFilterButtons();
-            if (state.file2.data && state.file2.data.length > 0) {
-                explorerState.fileName = state.file2.name || 'Zieldatei';
-                explorerState.filePath = state.file2.filePath || '';
-                explorerState.sheets = state.file2.sheets || [];
-                explorerState.selectedSheet = state.file2.selectedSheet || '';
-                explorerState.headers = [...state.file2.headers];
-                explorerState.data = state.file2.data.map(row => [...row]);
-                explorerState.filteredData = [...explorerState.data];
-                explorerState.hiddenColumns.clear();
-                elements.explorerFileName.textContent = explorerState.fileName;
-                updateExplorerSheetDropdown();
-                updateColumnToggles();
-                renderExplorerTable();
-            } else {
-                explorerState.data = []; explorerState.filteredData = []; explorerState.headers = [];
-                explorerState.hiddenColumns.clear(); explorerState.fileName = '';
-                elements.explorerFileName.textContent = 'Keine Datei geladen';
-                elements.explorerTableHead.innerHTML = '';
-                elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>';
-                elements.explorerResultCount.textContent = 'Keine Daten geladen.';
-                elements.explorerSheetSelect.innerHTML = '<option value="">-- Datei laden --</option>';
-                document.getElementById('columnToggles').innerHTML = '';
-            }
+            
+            // Immer leer starten - Benutzer muss explizit eine Datei laden
+            explorerState.data = []; 
+            explorerState.filteredData = []; 
+            explorerState.headers = [];
+            explorerState.hiddenColumns.clear(); 
+            explorerState.fileName = '';
+            explorerState.filePath = '';
+            explorerState.sheets = [];
+            explorerState.selectedSheet = '';
+            elements.explorerFileName.textContent = 'Keine Datei geladen';
+            elements.explorerTableHead.innerHTML = '';
+            elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>';
+            elements.explorerResultCount.textContent = 'Keine Daten geladen.';
+            elements.explorerSheetSelect.innerHTML = '<option value="">-- Datei laden --</option>';
+            document.getElementById('columnToggles').innerHTML = '';
+            
             if (elements.explorerSearch) elements.explorerSearch.value = '';
             explorerState.searchTerm = '';
         }
