@@ -564,7 +564,7 @@
         .status.error {
             background: rgba(244, 67, 54, 0.2);
             border: 1px solid var(--error);
-            color: var(--error);
+            color: var,--error);
         }
         
         .status.info {
@@ -611,6 +611,7 @@
             align-items: center;
             justify-content: center;
             z-index: 1000;
+            overflow: hidden;
         }
         
         .modal-overlay.hidden {
@@ -634,7 +635,12 @@
         
         .modal.modal-large {
             resize: both;
-            overflow: auto;
+            overflow: hidden;
+        }
+        
+        /* Verhindert Scroll-Durchgang bei offenen Modals */
+        body.modal-open {
+            overflow: hidden;
         }
         
         .modal-header {
@@ -1541,7 +1547,7 @@
             emptyState: document.getElementById('emptyState'),
             resultsTableContainer: document.getElementById('resultsTableContainer'),
             resultsTable: document.getElementById('resultsTable'),
-            resultsTableHead: document.getElementById('resultsTableHead'),
+            resultsTableHead: document.getElementById('resultsTableHead',
             resultsTableBody: document.getElementById('resultsTableBody'),
             
             // Transfer
@@ -1916,7 +1922,7 @@
                     const date = config.exportDate ? new Date(config.exportDate).toLocaleString('de-DE') : 'unbekannt';
                     const mappingCount = state.mapping.sourceColumns?.length || 0;
                     const filesIncluded = (config.file1Data ? 1 : 0) + (config.file2Data ? 1 : 0);
-                    
+
                     showStatus(elements.transferStatus, 
                         `✓ Konfiguration importiert! (${mappingCount} Spalten, ${filesIncluded} Datei(en), vom ${date})`, 'success');
 
@@ -2355,7 +2361,7 @@
             const newRow = new Array(Math.max(
                 state.file2.headers.length,
                 state.mapping.targetStartColumn + state.mapping.sourceColumns.length
-            )).fill('');
+            )).fill('');;
             
             newRow[0] = flag;
             newRow[1] = comment;
@@ -2488,7 +2494,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextIndex].focus();
+                            cells[nextElement].focus();
                         }
                     }
                 });
@@ -2553,6 +2559,8 @@
             
             if (state.selectedRows.length > 0) {
                 state.selectedRow = state.searchResults[state.selectedRows[state.selectedRows.length - 1]];
+
+               
             } else {
                 state.selectedRow = null;
             }
@@ -2613,7 +2621,7 @@
                 const newRow = new Array(Math.max(
                     state.file2.headers.length,
                     state.mapping.targetStartColumn + state.mapping.sourceColumns.length
-                )).fill('');
+                )).fill('');;
                 
                 newRow[0] = flag;
                 newRow[1] = comment;
@@ -2961,6 +2969,7 @@
         };
         
         async function openDataExplorer() {
+            document.body.classList.add('modal-open');
             elements.dataExplorerModal.classList.remove('hidden');
             explorerState.filters = [];
             document.getElementById('explorerFilters').innerHTML = '';
@@ -2992,7 +3001,10 @@
             explorerState.searchTerm = '';
         }
         
-        function closeDataExplorer() { elements.dataExplorerModal.classList.add('hidden'); }
+        function closeDataExplorer() { 
+            document.body.classList.remove('modal-open');
+            elements.dataExplorerModal.classList.add('hidden'); 
+        }
         
         function updateExplorerSheetDropdown() {
             elements.explorerSheetSelect.innerHTML = '';
@@ -3366,6 +3378,23 @@
             elements.explorerSearch.oninput = (e) => { explorerState.searchTerm = e.target.value; filterExplorerData(); };
             elements.explorerSheetSelect.onchange = (e) => loadExplorerSheet(e.target.value);
             elements.dataExplorerModal.onclick = (e) => { if (e.target === elements.dataExplorerModal) closeDataExplorer(); };
+            
+            // Verhindere Scroll-Durchgang beim Datenexplorer-Modal
+            elements.dataExplorerModal.addEventListener('wheel', (e) => {
+                const tableContainer = document.getElementById('explorerTableContainer');
+                if (tableContainer && tableContainer.contains(e.target)) {
+                    // Scroll im Tabellencontainer erlauben, aber nicht darüber hinaus
+                    const { scrollTop, scrollHeight, clientHeight } = tableContainer;
+                    const atTop = scrollTop === 0 && e.deltaY < 0;
+                    const atBottom = scrollTop + clientHeight >= scrollHeight && e.deltaY > 0;
+                    if (atTop || atBottom) {
+                        e.preventDefault();
+                    }
+                } else {
+                    // Außerhalb des Tabellencontainers: Scroll verhindern
+                    e.preventDefault();
+                }
+            }, { passive: false });
             
             elements.btnHelp.onclick = () => elements.helpModal.classList.remove('hidden');
             document.getElementById('btnCloseHelpModal').onclick = () => elements.helpModal.classList.add('hidden');
