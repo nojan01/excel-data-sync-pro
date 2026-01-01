@@ -2608,7 +2608,172 @@
             return result;
         }
         
-        // ==================== New Row (Manuelle Eingabe) ====================
+        // ==================== Search Functions ====================
+        function wildcardToRegex(pattern) {
+            let escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+            escaped = escaped.replace(/\*/g, '.*');
+            escaped = escaped.replace(/\?/g, '.');
+            return new RegExp('^' + escaped + '$', 'i');
+        }
+        
+        function search() {
+            const query = elements.searchInput.value.trim();
+            if (!query || !state.file1.data.length) return;
+            
+            const hasWildcards = query.includes('*') || query.includes('?');
+            state.searchResults = [];
+            
+            if (hasWildcards) {
+                const regex = wildcardToRegex(query);
+                state.file1.data.forEach((row, rowIndex) => {
+                    for (let col of row) {
+                        if (col && regex.test(String(col))) {
+                            state.searchResults.push({ rowIndex: rowIndex, data: row });
+                            break;
+                        }
+                    }
+                });
+            } else {
+                const lowerQuery = query.toLowerCase();
+                state.file1.data.forEach((row, rowIndex) => {
+                    for (let col of row) {
+                        if (col && String(col).toLowerCase().includes(lowerQuery)) {
+                            state.searchResults.push({ rowIndex: rowIndex, data: row });
+                            break;
+                        }
+                    }
+                });
+            }
+            
+            displaySearchResults(query, hasWildcards);
+        }
+        
+        function displaySearchResults(query, hasWildcards = false) {
+            state.selectedRows = [];
+            
+            if (state.searchResults.length === 0) {
+                elements.searchResultsInfo.innerHTML = `Keine Treffer für "<strong>${escapeHtml(query)}</strong>"`;
+                elements.emptyState.style.display = 'flex';
+                elements.resultsTableContainer.style.display = 'none';
+                elements.transferPanel.classList.add('hidden');
+                return;
+            }
+            
+            const wildcardInfo = hasWildcards ? ' (Platzhalter)' : '';
+            elements.searchResultsInfo.innerHTML = 
+                `<strong>${state.searchResults.length}</strong> Treffer für "<strong>${escapeHtml(query)}</strong>"${wildcardInfo}`;
+            
+            elements.emptyState.style.display = 'none';
+            elements.resultsTableContainer.style.display = 'block';
+            
+            let headerHtml = '<tr><th style="width: 40px;"><input type="checkbox" id="selectAllCheckbox" title="Alle auswählen"></th>';
+            state.file1.headers.forEach((header, i) => {
+                headerHtml += `<th>${escapeHtml(header || `Spalte ${getColumnLetter(i + 1)}`)}</th>`;
+            });
+            headerHtml += '</tr>';
+            elements.resultsTableHead.innerHTML = headerHtml;
+            
+            let bodyHtml = '';
+            state.searchResults.forEach((result, i) => {
+                bodyHtml += `<tr data-index="${i}">`;
+                bodyHtml += `<td><input type="checkbox" class="row-checkbox" data-index="${i}" onclick="event.stopPropagation()"></td>`;
+                state.file1.headers.forEach((_, colIndex) => {
+                    const cell = result.data[colIndex];
+                    const cellStr = String(cell ?? '');
+                    bodyHtml += `<td contenteditable="true" data-row="${i}" data-col="${colIndex}" data-original="${escapeHtml(cellStr)}" onclick="event.stopPropagation()">${escapeHtml(cellStr)}</td>`;
+                });
+                bodyHtml += '</tr>';
+            });
+            elements.resultsTableBody.innerHTML = bodyHtml;
+            
+            document.querySelectorAll('#resultsTableBody td[contenteditable]').forEach(td => {
+                td.addEventListener('input', function() {
+                    const original = this.dataset.original;
+                    const current = this.textContent;
+                    this.classList.toggle('edited', original !== current);
+                });
+                td.addEventListener('focus', function() {
+                    const rowIndex = parseInt(this.dataset.row);
+                    if (!state.selectedRows.includes(rowIndex)) {
+                        toggleRowSelection(rowIndex, true);
+                    }
+                });
+            });
+            
+            document.getElementById('selectAllCheckbox').addEventListener('change', (e) => {
+                selectAllRows(e.target.checked);
+            });
+            
+            document.querySelectorAll('.row-checkbox').forEach(cb => {
+                cb.addEventListener('change', (e) => {
+                    toggleRowSelection(parseInt(e.target.dataset.index), e.target.checked);
+                });
+            });
+            
+            toggleRowSelection(0, true);
+            elements.transferPanel.classList.remove('hidden');
+        }
+        
+        function getEditedRowData(rowIndex) {
+            const cells = document.querySelectorAll(`#resultsTableBody td[data-row="${rowIndex}"]`);
+            const data = [];
+            cells.forEach(cell => {
+                const colIndex = parseInt(cell.dataset.col);
+                data[colIndex] = cell.textContent;
+            });
+            return data;
+        }
+        
+        function isRowEdited(rowIndex) {
+            const cells = document.querySelectorAll(`#resultsTableBody td[data-row="${rowIndex}"].edited`);
+            return cells.length > 0;
+        }
+        
+        function toggleRowSelection(index, forceState) {
+            const checkbox = document.querySelector(`.row-checkbox[data-index="${index}"]`);
+            const tr = document.querySelector(`#resultsTableBody tr[data-index="${index}"]`);
+            if (!checkbox || !tr) return;
+            
+            const isSelected = forceState !== undefined ? forceState : !checkbox.checked;
+            checkbox.checked = isSelected;
+            tr.classList.toggle('selected', isSelected);
+            
+            if (isSelected) {
+                if (!state.selectedRows.includes(index)) {
+                    state.selectedRows.push(index);
+                }
+            } else {
+                state.selectedRows = state.selectedRows.filter(i => i !== index);
+            }
+            
+            document.getElementById('selectedCount').textContent = state.selectedRows.length;
+            
+            const allCheckbox = document.getElementById('selectAllCheckbox');
+            const allCheckboxes = document.querySelectorAll('.row-checkbox');
+            const checkedCount = document.querySelectorAll('.row-checkbox:checked').length;
+            if (allCheckbox) {
+                allCheckbox.checked = checkedCount === allCheckboxes.length;
+                allCheckbox.indeterminate = checkedCount > 0 && checkedCount < allCheckboxes.length;
+            }
+            
+            if (state.selectedRows.length > 0) {
+                state.selectedRow = state.searchResults[state.selectedRows[state.selectedRows.length - 1]];
+            } else {
+                state.selectedRow = null;
+            }
+        }
+        
+        function selectAllRows(selected) {
+            document.querySelectorAll('.row-checkbox').forEach((cb, i) => {
+                toggleRowSelection(i, selected);
+            });
+        }
+        
+        // Make functions available globally
+        window.removeFromQueue = removeFromQueue;
+        window.toggleRowSelection = toggleRowSelection;
+
+        // ==================== New Row Functions ====================
         function openNewRowPanel() {
             if (!state.mapping.sourceColumns || state.mapping.sourceColumns.length === 0) {
                 showStatus(elements.transferStatus, 'Bitte zuerst Spalten konfigurieren', 'error');
