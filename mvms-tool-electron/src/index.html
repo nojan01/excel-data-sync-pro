@@ -1030,7 +1030,75 @@
                 <button class="sidebar-toggle" id="sidebarToggle" title="Sidebar ein-/ausklappen">◀</button>
             </div>
             <div class="sidebar-content">
-                <!-- Einstellungen: Sprache & Theme -->
+                <!-- Datei 1 - Quelle -->
+                <div class="config-section">
+                    <div class="config-section-title" data-i18n="file1Source">📄 Datei 1 (Quelle)</div>
+                    <div class="config-group">
+                        <button class="btn btn-primary" id="btnLoadFile1" style="width: 100%; margin-bottom: 10px;" data-i18n="loadSourceFile">
+                            📂 Quelldatei laden
+                        </button>
+                        <div class="file-info" id="file1Info" data-i18n="noFileLoaded">Keine Datei geladen</div>
+                        
+                        <label class="config-label" style="margin-top: 12px;" data-i18n="worksheet">Arbeitsblatt:</label>
+                        <select class="config-select" id="selectSheet1" disabled>
+                            <option value="" data-i18n="loadFileFirst">-- Erst Datei laden --</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Datei 2 - Ziel -->
+                <div class="config-section">
+                    <div class="config-section-title" data-i18n="file2Target">📄 Datei 2 (Ziel)</div>
+                    <div class="config-group">
+                        <button class="btn btn-primary" id="btnLoadFile2" style="width: 100%; margin-bottom: 10px;" data-i18n="loadTargetFile">
+                            📂 Zieldatei laden
+                        </button>
+                        <div class="file-info" id="file2Info" data-i18n="noFileLoaded">Keine Datei geladen</div>
+                        
+                        <label class="config-label" style="margin-top: 12px;" data-i18n="worksheet">Arbeitsblatt:</label>
+                        <select class="config-select" id="selectSheet2" disabled>
+                            <option value="" data-i18n="loadFileFirst">-- Erst Datei laden --</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Spalten-Mapping -->
+                <div class="config-section">
+                    <div class="config-section-title" data-i18n="columnMapping">🔗 Spalten-Zuordnung</div>
+                    <div class="config-group">
+                        <button class="btn btn-secondary" id="btnConfigMapping" style="width: 100%;" data-i18n="configureColumns">
+                            ⚙️ Spalten konfigurieren
+                        </button>
+                        <div class="file-info" id="mappingInfo" data-i18n="loadBothFiles">Laden Sie beide Dateien</div>
+                        <div id="mappingPreview" style="margin-top: 10px; font-size: 12px; color: var(--text-muted);"></div>
+                    </div>
+                </div>
+                
+                <!-- Template für neuen Monat -->
+                <div class="config-section">
+                    <div class="config-section-title" data-i18n="monthTemplate">📄 Monats-Template</div>
+                    <div class="config-group">
+                        <button class="btn btn-secondary" id="btnLoadTemplate" style="width: 100%; margin-bottom: 10px;" data-i18n="loadTemplate">
+                            📂 Template laden
+                        </button>
+                        <div class="file-info" id="templateInfo" data-i18n="noTemplateLoaded">Kein Template geladen</div>
+                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;" data-i18n="templateHint">
+                            Leere Excel-Vorlage für "📅 Neue Monatsdatei"
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Transfer History -->
+                <div class="config-section history-section">
+                    <div class="config-section-title" data-i18n="lastTransfers">📋 Letzte Übertragungen</div>
+                    <div class="history-list" id="historyList">
+                        <div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;" data-i18n="noTransfersYet">
+                            Noch keine Übertragungen
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Einstellungen: Sprache & Theme (unten) -->
                 <div class="config-section">
                     <div class="config-section-title" data-i18n="settings">⚙️ Einstellungen</div>
                     <div class="config-group" style="display: flex; gap: 10px; flex-wrap: wrap;">
@@ -1047,74 +1115,6 @@
                                 <option value="dark" data-i18n="themeDark">🌙 Dunkel</option>
                                 <option value="light" data-i18n="themeLight">☀️ Hell</option>
                             </select>
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Datei 1 - Quelle -->
-                <div class="config-section">
-                    <div class="config-section-title">📄 Datei 1 (Quelle)</div>
-                    <div class="config-group">
-                        <button class="btn btn-primary" id="btnLoadFile1" style="width: 100%; margin-bottom: 10px;">
-                            📂 Quelldatei laden
-                        </button>
-                        <div class="file-info" id="file1Info">Keine Datei geladen</div>
-                        
-                        <label class="config-label" style="margin-top: 12px;">Arbeitsblatt:</label>
-                        <select class="config-select" id="selectSheet1" disabled>
-                            <option value="">-- Erst Datei laden --</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <!-- Datei 2 - Ziel -->
-                <div class="config-section">
-                    <div class="config-section-title">📄 Datei 2 (Ziel)</div>
-                    <div class="config-group">
-                        <button class="btn btn-primary" id="btnLoadFile2" style="width: 100%; margin-bottom: 10px;">
-                            📂 Zieldatei laden
-                        </button>
-                        <div class="file-info" id="file2Info">Keine Datei geladen</div>
-                        
-                        <label class="config-label" style="margin-top: 12px;">Arbeitsblatt:</label>
-                        <select class="config-select" id="selectSheet2" disabled>
-                            <option value="">-- Erst Datei laden --</option>
-                        </select>
-                    </div>
-                </div>
-                
-                <!-- Spalten-Mapping -->
-                <div class="config-section">
-                    <div class="config-section-title">🔗 Spalten-Zuordnung</div>
-                    <div class="config-group">
-                        <button class="btn btn-secondary" id="btnConfigMapping" style="width: 100%;">
-                            ⚙️ Spalten konfigurieren
-                        </button>
-                        <div class="file-info" id="mappingInfo">Laden Sie beide Dateien</div>
-                        <div id="mappingPreview" style="margin-top: 10px; font-size: 12px; color: var(--text-muted);"></div>
-                    </div>
-                </div>
-                
-                <!-- Template für neuen Monat -->
-                <div class="config-section">
-                    <div class="config-section-title">📄 Monats-Template</div>
-                    <div class="config-group">
-                        <button class="btn btn-secondary" id="btnLoadTemplate" style="width: 100%; margin-bottom: 10px;">
-                            📂 Template laden
-                        </button>
-                        <div class="file-info" id="templateInfo">Kein Template geladen</div>
-                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
-                            Leere Excel-Vorlage für "📅 Neue Monatsdatei"
-                        </div>
-                    </div>
-                </div>
-                
-                <!-- Transfer History -->
-                <div class="config-section history-section">
-                    <div class="config-section-title">📋 Letzte Übertragungen</div>
-                    <div class="history-list" id="historyList">
-                        <div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;">
-                            Noch keine Übertragungen
                         </div>
                     </div>
                 </div>
@@ -1732,24 +1732,37 @@
             // Update all elements with data-i18n attribute
             document.querySelectorAll('[data-i18n]').forEach(el => {
                 const key = el.getAttribute('data-i18n');
-                if (el.tagName === 'INPUT' && el.placeholder) {
-                    el.placeholder = t(key);
+                const text = t(key);
+                if (el.tagName === 'INPUT' && el.type === 'text') {
+                    el.placeholder = text;
+                } else if (el.tagName === 'OPTION') {
+                    el.textContent = text;
                 } else {
-                    el.textContent = t(key);
+                    // Keep existing content if it's a dynamic element (like file info)
+                    const dynamicElements = ['file1Info', 'file2Info', 'templateInfo', 'mappingInfo'];
+                    if (!dynamicElements.includes(el.id)) {
+                        el.innerHTML = text;
+                    }
                 }
             });
             
-            // Update specific elements
+            // Update specific header elements
             document.querySelector('.logo span').textContent = t('appTitle');
             document.getElementById('btnImportConfig').innerHTML = t('loadConfig');
             document.getElementById('btnExportConfig').innerHTML = t('saveConfig');
             document.getElementById('btnHelp').innerHTML = t('help');
             document.querySelector('.sidebar-header-text').textContent = t('configuration');
+            
+            // Search section
             document.getElementById('searchInput').placeholder = t('searchPlaceholder');
             document.getElementById('btnSearch').innerHTML = t('search');
             document.getElementById('btnNewRow').innerHTML = t('newRow');
+            
+            // Empty state
             document.querySelector('.empty-state-title').textContent = t('readyToStart');
             document.querySelector('.empty-state-text').innerHTML = t('instructions');
+            
+            // Footer
             document.querySelector('footer').innerHTML = t('copyright');
             
             // Queue panel
@@ -1764,8 +1777,30 @@
             document.getElementById('btnDeselectAll').innerHTML = t('deselectAll');
             
             // Theme dropdown options
-            document.querySelector('#selectTheme option[value="dark"]').textContent = t('themeDark');
-            document.querySelector('#selectTheme option[value="light"]').textContent = t('themeLight');
+            const darkOpt = document.querySelector('#selectTheme option[value="dark"]');
+            const lightOpt = document.querySelector('#selectTheme option[value="light"]');
+            if (darkOpt) darkOpt.textContent = t('themeDark');
+            if (lightOpt) lightOpt.textContent = t('themeLight');
+            
+            // Sidebar buttons
+            const btnLoadFile1 = document.getElementById('btnLoadFile1');
+            const btnLoadFile2 = document.getElementById('btnLoadFile2');
+            const btnConfigMapping = document.getElementById('btnConfigMapping');
+            const btnLoadTemplate = document.getElementById('btnLoadTemplate');
+            if (btnLoadFile1) btnLoadFile1.innerHTML = t('loadSourceFile');
+            if (btnLoadFile2) btnLoadFile2.innerHTML = t('loadTargetFile');
+            if (btnConfigMapping) btnConfigMapping.innerHTML = t('configureColumns');
+            if (btnLoadTemplate) btnLoadTemplate.innerHTML = t('loadTemplate');
+            
+            // New row panel
+            const newRowTitle = document.querySelector('.new-row-title');
+            const btnCloseNewRow = document.getElementById('btnCloseNewRow');
+            const btnAddNewRowToQueue = document.getElementById('btnAddNewRowToQueue');
+            const btnTransferNewRowDirect = document.getElementById('btnTransferNewRowDirect');
+            if (newRowTitle) newRowTitle.textContent = t('createNewRow');
+            if (btnCloseNewRow) btnCloseNewRow.innerHTML = t('close');
+            if (btnAddNewRowToQueue) btnAddNewRowToQueue.innerHTML = t('toQueue');
+            if (btnTransferNewRowDirect) btnTransferNewRowDirect.innerHTML = t('transferDirectly');
         }
         
         function setLanguage(lang) {
@@ -1881,7 +1916,7 @@
             btnDataExplorer: document.getElementById('btnDataExplorer'),
             
             // Template
-            btnLoadTemplate: document.getElementById('btnLoadTemplate'),
+            btnLoadTemplate: documentElementById('btnLoadTemplate'),
             templateInput: document.getElementById('templateInput'),
             templateInfo: document.getElementById('templateInfo'),
             
@@ -2453,7 +2488,6 @@
             preview.innerHTML = html;
         }
         
-        // ==================== Column Mapping ====================
         function updateMappingInfo() {
             if (!state.file1.workbook || !state.file2.workbook) {
                 if (state.mapping.sourceColumns && state.mapping.sourceColumns.length > 0) {
@@ -2739,181 +2773,6 @@
             if (firstField) firstField.focus();
             
             saveConfig();
-        }
-        
-        // ==================== Search ====================
-        function wildcardToRegex(pattern) {
-            let escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
-            escaped = escaped.replace(/\*/g, '.*');
-            escaped = escaped.replace(/\?/g, '.');
-            return new RegExp('^' + escaped + '$', 'i');
-        }
-        
-        function search() {
-            const query = elements.searchInput.value.trim();
-            if (!query || !state.file1.data.length) return;
-            
-            const hasWildcards = query.includes('*') || query.includes('?');
-            
-            state.searchResults = [];
-            
-            if (hasWildcards) {
-                const regex = wildcardToRegex(query);
-                state.file1.data.forEach((row, rowIndex) => {
-                    for (let col of row) {
-                        if (col && regex.test(String(col))) {
-                            state.searchResults.push({ rowIndex: rowIndex, data: row });
-                            break;
-                        }
-                    }
-                });
-            } else {
-                const lowerQuery = query.toLowerCase();
-                state.file1.data.forEach((row, rowIndex) => {
-                    for (let col of row) {
-                        if (col && String(col).toLowerCase().includes(lowerQuery)) {
-                            state.searchResults.push({ rowIndex: rowIndex, data: row });
-                            break;
-                        }
-                    }
-                });
-            }
-            
-            displaySearchResults(query, hasWildcards);
-        }
-        
-        function displaySearchResults(query, hasWildcards = false) {
-            state.selectedRows = [];
-            
-            if (state.searchResults.length === 0) {
-                elements.searchResultsInfo.innerHTML = `Keine Treffer für "<strong>${escapeHtml(query)}</strong>"`;
-                elements.emptyState.style.display = 'flex';
-                elements.resultsTableContainer.style.display = 'none';
-                elements.transferPanel.classList.add('hidden');
-                return;
-            }
-            
-            const wildcardInfo = hasWildcards ? ' (Platzhalter)' : '';
-            elements.searchResultsInfo.innerHTML = `<strong>${state.searchResults.length}</strong> Treffer für "<strong>${escapeHtml(query)}</strong>"${wildcardInfo}`;
-            
-            elements.emptyState.style.display = 'none';
-            elements.resultsTableContainer.style.display = 'block';
-            
-            let headerHtml = '<tr><th style="width: 40px;"><input type="checkbox" id="selectAllCheckbox" title="Alle auswählen"></th>';
-            state.file1.headers.forEach((header, i) => {
-                headerHtml += `<th>${escapeHtml(header || `Spalte ${getColumnLetter(i + 1)}`)}</th>`;
-            });
-            headerHtml += '</tr>';
-            elements.resultsTableHead.innerHTML = headerHtml;
-            
-            let bodyHtml = '';
-            state.searchResults.forEach((result, i) => {
-                bodyHtml += `<tr data-index="${i}">`;
-                bodyHtml += `<td><input type="checkbox" class="row-checkbox" data-index="${i}" onclick="event.stopPropagation()"></td>`;
-                state.file1.headers.forEach((_, colIndex) => {
-                    const cell = result.data[colIndex];
-                    const cellStr = String(cell ?? '' );
-                    bodyHtml += `<td contenteditable="true" data-row="${i}" data-col="${colIndex}" data-original="${escapeHtml(cellStr)}" onclick="event.stopPropagation()">${escapeHtml(cellStr)}</td>`;
-                });
-                bodyHtml += '</tr>';
-            });
-            elements.resultsTableBody.innerHTML = bodyHtml;
-            
-            document.querySelectorAll('#resultsTableBody td[contenteditable]').forEach(td => {
-                td.addEventListener('input', function() {
-                    const original = this.dataset.original;
-                    const current = this.textContent;
-                    this.classList.toggle('edited', original !== current);
-                });
-                td.addEventListener('focus', function() {
-                    const rowIndex = parseInt(this.dataset.row);
-                    if (!state.selectedRows.includes(rowIndex)) {
-                        toggleRowSelection(rowIndex, true);
-                    }
-                });
-                td.addEventListener('keydown', function(e) {
-                    if (e.key === 'Tab') {
-                        e.preventDefault();
-                        const cells = Array.from(document.querySelectorAll('#resultsTableBody td[contenteditable]'));
-                        const currentIndex = cells.indexOf(this);
-                        const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
-                        if (cells[nextIndex]) {
-                            cells[nextEntity].focus();
-                        }
-                    }
-                });
-            });
-            
-            document.getElementById('selectAllCheckbox').addEventListener('change', (e) => {
-                selectAllRows(e.target.checked);
-            });
-            
-            document.querySelectorAll('.row-checkbox').forEach(cb => {
-                cb.addEventListener('change', (e) => {
-                    toggleRowSelection(parseInt(e.target.dataset.index), e.target.checked);
-                });
-            });
-            
-            toggleRowSelection(0, true);
-            elements.transferPanel.classList.remove('hidden');
-        }
-        
-        function getEditedRowData(rowIndex) {
-            const cells = document.querySelectorAll(`#resultsTableBody td[data-row="${rowIndex}"]`);
-            const data = [];
-            cells.forEach(cell => {
-                const colIndex = parseInt(cell.dataset.col);
-                data[colIndex] = cell.textContent;
-            });
-            return data;
-        }
-        
-        function isRowEdited(rowIndex) {
-            const cells = document.querySelectorAll(`#resultsTableBody td[data-row="${rowIndex}"].edited`);
-            return cells.length > 0;
-        }
-        
-        function toggleRowSelection(index, forceState) {
-            const checkbox = document.querySelector(`.row-checkbox[data-index="${index}"]`);
-            const tr = document.querySelector(`#resultsTableBody tr[data-index="${index}"]`);
-            
-            if (!checkbox || !tr) return;
-            
-            const isSelected = forceState !== undefined ? forceState : !checkbox.checked;
-            checkbox.checked = isSelected;
-            tr.classList.toggle('selected', isSelected);
-            
-            if (isSelected) {
-                if (!state.selectedRows.includes(index)) {
-                    state.selectedRows.push(index);
-                }
-            } else {
-                state.selectedRows = state.selectedRows.filter(i => i !== index);
-            }
-            
-            document.getElementById('selectedCount').textContent = state.selectedRows.length;
-            
-            const allCheckbox = document.getElementById('selectAllCheckbox');
-            const allCheckboxes = document.querySelectorAll('.row-checkbox');
-            const checkedCount = document.querySelectorAll('.row-checkbox:checked').length;
-            if (allCheckbox) {
-                allCheckbox.checked = checkedCount === allCheckboxes.length;
-                allCheckbox.indeterminate = checkedCount > 0 && checkedCount < allCheckboxes.length;
-            }
-            
-            if (state.selectedRows.length > 0) {
-                state.selectedRow = state.searchResults[state.selectedRows[state.selectedRows.length - 1]];
-
-               
-            } else {
-                state.selectedRow = null;
-            }
-        }
-        
-        function selectAllRows(selected) {
-            document.querySelectorAll('.row-checkbox').forEach((cb, i) => {
-                toggleRowSelection(i, selected);
-            });
         }
         
         // ==================== Transfer ====================
@@ -3787,6 +3646,9 @@
             elements.mappingModal.onclick = (e) => { if (e.target === elements.mappingModal) closeMappingModal(); };
             elements.newMonthModal.onclick = (e) => { if (e.target === elements.newMonthModal) closeNewMonthModal(); };
             elements.helpModal.onclick = (e) => { if (e.target === elements.helpModal) elements.helpModal.classList.add('hidden'); };
+            
+            // Übersetze alle Elemente sofort nach dem Initialisieren
+            applyTranslations();
             
             console.log('✅ App initialisiert');
         }
