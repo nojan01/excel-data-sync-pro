@@ -235,15 +235,14 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         }
         
         // Erste leere Zeile finden (ab Zeile 2, da Zeile 1 = Header)
-        // Eine Zeile gilt als leer, wenn Spalte A (Flag) UND die Startspalte leer sind
-        let insertRow = 2;  // Start bei Zeile 2 (nach Header)
+        let insertRow = 2;  // Standard: direkt nach Header
         
         const usedRange = worksheet.usedRange();
         if (usedRange) {
             const endRow = usedRange.endCell().rowNumber();
             
-            // Suche die erste wirklich leere Zeile
-            for (let row = 2; row <= endRow + 1; row++) {
+            // Prüfe ab Zeile 2, ob es Daten gibt
+            for (let row = 2; row <= endRow; row++) {
                 const flagCell = worksheet.cell(row, 1).value();
                 const dataCell = worksheet.cell(row, startColumn).value();
                 
@@ -252,10 +251,12 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                 const dataEmpty = dataCell === undefined || dataCell === null || dataCell === '';
                 
                 if (flagEmpty && dataEmpty) {
+                    // Erste leere Zeile gefunden
                     insertRow = row;
                     break;
                 }
-                insertRow = row + 1;  // Falls keine leere Zeile gefunden, am Ende einfügen
+                // Wenn wir hier sind, ist die Zeile nicht leer - gehe zur nächsten
+                insertRow = row + 1;
             }
         }
         
@@ -301,6 +302,7 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             startRow: insertRow
         };
     } catch (error) {
+        console.error('Fehler beim Einfügen:', error);
         return { success: false, error: error.message };
     }
 });
