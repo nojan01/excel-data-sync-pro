@@ -1627,6 +1627,37 @@
                 duplicates: 'Duplikat(e)',
                 configFirst: 'Bitte zuerst Spalten konfigurieren',
                 
+                // Data Explorer
+                explorerTitle: '📊 Datenexplorer',
+                noFileLoadedExplorer: 'Keine Datei geladen',
+                openFile: '📂 Datei öffnen',
+                fullTextSearch: 'Volltextsuche:',
+                searchPlaceholderExplorer: 'Suchbegriff eingeben...',
+                columns: '👁️ Spalten',
+                exportXlsx: '💾 Als XLSX exportieren',
+                filter: '🔍 Filter',
+                addFilter: '➕ Filter hinzufügen',
+                resetFilters: '🗑️ Filter zurücksetzen',
+                showAll: 'Alle anzeigen',
+                hideAll: 'Alle ausblenden',
+                noDataLoaded: 'Keine Daten geladen.',
+                pleaseLoadFile: '📂 Bitte eine Excel-Datei laden',
+                contains: 'enthält',
+                equals: 'gleich',
+                startsWith: 'beginnt mit',
+                endsWith: 'endet mit',
+                selectColumn: 'Spalte wählen',
+                filterValue: 'Filterwert',
+                
+                // New Month Modal
+                createNewMonthFile: '📅 Neue Monatsdatei erstellen',
+                newMonthDescription: 'Erstellt eine Kopie der Template-Datei unter neuem Namen und setzt sie als Datei 2.',
+                newFilename: 'Neuer Dateiname:',
+                filenamePlaceholder: 'z.B. Vertragsliste_2025-01.xlsx',
+                templateLabel: '💡 Template:',
+                cancel: 'Abbrechen',
+                createAndLoad: '📅 Erstellen & Laden',
+                
                 // Footer
                 copyright: '© Norbert Jander 2025 · v1.0.4'
             },
@@ -1716,6 +1747,37 @@
                 duplicates: 'duplicate(s)',
                 configFirst: 'Please configure columns first',
                 
+                // Data Explorer
+                explorerTitle: '📊 Datenexplorer',
+                noFileLoadedExplorer: 'Keine Datei geladen',
+                openFile: '📂 Datei öffnen',
+                fullTextSearch: 'Volltextsuche:',
+                searchPlaceholderExplorer: 'Suchbegriff eingeben...',
+                columns: '👁️ Spalten',
+                exportXlsx: '💾 Als XLSX exportieren',
+                filter: '🔍 Filter',
+                addFilter: '➕ Filter hinzufügen',
+                resetFilters: '🗑️ Filter zurücksetzen',
+                showAll: 'Alle anzeigen',
+                hideAll: 'Alle ausblenden',
+                noDataLoaded: 'Keine Daten geladen.',
+                pleaseLoadFile: '📂 Bitte eine Excel-Datei laden',
+                contains: 'enthält',
+                equals: 'gleich',
+                startsWith: 'beginnt mit',
+                endsWith: 'endet mit',
+                selectColumn: 'Spalte wählen',
+                filterValue: 'Filterwert',
+                
+                // New Month Modal
+                createNewMonthFile: '📅 Neue Monatsdatei erstellen',
+                newMonthDescription: 'Erstellt eine Kopie der Template-Datei unter neuem Namen und setzt sie als Datei 2.',
+                newFilename: 'Neuer Dateiname:',
+                filenamePlaceholder: 'z.B. Vertragsliste_2025-01.xlsx',
+                templateLabel: '💡 Template:',
+                cancel: 'Abbrechen',
+                createAndLoad: '📅 Erstellen & Laden',
+                
                 // Footer
                 copyright: '© Norbert Jander 2025 · v1.0.4'
             }
@@ -1801,6 +1863,82 @@
             if (btnCloseNewRow) btnCloseNewRow.innerHTML = t('close');
             if (btnAddNewRowToQueue) btnAddNewRowToQueue.innerHTML = t('toQueue');
             if (btnTransferNewRowDirect) btnTransferNewRowDirect.innerHTML = t('transferDirectly');
+            
+            // Data Explorer Modal
+            const explorerTitle = document.querySelector('#dataExplorerModal .modal-title');
+            if (explorerTitle) {
+                const fileName = document.getElementById('explorerFileName');
+                explorerTitle.innerHTML = `${t('explorerTitle')} - <span id="explorerFileName">${fileName ? fileName.textContent : t('noFileLoadedExplorer')}</span>`;
+            }
+            const btnExplorerOpenFile = document.getElementById('btnExplorerOpenFile');
+            const btnToggleColumns = document.getElementById('btnToggleColumns');
+            const btnExplorerExport = document.getElementById('btnExplorerExport');
+            const btnAddExplorerFilter = document.getElementById('btnAddExplorerFilter');
+            const btnClearExplorerFilters = document.getElementById('btnClearExplorerFilters');
+            const btnShowAllColumns = document.getElementById('btnShowAllColumns');
+            const btnHideAllColumns = document.getElementById('btnHideAllColumns');
+            const btnCloseExplorerFooter = document.getElementById('btnCloseExplorerFooter');
+            const explorerResultCount = document.getElementById('explorerResultCount');
+            const explorerSearch = document.getElementById('explorerSearch');
+            
+            if (btnExplorerOpenFile) btnExplorerOpenFile.innerHTML = t('openFile');
+            if (btnToggleColumns) btnToggleColumns.innerHTML = t('columns');
+            if (btnExplorerExport) btnExplorerExport.innerHTML = t('exportXlsx');
+            if (btnAddExplorerFilter) btnAddExplorerFilter.innerHTML = t('addFilter');
+            if (btnClearExplorerFilters) btnClearExplorerFilters.innerHTML = t('resetFilters');
+            if (btnShowAllColumns) btnShowAllColumns.textContent = t('showAll');
+            if (btnHideAllColumns) btnHideAllColumns.textContent = t('hideAll');
+            if (btnCloseExplorerFooter) btnCloseExplorerFooter.textContent = t('close');
+            if (explorerResultCount && (explorerResultCount.textContent === 'Keine Daten geladen.' || explorerResultCount.textContent === 'No data loaded.')) {
+                explorerResultCount.textContent = t('noDataLoaded');
+            }
+            if (explorerSearch) explorerSearch.placeholder = t('searchPlaceholderExplorer');
+            
+            // Explorer filter section label
+            const filterLabel = document.querySelector('#explorerFilterControls > div > span');
+            if (filterLabel) filterLabel.textContent = t('filter');
+            
+            // Explorer worksheet label and full-text search label
+            const worksheetLabels = document.querySelectorAll('#dataExplorerModal .transfer-field label');
+            worksheetLabels.forEach(label => {
+                if (label.textContent === 'Arbeitsblatt:' || label.textContent === 'Worksheet:') {
+                    label.textContent = t('worksheet');
+                }
+                if (label.textContent === 'Volltextsuche:' || label.textContent === 'Full-text search:') {
+                    label.textContent = t('fullTextSearch');
+                }
+            });
+            
+            // Explorer filter operator options
+            document.querySelectorAll('#explorerFilters .filter-operator').forEach(select => {
+                const options = select.querySelectorAll('option');
+                options.forEach(opt => {
+                    if (opt.value === 'contains') opt.textContent = t('contains');
+                    if (opt.value === 'equals') opt.textContent = t('equals');
+                    if (opt.value === 'startsWith') opt.textContent = t('startsWith');
+                    if (opt.value === 'endsWith') opt.textContent = t('endsWith');
+                });
+            });
+            
+            // New Month Modal
+            const newMonthTitle = document.querySelector('#newMonthModal .modal-title');
+            const newMonthDesc = document.querySelector('#newMonthModal .modal-body > p:first-of-type');
+            const newMonthLabel = document.querySelector('#newMonthModal .config-label');
+            const newMonthFilename = document.getElementById('newMonthFilename');
+            const newMonthTemplateLabel = document.querySelector('#newMonthModal .modal-body > p:last-of-type');
+            const btnCancelNewMonth = document.getElementById('btnCancelNewMonth');
+            const btnConfirmNewMonth = document.getElementById('btnConfirmNewMonth');
+            
+            if (newMonthTitle) newMonthTitle.textContent = t('createNewMonthFile');
+            if (newMonthDesc) newMonthDesc.textContent = t('newMonthDescription');
+            if (newMonthLabel) newMonthLabel.textContent = t('newFilename');
+            if (newMonthFilename) newMonthFilename.placeholder = t('filenamePlaceholder');
+            if (newMonthTemplateLabel) {
+                const templateName = document.getElementById('newMonthTemplateName');
+                newMonthTemplateLabel.innerHTML = `${t('templateLabel')} <strong id="newMonthTemplateName">${templateName ? templateName.textContent : '-'}</strong>`;
+            }
+            if (btnCancelNewMonth) btnCancelNewMonth.textContent = t('cancel');
+            if (btnConfirmNewMonth) btnConfirmNewMonth.innerHTML = t('createAndLoad');
         }
         
         function setLanguage(lang) {
@@ -3601,7 +3739,13 @@
             if (!filePath) return;
             try {
                 const result = await window.electronAPI.readExcelFile(filePath);
-                if (result.success) { state.template.name = result.fileName; state.template.filePath = filePath; elements.templateInfo.textContent = result.fileName; elements.btnNewMonth.disabled = false; showStatus(elements.transferStatus, `✓ Template geladen: ${result.fileName}`, 'success'); }
+                if (result.success) { 
+                    state.template.name = result.fileName; 
+                    state.template.filePath = filePath; 
+                    elements.templateInfo.textContent = result.fileName; 
+                    elements.btnNewMonth.disabled = false; 
+                    showStatus(elements.transferStatus, `✓ Template geladen: ${result.fileName}`, 'success'); 
+                }
             } catch (e) { showStatus(elements.transferStatus, `Fehler: ${e.message}`, 'error'); }
         }
         
