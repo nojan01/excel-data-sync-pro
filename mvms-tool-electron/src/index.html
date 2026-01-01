@@ -1916,7 +1916,7 @@
             btnDataExplorer: document.getElementById('btnDataExplorer'),
             
             // Template
-            btnLoadTemplate: documentElementById('btnLoadTemplate'),
+            btnLoadTemplate: document.getElementById('btnLoadTemplate'),
             templateInput: document.getElementById('templateInput'),
             templateInfo: document.getElementById('templateInfo'),
             
@@ -2813,11 +2813,10 @@
                     
                     state.transferQueue.push({
                         data: [...rowData],
-                        rowIndex: row.rowIndex,
                         flag: flag,
                         comment: comment,
                         checkValue: checkValue,
-                        wasEdited: isRowEdited(rowIndex)
+                        isManual: true
                     });
                 }
                 
