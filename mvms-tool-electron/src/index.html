@@ -1525,7 +1525,7 @@
             // Mapping
             btnConfigMapping: document.getElementById('btnConfigMapping'),
             mappingInfo: document.getElementById('mappingInfo'),
-            mappingModal: document.getElementById('mappingModal'),
+            mappingModal: document.getElementById('mappingModal"),
             mappingList: document.getElementById('mappingList'),
             targetStartColumn: document.getElementById('targetStartColumn'),
             
@@ -2359,10 +2359,41 @@
                 return;
             }
             
+            // Im Electron-Modus: Zur Warteschlange hinzufügen und direkt übertragen
+            if (isElectron && state.file2.filePath) {
+                const checkValue = data[state.mapping.duplicateCheckColumn] || '';
+                
+                state.transferQueue.push({
+                    data: data,
+                    flag: flag,
+                    comment: comment,
+                    checkValue: checkValue,
+                    isManual: true
+                });
+                
+                updateQueueDisplay();
+                
+                // Direkt übertragen
+                transferQueueToExcel().then(() => {
+                    // Felder leeren für nächste Eingabe
+                    state.mapping.sourceColumns.forEach((colIndex, i) => {
+                        const field = document.getElementById(`newRowField_${i}`);
+                        if (field) field.value = '';
+                    });
+                    elements.newRowComment.value = '';
+                    
+                    const firstField = document.getElementById('newRowField_0');
+                    if (firstField) firstField.focus();
+                });
+                
+                return;
+            }
+            
+            // Browser-Modus: Original-Logik
             const newRow = new Array(Math.max(
                 state.file2.headers.length,
                 state.mapping.targetStartColumn + state.mapping.sourceColumns.length
-            )).fill('');;
+            )).fill('');
             
             newRow[0] = flag;
             newRow[1] = comment;
@@ -2495,7 +2526,7 @@
                         const currentIndex = cells.indexOf(this);
                         const nextIndex = e.shiftKey ? currentIndex - 1 : currentIndex + 1;
                         if (cells[nextIndex]) {
-                            cells[nextElement].focus();
+                            cells[nextIndex].focus();
                         }
                     }
                 });
