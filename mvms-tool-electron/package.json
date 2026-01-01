@@ -28,7 +28,9 @@
       "target": [
         {
           "target": "portable",
-          "arch": ["x64"]
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "assets/icon.ico"
@@ -41,9 +43,10 @@
   "devDependencies": {
     "electron": "^39.2.7",
     "electron-builder": "^26.0.12",
-    "electron-reload": "^2.0.0-alpha.1"
+    "electron-reload": "^2.0.0-alpha.1",
+    "eslint": "^9.39.2"
   },
   "dependencies": {
-    "exceljs": "^4.4.0"
+    "xlsx-populate": "^1.21.0"
   }
 }

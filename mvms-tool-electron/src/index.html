@@ -6,7 +6,7 @@
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';">
     <title>MVMS-Vertragslisten aktualisieren</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='12' fill='%231565C0'/><text x='50' y='32' font-size='18' font-weight='bold' text-anchor='middle' fill='white'>MVMS</text><g transform='translate(50,62) scale(0.9)'><path d='M0,-30 L3,-25 L3,20 L0,28 L-3,20 L-3,-25 Z' fill='white'/><path d='M3,0 L38,15 L35,18 L3,8 Z' fill='white'/><path d='M-3,0 L-38,15 L-35,18 L-3,8 Z' fill='white'/><path d='M3,-18 L18,-12 L16,-10 L3,-14 Z' fill='white'/><path d='M-3,-18 L-18,-12 L-16,-10 L-3,-14 Z' fill='white'/><path d='M2,18 L5,10 L5,20 L2,24 Z' fill='white'/><path d='M-2,18 L-5,10 L-5,20 L-2,24 Z' fill='white'/></g></svg>">
-    <!-- Electron-Modus: Excel wird via Node.js ExcelJS geladen (kein Browser-JS nötig) -->
+    <!-- Electron-Modus: Excel wird via Node.js xlsx-populate geladen (erhält Formatierung) -->
     <style>
         :root {
             --primary: #1565C0;
@@ -1479,8 +1479,6 @@
             file2: {
                 name: null,
                 workbook: null,
-                excelWorkbook: null,
-                rawArrayBuffer: null,
                 sheets: [],
                 selectedSheet: null,
                 data: [],
@@ -1955,33 +1953,6 @@
                 fileState.workbook = workbook;
                 fileState.sheets = workbook.SheetNames;
                 
-                // Für Datei 2: ExcelJS Workbook laden (erhält Formatierung)
-                if (fileNum === 2 && typeof ExcelJS !== 'undefined') {
-                    try {
-                        // Base64 zu ArrayBuffer konvertieren
-                        const binaryString = atob(base64Data);
-                        const bytes = new Uint8Array(binaryString.length);
-                        for (let i = 0; i < binaryString.length; i++) {
-                            bytes[i] = binaryString.charCodeAt(i);
-                        }
-                        const arrayBuffer = bytes.buffer;
-                        
-                        fileState.rawArrayBuffer = arrayBuffer;
-                        
-                        const excelWorkbook = new ExcelJS.Workbook();
-                        await excelWorkbook.xlsx.load(arrayBuffer);
-                        fileState.excelWorkbook = excelWorkbook;
-                        
-                        console.log('✓ ExcelJS Workbook aus Konfig geladen:');
-                        excelWorkbook.eachSheet((worksheet, sheetId) => {
-                            console.log(`  Sheet ${sheetId}: "${worksheet.name}" - ${worksheet.rowCount} Zeilen`);
-                        });
-                    } catch (excelErr) {
-                        console.error('ExcelJS Fehler beim Laden aus Konfig:', excelErr);
-                        fileState.excelWorkbook = null;
-                    }
-                }
-                
                 // Update UI
                 infoEl.textContent = fileName || `Datei ${fileNum} (aus Konfig)`;
                 infoEl.classList.add('loaded');
@@ -2041,33 +2012,6 @@
                     fileState.name = file.name;
                     fileState.workbook = workbook;
                     fileState.sheets = workbook.SheetNames;
-                    
-                    // Für Datei 2: ExcelJS Workbook laden (erhält Formatierung)
-                    if (fileNum === 2) {
-                        fileState.rawArrayBuffer = arrayBuffer.slice(0); // Kopie speichern
-                        
-                        // Prüfen ob ExcelJS geladen ist
-                        if (typeof ExcelJS === 'undefined') {
-                            console.error('ExcelJS nicht geladen! CDN nicht erreichbar?');
-                            fileState.excelWorkbook = null;
-                        } else {
-                            try {
-                                const excelWorkbook = new ExcelJS.Workbook();
-                                await excelWorkbook.xlsx.load(arrayBuffer);
-                                fileState.excelWorkbook = excelWorkbook;
-                                
-                                // Debug: Alle Worksheets und deren Eigenschaften loggen
-                                console.log('✓ ExcelJS Workbook geladen:');
-                                excelWorkbook.eachSheet((worksheet, sheetId) => {
-                                    console.log(`  Sheet ${sheetId}: "${worksheet.name}" - ${worksheet.rowCount} Zeilen, ${worksheet.columnCount} Spalten`);
-                                });
-                            } catch (excelErr) {
-                                console.error('ExcelJS Fehler beim Laden:', excelErr);
-                                console.warn('Fallback auf SheetJS (Formatierung wird beim Speichern verloren gehen)');
-                                fileState.excelWorkbook = null;
-                            }
-                        }
-                    }
                     
                     // Update UI
                     infoEl.textContent = file.name;
@@ -2518,7 +2462,7 @@
                 bodyHtml += `<td><input type="checkbox" class="row-checkbox" data-index="${i}" onclick="event.stopPropagation()"></td>`;
                 state.file1.headers.forEach((_, colIndex) => {
                     const cell = result.data[colIndex];
-                    const cellStr = String(cell ?? '');
+                    const cellStr = String(cell ?? '' );
                     bodyHtml += `<td contenteditable="true" data-row="${i}" data-col="${colIndex}" data-original="${escapeHtml(cellStr)}" onclick="event.stopPropagation()">${escapeHtml(cellStr)}</td>`;
                 });
                 bodyHtml += '</tr>';
@@ -2698,7 +2642,8 @@
             saveConfig();
             
             let message = `✓ ${transferredCount} Zeile(n) direkt übertragen!`;
-            // Fix: Tippfehler nextString -> nextIndex
+
+// Fix: Tippfehler nextString -> nextIndex
             let status = 'success';
             if (editedCount > 0) {
                 message += ` (${editedCount} bearbeitet ✏️)`;
@@ -2822,7 +2767,7 @@
                         <span style="background: var(--primary); color: white; padding: 2px 8px; border-radius: 3px; font-weight: bold;">${item.flag}</span>
                         ${editedBadge}
                         <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(String(item.data))}">${escapeHtml(preview)}</span>
-                        ${item.comment ? `<span style="color: var(--text-muted); font-size: 12px;" title="${escapeHtml(item.comment)}">${escapeHtml(item.comment.substring(0, 20))}</span>` : ''}
+                        ${item.comment ? `<span style="color: var(--text-muted); font-size: 12px;" title="${escapeHtml(item.comment)}">${escapeHtml(item.comment.substring(0, 20))}</span>` : ''}}
                         <button class="btn btn-secondary btn-sm" onclick="removeFromQueue(${index})" title="Entfernen">✕</button>
                     </div>`;
             });
@@ -2894,7 +2839,7 @@
             const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
             const monthStr = nextMonth.toISOString().substring(0, 7);
             
-            const templateBase = state.template.name.replace(/\.xlsx?$/i, '');
+            const templateBase = state.template.name.replace(/\.xlsx?$/i, '' );
             const suggestedName = `${templateBase}_${monthStr}.xlsx`;
             
             elements.newMonthFilename.value = suggestedName;
@@ -2930,12 +2875,12 @@
                     
                     if (!savePath) return;
                     
-                    // Template kopieren - sheetName kann null sein, main.js nimmt dann das erste Sheet
+                    // Template nur kopieren (keepHeader: false = nur binäre Kopie)
                     const result = await window.electronAPI.copyExcelFile({
                         sourcePath: state.template.filePath,
                         targetPath: savePath,
-                        sheetName: null, // null = erstes verfügbares Sheet verwenden
-                        keepHeader: true
+                        sheetName: null,
+                        keepHeader: false
                     });
                     
                     if (!result.success) {
@@ -3100,7 +3045,7 @@
                     if (searchTerm) {
                         let found = false;
                         for (const cell of row) {
-                            const cellStr = String(cell ?? '');
+                            const cellStr = String(cell ?? '' );
                             if (hasWildcards) { if (searchRegex.test(cellStr)) { found = true; break; } }
                             else { if (cellStr.toLowerCase().includes(lowerSearchTerm)) { found = true; break; } }
                         }
@@ -3258,10 +3203,70 @@
         
         async function applyLoadedConfig(config) {
             if (config.mapping) state.mapping = config.mapping;
-            if (config.file1Path) { try { const result = await window.electronAPI.readExcelFile(config.file1Path); if (result.success) { state.file1.name = result.fileName; state.file1.filePath = result.filePath; state.file1.sheets = result.sheets; state.file1.workbook = { SheetNames: result.sheets }; elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join(''); elements.selectSheet1.disabled = false; elements.file1Info.textContent = `✓ ${result.fileName}`; elements.file1Info.classList.add('loaded'); const sheetToSelect = config.file1SheetName && result.sheets.includes(config.file1SheetName) ? config.file1SheetName : result.sheets[0]; elements.selectSheet1.value = sheetToSelect; await loadSheet1Electron(sheetToSelect); } } catch (e) { console.warn('Quelldatei konnte nicht geladen werden:', e); elements.file1Info.textContent = `⚠️ ${config.file1Name || 'Datei nicht gefunden'}`; elements.file1Info.style.color = 'var(--warning)'; } }
-            if (config.file2Path) { try { const result = await window.electronAPI.readExcelFile(config.file2Path); if (result.success) { state.file2.name = result.fileName; state.file2.filePath = result.filePath; state.file2.sheets = result.sheets; state.file2.workbook = { SheetNames: result.sheets }; elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join(''); elements.selectSheet2.disabled = false; elements.file2Info.textContent = `✓ ${result.fileName}`; elements.file2Info.classList.add('loaded'); const sheetToSelect = config.file2SheetName && result.sheets.includes(config.file2SheetName) ? config.file2SheetName : result.sheets[0]; elements.selectSheet2.value = sheetToSelect; await loadSheet2Electron(sheetToSelect); } } catch (e) { console.warn('Zieldatei konnte nicht geladen werden:', e); elements.file2Info.textContent = `⚠️ ${config.file2Name || 'Datei nicht gefunden'}`; elements.file2Info.style.color = 'var(--warning)'; } }
-            if (config.templatePath) { try { const result = await window.electronAPI.readExcelFile(config.templatePath); if (result.success) { state.template.name = result.fileName; state.template.filePath = config.templatePath; elements.templateInfo.textContent = result.fileName; elements.btnNewMonth.disabled = false; } } catch (e) { elements.templateInfo.textContent = `⚠️ ${config.templateName || 'Template nicht gefunden'}`; elements.templateInfo.style.color = 'var(--warning)'; } }
-            else if (config.templateData && config.templateName) { state.template.data = config.templateData; state.template.name = config.templateName; elements.templateInfo.textContent = config.templateName; elements.btnNewMonth.disabled = false; }
+            if (config.file1Path) { 
+                try { 
+                    const result = await window.electronAPI.readExcelFile(config.file1Path); 
+                    if (result.success) { 
+                        state.file1.name = result.fileName; 
+                        state.file1.filePath = result.filePath; 
+                        state.file1.sheets = result.sheets; 
+                        state.file1.workbook = { SheetNames: result.sheets }; 
+                        elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join(''); 
+                        elements.selectSheet1.disabled = false; 
+                        elements.file1Info.textContent = `✓ ${result.fileName}`; 
+                        elements.file1Info.classList.add('loaded'); 
+                        const sheetToSelect = config.file1SheetName && result.sheets.includes(config.file1SheetName) ? config.file1SheetName : result.sheets[0]; 
+                        elements.selectSheet1.value = sheetToSelect; 
+                        await loadSheet1Electron(sheetToSelect); 
+                    } 
+                } catch (e) { 
+                    console.warn('Quelldatei konnte nicht geladen werden:', e); 
+                    elements.file1Info.textContent = `⚠️ ${config.file1Name || 'Datei nicht gefunden'}`; 
+                    elements.file1Info.style.color = 'var(--warning)'; 
+                } 
+            }
+            if (config.file2Path) { 
+                try { 
+                    const result = await window.electronAPI.readExcelFile(config.file2Path); 
+                    if (result.success) { 
+                        state.file2.name = result.fileName; 
+                        state.file2.filePath = result.filePath; 
+                        state.file2.sheets = result.sheets; 
+                        state.file2.workbook = { SheetNames: result.sheets }; 
+                        elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join(''); 
+                        elements.selectSheet2.disabled = false; 
+                        elements.file2Info.textContent = `✓ ${result.fileName}`; 
+                        elements.file2Info.classList.add('loaded'); 
+                        const sheetToSelect = config.file2SheetName && result.sheets.includes(config.file2SheetName) ? config.file2SheetName : result.sheets[0]; 
+                        elements.selectSheet2.value = sheetToSelect; 
+                        await loadSheet2Electron(sheetToSelect); 
+                    } 
+                } catch (e) { 
+                    console.warn('Zieldatei konnte nicht geladen werden:', e); 
+                    elements.file2Info.textContent = `⚠️ ${config.file2Name || 'Datei nicht gefunden'}`; 
+                    elements.file2Info.style.color = 'var(--warning)'; 
+                } 
+            }
+            if (config.templatePath) { 
+                try { 
+                    const result = await window.electronAPI.readExcelFile(config.templatePath); 
+                    if (result.success) { 
+                        state.template.name = result.fileName; 
+                        state.template.filePath = config.templatePath; 
+                        elements.templateInfo.textContent = result.fileName; 
+                        elements.btnNewMonth.disabled = false; 
+                    } 
+                } catch (e) { 
+                    elements.templateInfo.textContent = `⚠️ ${config.templateName || 'Template nicht gefunden'}`; 
+                    elements.templateInfo.style.color = 'var(--warning)'; 
+                } 
+            }
+            else if (config.templateData && config.templateName) { 
+                state.template.data = config.templateData; 
+                state.template.name = config.templateName; 
+                elements.templateInfo.textContent = config.templateName; 
+                elements.btnNewMonth.disabled = false; 
+            }
             updateMappingInfo(); updateMappingPreview(); checkReadyState(); saveConfig();
         }
         
@@ -3284,7 +3289,6 @@
                 showStatus(elements.transferStatus, `❌ Fehler: ${result.error}`, 'error'); 
             }
         }
-        
         // ==================== Initialize App ====================
         async function initApp() {
             try { await initDB(); } catch (e) { console.warn('IndexedDB nicht verfügbar'); }

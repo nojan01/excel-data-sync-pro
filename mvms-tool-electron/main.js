@@ -1,6 +1,6 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
-const ExcelJS = require('exceljs');
+const XlsxPopulate = require('xlsx-populate');
 const fs = require('fs');
 
 let mainWindow = null;
@@ -148,16 +148,14 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
 });
 
 // ============================================
-// EXCEL OPERATIONEN
+// EXCEL OPERATIONEN (xlsx-populate - erhält Formatierung!)
 // ============================================
 
 // Excel-Datei lesen
 ipcMain.handle('excel:readFile', async (event, filePath) => {
     try {
-        const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.readFile(filePath);
-        
-        const sheets = workbook.worksheets.map(ws => ws.name);
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const sheets = workbook.sheets().map(ws => ws.name());
         
         return {
             success: true,
@@ -173,26 +171,40 @@ ipcMain.handle('excel:readFile', async (event, filePath) => {
 // Sheet-Daten lesen
 ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
     try {
-        const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.readFile(filePath);
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const worksheet = workbook.sheet(sheetName);
         
-        const worksheet = workbook.getWorksheet(sheetName);
         if (!worksheet) {
             return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
         }
         
+        // Benutzte Range ermitteln
+        const usedRange = worksheet.usedRange();
+        if (!usedRange) {
+            return { success: true, headers: [], data: [] };
+        }
+        
+        const startRow = usedRange.startCell().rowNumber();
+        const endRow = usedRange.endCell().rowNumber();
+        const startCol = usedRange.startCell().columnNumber();
+        const endCol = usedRange.endCell().columnNumber();
+        
         const data = [];
         const headers = [];
         
-        worksheet.eachRow((row, rowNumber) => {
+        for (let row = startRow; row <= endRow; row++) {
             const rowData = [];
-            row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
-                // Header-Zeile
-                if (rowNumber === 1) {
-                    headers[colNumber - 1] = cell.text || `Spalte ${colNumber}`;
+            for (let col = startCol; col <= endCol; col++) {
+                const cell = worksheet.cell(row, col);
+                const value = cell.value();
+                const textValue = value !== undefined && value !== null ? String(value) : '';
+                
+                // Header-Zeile (erste Zeile)
+                if (row === startRow) {
+                    headers[col - 1] = textValue || `Spalte ${col}`;
                 }
-                rowData[colNumber - 1] = cell.text || '';
-            });
+                rowData[col - 1] = textValue;
+            }
             
             // Zeilen auffuellen bis zur maximalen Spaltenanzahl
             while (rowData.length < headers.length) {
@@ -200,7 +212,7 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
             }
             
             data.push(rowData);
-        });
+        }
         
         return {
             success: true,
@@ -212,45 +224,36 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
     }
 });
 
-// Zeilen in Excel einfuegen (MIT Formatierungserhalt!)
+// Zeilen in Excel einfuegen (MIT Formatierungserhalt dank xlsx-populate!)
 ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, startColumn }) => {
     try {
-        const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.readFile(filePath);
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const worksheet = workbook.sheet(sheetName);
         
-        const worksheet = workbook.getWorksheet(sheetName);
         if (!worksheet) {
             return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
         }
         
         // Letzte nicht-leere Zeile finden
+        const usedRange = worksheet.usedRange();
         let lastRow = 1;
-        worksheet.eachRow((row, rowNumber) => {
-            let isEmpty = true;
-            row.eachCell(cell => {
-                if (cell.value !== null && cell.value !== '') {
-                    isEmpty = false;
-                }
-            });
-            if (!isEmpty) {
-                lastRow = rowNumber;
-            }
-        });
+        if (usedRange) {
+            lastRow = usedRange.endCell().rowNumber();
+        }
         
         // Neue Zeilen einfuegen
         let insertedCount = 0;
         for (const row of rows) {
             const newRowNum = lastRow + insertedCount + 1;
-            const newRow = worksheet.getRow(newRowNum);
             
             // Flag in Spalte A
             if (row.flag && row.flag !== 'leer') {
-                newRow.getCell(1).value = row.flag;
+                worksheet.cell(newRowNum, 1).value(row.flag);
             }
             
             // Kommentar in Spalte B
             if (row.comment) {
-                newRow.getCell(2).value = row.comment;
+                worksheet.cell(newRowNum, 2).value(row.comment);
             }
             
             // Daten ab Startspalte - row.data ist ein Objekt mit Index als Key
@@ -260,17 +263,16 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                     const index = parseInt(key);
                     const value = row.data[key];
                     if (value !== null && value !== undefined && value !== '') {
-                        newRow.getCell(startColumn + index).value = value;
+                        worksheet.cell(newRowNum, startColumn + index).value(value);
                     }
                 });
             }
             
-            newRow.commit();
             insertedCount++;
         }
         
-        // Speichern
-        await workbook.xlsx.writeFile(filePath);
+        // Speichern (xlsx-populate erhält die originale Formatierung!)
+        await workbook.toFileAsync(filePath);
         
         return { 
             success: true, 
@@ -282,36 +284,54 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
     }
 });
 
-// Datei kopieren (fuer "Neuer Monat")
+// Datei kopieren (fuer "Neuer Monat") - BINÄRE KOPIE erhält 100% Formatierung!
 ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetName, keepHeader }) => {
     try {
-        const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.readFile(sourcePath);
+        // Wenn keepHeader false ist oder nicht gesetzt, einfach binär kopieren
+        // Das erhält 100% der Formatierung!
+        if (!keepHeader) {
+            fs.copyFileSync(sourcePath, targetPath);
+            return { success: true, message: `Datei kopiert: ${targetPath}` };
+        }
+        
+        // Wenn keepHeader true ist, müssen wir die Daten löschen
+        // Aber zuerst: Binär kopieren, dann nur die Werte löschen
+        fs.copyFileSync(sourcePath, targetPath);
+        
+        // Jetzt die kopierte Datei öffnen und nur die Datenwerte löschen
+        const workbook = await XlsxPopulate.fromFileAsync(targetPath);
         
         // Wenn sheetName angegeben und existiert, nutze dieses Sheet
         // Ansonsten nimm das erste Sheet
         let worksheet = null;
         if (sheetName) {
-            worksheet = workbook.getWorksheet(sheetName);
+            worksheet = workbook.sheet(sheetName);
         }
         if (!worksheet) {
             // Erstes verfuegbares Sheet nehmen
-            worksheet = workbook.worksheets[0];
+            worksheet = workbook.sheets()[0];
         }
         
         if (!worksheet) {
             return { success: false, error: 'Keine Worksheets in der Template-Datei gefunden' };
         }
         
-        // Zeilen loeschen (ausser Header) wenn gewuenscht
-        if (keepHeader) {
-            const rowCount = worksheet.rowCount;
-            for (let i = rowCount; i > 1; i--) {
-                worksheet.spliceRows(i, 1);
+        // Nur die Werte ab Zeile 2 löschen (Header in Zeile 1 bleibt)
+        // Formatierung bleibt erhalten!
+        const usedRange = worksheet.usedRange();
+        if (usedRange) {
+            const endRow = usedRange.endCell().rowNumber();
+            const endCol = usedRange.endCell().columnNumber();
+            
+            // Alle Datenwerte ab Zeile 2 löschen
+            for (let row = 2; row <= endRow; row++) {
+                for (let col = 1; col <= endCol; col++) {
+                    worksheet.cell(row, col).value(undefined);
+                }
             }
         }
         
-        await workbook.xlsx.writeFile(targetPath);
+        await workbook.toFileAsync(targetPath);
         
         return { success: true, message: `Datei erstellt: ${targetPath}` };
     } catch (error) {
@@ -322,31 +342,27 @@ ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetNa
 // Daten exportieren (fuer Datenexplorer)
 ipcMain.handle('excel:exportData', async (event, { filePath, sheetName, headers, rows }) => {
     try {
-        const workbook = new ExcelJS.Workbook();
-        const worksheet = workbook.addWorksheet(sheetName.substring(0, 31));
+        // Neue leere Workbook erstellen
+        const workbook = await XlsxPopulate.fromBlankAsync();
+        
+        // Erstes Sheet umbenennen
+        const worksheet = workbook.sheet(0);
+        worksheet.name(sheetName.substring(0, 31));
         
         // Header-Zeile
-        worksheet.addRow(headers);
+        headers.forEach((header, colIndex) => {
+            worksheet.cell(1, colIndex + 1).value(header);
+        });
         
         // Daten-Zeilen
-        rows.forEach(row => {
-            const rowValues = headers.map(h => row[h] || '');
-            worksheet.addRow(rowValues);
-        });
-        
-        // Spaltenbreiten automatisch anpassen
-        worksheet.columns.forEach((column, i) => {
-            let maxLength = headers[i] ? headers[i].length : 10;
-            rows.forEach(row => {
-                const cellValue = String(row[headers[i]] || '');
-                if (cellValue.length > maxLength) {
-                    maxLength = Math.min(cellValue.length, 50);
-                }
+        rows.forEach((row, rowIndex) => {
+            headers.forEach((header, colIndex) => {
+                const value = row[header] || '';
+                worksheet.cell(rowIndex + 2, colIndex + 1).value(value);
             });
-            column.width = maxLength + 2;
         });
         
-        await workbook.xlsx.writeFile(filePath);
+        await workbook.toFileAsync(filePath);
         
         return { success: true, message: `Export erstellt: ${filePath}` };
     } catch (error) {
