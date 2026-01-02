@@ -192,12 +192,98 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
         const data = [];
         const headers = [];
         
+        // Hilfsfunktion: Excel-Datum zu lesbarem String konvertieren
+        function excelDateToString(excelDate) {
+            // Excel-Datum: Tage seit 1.1.1900 (mit falschem Schaltjahr 1900)
+            // JavaScript: Millisekunden seit 1.1.1970
+            const excelEpoch = new Date(1899, 11, 30); // 30.12.1899
+            const jsDate = new Date(excelEpoch.getTime() + excelDate * 86400000);
+            
+            // Prüfen ob es ein reines Datum oder Datum mit Uhrzeit ist
+            const hasTime = (excelDate % 1) !== 0;
+            
+            if (hasTime) {
+                // Datum mit Uhrzeit
+                const day = String(jsDate.getDate()).padStart(2, '0');
+                const month = String(jsDate.getMonth() + 1).padStart(2, '0');
+                const year = jsDate.getFullYear();
+                const hours = String(jsDate.getHours()).padStart(2, '0');
+                const minutes = String(jsDate.getMinutes()).padStart(2, '0');
+                return `${day}.${month}.${year} ${hours}:${minutes}`;
+            } else {
+                // Nur Datum
+                const day = String(jsDate.getDate()).padStart(2, '0');
+                const month = String(jsDate.getMonth() + 1).padStart(2, '0');
+                const year = jsDate.getFullYear();
+                return `${day}.${month}.${year}`;
+            }
+        }
+        
+        // Hilfsfunktion: Prüfen ob ein Zellwert ein Datum ist
+        function isExcelDate(cell, value) {
+            if (typeof value !== 'number') return false;
+            
+            // Prüfe das Zahlenformat der Zelle
+            const numFmt = cell.style('numberFormat');
+            if (numFmt) {
+                // Typische Datumsformate erkennen
+                const datePatterns = [
+                    /d+[\/\-.]m+[\/\-.]y+/i,  // d.m.y, d/m/y, d-m-y
+                    /m+[\/\-.]d+[\/\-.]y+/i,  // m/d/y (US-Format)
+                    /y+[\/\-.]m+[\/\-.]d+/i,  // y-m-d (ISO-Format)
+                    /\[.*?\]dd/i,              // Benutzerdefinierte Formate
+                    /^d+$/i,                   // "d" oder "dd"
+                    /mmm/i,                    // Monatsname (mmm, mmmm)
+                    /^[$-F800]dddd/,           // Locale-spezifische Formate
+                ];
+                
+                for (const pattern of datePatterns) {
+                    if (pattern.test(numFmt)) {
+                        return true;
+                    }
+                }
+            }
+            
+            // Heuristik: Zahlen im typischen Excel-Datumsbereich (1900-2100)
+            // Excel-Datum 1 = 1.1.1900, 73050 ? 1.1.2100
+            if (value >= 1 && value <= 73050) {
+                // Könnte ein Datum sein - prüfe auf vernünftigen Wert
+                // Aber nur wenn kein offensichtliches Zahlenformat
+                if (numFmt && /^[#0,]+(\.[#0]+)?$/.test(numFmt)) {
+                    return false; // Explizites Zahlenformat
+                }
+                if (numFmt && numFmt.indexOf('%') !== -1) {
+                    return false; // Prozentformat
+                }
+                if (numFmt && numFmt.indexOf('€') !== -1) {
+                    return false; // Währungsformat
+                }
+            }
+            
+            return false;
+        }
+        
         for (let row = startRow; row <= endRow; row++) {
             const rowData = [];
             for (let col = startCol; col <= endCol; col++) {
                 const cell = worksheet.cell(row, col);
                 const value = cell.value();
-                const textValue = value !== undefined && value !== null ? String(value) : '';
+                
+                let textValue = '';
+                if (value !== undefined && value !== null) {
+                    // Prüfe ob es ein Datum ist
+                    if (isExcelDate(cell, value)) {
+                        textValue = excelDateToString(value);
+                    } else if (value instanceof Date) {
+                        // Falls xlsx-populate bereits ein Date-Objekt zurückgibt
+                        const day = String(value.getDate()).padStart(2, '0');
+                        const month = String(value.getMonth() + 1).padStart(2, '0');
+                        const year = value.getFullYear();
+                        textValue = `${day}.${month}.${year}`;
+                    } else {
+                        textValue = String(value);
+                    }
+                }
                 
                 // Header-Zeile (erste Zeile)
                 if (row === startRow) {
@@ -232,6 +318,79 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         
         if (!worksheet) {
             return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
+        }
+        
+        // Hilfsfunktion: Deutsches Datum zu Excel-Datum konvertieren
+        function parseGermanDateToExcel(dateStr) {
+            if (!dateStr || typeof dateStr !== 'string') return null;
+            
+            // Deutsches Datum: dd.mm.yyyy oder dd.mm.yyyy hh:mm
+            const dateTimeMatch = dateStr.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})$/);
+            const dateMatch = dateStr.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+            
+            if (dateTimeMatch) {
+                const day = parseInt(dateTimeMatch[1], 10);
+                const month = parseInt(dateTimeMatch[2], 10);
+                const year = parseInt(dateTimeMatch[3], 10);
+                const hours = parseInt(dateTimeMatch[4], 10);
+                const minutes = parseInt(dateTimeMatch[5], 10);
+                
+                // Excel-Datum berechnen
+                const jsDate = new Date(year, month - 1, day, hours, minutes);
+                const excelEpoch = new Date(1899, 11, 30);
+                const excelDate = (jsDate.getTime() - excelEpoch.getTime()) / 86400000;
+                return excelDate;
+            } else if (dateMatch) {
+                const day = parseInt(dateMatch[1], 10);
+                const month = parseInt(dateMatch[2], 10);
+                const year = parseInt(dateMatch[3], 10);
+                
+                // Excel-Datum berechnen
+                const jsDate = new Date(year, month - 1, day);
+                const excelEpoch = new Date(1899, 11, 30);
+                const excelDate = Math.floor((jsDate.getTime() - excelEpoch.getTime()) / 86400000);
+                return excelDate;
+            }
+            
+            return null;
+        }
+        
+        // Hilfsfunktion: Wert intelligent konvertieren
+        function convertValue(value, targetCell) {
+            if (value === null || value === undefined || value === '') {
+                return value;
+            }
+            
+            // Prüfe ob es ein deutsches Datum ist
+            const excelDate = parseGermanDateToExcel(value);
+            if (excelDate !== null) {
+                return excelDate;
+            }
+            
+            // Prüfe ob es eine Zahl ist (mit deutschen Dezimaltrennzeichen)
+            if (typeof value === 'string') {
+                // Deutsche Zahlen: 1.234,56 -> 1234.56
+                const germanNumberMatch = value.match(/^-?\d{1,3}(\.\d{3})*(,\d+)?$/);
+                if (germanNumberMatch) {
+                    const normalized = value.replace(/\./g, '').replace(',', '.');
+                    const num = parseFloat(normalized);
+                    if (!isNaN(num)) {
+                        return num;
+                    }
+                }
+                
+                // Englische Zahlen oder einfache Zahlen
+                const simpleNumber = value.match(/^-?\d+(\.\d+)?$/);
+                if (simpleNumber) {
+                    const num = parseFloat(value);
+                    if (!isNaN(num)) {
+                        return num;
+                    }
+                }
+            }
+            
+            // Als String belassen
+            return value;
         }
         
         // Erste leere Zeile finden (ab Zeile 2, da Zeile 1 = Header)
@@ -284,7 +443,9 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                     const index = parseInt(key);
                     const value = row.data[key];
                     if (value !== null && value !== undefined && value !== '') {
-                        worksheet.cell(newRowNum, startColumn + index).value(value);
+                        const targetCell = worksheet.cell(newRowNum, startColumn + index);
+                        const convertedValue = convertValue(value, targetCell);
+                        targetCell.value(convertedValue);
                     }
                 });
             }
