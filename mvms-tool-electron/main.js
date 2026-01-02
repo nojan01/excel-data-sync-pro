@@ -50,13 +50,13 @@ function createWindow() {
                     enabled: editFlags.canCopy
                 },
                 {
-                    label: 'Einfügen',
+                    label: 'Einf\u00FCgen',
                     role: 'paste',
                     enabled: editFlags.canPaste
                 },
                 { type: 'separator' },
                 {
-                    label: 'Alles auswählen',
+                    label: 'Alles ausw\u00E4hlen',
                     role: 'selectAll',
                     enabled: editFlags.canSelectAll
                 }
