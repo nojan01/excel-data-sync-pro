@@ -743,49 +743,77 @@ ipcMain.handle('app:getPath', async (event) => {
     };
 });
 
-// Automatisch config.json im Programmordner suchen
+// Automatisch config.json im Programmordner oder Benutzerordnern suchen
 ipcMain.handle('config:loadFromAppDir', async (event) => {
+    console.log('=== config:loadFromAppDir aufgerufen ===');
+    
     try {
         const exePath = app.getPath('exe');
         const exeDir = path.dirname(exePath);
+        const documentsDir = app.getPath('documents');
+        const downloadsDir = app.getPath('downloads');
         
         // PORTABLE EXE: Der Ordner wo die portable EXE gestartet wurde
         const portableDir = process.env.PORTABLE_EXECUTABLE_DIR || '';
         
-        // Nur die wichtigsten Pfade prüfen (optimiert)
+        console.log('EXE Pfad:', exePath);
+        console.log('EXE Ordner:', exeDir);
+        console.log('Dokumente Ordner:', documentsDir);
+        console.log('Downloads Ordner:', downloadsDir);
+        console.log('Portable Ordner:', portableDir || '(nicht gesetzt)');
+        console.log('App gepackt:', app.isPackaged);
+        
+        // Suchpfade in Prioritätsreihenfolge
         const possiblePaths = [];
         
-        // 1. Portable EXE: Neben der EXE
+        // 1. Portable EXE: Neben der EXE (höchste Priorität für portable Version)
         if (portableDir) {
             possiblePaths.push(path.join(portableDir, 'config.json'));
         }
         
-        // 2. Neben der EXE (Standard)
+        // 2. Installationsordner (neben der EXE)
         possiblePaths.push(path.join(exeDir, 'config.json'));
         
-        // 3. Im Entwicklungsmodus: Projektordner
+        // 3. Dokumente-Ordner des Benutzers
+        possiblePaths.push(path.join(documentsDir, 'config.json'));
+        possiblePaths.push(path.join(documentsDir, 'MVMS-Tool', 'config.json'));
+        
+        // 4. Downloads-Ordner des Benutzers
+        possiblePaths.push(path.join(downloadsDir, 'config.json'));
+        
+        // 5. Im Entwicklungsmodus: Projektordner
         if (process.argv.includes('--dev') || !app.isPackaged) {
             possiblePaths.push(path.join(__dirname, 'config.json'));
             possiblePaths.push(path.join(process.cwd(), 'config.json'));
         }
         
+        console.log('Suche in folgenden Pfaden:');
+        possiblePaths.forEach((p, i) => {
+            const exists = fs.existsSync(p);
+            console.log(`  ${i + 1}. ${p} - ${exists ? 'GEFUNDEN' : 'nicht vorhanden'}`);
+        });
+        
         // Schnelle Suche - bei erstem Treffer abbrechen
         for (const configPath of possiblePaths) {
             if (fs.existsSync(configPath)) {
-                console.log('? config.json gefunden:', configPath);
+                console.log('>>> config.json gefunden:', configPath);
                 const content = fs.readFileSync(configPath, 'utf8');
+                const config = JSON.parse(content);
+                console.log('>>> Konfig geladen, Mapping:', config.mapping?.sourceColumns?.length || 0, 'Spalten');
                 return { 
                     success: true, 
-                    config: JSON.parse(content),
+                    config: config,
                     path: configPath
                 };
             }
         }
         
         // Keine config.json gefunden - kein Fehler, nur Info
+        console.log('>>> Keine config.json in den Suchpfaden gefunden');
         return { 
             success: false, 
-            error: 'Keine config.json gefunden'
+            error: 'Keine config.json gefunden',
+            searchedPaths: possiblePaths
         };
     } catch (error) {
         console.error('Fehler beim Laden der config.json:', error);

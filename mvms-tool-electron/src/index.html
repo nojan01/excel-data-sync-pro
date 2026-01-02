@@ -570,7 +570,7 @@
         .status.success {
             background: rgba(76, 175, 80, 0.2);
             border: 1px solid var(--success);
-            color: var(--success);
+            color: var,--success);
         }
         
         .status.error {
@@ -2039,7 +2039,8 @@
             emptyState: document.getElementById('emptyState'),
             resultsTableContainer: document.getElementById('resultsTableContainer'),
             resultsTable: document.getElementById('resultsTable'),
-            resultsTableHead: document.getElementById('resultsTableHead'),
+            resultsTableHead: document.getElementById('resultsTableHead',
+            ),
             resultsTableBody: document.getElementById('resultsTableBody'),
             
             // Transfer
@@ -2936,7 +2937,7 @@
             // Formular mit konfigurierten Spalten aufbauen
             let html = '';
             state.mapping.sourceColumns.forEach((colIndex, i) => {
-                const headerName = state.file1.headers[colIndex] || `Spalte ${colIndex + 1}`;
+                const headerName = state.file1_headers[colIndex] || `Spalte ${colIndex + 1}`;
                 html += `
                     <div class="new-row-field">
                         <label title="${headerName}">${headerName}</label>
@@ -3528,7 +3529,7 @@
                         state.file2.filePath = config.file2Path;
                         state.file2.sheets = result.sheets;
                         state.file2.workbook = { SheetNames: result.sheets };
-                        
+            
                         elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
                         elements.selectSheet2.disabled = false;
                         elements.file2Info.textContent = `✓ ${result.fileName}`;
@@ -3920,6 +3921,26 @@
             try { await initDB(); } catch (e) { console.warn('IndexedDB nicht verfügbar'); }
             loadConfig(); updateMappingPreview(); checkReadyState();
             
+            // Automatisch config.json aus Programmordner laden beim Start
+            console.log('[Config] Suche automatisch nach config.json...');
+            try {
+                const autoResult = await window.electronAPI.loadConfigFromAppDir();
+                console.log('[Config] loadConfigFromAppDir Ergebnis:', autoResult);
+                
+                if (autoResult.success && autoResult.config) {
+                    await applyLoadedConfig(autoResult.config);
+                    console.log('[Config] config.json automatisch geladen:', autoResult.path);
+                    showStatus(elements.transferStatus, `✓ config.json geladen: ${autoResult.path}`, 'success');
+                } else {
+                    console.log('[Config] Keine config.json gefunden.');
+                    if (autoResult.searchedPaths) {
+                        console.log('[Config] Gesuchte Pfade:', autoResult.searchedPaths);
+                    }
+                }
+            } catch (e) {
+                console.error('[Config] Fehler beim automatischen Laden:', e);
+            }
+            
             // Common Event Listeners (both modes)
             elements.btnSearch.onclick = search;
             elements.searchInput.onkeydown = (e) => { if (e.key === 'Enter') search(); };
@@ -3993,6 +4014,26 @@
                 elements.btnImportConfig.onclick = loadConfigFromAppDirOrDialog;
                 elements.btnExportConfig.onclick = exportConfig;
                 elements.btnExportPS.onclick = transferQueueToExcel;
+                
+                // Automatisch config.json aus Programmordner laden beim Start
+                console.log('[Config] Suche automatisch nach config.json...');
+                try {
+                    const autoResult = await window.electronAPI.loadConfigFromAppDir();
+                    console.log('[Config] loadConfigFromAppDir Ergebnis:', autoResult);
+                    
+                    if (autoResult.success && autoResult.config) {
+                        await applyLoadedConfig(autoResult.config);
+                        console.log('[Config] config.json automatisch geladen:', autoResult.path);
+                        showStatus(elements.transferStatus, `✓ config.json geladen: ${autoResult.path}`, 'success');
+                    } else {
+                        console.log('[Config] Keine config.json gefunden.');
+                        if (autoResult.searchedPaths) {
+                            console.log('[Config] Gesuchte Pfade:', autoResult.searchedPaths);
+                        }
+                    }
+                } catch (e) {
+                    console.error('[Config] Fehler beim automatischen Laden:', e);
+                }
             } else {
                 // Browser-Modus: Verwende File-Input für Dateioperationen
                 elements.btnLoadFile1.onclick = () => loadFile(1);
