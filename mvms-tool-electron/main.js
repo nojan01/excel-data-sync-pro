@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const XlsxPopulate = require('xlsx-populate');
 const fs = require('fs');
@@ -32,6 +32,52 @@ function createWindow() {
     });
 
     mainWindow.loadFile('src/index.html');
+    
+    // Kontextmenü für Texteingabefelder aktivieren
+    mainWindow.webContents.on('context-menu', (event, params) => {
+        const { isEditable, selectionText, editFlags } = params;
+        
+        if (isEditable) {
+            const menuTemplate = [
+                {
+                    label: 'Ausschneiden',
+                    role: 'cut',
+                    enabled: editFlags.canCut
+                },
+                {
+                    label: 'Kopieren',
+                    role: 'copy',
+                    enabled: editFlags.canCopy
+                },
+                {
+                    label: 'Einfügen',
+                    role: 'paste',
+                    enabled: editFlags.canPaste
+                },
+                { type: 'separator' },
+                {
+                    label: 'Alles auswählen',
+                    role: 'selectAll',
+                    enabled: editFlags.canSelectAll
+                }
+            ];
+            
+            const menu = Menu.buildFromTemplate(menuTemplate);
+            menu.popup({ window: mainWindow });
+        } else if (selectionText) {
+            // Kontextmenü für markierten Text (nicht editierbar)
+            const menuTemplate = [
+                {
+                    label: 'Kopieren',
+                    role: 'copy',
+                    enabled: editFlags.canCopy
+                }
+            ];
+            
+            const menu = Menu.buildFromTemplate(menuTemplate);
+            menu.popup({ window: mainWindow });
+        }
+    });
     
     // DevTools oeffnen (nur waehrend Entwicklung)
     if (process.argv.includes('--dev')) {
