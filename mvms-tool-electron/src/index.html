@@ -3666,12 +3666,24 @@
         function filterExplorerData() {
             let filtered = [...explorerState.data];
             
-            // Volltextsuche
+            // Volltextsuche mit Platzhalter-Unterstützung
             if (explorerState.searchTerm) {
-                const term = explorerState.searchTerm.toLowerCase();
-                filtered = filtered.filter(row => 
-                    row.some(cell => cell && String(cell).toLowerCase().includes(term))
-                );
+                const term = explorerState.searchTerm;
+                const hasWildcards = term.includes('*') || term.includes('?');
+                
+                if (hasWildcards) {
+                    // Platzhalter-Suche: * = beliebig viele Zeichen, ? = ein Zeichen
+                    const regex = wildcardToRegex(term);
+                    filtered = filtered.filter(row => 
+                        row.some(cell => cell && regex.test(String(cell)))
+                    );
+                } else {
+                    // Normale Suche (case-insensitive)
+                    const lowerTerm = term.toLowerCase();
+                    filtered = filtered.filter(row => 
+                        row.some(cell => cell && String(cell).toLowerCase().includes(lowerTerm))
+                    );
+                }
             }
             
             // Spaltenfilter
@@ -3912,183 +3924,6 @@
                 }
             }
         }
-        
-        // ==================== Initialize App ====================
-        async function initApp() {
-            // Initialize theme and language first
-            setTheme(currentTheme);
-            setLanguage(currentLanguage);
-            document.getElementById('selectLanguage').value = currentLanguage;
-            document.getElementById('selectTheme').value = currentTheme;
-            document.getElementById('selectLanguage').onchange = (e) => setLanguage(e.target.value);
-            document.getElementById('selectTheme').onchange = (e) => setTheme(e.target.value);
-            
-            try { await initDB(); } catch (e) { console.warn('IndexedDB nicht verfügbar'); }
-            loadConfig(); updateMappingPreview(); checkReadyState();
-            
-            // Automatisch config.json aus Programmordner laden beim Start
-            console.log('[Config] Suche automatisch nach config.json...');
-            try {
-                const autoResult = await window.electronAPI.loadConfigFromAppDir();
-                console.log('[Config] loadConfigFromAppDir Ergebnis:', autoResult);
-                
-                if (autoResult.success && autoResult.config) {
-                    await applyLoadedConfig(autoResult.config);
-                    console.log('[Config] config.json automatisch geladen:', autoResult.path);
-                    showStatus(elements.transferStatus, `✓ config.json geladen: ${autoResult.path}`, 'success');
-                } else {
-                    console.log('[Config] Keine config.json gefunden.');
-                    if (autoResult.searchedPaths) {
-                        console.log('[Config] Gesuchte Pfade:', autoResult.searchedPaths);
-                    }
-                }
-            } catch (e) {
-                console.error('[Config] Fehler beim automatischen Laden:', e);
-            }
-            
-            // Common Event Listeners (both modes)
-            elements.btnSearch.onclick = search;
-            elements.searchInput.onkeydown = (e) => { if (e.key === 'Enter') search(); };
-            elements.btnNewRow.onclick = openNewRowPanel;
-            elements.btnCloseNewRow.onclick = closeNewRowPanel;
-            elements.btnAddNewRowToQueue.onclick = addNewRowToQueue;
-            elements.btnTransferNewRowDirect.onclick = transferNewRowDirect;
-            elements.btnAddToQueue.onclick = addToQueue;
-            elements.btnTransferDirect.onclick = transferSelectedDirect;
-            elements.btnSelectAll.onclick = () => selectAllRows(true);
-            elements.btnDeselectAll.onclick = () => selectAllRows(false);
-            elements.btnClearQueue.onclick = clearQueue;
-            elements.btnConfigMapping.onclick = openMappingModal;
-            document.getElementById('btnCloseMappingModal').onclick = closeMappingModal;
-            document.getElementById('btnCancelMapping').onclick = closeMappingModal;
-            document.getElementById('btnSaveMapping').onclick = saveMapping;
-            document.getElementById('btnAddMapping').onclick = addMappingColumn;
-            
-            // Data Explorer Event Listeners
-            elements.btnDataExplorer.onclick = openDataExplorer;
-            document.getElementById('btnCloseExplorerX').onclick = closeDataExplorer;
-            document.getElementById('btnCloseExplorerFooter').onclick = closeDataExplorer;
-            elements.btnExplorerOpenFile.onclick = loadExplorerFile;
-            elements.explorerSheetSelect.onchange = (e) => loadExplorerSheet(e.target.value);
-            elements.explorerSearch.onkeydown = (e) => { 
-                if (e.key === 'Enter') {
-                    explorerState.searchTerm = e.target.value; 
-                    filterExplorerData(); 
-                }
-            };
-            document.getElementById('btnExplorerSearch').onclick = () => {
-                explorerState.searchTerm = elements.explorerSearch.value;
-                filterExplorerData();
-            };
-            document.getElementById('btnToggleColumns').onclick = toggleColumnPanel;
-            document.getElementById('btnShowAllColumns').onclick = showAllExplorerColumns;
-            document.getElementById('btnHideAllColumns').onclick = hideAllExplorerColumns;
-            document.getElementById('btnAddExplorerFilter').onclick = addExplorerFilter;
-            document.getElementById('btnClearExplorerFilters').onclick = clearExplorerFilters;
-            elements.btnExplorerExport.onclick = exportExplorerData;
-            
-            // New Month Modal Event Listeners
-            elements.btnNewMonth.onclick = openNewMonthModal;
-            document.getElementById('btnCloseNewMonthModal').onclick = closeNewMonthModal;
-            document.getElementById('btnCancelNewMonth').onclick = closeNewMonthModal;
-            document.getElementById('btnConfirmNewMonth').onclick = confirmNewMonth;
-            
-            // Help Modal Event Listeners
-            elements.btnHelp.onclick = () => elements.helpModal.classList.remove('hidden');
-            document.getElementById('btnCloseHelpModal').onclick = () => elements.helpModal.classList.add('hidden');
-            document.getElementById('btnCloseHelp').onclick = () => elements.helpModal.classList.add('hidden');
-            
-            // Sidebar Toggle
-            document.getElementById('sidebarToggle').onclick = () => {
-                document.getElementById('sidebar').classList.toggle('collapsed');
-            };
-            
-            // Keyboard shortcuts
-            document.onkeydown = (e) => {
-                if (e.key === 'F1') {
-                    e.preventDefault();
-                    elements.helpModal.classList.toggle('hidden');
-                }
-                if (e.key === 'Escape') {
-                    elements.helpModal.classList.add('hidden');
-                    elements.mappingModal.classList.add('hidden');
-                    elements.newMonthModal.classList.add('hidden');
-                    closeDataExplorer();
-                }
-            };
-            
-            // Mode-specific Event Listeners
-            if (isElectron) {
-                // Electron-Modus: Verwende Electron-API für Dateioperationen
-                elements.btnLoadFile1.onclick = loadFile1Electron;
-                elements.btnLoadFile2.onclick = loadFile2Electron;
-                elements.btnLoadTemplate.onclick = loadTemplateElectron;
-                elements.selectSheet1.onchange = (e) => loadSheet1Electron(e.target.value);
-                elements.selectSheet2.onchange = (e) => loadSheet2Electron(e.target.value);
-                elements.btnImportConfig.onclick = loadConfigFromAppDirOrDialog;
-                elements.btnExportConfig.onclick = exportConfig;
-                elements.btnExportPS.onclick = transferQueueToExcel;
-                
-                // Automatisch config.json aus Programmordner laden beim Start
-                console.log('[Config] Suche automatisch nach config.json...');
-                try {
-                    const autoResult = await window.electronAPI.loadConfigFromAppDir();
-                    console.log('[Config] loadConfigFromAppDir Ergebnis:', autoResult);
-                    
-                    if (autoResult.success && autoResult.config) {
-                        await applyLoadedConfig(autoResult.config);
-                        console.log('[Config] config.json automatisch geladen:', autoResult.path);
-                        showStatus(elements.transferStatus, `✓ config.json geladen: ${autoResult.path}`, 'success');
-                    } else {
-                        console.log('[Config] Keine config.json gefunden.');
-                        if (autoResult.searchedPaths) {
-                            console.log('[Config] Gesuchte Pfade:', autoResult.searchedPaths);
-                        }
-                    }
-                } catch (e) {
-                    console.error('[Config] Fehler beim automatischen Laden:', e);
-                }
-            } else {
-                // Browser-Modus: Verwende File-Input für Dateioperationen
-                elements.btnLoadFile1.onclick = () => loadFile(1);
-                elements.btnLoadFile2.onclick = () => loadFile(2);
-                elements.fileInput1.onchange = (e) => { if (e.target.files[0]) processFile(e.target.files[0], 1); };
-                elements.fileInput2.onchange = (e) => { if (e.target.files[0]) processFile(e.target.files[0], 2); };
-                elements.selectSheet1.onchange = (e) => selectSheet1(e.target.value);
-                elements.selectSheet2.onchange = (e) => selectSheet2(e.target.value);
-                elements.btnImportConfig.onclick = () => elements.configInput.click();
-                elements.configInput.onchange = (e) => { if (e.target.files[0]) importConfig(e.target.files[0]); };
-                elements.btnExportConfig.onclick = exportConfig;
-                elements.btnLoadTemplate.onclick = () => elements.templateInput.click();
-                elements.templateInput.onchange = (e) => {
-                    if (e.target.files[0]) {
-                        const file = e.target.files[0];
-                        const reader = new FileReader();
-                        reader.onload = (ev) => {
-                            state.template.data = ev.target.result;
-                            state.template.name = file.name;
-                            elements.templateInfo.textContent = file.name;
-                            elements.templateInfo.classList.add('loaded');
-                            elements.btnNewMonth.disabled = false;
-                        };
-                        reader.readAsDataURL(file);
-                    }
-                };
-                elements.btnExportPS.onclick = () => {
-                    if (!state.file2.workbook) {
-                        showStatus(elements.transferStatus, 'Keine Zieldatei geladen', 'error');
-                        return;
-                    }
-                    // Im Browser-Modus: Datei zum Download anbieten
-                    const wbOut = XLSX.write(state.file2.workbook, { bookType: 'xlsx', type: 'array' });
-                    const blob = new Blob([wbOut], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-                    downloadBlob(blob, state.file2.name || 'export.xlsx');
-                    showStatus(elements.transferStatus, '✓ Excel-Datei heruntergeladen', 'success');
-                };
-            }
-        }
-
-        initApp();
     </script>
 </body>
 </html>
