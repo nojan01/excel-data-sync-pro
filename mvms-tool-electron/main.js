@@ -529,9 +529,10 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                 const flagCell = worksheet.cell(row, 1).value();
                 const dataCell = worksheet.cell(row, startColumn).value();
                 
-                // Zeile ist leer wenn beide Zellen leer sind
-                const flagEmpty = flagCell === undefined || flagCell === null || flagCell === '';
-                const dataEmpty = dataCell === undefined || dataCell === null || dataCell === '';
+                // Zeile ist leer wenn beide Zellen undefined oder null sind
+                // Ein leerer String '' bedeutet "belegt" (Leerzeile)
+                const flagEmpty = flagCell === undefined || flagCell === null;
+                const dataEmpty = dataCell === undefined || dataCell === null;
                 
                 if (flagEmpty && dataEmpty) {
                     // Erste leere Zeile gefunden
@@ -553,50 +554,58 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         for (const row of rows) {
             const newRowNum = insertRow + insertedCount;
             
-            // Flag in Spalte A
-            if (row.flag && row.flag !== 'leer') {
-                worksheet.cell(newRowNum, 1).value(row.flag);
-            }
-            
-            // Kommentar in Spalte B
-            if (row.comment) {
-                worksheet.cell(newRowNum, 2).value(row.comment);
-            }
-            
-            // Daten ab Startspalte - row.data ist ein Objekt mit Index als Key
-            if (row.data && row.flag !== 'leer') {
-                const dataKeys = Object.keys(row.data);
-                dataKeys.forEach(key => {
-                    const index = parseInt(key);
-                    const value = row.data[key];
-                    if (value !== null && value !== undefined && value !== '') {
-                        const colNumber = startColumn + index;
-                        const targetCell = worksheet.cell(newRowNum, colNumber);
-                        const converted = convertValue(value, targetCell);
-                        
-                        targetCell.value(converted.value);
-                        
-                        // Wenn es ein Datum ist und die Zelle kein Format hat, 
-                        // versuche das Format aus der Spalte zu übernehmen
-                        if (converted.isDate) {
-                            const currentFormat = targetCell.style('numberFormat');
-                            if (!currentFormat || currentFormat === 'General') {
-                                // Spaltenformat aus Cache oder neu ermitteln
-                                if (!(colNumber in columnFormats)) {
-                                    columnFormats[colNumber] = getColumnFormat(colNumber);
-                                }
-                                
-                                const colFormat = columnFormats[colNumber];
-                                if (colFormat) {
-                                    targetCell.style('numberFormat', colFormat);
-                                } else {
-                                    // Standard deutsches Datumsformat setzen
-                                    targetCell.style('numberFormat', 'DD.MM.YYYY');
+            // Bei Leerzeile: Zeile explizit als "leer" markieren
+            // Wir setzen einen leeren String in Spalte A, damit die Zeile als "benutzt" gilt
+            if (row.flag === 'leer') {
+                // Leere Zeile - nichts schreiben, aber Zeile ist "belegt"
+                // Setze einen einzelnen Leertext, damit usedRange die Zeile erkennt
+                worksheet.cell(newRowNum, 1).value('');
+            } else {
+                // Normale Zeile mit Flag
+                if (row.flag) {
+                    worksheet.cell(newRowNum, 1).value(row.flag);
+                }
+                
+                // Kommentar in Spalte B
+                if (row.comment) {
+                    worksheet.cell(newRowNum, 2).value(row.comment);
+                }
+                
+                // Daten ab Startspalte - row.data ist ein Objekt mit Index als Key
+                if (row.data) {
+                    const dataKeys = Object.keys(row.data);
+                    dataKeys.forEach(key => {
+                        const index = parseInt(key);
+                        const value = row.data[key];
+                        if (value !== null && value !== undefined && value !== '') {
+                            const colNumber = startColumn + index;
+                            const targetCell = worksheet.cell(newRowNum, colNumber);
+                            const converted = convertValue(value, targetCell);
+                            
+                            targetCell.value(converted.value);
+                            
+                            // Wenn es ein Datum ist und die Zelle kein Format hat, 
+                            // versuche das Format aus der Spalte zu übernehmen
+                            if (converted.isDate) {
+                                const currentFormat = targetCell.style('numberFormat');
+                                if (!currentFormat || currentFormat === 'General') {
+                                    // Spaltenformat aus Cache oder neu ermitteln
+                                    if (!(colNumber in columnFormats)) {
+                                        columnFormats[colNumber] = getColumnFormat(colNumber);
+                                    }
+                                    
+                                    const colFormat = columnFormats[colNumber];
+                                    if (colFormat) {
+                                        targetCell.style('numberFormat', colFormat);
+                                    } else {
+                                        // Standard deutsches Datumsformat setzen
+                                        targetCell.style('numberFormat', 'DD.MM.YYYY');
+                                    }
                                 }
                             }
                         }
-                    }
-                });
+                    });
+                }
             }
             
             insertedCount++;

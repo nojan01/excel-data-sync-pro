@@ -2421,7 +2421,7 @@
 
                     showStatus(elements.transferStatus, 
                         `✓ Konfiguration importiert! (${mappingCount} Spalten, ${filesIncluded} Datei(en), vom ${date})`, 'success');
-
+                        
                     elements.mappingInfo.textContent = `${mappingCount} Spalte(n) konfiguriert`;
                     
                 } catch (err) {
@@ -3088,13 +3088,17 @@
                 state.mapping.targetStartColumn + state.mapping.sourceColumns.length
             )).fill('');
             
-            newRow[0] = flag;
-            newRow[1] = comment;
-            
-            state.mapping.sourceColumns.forEach((srcColIndex, i) => {
-                const targetColIndex = state.mapping.targetStartColumn - 1 + i;
-                newRow[targetColIndex] = data[srcColIndex] || '';
-            });
+            // Bei Leerzeile: nur Flag setzen, keine Daten
+            if (flag !== 'leer') {
+                newRow[0] = flag;
+                newRow[1] = comment;
+                
+                state.mapping.sourceColumns.forEach((srcColIndex, i) => {
+                    const targetColIndex = state.mapping.targetStartColumn - 1 + i;
+                    newRow[targetColIndex] = data[srcColIndex] || '';
+                });
+            }
+            // Bei Leerzeile: leere Zeile (ohne Flag, ohne Daten)
             
             state.file2.data.push(newRow);
             updateWorkbook();
@@ -3103,23 +3107,14 @@
                 time: new Date().toLocaleTimeString(),
                 flag: flag,
                 searchValue: '(Manuelle Eingabe)',
-                preview: data[state.mapping.duplicateCheckColumn] || '(Neue Zeile)'
+                preview: flag === 'leer' ? '(Leerzeile)' : (data[state.mapping.duplicateCheckColumn] || '(Neue Zeile)')
             });
             if (state.history.length > 50) state.history = state.history.slice(0, 50);
             updateHistoryDisplay();
             
-            let message = `✓ ${transferredCount} Zeile(n) direkt übertragen!`;
-            let status = 'success';
-            if (editedCount > 0) {
-                message += ` (${editedCount} bearbeitet ✏️)`;
-            }
-            if (duplicatesFound.length > 0) {
-                message += ` ⚠️ ${duplicatesFound.length} Duplikat(e)!`;
-                status = 'warning';
-            }
+            showStatus(elements.transferStatus, '✓ 1 Zeile direkt übertragen!', 'success');
             
-            showStatus(elements.transferStatus, message, status);
-            
+            // Felder leeren für nächste Eingabe
             state.mapping.sourceColumns.forEach((colIndex, i) => {
                 const field = document.getElementById(`newRowField_${i}`);
                 if (field) field.value = '';
@@ -3131,7 +3126,7 @@
             
             saveConfig();
         }
-        
+
         // ==================== Transfer ====================
         function checkForDuplicate(value) {
             if (!value || !state.file2.data.length) return null;
@@ -3322,7 +3317,7 @@
             
             updateQueueDisplay();
             elements.transferComment.value = '';
-            
+
             let message = `✓ ${addedCount} Zeile(n) zur Warteschlange hinzugefügt`;
             let status = 'success';
             
@@ -3768,7 +3763,7 @@
                 headerHtml += `<th>${escapeHtml(explorerState.headers[colIndex] || `Spalte ${colIndex + 1}`)}</th>`;
             });
             headerHtml += '</tr>';
-            elements.explorerTableHead.innerHTML = header html;
+            elements.explorerTableHead.innerHTML = headerHtml;
             
             // Body
             let bodyHtml = '';
