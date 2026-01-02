@@ -1446,9 +1446,9 @@
                 <div class="modal-title">📊 Datenexplorer - <span id="explorerFileName">Keine Datei geladen</span></div>
                 <button class="modal-close" id="btnCloseExplorerX">&times;</button>
             </div>
-            <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px; padding: 15px; overflow: hidden; flex: 1;">
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px; padding: 15px; overflow-y: auto; flex: 1; min-height: 0;">
                 <!-- Explorer Controls -->
-                <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end;">
+                <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end; flex-shrink: 0;">
                     <button class="btn btn-primary" id="btnExplorerOpenFile">
                         📂 Datei öffnen
                     </button>
@@ -1474,7 +1474,7 @@
                 </div>
                 
                 <!-- Filter Controls -->
-                <div id="explorerFilterControls" style="display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--bg-light); border-radius: 6px; border: 1px solid var(--border);">
+                <div id="explorerFilterControls" style="display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--bg-light); border-radius: 6px; border: 1px solid var(--border); flex-shrink: 0;">
                     <div style="display: flex; gap: 10px; align-items: center;">
                         <span style="font-weight: 600; font-size: 14px;">🔍 Filter</span>
                         <button class="btn btn-secondary btn-sm" id="btnAddExplorerFilter">➕ Filter hinzufügen</button>
@@ -1484,7 +1484,7 @@
                 </div>
                 
                 <!-- Column Visibility Panel (initially hidden) -->
-                <div id="columnTogglePanel" style="display: none; flex-direction: column; gap: 10px; padding: 15px; background: var(--bg-light); border-radius: 6px; margin-bottom: 10px; border: 1px solid var(--border);">
+                <div id="columnTogglePanel" style="display: none; flex-direction: column; gap: 10px; padding: 15px; background: var(--bg-light); border-radius: 6px; margin-bottom: 10px; border: 1px solid var(--border); flex-shrink: 0;">
                     <div style="display: flex; gap: 10px; margin-bottom: 5px;">
                         <button class="btn btn-secondary btn-sm" id="btnShowAllColumns">Alle anzeigen</button>
                         <button class="btn btn-secondary btn-sm" id="btnHideAllColumns">Alle ausblenden</button>
@@ -1493,13 +1493,13 @@
                 </div>
                 
                 <!-- Results Info -->
-                <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-shrink: 0;">
                     <span id="explorerResultCount" style="color: var(--text-muted);">Keine Daten geladen.</span>
                     <span id="explorerStatus" style="color: var(--text-muted); font-size: 12px;"></span>
                 </div>
                 
                 <!-- Table Container -->
-                <div id="explorerTableContainer" style="flex: 1; overflow: auto; background: var(--bg-dark); border-radius: 6px; border: 1px solid var(--border); min-height: 200px;">
+                <div id="explorerTableContainer" style="flex: 1; min-height: 200px; overflow: auto; background: var(--bg-dark); border-radius: 6px; border: 1px solid var(--border);">
                     <table class="results-table" id="explorerTable">
                         <thead id="explorerTableHead"></thead>
                         <tbody id="explorerTableBody">
@@ -1961,7 +1961,7 @@
             if (newMonthFilename) newMonthFilename.placeholder = t('filenamePlaceholder');
             if (newMonthTemplateLabel) {
                 const templateName = document.getElementById('newMonthTemplateName');
-                newMonthTemplateLabel.innerHTML = `${t('templateLabel')} <strong id="newMonthTemplateName">${templateName ? templateName.textContent : '-'}</strong>`;
+                newMonthTemplateLabel.innerHTML = `${t('templateLabel')} <strong id="newMonthTemplateName">${templateName ? templateName.textContent : '-'}</strong>`; 
             }
             if (btnCancelNewMonth) btnCancelNewMonth.textContent = t('cancel');
             if (btnConfirmNewMonth) btnConfirmNewMonth.innerHTML = t('createAndLoad');
@@ -2848,7 +2848,7 @@
                     const rowIndex = parseInt(this.dataset.row);
                     if (!state.selectedRows.includes(rowIndex)) {
                         toggleRowSelection(rowIndex, true);
-                    }
+                      }
                 });
             });
             
@@ -3327,7 +3327,7 @@
                         <span style="background: var(--primary); color: white; padding: 2px 8px; border-radius: 3px; font-weight: bold;">${item.flag}</span>
                         ${editedBadge}
                         <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(String(item.data))}">${escapeHtml(preview)}</span>
-                        ${item.comment ? `<span style="color: var(--text-muted); font-size: 12px;" title="${escapeHtml(item.comment)}">${escapeHtml(item.comment.substring(0, 20))}</span>` : ''}
+                        ${item.comment ? `<span style="color: var(--text-muted); font-size: 12px;" title="${escapeHtml(item.comment)}">${escapeHtml(item.comment.substring(0, 20))}</span>` : '' }
                         <button class="btn btn-secondary btn-sm" onclick="removeFromQueue(${index})" title="Entfernen">✕</button>
                     </div>`;
             });
