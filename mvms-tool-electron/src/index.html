@@ -1526,6 +1526,12 @@
         </div>
     </template>
 
+    <!-- Hidden File Inputs -->
+    <input type="file" id="fileInput1" accept=".xlsx,.xls" style="display: none;">
+    <input type="file" id="fileInput2" accept=".xlsx,.xls" style="display: none;">
+    <input type="file" id="templateInput" accept=".xlsx,.xls" style="display: none;">
+    <input type="file" id="configInput" accept=".json" style="display: none;">
+
     <script>
         // ============================================
         // ELECTRON-DETECTION (muss ganz oben stehen!)
@@ -1605,11 +1611,11 @@
                 deselectAll: '☐ Alles abwählen',
                 
                 // Queue
-                queue: '📋 Warteschlange',
-                rows: 'Zeilen',
-                clear: '🗑️ Leeren',
-                directTransfer: '✅ Direkt übertragen',
-                dataExplorer: '📊 Datenexplorer',
+                queue: '📋 Queue',
+                rows: 'rows',
+                clear: '🗑️ Clear',
+                directTransfer: '✅ Transfer Directly',
+                dataExplorer: '📊 Data Explorer',
                 newMonthFile: '📅 Neue Monatsdatei',
                 noRowsInQueue: 'Keine Zeilen in der Warteschlange',
                 
@@ -1642,7 +1648,7 @@
                 showAll: 'Alle anzeigen',
                 hideAll: 'Alle ausblenden',
                 noDataLoaded: 'No data loaded.',
-                pleaseLoadFile: '📂 Bitte eine Excel-Datei laden',
+                pleaseLoadFile: '📂 Please load an Excel file',
                 contains: 'enthält',
                 equals: 'gleich',
                 startsWith: 'beginnt mit',
@@ -1652,7 +1658,7 @@
                 
                 // New Month Modal
                 createNewMonthFile: '📅 Neue Monatsdatei erstellen',
-                newMonthDescription: 'Erstellt eine Kopie der Template-Datei unter neuem Namen und setzt sie als Datei 2.',
+                newMonthDescription: 'Erschafft eine Kopie der Template-Datei unter neuem Namen und setzt sie als Datei 2.',
                 newFilename: 'Neuer Dateiname:',
                 filenamePlaceholder: 'z.B. Vertragsliste_2025-01.xlsx',
                 templateLabel: '💡 Template:',
@@ -1725,10 +1731,10 @@
                 deselectAll: '☐ Deselect All',
                 
                 // Queue
-                queue: '📋 Warteschlange',
-                rows: 'Zeilen',
-                clear: '🗑️ Leeren',
-                directTransfer: '✅ Direkt übertragen',
+                queue: '📋 Queue',
+                rows: 'rows',
+                clear: '🗑️ Clear',
+                directTransfer: '✅ Transfer Directly',
                 dataExplorer: '📊 Data Explorer',
                 newMonthFile: '📅 New Month File',
                 noRowsInQueue: 'No rows in queue',
@@ -2042,6 +2048,8 @@
             transferComment: document.getElementById('transferComment'),
             btnAddToQueue: document.getElementById('btnAddToQueue'),
             btnTransferDirect: document.getElementById('btnTransferDirect'),
+            btnSelectAll: document.getElementById('btnSelectAll'),
+            btnDeselectAll: document.getElementById('btnDeselectAll'),
             transferStatus: document.getElementById('transferStatus'),
             
             // Queue
@@ -2396,7 +2404,7 @@
                     if (config.templateData) {
                         state.template.data = config.templateData;
                         state.template.name = config.template.name;
-                        elements.templateInfo.textContent = config.template.name;
+                        elements.templateInfo.textContent = config.templateName;
                         elements.btnNewMonth.disabled = false;
                     }
                     
@@ -2867,6 +2875,14 @@
             return cells.length > 0;
         }
         
+        function selectAllRows(selected) {
+            const checkboxes = document.querySelectorAll('.row-checkbox');
+            checkboxes.forEach(cb => {
+                const index = parseInt(cb.dataset.index);
+                toggleRowSelection(index, selected);
+            });
+        }
+        
         function toggleRowSelection(index, forceState) {
             const checkbox = document.querySelector(`.row-checkbox[data-index="${index}"]`);
             const tr = document.querySelector(`#resultsTableBody tr[data-index="${index}"]`);
@@ -2899,6 +2915,12 @@
             } else {
                 state.selectedRow = null;
             }
+        }
+
+        function removeFromQueue(index) {
+            if (typeof index !== 'number' || index < 0 || index >= state.transferQueue.length) return;
+            state.transferQueue.splice(index, 1);
+            updateQueueDisplay();
         }
         
         window.removeFromQueue = removeFromQueue;
@@ -3269,11 +3291,6 @@
             selectAllRows(false);
             elements.searchInput.value = '';
             elements.searchInput.focus();
-        }
-        
-        function removeFromQueue(index) {
-            state.transferQueue.splice(index, 1);
-            updateQueueDisplay();
         }
         
         function clearQueue() {
@@ -3903,96 +3920,119 @@
             try { await initDB(); } catch (e) { console.warn('IndexedDB nicht verfügbar'); }
             loadConfig(); updateMappingPreview(); checkReadyState();
             
-            if (isElectron) {
-                elements.btnLoadFile1.onclick = loadFile1Electron;
-                elements.btnLoadFile2.onclick = loadFile2Electron;
-                elements.selectSheet1.onchange = (e) => loadSheet1Electron(e.target.value);
-                elements.selectSheet2.onchange = (e) => loadSheet2Electron(e.target.value);
-                elements.btnExportPS.onclick = transferQueueToExcel;
-                elements.btnExportPS.innerHTML = '✅ Direkt übertragen';
-                elements.btnLoadTemplate.onclick = loadTemplateElectron;
-                elements.btnImportConfig.onclick = loadConfigFromAppDirOrDialog;
-                elements.btnExportConfig.onclick = exportConfig;
-                
-                // Automatisch config.json aus Programmordner laden beim Start
-                try {
-                    console.log('🔍 Suche config.json...');
-                    const autoResult = await window.electronAPI.loadConfigFromAppDir();
-                    console.log('📁 Ergebnis:', autoResult);
-                    
-                    if (autoResult && autoResult.success && autoResult.config) {
-                        await applyLoadedConfig(autoResult.config);
-                        console.log('✓ config.json automatisch geladen:', autoResult.path);
-                        showStatus(elements.transferStatus, `✓ config.json automatisch geladen: ${autoResult.path}`, 'success');
-                    } else {
-                        console.log('✗ Keine config.json gefunden:', autoResult?.error || 'Unbekannter Fehler');
-                    }
-                } catch (e) {
-                    console.log('❌ Fehler beim Laden der config.json:', e);
-                }
-            }
-            
+            // Common Event Listeners (both modes)
+            elements.btnSearch.onclick = search;
+            elements.searchInput.onkeydown = (e) => { if (e.key === 'Enter') search(); };
+            elements.btnNewRow.onclick = openNewRowPanel;
+            elements.btnCloseNewRow.onclick = closeNewRowPanel;
+            elements.btnAddNewRowToQueue.onclick = addNewRowToQueue;
+            elements.btnTransferNewRowDirect.onclick = transferNewRowDirect;
+            elements.btnAddToQueue.onclick = addToQueue;
+            elements.btnTransferDirect.onclick = transferSelectedDirect;
+            elements.btnSelectAll.onclick = () => selectAllRows(true);
+            elements.btnDeselectAll.onclick = () => selectAllRows(false);
+            elements.btnClearQueue.onclick = clearQueue;
             elements.btnConfigMapping.onclick = openMappingModal;
             document.getElementById('btnCloseMappingModal').onclick = closeMappingModal;
             document.getElementById('btnCancelMapping').onclick = closeMappingModal;
             document.getElementById('btnSaveMapping').onclick = saveMapping;
             document.getElementById('btnAddMapping').onclick = addMappingColumn;
             
-            elements.btnSearch.onclick = search;
-            elements.searchInput.onkeydown = (e) => { if (e.key === 'Enter') search(); };
-            
-            elements.btnNewRow.onclick = openNewRowPanel;
-            elements.btnCloseNewRow.onclick = closeNewRowPanel;
-            elements.btnAddNewRowToQueue.onclick = addNewRowToQueue;
-            elements.btnTransferNewRowDirect.onclick = transferNewRowDirect;
-            
-            elements.btnAddToQueue.onclick = addToQueue;
-            elements.btnTransferDirect.onclick = transferSelectedDirect;
-            document.getElementById('btnSelectAll').onclick = () => selectAllRows(true);
-            document.getElementById('btnDeselectAll').onclick = () => selectAllRows(false);
-            
-            elements.btnClearQueue.onclick = clearQueue;
-            elements.btnNewMonth.onclick = openNewMonthModal;
-            
+            // Data Explorer Event Listeners
             elements.btnDataExplorer.onclick = openDataExplorer;
             document.getElementById('btnCloseExplorerX').onclick = closeDataExplorer;
             document.getElementById('btnCloseExplorerFooter').onclick = closeDataExplorer;
-            document.getElementById('btnExplorerOpenFile').onclick = loadExplorerFile;
-            document.getElementById('btnExplorerExport').onclick = exportExplorerData;
+            elements.btnExplorerOpenFile.onclick = loadExplorerFile;
+            elements.explorerSheetSelect.onchange = (e) => loadExplorerSheet(e.target.value);
+            elements.explorerSearch.oninput = (e) => { explorerState.searchTerm = e.target.value; filterExplorerData(); };
             document.getElementById('btnToggleColumns').onclick = toggleColumnPanel;
             document.getElementById('btnShowAllColumns').onclick = showAllExplorerColumns;
             document.getElementById('btnHideAllColumns').onclick = hideAllExplorerColumns;
             document.getElementById('btnAddExplorerFilter').onclick = addExplorerFilter;
             document.getElementById('btnClearExplorerFilters').onclick = clearExplorerFilters;
-            elements.explorerSearch.oninput = (e) => { explorerState.searchTerm = e.target.value; filterExplorerData(); };
-            elements.explorerSheetSelect.onchange = (e) => loadExplorerSheet(e.target.value);
+            elements.btnExplorerExport.onclick = exportExplorerData;
             
-            elements.btnHelp.onclick = () => elements.helpModal.classList.remove('hidden');
-            document.getElementById('btnCloseHelpModal').onclick = () => elements.helpModal.classList.add('hidden');
-            document.getElementById('btnCloseHelp').onclick = () => elements.helpModal.classList.add('hidden');
-            
+            // New Month Modal Event Listeners
+            elements.btnNewMonth.onclick = openNewMonthModal;
             document.getElementById('btnCloseNewMonthModal').onclick = closeNewMonthModal;
             document.getElementById('btnCancelNewMonth').onclick = closeNewMonthModal;
             document.getElementById('btnConfirmNewMonth').onclick = confirmNewMonth;
             
-            document.getElementById('sidebarToggle').onclick = () => document.getElementById('sidebar').classList.toggle('collapsed');
+            // Help Modal Event Listeners
+            elements.btnHelp.onclick = () => elements.helpModal.classList.remove('hidden');
+            document.getElementById('btnCloseHelpModal').onclick = () => elements.helpModal.classList.add('hidden');
+            document.getElementById('btnCloseHelp').onclick = () => elements.helpModal.classList.add('hidden');
             
-            document.addEventListener('keydown', (e) => {
-                if (e.key === 'F1') { e.preventDefault(); elements.helpModal.classList.toggle('hidden'); }
-                if (e.key === 'Escape') { 
-                    elements.mappingModal.classList.add('hidden'); 
-                    elements.newMonthModal.classList.add('hidden'); 
-                    elements.helpModal.classList.add('hidden'); 
-                    elements.dataExplorerModal.classList.add('hidden'); 
+            // Sidebar Toggle
+            document.getElementById('sidebarToggle').onclick = () => {
+                document.getElementById('sidebar').classList.toggle('collapsed');
+            };
+            
+            // Keyboard shortcuts
+            document.onkeydown = (e) => {
+                if (e.key === 'F1') {
+                    e.preventDefault();
+                    elements.helpModal.classList.toggle('hidden');
                 }
-            });
+                if (e.key === 'Escape') {
+                    elements.helpModal.classList.add('hidden');
+                    elements.mappingModal.classList.add('hidden');
+                    elements.newMonthModal.classList.add('hidden');
+                    closeDataExplorer();
+                }
+            };
             
-            // Übersetze alle Elemente sofort nach dem Initialisieren
-            applyTranslations();
-            
-            console.log('✅ App initialisiert');
+            // Mode-specific Event Listeners
+            if (isElectron) {
+                // Electron-Modus: Verwende Electron-API für Dateioperationen
+                elements.btnLoadFile1.onclick = loadFile1Electron;
+                elements.btnLoadFile2.onclick = loadFile2Electron;
+                elements.btnLoadTemplate.onclick = loadTemplateElectron;
+                elements.selectSheet1.onchange = (e) => loadSheet1Electron(e.target.value);
+                elements.selectSheet2.onchange = (e) => loadSheet2Electron(e.target.value);
+                elements.btnImportConfig.onclick = loadConfigFromAppDirOrDialog;
+                elements.btnExportConfig.onclick = exportConfig;
+                elements.btnExportPS.onclick = transferQueueToExcel;
+            } else {
+                // Browser-Modus: Verwende File-Input für Dateioperationen
+                elements.btnLoadFile1.onclick = () => loadFile(1);
+                elements.btnLoadFile2.onclick = () => loadFile(2);
+                elements.fileInput1.onchange = (e) => { if (e.target.files[0]) processFile(e.target.files[0], 1); };
+                elements.fileInput2.onchange = (e) => { if (e.target.files[0]) processFile(e.target.files[0], 2); };
+                elements.selectSheet1.onchange = (e) => selectSheet1(e.target.value);
+                elements.selectSheet2.onchange = (e) => selectSheet2(e.target.value);
+                elements.btnImportConfig.onclick = () => elements.configInput.click();
+                elements.configInput.onchange = (e) => { if (e.target.files[0]) importConfig(e.target.files[0]); };
+                elements.btnExportConfig.onclick = exportConfig;
+                elements.btnLoadTemplate.onclick = () => elements.templateInput.click();
+                elements.templateInput.onchange = (e) => {
+                    if (e.target.files[0]) {
+                        const file = e.target.files[0];
+                        const reader = new FileReader();
+                        reader.onload = (ev) => {
+                            state.template.data = ev.target.result;
+                            state.template.name = file.name;
+                            elements.templateInfo.textContent = file.name;
+                            elements.templateInfo.classList.add('loaded');
+                            elements.btnNewMonth.disabled = false;
+                        };
+                        reader.readAsDataURL(file);
+                    }
+                };
+                elements.btnExportPS.onclick = () => {
+                    if (!state.file2.workbook) {
+                        showStatus(elements.transferStatus, 'Keine Zieldatei geladen', 'error');
+                        return;
+                    }
+                    // Im Browser-Modus: Datei zum Download anbieten
+                    const wbOut = XLSX.write(state.file2.workbook, { bookType: 'xlsx', type: 'array' });
+                    const blob = new Blob([wbOut], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                    downloadBlob(blob, state.file2.name || 'export.xlsx');
+                    showStatus(elements.transferStatus, '✓ Excel-Datei heruntergeladen', 'success');
+                };
+            }
         }
-        
+
         initApp();
     </script>
 </body>
