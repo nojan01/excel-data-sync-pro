@@ -1203,6 +1203,7 @@
                             <option value="A">A (Add)</option>
                             <option value="D">D (Delete)</option>
                             <option value="C">C (Change)</option>
+                            <option value="leer">Leerzeile</option>
                         </select>
                     </div>
                     <div class="transfer-field">
@@ -2421,7 +2422,7 @@
 
                     showStatus(elements.transferStatus, 
                         `✓ Konfiguration importiert! (${mappingCount} Spalten, ${filesIncluded} Datei(en), vom ${date})`, 'success');
-                        
+
                     elements.mappingInfo.textContent = `${mappingCount} Spalte(n) konfiguriert`;
                     
                 } catch (err) {
@@ -2993,18 +2994,10 @@
         
         // ==================== New Row Functions ====================
         function addNewRowToQueue() {
+            const data = getNewRowData();
             const flag = elements.newRowFlag.value;
             const comment = elements.newRowComment.value;
-            
-            // Bei Leerzeile: leere Daten
-            let data;
-            let checkValue = '';
-            if (flag === 'leer') {
-                data = [];
-            } else {
-                data = getNewRowData();
-                checkValue = data[state.mapping.duplicateCheckColumn] || '';
-            }
+            const checkValue = data[state.mapping.duplicateCheckColumn] || '';
             
             state.transferQueue.push({
                 data: data,
@@ -3029,16 +3022,9 @@
         }
         
         async function transferNewRowDirect() {
+            const data = getNewRowData();
             const flag = elements.newRowFlag.value;
             const comment = elements.newRowComment.value;
-            
-            // Bei Leerzeile: leere Daten
-            let data;
-            if (flag === 'leer') {
-                data = [];
-            } else {
-                data = getNewRowData();
-            }
             
             // Prüfe ob Zieldatei verfügbar ist (Electron: filePath, Browser: workbook)
             const hasTargetFile = isElectron ? state.file2.filePath : state.file2.workbook;
@@ -3049,7 +3035,7 @@
             
             // Im Electron-Modus: Zur Warteschlange hinzufügen und direkt übertragen
             if (isElectron && state.file2.filePath) {
-                const checkValue = flag === 'leer' ? '' : (data[state.mapping.duplicateCheckColumn] || '');
+                const checkValue = data[state.mapping.duplicateCheckColumn] || '';
                 
                 state.transferQueue.push({
                     data: data,
@@ -3088,17 +3074,13 @@
                 state.mapping.targetStartColumn + state.mapping.sourceColumns.length
             )).fill('');
             
-            // Bei Leerzeile: nur Flag setzen, keine Daten
-            if (flag !== 'leer') {
-                newRow[0] = flag;
-                newRow[1] = comment;
-                
-                state.mapping.sourceColumns.forEach((srcColIndex, i) => {
-                    const targetColIndex = state.mapping.targetStartColumn - 1 + i;
-                    newRow[targetColIndex] = data[srcColIndex] || '';
-                });
-            }
-            // Bei Leerzeile: leere Zeile (ohne Flag, ohne Daten)
+            newRow[0] = flag;
+            newRow[1] = comment;
+            
+            state.mapping.sourceColumns.forEach((srcColIndex, i) => {
+                const targetColIndex = state.mapping.targetStartColumn - 1 + i;
+                newRow[targetColIndex] = data[srcColIndex] || '';
+            });
             
             state.file2.data.push(newRow);
             updateWorkbook();
@@ -3107,14 +3089,13 @@
                 time: new Date().toLocaleTimeString(),
                 flag: flag,
                 searchValue: '(Manuelle Eingabe)',
-                preview: flag === 'leer' ? '(Leerzeile)' : (data[state.mapping.duplicateCheckColumn] || '(Neue Zeile)')
+                preview: data[state.mapping.duplicateCheckColumn] || '(Neue Zeile)'
             });
             if (state.history.length > 50) state.history = state.history.slice(0, 50);
             updateHistoryDisplay();
             
-            showStatus(elements.transferStatus, '✓ 1 Zeile direkt übertragen!', 'success');
+            showStatus(elements.transferStatus, '✅ Neue Zeile direkt übertragen!', 'success');
             
-            // Felder leeren für nächste Eingabe
             state.mapping.sourceColumns.forEach((colIndex, i) => {
                 const field = document.getElementById(`newRowField_${i}`);
                 if (field) field.value = '';
@@ -3126,7 +3107,7 @@
             
             saveConfig();
         }
-
+        
         // ==================== Transfer ====================
         function checkForDuplicate(value) {
             if (!value || !state.file2.data.length) return null;
@@ -3317,7 +3298,7 @@
             
             updateQueueDisplay();
             elements.transferComment.value = '';
-
+            
             let message = `✓ ${addedCount} Zeile(n) zur Warteschlange hinzugefügt`;
             let status = 'success';
             
@@ -3388,14 +3369,23 @@
             }
             
             const rows = state.transferQueue.map(item => {
-                // Konvertiere item.data (Array) zu rowData (Objekt mit Index als Key)
+                // Bei Leerzeilen: Leeres data-Objekt übergeben
+                if (item.flag === 'leer') {
+                    return {
+                        flag: item.flag,
+                        comment: item.comment || '',
+                        data: {}
+                    };
+                }
+                
+                // Für normale Zeilen: Daten aus dem Mapping extrahieren
                 const rowData = {};
                 state.mapping.sourceColumns.forEach((srcColIndex, i) => {
                     rowData[i] = item.data[srcColIndex] || '';
                 });
                 return {
                     flag: item.flag,
-                    comment: item.comment,
+                    comment: item.comment || '',
                     data: rowData
                 };
             });
@@ -3774,7 +3764,7 @@
                 });
                 bodyHtml += '</tr>';
             });
-            elements.explorerTableBody.innerHTML = bodyHtml || '<tr><td colspan="100" style="text-align: center; padding: 20px;">Keine Daten gefunden</td></tr>';
+            elements.explorerTableBody.innerHTML = bodyHtml || '<tr><td colspan="100" style="text-align: center; padding: 20px;">Keine Daten gefunden</td>';
             
             elements.explorerResultCount.textContent = `${explorerState.filteredData.length} von ${explorerState.data.length} Zeilen`;
         }
