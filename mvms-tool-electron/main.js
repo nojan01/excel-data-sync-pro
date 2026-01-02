@@ -196,7 +196,7 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
         function excelDateToString(excelDate) {
             // Excel-Datum: Tage seit 1.1.1900 (mit falschem Schaltjahr 1900)
             // JavaScript: Millisekunden seit 1.1.1970
-            const excelEpoch = new Date(1899, 11, 30); // 30.12.1899
+            const excelEpoch = new Date(Date.UTC(1899, 11, 30)); // 30.12.1899 UTC
             const jsDate = new Date(excelEpoch.getTime() + excelDate * 86400000);
             
             // Prüfen ob es ein reines Datum oder Datum mit Uhrzeit ist
@@ -204,17 +204,17 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
             
             if (hasTime) {
                 // Datum mit Uhrzeit
-                const day = String(jsDate.getDate()).padStart(2, '0');
-                const month = String(jsDate.getMonth() + 1).padStart(2, '0');
-                const year = jsDate.getFullYear();
-                const hours = String(jsDate.getHours()).padStart(2, '0');
-                const minutes = String(jsDate.getMinutes()).padStart(2, '0');
+                const day = String(jsDate.getUTCDate()).padStart(2, '0');
+                const month = String(jsDate.getUTCMonth() + 1).padStart(2, '0');
+                const year = jsDate.getUTCFullYear();
+                const hours = String(jsDate.getUTCHours()).padStart(2, '0');
+                const minutes = String(jsDate.getUTCMinutes()).padStart(2, '0');
                 return `${day}.${month}.${year} ${hours}:${minutes}`;
             } else {
                 // Nur Datum
-                const day = String(jsDate.getDate()).padStart(2, '0');
-                const month = String(jsDate.getMonth() + 1).padStart(2, '0');
-                const year = jsDate.getFullYear();
+                const day = String(jsDate.getUTCDate()).padStart(2, '0');
+                const month = String(jsDate.getUTCMonth() + 1).padStart(2, '0');
+                const year = jsDate.getUTCFullYear();
                 return `${day}.${month}.${year}`;
             }
         }
@@ -225,16 +225,55 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
             
             // Prüfe das Zahlenformat der Zelle
             const numFmt = cell.style('numberFormat');
+            
+            // Debug-Logging (kann später entfernt werden)
+            // console.log(`Zelle: Wert=${value}, Format="${numFmt}"`);
+            
             if (numFmt) {
-                // Typische Datumsformate erkennen
+                // Standard-Excel-Datumsformate (Format-IDs als Strings)
+                // Diese werden von xlsx-populate oft als Strings zurückgegeben
+                const dateFormatIds = [
+                    '14', '15', '16', '17', '18', '19', '20', '21', '22',
+                    '45', '46', '47', '27', '30', '36', '50', '57'
+                ];
+                
+                // Prüfe auf numerische Format-ID
+                if (dateFormatIds.includes(String(numFmt))) {
+                    return true;
+                }
+                
+                // Explizite Nicht-Datum-Formate
+                const nonDatePatterns = [
+                    /^General$/i,
+                    /^[#0,]+(\.[#0]+)?$/,        // Zahlenformat wie #,##0.00
+                    /^[#0,]+(\.[#0]+)?%$/,       // Prozent
+                    /%/,                          // Prozentzeichen
+                    /€|EUR|\$/,                   // Währung
+                    /^@$/,                        // Text
+                    /^\[.*?\][#0]/,               // Buchhaltungsformat
+                ];
+                
+                for (const pattern of nonDatePatterns) {
+                    if (pattern.test(numFmt)) {
+                        return false;
+                    }
+                }
+                
+                // Typische Datumsformate erkennen (Strings)
                 const datePatterns = [
-                    /d+[\/\-.]m+[\/\-.]y+/i,  // d.m.y, d/m/y, d-m-y
-                    /m+[\/\-.]d+[\/\-.]y+/i,  // m/d/y (US-Format)
-                    /y+[\/\-.]m+[\/\-.]d+/i,  // y-m-d (ISO-Format)
-                    /\[.*?\]dd/i,              // Benutzerdefinierte Formate
-                    /^d+$/i,                   // "d" oder "dd"
-                    /mmm/i,                    // Monatsname (mmm, mmmm)
-                    /^[$-F800]dddd/,           // Locale-spezifische Formate
+                    /d+[\/\-.\s]m+[\/\-.\s]y+/i,     // d.m.y, d/m/y, d-m-y, d m y
+                    /m+[\/\-.\s]d+[\/\-.\s]y+/i,     // m/d/y (US-Format)
+                    /y+[\/\-.\s]m+[\/\-.\s]d+/i,     // y-m-d (ISO-Format)
+                    /dd\.mm\.yyyy/i,                  // Deutsches Format
+                    /dd\/mm\/yyyy/i,                  // Britisches Format
+                    /mm\/dd\/yyyy/i,                  // US-Format
+                    /yyyy-mm-dd/i,                    // ISO-Format
+                    /\[.*?\]dd/i,                     // Benutzerdefinierte Formate
+                    /mmm/i,                           // Monatsname (mmm, mmmm)
+                    /^d+$/i,                          // Nur "d" oder "dd"
+                    /^[$-].*d.*m.*y/i,                // Locale-spezifische Formate
+                    /[$-F800]/,                       // Windows Locale Format
+                    /[$-407]/,                        // Deutsches Locale
                 ];
                 
                 for (const pattern of datePatterns) {
@@ -244,19 +283,27 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
                 }
             }
             
-            // Heuristik: Zahlen im typischen Excel-Datumsbereich (1900-2100)
-            // Excel-Datum 1 = 1.1.1900, 73050 ? 1.1.2100
+            // Heuristik für Werte ohne explizites Format oder mit "General"
+            // Excel-Datum: 1 = 1.1.1900, 44197 = 1.1.2021, 47848 = 1.1.2031
+            // Typischer Bereich für aktuelle Daten: 35000 (1995) bis 55000 (2050)
             if (value >= 1 && value <= 73050) {
-                // Könnte ein Datum sein - prüfe auf vernünftigen Wert
-                // Aber nur wenn kein offensichtliches Zahlenformat
-                if (numFmt && /^[#0,]+(\.[#0]+)?$/.test(numFmt)) {
-                    return false; // Explizites Zahlenformat
+                // Nur ganzzahlige Werte oder Werte mit Zeitanteil prüfen
+                // Sehr kleine Zahlen (< 365) sind wahrscheinlich keine Daten
+                if (value < 365) {
+                    return false; // Wahrscheinlich eine normale Zahl (Tage im Jahr etc.)
                 }
-                if (numFmt && numFmt.indexOf('%') !== -1) {
-                    return false; // Prozentformat
-                }
-                if (numFmt && numFmt.indexOf('€') !== -1) {
-                    return false; // Währungsformat
+                
+                // Prüfe ob es vernünftig aussieht
+                // Moderne Daten liegen zwischen 30000 (1982) und 55000 (2050)
+                if (value >= 30000 && value <= 55000) {
+                    // Wenn kein explizites Nicht-Datum-Format, könnte es ein Datum sein
+                    if (!numFmt || numFmt === 'General' || numFmt === 'general') {
+                        // Zusätzliche Heuristik: Ganzzahlige Werte in diesem Bereich 
+                        // sind sehr wahrscheinlich Daten
+                        if (Number.isInteger(value)) {
+                            return true;
+                        }
+                    }
                 }
             }
             
@@ -272,14 +319,14 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
                 let textValue = '';
                 if (value !== undefined && value !== null) {
                     // Prüfe ob es ein Datum ist
-                    if (isExcelDate(cell, value)) {
-                        textValue = excelDateToString(value);
-                    } else if (value instanceof Date) {
+                    if (value instanceof Date) {
                         // Falls xlsx-populate bereits ein Date-Objekt zurückgibt
                         const day = String(value.getDate()).padStart(2, '0');
                         const month = String(value.getMonth() + 1).padStart(2, '0');
                         const year = value.getFullYear();
                         textValue = `${day}.${month}.${year}`;
+                    } else if (isExcelDate(cell, value)) {
+                        textValue = excelDateToString(value);
                     } else {
                         textValue = String(value);
                     }
@@ -335,20 +382,30 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                 const hours = parseInt(dateTimeMatch[4], 10);
                 const minutes = parseInt(dateTimeMatch[5], 10);
                 
-                // Excel-Datum berechnen
-                const jsDate = new Date(year, month - 1, day, hours, minutes);
-                const excelEpoch = new Date(1899, 11, 30);
-                const excelDate = (jsDate.getTime() - excelEpoch.getTime()) / 86400000;
+                // Validierung
+                if (day < 1 || day > 31 || month < 1 || month > 12 || year < 1900 || year > 2100) {
+                    return null;
+                }
+                
+                // Excel-Datum berechnen (UTC um Zeitzonenproblemen vorzubeugen)
+                const jsDate = Date.UTC(year, month - 1, day, hours, minutes);
+                const excelEpoch = Date.UTC(1899, 11, 30);
+                const excelDate = (jsDate - excelEpoch) / 86400000;
                 return excelDate;
             } else if (dateMatch) {
                 const day = parseInt(dateMatch[1], 10);
                 const month = parseInt(dateMatch[2], 10);
                 const year = parseInt(dateMatch[3], 10);
                 
-                // Excel-Datum berechnen
-                const jsDate = new Date(year, month - 1, day);
-                const excelEpoch = new Date(1899, 11, 30);
-                const excelDate = Math.floor((jsDate.getTime() - excelEpoch.getTime()) / 86400000);
+                // Validierung
+                if (day < 1 || day > 31 || month < 1 || month > 12 || year < 1900 || year > 2100) {
+                    return null;
+                }
+                
+                // Excel-Datum berechnen (UTC)
+                const jsDate = Date.UTC(year, month - 1, day);
+                const excelEpoch = Date.UTC(1899, 11, 30);
+                const excelDate = Math.floor((jsDate - excelEpoch) / 86400000);
                 return excelDate;
             }
             
@@ -358,13 +415,13 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         // Hilfsfunktion: Wert intelligent konvertieren
         function convertValue(value, targetCell) {
             if (value === null || value === undefined || value === '') {
-                return value;
+                return { value: value, isDate: false };
             }
             
             // Prüfe ob es ein deutsches Datum ist
             const excelDate = parseGermanDateToExcel(value);
             if (excelDate !== null) {
-                return excelDate;
+                return { value: excelDate, isDate: true };
             }
             
             // Prüfe ob es eine Zahl ist (mit deutschen Dezimaltrennzeichen)
@@ -375,7 +432,7 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                     const normalized = value.replace(/\./g, '').replace(',', '.');
                     const num = parseFloat(normalized);
                     if (!isNaN(num)) {
-                        return num;
+                        return { value: num, isDate: false };
                     }
                 }
                 
@@ -384,13 +441,34 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                 if (simpleNumber) {
                     const num = parseFloat(value);
                     if (!isNaN(num)) {
-                        return num;
+                        return { value: num, isDate: false };
                     }
                 }
             }
             
             // Als String belassen
-            return value;
+            return { value: value, isDate: false };
+        }
+        
+        // Formatvorlage aus Header-Zeile oder vorhandenen Zeilen ermitteln
+        function getColumnFormat(colNumber) {
+            // Suche nach dem ersten nicht-leeren Wert in dieser Spalte (ab Zeile 2)
+            const usedRange = worksheet.usedRange();
+            if (!usedRange) return null;
+            
+            const endRow = Math.min(usedRange.endCell().rowNumber(), 100); // Max 100 Zeilen prüfen
+            
+            for (let row = 2; row <= endRow; row++) {
+                const cell = worksheet.cell(row, colNumber);
+                const value = cell.value();
+                if (value !== undefined && value !== null && value !== '') {
+                    const numFmt = cell.style('numberFormat');
+                    if (numFmt && numFmt !== 'General') {
+                        return numFmt;
+                    }
+                }
+            }
+            return null;
         }
         
         // Erste leere Zeile finden (ab Zeile 2, da Zeile 1 = Header)
@@ -421,6 +499,9 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         
         console.log(`Einfügen ab Zeile: ${insertRow}`);
         
+        // Spaltenformate vorab ermitteln
+        const columnFormats = {};
+        
         // Neue Zeilen einfuegen
         let insertedCount = 0;
         for (const row of rows) {
@@ -443,9 +524,31 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                     const index = parseInt(key);
                     const value = row.data[key];
                     if (value !== null && value !== undefined && value !== '') {
-                        const targetCell = worksheet.cell(newRowNum, startColumn + index);
-                        const convertedValue = convertValue(value, targetCell);
-                        targetCell.value(convertedValue);
+                        const colNumber = startColumn + index;
+                        const targetCell = worksheet.cell(newRowNum, colNumber);
+                        const converted = convertValue(value, targetCell);
+                        
+                        targetCell.value(converted.value);
+                        
+                        // Wenn es ein Datum ist und die Zelle kein Format hat, 
+                        // versuche das Format aus der Spalte zu übernehmen
+                        if (converted.isDate) {
+                            const currentFormat = targetCell.style('numberFormat');
+                            if (!currentFormat || currentFormat === 'General') {
+                                // Spaltenformat aus Cache oder neu ermitteln
+                                if (!(colNumber in columnFormats)) {
+                                    columnFormats[colNumber] = getColumnFormat(colNumber);
+                                }
+                                
+                                const colFormat = columnFormats[colNumber];
+                                if (colFormat) {
+                                    targetCell.style('numberFormat', colFormat);
+                                } else {
+                                    // Standard deutsches Datumsformat setzen
+                                    targetCell.style('numberFormat', 'DD.MM.YYYY');
+                                }
+                            }
+                        }
                     }
                 });
             }
