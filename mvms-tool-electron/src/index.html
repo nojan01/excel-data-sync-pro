@@ -2942,7 +2942,7 @@
             // Formular mit konfigurierten Spalten aufbauen
             let html = '';
             state.mapping.sourceColumns.forEach((colIndex, i) => {
-                const headerName = state.file1_headers[colIndex] || `Spalte ${colIndex + 1}`;
+                const headerName = state.file1.headers[colIndex] || `Spalte ${colIndex + 1}`;
                 html += `
                     <div class="new-row-field">
                         <label title="${headerName}">${headerName}</label>
@@ -4108,4 +4108,5 @@
     </script>
 </body>
 </html>
+
 
