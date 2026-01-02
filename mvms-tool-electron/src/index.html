@@ -1220,7 +1220,7 @@
                         ☑️ Alle auswählen
                     </button>
                     <button class="btn btn-secondary" id="btnDeselectAll">
-                        ☐ Alles abwählen
+                        ☐Alles abwählen
                     </button>
                 </div>
                 <div id="transferStatus"></div>
@@ -1460,7 +1460,10 @@
                     </div>
                     <div class="transfer-field" style="flex: 1;">
                         <label>Volltextsuche:</label>
-                        <input type="text" id="explorerSearch" class="config-input" placeholder="Suchbegriff eingeben..." style="min-width: 250px;">
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="explorerSearch" class="config-input" placeholder="Suchbegriff eingeben..." style="flex: 1; min-width: 200px;">
+                            <button class="btn btn-primary btn-sm" id="btnExplorerSearch" title="Suche starten (Enter)">🔍</button>
+                        </div>
                     </div>
                     <button class="btn btn-secondary" id="btnToggleColumns" title="Spalten ein-/ausblenden">
                         👁️ Spalten
@@ -1608,7 +1611,7 @@
                 addToQueue: '➕ Markierte zur Warteschlange',
                 transferDirect: '➡️ Markierte direkt übertragen',
                 selectAll: '☑️ Alle auswählen',
-                deselectAll: '☐ Alles abwählen',
+                deselectAll: '☐Alles abwählen',
                 
                 // Queue
                 queue: '📋 Queue',
@@ -1616,7 +1619,7 @@
                 clear: '🗑️ Clear',
                 directTransfer: '✅ Transfer Directly',
                 dataExplorer: '📊 Data Explorer',
-                newMonthFile: '📅 Neue Monatsdatei',
+                newMonthFile: '📅 New Month File',
                 noRowsInQueue: 'Keine Zeilen in der Warteschlange',
                 
                 // New Row
@@ -2021,7 +2024,8 @@
             targetStartColumn: document.getElementById('targetStartColumn'),
             
             // Search
-            searchInput: document.getElementById('searchInput'),
+            searchInput: document.getElementById('searchInput',
+            ),
             btnSearch: document.getElementById('btnSearch'),
             btnNewRow: document.getElementById('btnNewRow'),
             searchResultsInfo: document.getElementById('searchResultsInfo'),
@@ -2045,7 +2049,8 @@
             
             // Transfer
             transferPanel: document.getElementById('transferPanel'),
-            transferFlag: document.getElementById('transferFlag'),
+            transferFlag: document.getElementById('transferFlag',
+            ),
             transferComment: document.getElementById('transferComment'),
             btnAddToQueue: document.getElementById('btnAddToQueue'),
             btnTransferDirect: document.getElementById('btnTransferDirect'),
@@ -3965,7 +3970,16 @@
             document.getElementById('btnCloseExplorerFooter').onclick = closeDataExplorer;
             elements.btnExplorerOpenFile.onclick = loadExplorerFile;
             elements.explorerSheetSelect.onchange = (e) => loadExplorerSheet(e.target.value);
-            elements.explorerSearch.oninput = (e) => { explorerState.searchTerm = e.target.value; filterExplorerData(); };
+            elements.explorerSearch.onkeydown = (e) => { 
+                if (e.key === 'Enter') {
+                    explorerState.searchTerm = e.target.value; 
+                    filterExplorerData(); 
+                }
+            };
+            document.getElementById('btnExplorerSearch').onclick = () => {
+                explorerState.searchTerm = elements.explorerSearch.value;
+                filterExplorerData();
+            };
             document.getElementById('btnToggleColumns').onclick = toggleColumnPanel;
             document.getElementById('btnShowAllColumns').onclick = showAllExplorerColumns;
             document.getElementById('btnHideAllColumns').onclick = hideAllExplorerColumns;
