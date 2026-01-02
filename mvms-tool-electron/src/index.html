@@ -2993,10 +2993,18 @@
         
         // ==================== New Row Functions ====================
         function addNewRowToQueue() {
-            const data = getNewRowData();
             const flag = elements.newRowFlag.value;
             const comment = elements.newRowComment.value;
-            const checkValue = data[state.mapping.duplicateCheckColumn] || '';
+            
+            // Bei Leerzeile: leere Daten
+            let data;
+            let checkValue = '';
+            if (flag === 'leer') {
+                data = [];
+            } else {
+                data = getNewRowData();
+                checkValue = data[state.mapping.duplicateCheckColumn] || '';
+            }
             
             state.transferQueue.push({
                 data: data,
@@ -3021,9 +3029,16 @@
         }
         
         async function transferNewRowDirect() {
-            const data = getNewRowData();
             const flag = elements.newRowFlag.value;
             const comment = elements.newRowComment.value;
+            
+            // Bei Leerzeile: leere Daten
+            let data;
+            if (flag === 'leer') {
+                data = [];
+            } else {
+                data = getNewRowData();
+            }
             
             // Prüfe ob Zieldatei verfügbar ist (Electron: filePath, Browser: workbook)
             const hasTargetFile = isElectron ? state.file2.filePath : state.file2.workbook;
@@ -3034,7 +3049,7 @@
             
             // Im Electron-Modus: Zur Warteschlange hinzufügen und direkt übertragen
             if (isElectron && state.file2.filePath) {
-                const checkValue = data[state.mapping.duplicateCheckColumn] || '';
+                const checkValue = flag === 'leer' ? '' : (data[state.mapping.duplicateCheckColumn] || '');
                 
                 state.transferQueue.push({
                     data: data,
@@ -3093,7 +3108,17 @@
             if (state.history.length > 50) state.history = state.history.slice(0, 50);
             updateHistoryDisplay();
             
-            showStatus(elements.transferStatus, '✅ Neue Zeile direkt übertragen!', 'success');
+            let message = `✓ ${transferredCount} Zeile(n) direkt übertragen!`;
+            let status = 'success';
+            if (editedCount > 0) {
+                message += ` (${editedCount} bearbeitet ✏️)`;
+            }
+            if (duplicatesFound.length > 0) {
+                message += ` ⚠️ ${duplicatesFound.length} Duplikat(e)!`;
+                status = 'warning';
+            }
+            
+            showStatus(elements.transferStatus, message, status);
             
             state.mapping.sourceColumns.forEach((colIndex, i) => {
                 const field = document.getElementById(`newRowField_${i}`);
@@ -3743,7 +3768,7 @@
                 headerHtml += `<th>${escapeHtml(explorerState.headers[colIndex] || `Spalte ${colIndex + 1}`)}</th>`;
             });
             headerHtml += '</tr>';
-            elements.explorerTableHead.innerHTML = headerHtml;
+            elements.explorerTableHead.innerHTML = header html;
             
             // Body
             let bodyHtml = '';
