@@ -3862,11 +3862,15 @@
             
             elements.newMonthTemplateName.textContent = state.template.name || '-';
             
-            // Vorschlag für neuen Dateinamen
+            // Vorschlag für neuen Dateinamen: Template-Name als Basis verwenden
+            let baseName = state.template.name || 'Vertragsliste.xlsx';
+            // Entferne .xlsx/.xls Endung falls vorhanden
+            baseName = baseName.replace(/\.(xlsx|xls)$/i, '');
+            // Füge aktuellen Monat hinzu
             const now = new Date();
             const year = now.getFullYear();
             const month = String(now.getMonth() + 1).padStart(2, '0');
-            elements.newMonthFilename.value = `Vertragsliste_${year}-${month}.xlsx`;
+            elements.newMonthFilename.value = `${baseName}_${year}-${month}.xlsx`;
             
             elements.newMonthModal.classList.remove('hidden');
         }
