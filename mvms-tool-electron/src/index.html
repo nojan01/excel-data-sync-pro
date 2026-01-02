@@ -1834,7 +1834,7 @@
                 }
             });
             
-            // Update specific header elements
+            // Header
             document.querySelector('.logo span').textContent = t('appTitle');
             document.getElementById('btnImportConfig').innerHTML = t('loadConfig');
             document.getElementById('btnExportConfig').innerHTML = t('saveConfig');
@@ -2024,8 +2024,7 @@
             targetStartColumn: document.getElementById('targetStartColumn'),
             
             // Search
-            searchInput: document.getElementById('searchInput',
-            ),
+            searchInput: document.getElementById('searchInput'),
             btnSearch: document.getElementById('btnSearch'),
             btnNewRow: document.getElementById('btnNewRow'),
             searchResultsInfo: document.getElementById('searchResultsInfo'),
@@ -2043,14 +2042,12 @@
             emptyState: document.getElementById('emptyState'),
             resultsTableContainer: document.getElementById('resultsTableContainer'),
             resultsTable: document.getElementById('resultsTable'),
-            resultsTableHead: document.getElementById('resultsTableHead',
-            ),
+            resultsTableHead: document.getElementById('resultsTableHead'),
             resultsTableBody: document.getElementById('resultsTableBody'),
             
             // Transfer
             transferPanel: document.getElementById('transferPanel'),
-            transferFlag: document.getElementById('transferFlag',
-            ),
+            transferFlag: document.getElementById('transferFlag'),
             transferComment: document.getElementById('transferComment'),
             btnAddToQueue: document.getElementById('btnAddToQueue'),
             btnTransferDirect: document.getElementById('btnTransferDirect'),
@@ -2409,7 +2406,7 @@
                     // Template laden (falls vorhanden)
                     if (config.templateData) {
                         state.template.data = config.templateData;
-                        state.template.name = config.template.name;
+                        state.template.name = config.templateName;
                         elements.templateInfo.textContent = config.templateName;
                         elements.btnNewMonth.disabled = false;
                     }
@@ -2604,9 +2601,11 @@
         }
         
         function checkReadyState() {
-            const bothLoaded = state.file1.workbook && state.file2.workbook;
+            const hasFile1 = isElectron ? state.file1.filePath : state.file1.workbook;
+            const hasFile2 = isElectron ? state.file2.filePath : state.file2.workbook;
+            const bothLoaded = hasFile1 && hasFile2;
             
-            // Mapping-Button nur deaktivieren wenn KEINE Konfig geladen UND keine Dateien
+            // Mapping-Button nur deaktivieren wenn KEINE Konfig geladen AND kein Dateien
             const hasMapping = state.mapping.sourceColumns && state.mapping.sourceColumns.length > 0;
             elements.btnConfigMapping.disabled = !bothLoaded && !hasMapping;
             
@@ -2614,7 +2613,7 @@
             elements.btnSearch.disabled = !state.file1.selectedSheet;
             
             // "Neue Zeile" Button aktivieren wenn Mapping vorhanden und Datei 2 geladen
-            elements.btnNewRow.disabled = !hasMapping || !state.file2.workbook;
+            elements.btnNewRow.disabled = !hasMapping || !hasFile2;
             
             // Datenexplorer ist immer aktiviert (kann eigene Dateien öffnen)
             elements.btnDataExplorer.disabled = false;
@@ -2641,7 +2640,10 @@
         }
         
         function updateMappingInfo() {
-            if (!state.file1.workbook || !state.file2.workbook) {
+            const hasFile1 = isElectron ? state.file1.filePath : state.file1.workbook;
+            const hasFile2 = isElectron ? state.file2.filePath : state.file2.workbook;
+            
+            if (!hasFile1 || !hasFile2) {
                 if (state.mapping.sourceColumns && state.mapping.sourceColumns.length > 0) {
                     elements.mappingInfo.textContent = `${state.mapping.sourceColumns.length} Spalte(n) konfiguriert (Dateien laden)`;
                     elements.mappingInfo.style.color = 'var(--warning)';
@@ -3019,12 +3021,14 @@
             if (firstField) firstField.focus();
         }
         
-        function transferNewRowDirect() {
+        async function transferNewRowDirect() {
             const data = getNewRowData();
             const flag = elements.newRowFlag.value;
             const comment = elements.newRowComment.value;
             
-            if (!state.file2.workbook && !state.file2.filePath) {
+            // Prüfe ob Zieldatei verfügbar ist (Electron: filePath, Browser: workbook)
+            const hasTargetFile = isElectron ? state.file2.filePath : state.file2.workbook;
+            if (!hasTargetFile) {
                 showStatus(elements.transferStatus, 'Keine Zieldatei geladen', 'error');
                 return;
             }
@@ -3043,8 +3047,10 @@
                 
                 updateQueueDisplay();
                 
-                // Direkt übertragen
-                transferQueueToExcel().then(() => {
+                try {
+                    // Direkt übertragen
+                    await transferQueueToExcel();
+                    
                     // Felder leeren für nächste Eingabe
                     state.mapping.sourceColumns.forEach((colIndex, i) => {
                         const field = document.getElementById(`newRowField_${i}`);
@@ -3054,7 +3060,10 @@
                     
                     const firstField = document.getElementById('newRowField_0');
                     if (firstField) firstField.focus();
-                });
+                } catch (err) {
+                    console.error('Fehler bei Übertragung:', err);
+                    showStatus(elements.transferStatus, `Fehler: ${err.message}`, 'error');
+                }
                 
                 return;
             }
@@ -3116,9 +3125,16 @@
             return null;
         }
         
-        function transferSelectedDirect() {
-            if (state.selectedRows.length === 0 || (!state.file2.workbook && !state.file2.filePath)) {
+        async function transferSelectedDirect() {
+            if (state.selectedRows.length === 0) {
                 showStatus(elements.transferStatus, 'Bitte wählen Sie mindestens eine Zeile aus', 'error');
+                return;
+            }
+            
+            // Prüfe ob Zieldatei verfügbar ist (Electron: filePath, Browser: workbook)
+            const hasTargetFile = isElectron ? state.file2.filePath : state.file2.workbook;
+            if (!hasTargetFile) {
+                showStatus(elements.transferStatus, 'Keine Zieldatei geladen', 'error');
                 return;
             }
             
@@ -3140,14 +3156,19 @@
                         flag: flag,
                         comment: comment,
                         checkValue: checkValue,
-                        isManual: true
+                        wasEdited: isRowEdited(rowIndex)
                     });
                 }
                 
                 updateQueueDisplay();
                 
-                // Direkt übertragen
-                transferQueueToExcel();
+                try {
+                    // Direkt übertragen
+                    await transferQueueToExcel();
+                } catch (err) {
+                    console.error('Fehler bei Übertragung:', err);
+                    showStatus(elements.transferStatus, `Fehler: ${err.message}`, 'error');
+                }
                 
                 selectAllRows(false);
                 elements.transferComment.value = '';
@@ -3309,9 +3330,11 @@
         }
         
         function updateQueueDisplay() {
+            const hasFile2 = isElectron ? state.file2.filePath : state.file2.workbook;
+            
             elements.queueCount.textContent = state.transferQueue.length;
             elements.btnClearQueue.disabled = state.transferQueue.length === 0;
-            elements.btnExportPS.disabled = state.transferQueue.length === 0 || (!state.file2.workbook && !state.file2.filePath);
+            elements.btnExportPS.disabled = state.transferQueue.length === 0 || !hasFile2;
             
             if (state.transferQueue.length === 0) {
                 elements.queueList.innerHTML = '<div class="queue-empty">Keine Zeilen in der Warteschlange</div>';
@@ -3341,7 +3364,7 @@
             }
             
             if (!state.file2.filePath) {
-                showStatus(elements.transferStatus, 'Keine Zieldatei ausgewählt', 'error');
+                showStatus(elements.transferStatus, 'Keine Zieldatei geladen', 'error');
                 return;
             }
             
@@ -3838,7 +3861,7 @@
                         explorerState.visibleColumns.map(i => row[i])
                     );
                     
-                    const result = await window.electronAPI.exportExcel({
+                    const result = await window.electronAPI.exportData({
                         filePath: savePath,
                         headers: visibleHeaders,
                         data: visibleData
@@ -3942,29 +3965,15 @@
             try { await initDB(); } catch (e) { console.warn('IndexedDB nicht verfügbar'); }
             loadConfig(); updateMappingPreview(); checkReadyState();
             
-            // Automatisch config.json aus Programmordner laden beim Start
-            console.log('[Config] Suche automatisch nach config.json...');
-            try {
-                const autoResult = await window.electronAPI.loadConfigFromAppDir();
-                console.log('[Config] loadConfigFromAppDir Ergebnis:', autoResult);
-                
-                if (autoResult.success && autoResult.config) {
-                    await applyLoadedConfig(autoResult.config);
-                    console.log('[Config] config.json automatisch geladen:', autoResult.path);
-                    showStatus(elements.transferStatus, `✓ config.json geladen: ${autoResult.path}`, 'success');
-                } else {
-                    console.log('[Config] Keine config.json gefunden.');
-                    if (autoResult.searchedPaths) {
-                        console.log('[Config] Gesuchte Pfade:', autoResult.searchedPaths);
-                    }
+            // Search Event Listeners - WICHTIG!
+            elements.searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    search();
                 }
-            } catch (e) {
-                console.error('[Config] Fehler beim automatischen Laden:', e);
-            }
-            
-            // Common Event Listeners (both modes)
+            });
             elements.btnSearch.onclick = search;
-            elements.searchInput.onkeydown = (e) => { if (e.key === 'Enter') search(); };
+            
             elements.btnNewRow.onclick = openNewRowPanel;
             elements.btnCloseNewRow.onclick = closeNewRowPanel;
             elements.btnAddNewRowToQueue.onclick = addNewRowToQueue;
@@ -4108,5 +4117,3 @@
     </script>
 </body>
 </html>
-
-

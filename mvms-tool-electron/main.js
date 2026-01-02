@@ -673,25 +673,24 @@ ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetNa
 });
 
 // Daten exportieren (fuer Datenexplorer)
-ipcMain.handle('excel:exportData', async (event, { filePath, sheetName, headers, rows }) => {
+ipcMain.handle('excel:exportData', async (event, { filePath, headers, data }) => {
     try {
         // Neue leere Workbook erstellen
         const workbook = await XlsxPopulate.fromBlankAsync();
         
         // Erstes Sheet umbenennen
         const worksheet = workbook.sheet(0);
-        worksheet.name(sheetName.substring(0, 31));
+        worksheet.name('Export');
         
         // Header-Zeile
         headers.forEach((header, colIndex) => {
             worksheet.cell(1, colIndex + 1).value(header);
         });
         
-        // Daten-Zeilen
-        rows.forEach((row, rowIndex) => {
-            headers.forEach((header, colIndex) => {
-                const value = row[header] || '';
-                worksheet.cell(rowIndex + 2, colIndex + 1).value(value);
+        // Daten-Zeilen (data ist ein Array von Arrays)
+        data.forEach((row, rowIndex) => {
+            row.forEach((value, colIndex) => {
+                worksheet.cell(rowIndex + 2, colIndex + 1).value(value || '');
             });
         });
         
