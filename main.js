@@ -105,8 +105,8 @@ function isValidFilePath(filePath) {
 // ============================================
 function createWindow() {
     mainWindow = new BrowserWindow({
-        width: 1400,
-        height: 900,
+        width: 1600,
+        height: 1000,
         minWidth: 800,
         minHeight: 600,
         resizable: true,
