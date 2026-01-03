@@ -1,0 +1,77 @@
+{
+  "name": "mvms-tool",
+  "version": "1.0.5",
+  "description": "MVMS-Vertragslisten Tool",
+  "main": "main.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --dev",
+    "build": "electron-builder --win portable --x64",
+    "build:mac": "electron-builder --mac",
+    "build:mac-arm": "electron-builder --mac --arm64",
+    "build:win": "electron-builder --win portable --x64",
+    "build:arm64": "electron-builder --win portable --arm64",
+    "build:all": "electron-builder --win --mac",
+    "build:installer": "electron-builder --win nsis --x64"
+  },
+  "build": {
+    "appId": "de.mvms.tool",
+    "productName": "MVMS-Tool",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "src/**/*",
+      "node_modules/**/*"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": ["x64", "arm64"]
+        }
+      ],
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.productivity"
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "artifactName": "MVMS-Tool-${version}-Setup.exe",
+      "shortcutName": "MVMS-Tool",
+      "perMachine": false
+    },
+    "portable": {
+      "artifactName": "MVMS-Tool-${arch}.exe"
+    }
+  },
+  "author": "Norbert Jander",
+  "devDependencies": {
+    "electron": "^39.2.7",
+    "electron-builder": "^26.0.12",
+    "electron-reload": "^2.0.0-alpha.1",
+    "eslint": "^9.39.2"
+  },
+  "dependencies": {
+    "xlsx-populate": "^1.21.0"
+  }
+}

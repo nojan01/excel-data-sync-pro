@@ -1,0 +1,4147 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';">
+    <title>MVMS-Vertragslisten aktualisieren</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='12' fill='%231565C0'/><text x='50' y='32' font-size='18' font-weight='bold' text-anchor='middle' fill='white'>MVMS</text><g transform='translate(50,62) scale(0.9)'><path d='M0,-30 L3,-25 L3,20 L0,28 L-3,20 L-3,-25 Z' fill='white'/><path d='M3,0 L38,15 L35,18 L3,8 Z' fill='white'/><path d='M-3,0 L-38,15 L-35,18 L-3,8 Z' fill='white'/><path d='M3,-18 L18,-12 L16,-10 L3,-14 Z' fill='white'/><path d='M-3,-18 L-18,-12 L-16,-10 L-3,-14 Z' fill='white'/><path d='M2,18 L5,10 L5,20 L2,24 Z' fill='white'/><path d='M-2,18 L-5,10 L-5,20 L-2,24 Z' fill='white'/></g></svg>">
+    <!-- Electron-Modus: Excel wird via Node.js xlsx-populate geladen (erhält Formatierung) -->
+    <style>
+        :root {
+            --primary: #1565C0;
+            --primary-dark: #0D47A1;
+            --primary-light: #1E88E5;
+            --bg-dark: #1e1e1e;
+            --bg-medium: #252526;
+            --bg-light: #2d2d30;
+            --bg-lighter: #3c3c3c;
+            --text: #e0e0e0;
+            --text-muted: #888;
+            --border: #404040;
+            --success: #4caf50;
+            --warning: #ff9800;
+            --error: #f44336;
+            --info: #2196f3;
+        }
+        
+        /* Light Theme */
+        body.light-theme {
+            --bg-dark: #f5f5f5;
+            --bg-medium: #ffffff;
+            --bg-light: #e8e8e8;
+            --bg-lighter: #d0d0d0;
+            --text: #1e1e1e;
+            --text-muted: #666666;
+            --border: #cccccc;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: var(--bg-dark);
+            color: var(--text);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* Header */
+        .header {
+            background: var(--bg-medium);
+            border-bottom: 1px solid var(--border);
+            padding: 12px 20px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+        
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--primary-light);
+        }
+        
+        .logo-icon {
+            width: 32px;
+            height: 32px;
+            background: var(--primary);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            color: white;
+        }
+        
+        .header-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 10px;
+        }
+        
+        /* Buttons */
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            transition: all 0.2s;
+            background: var(--bg-lighter, #3c3c3c);
+            color: var(--text, #e0e0e0);
+        }
+        
+        .btn-primary {
+            background: var(--primary);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: var(--primary-light);
+        }
+        
+        .btn-warning {
+            background: var(--warning);
+            color: #1e1e1e;
+        }
+        
+        .btn-warning:hover {
+            background: #ffa726;
+        }
+        
+        .btn-info {
+            background: #9c27b0;
+            color: white;
+        }
+        
+        .btn-info:hover {
+            background: #ab47bc;
+        }
+        
+        .btn-unsaved {
+            animation: pulse-save 1.5s infinite;
+            box-shadow: 0 0 10px rgba(66, 165, 245, 0.5);
+        }
+        
+        @keyframes pulse-save {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.02); }
+        }
+        
+        .btn-secondary {
+            background: var(--bg-lighter);
+            color: var(--text);
+            border: 1px solid var(--border);
+        }
+        
+        .btn-secondary:hover {
+            background: var(--border);
+        }
+        
+        .btn-success {
+            background: var(--success);
+            color: white;
+        }
+        
+        .btn-success:hover {
+            background: #66bb6a;
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        /* Main Layout */
+        .main {
+            flex: 1;
+            display: flex;
+            overflow: hidden;
+        }
+        
+        /* Sidebar - Konfiguration */
+        .sidebar {
+            width: 320px;
+            background: var(--bg-medium);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+            transition: width 0.3s ease, min-width 0.3s ease;
+        }
+        
+        .sidebar.collapsed {
+            width: 48px;
+            min-width: 48px;
+        }
+        
+        .sidebar.collapsed .sidebar-content {
+            display: none;
+        }
+        
+        .sidebar.collapsed .sidebar-header-text {
+            display: none;
+        }
+        
+        .sidebar.collapsed .sidebar-toggle {
+            transform: rotate(180deg);
+        }
+        
+        .sidebar-header {
+            padding: 15px;
+            border-bottom: 1px solid var(--border);
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            justify-content: space-between;
+            min-height: 52px;
+        }
+        
+        .sidebar-header-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            overflow: hidden;
+        }
+        
+        .sidebar-toggle {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 6px;
+            border-radius: 4px;
+            transition: background 0.2s, transform 0.3s;
+            font-size: 16px;
+            flex-shrink: 0;
+        }
+        
+        .sidebar-toggle:hover {
+            background: var(--bg-lighter);
+            color: var(--text-primary);
+        }
+        
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 15px;
+        }
+        
+        .config-section {
+            margin-bottom: 20px;
+        }
+        
+        .config-section-title {
+            font-size: 12px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: 10px;
+            letter-spacing: 0.5px;
+        }
+        
+        .config-group {
+            background: var(--bg-light);
+            border-radius: 6px;
+            padding: 12px;
+            margin-bottom: 10px;
+        }
+        
+        .config-label {
+            font-size: 13px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            display: block;
+        }
+        
+        .config-select, .config-input {
+            width: 100%;
+            padding: 8px 10px;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-size: 14px;
+        }
+        
+        .config-select:focus, .config-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .file-info {
+            font-size: 12px;
+            color: var(--text-muted);
+            margin-top: 6px;
+            word-break: break-all;
+        }
+        
+        .file-info.loaded {
+            color: var(--success);
+        }
+        
+        /* Content Area */
+        .content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        /* Search Section */
+        .search-section {
+            padding: 20px;
+            background: var(--bg-medium);
+            border-bottom: 1px solid var(--border);
+        }
+        
+        .search-box {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .search-input {
+            flex: 1;
+            padding: 12px 16px;
+            background: var(--bg-dark);
+            border: 2px solid var(--border);
+            border-radius: 6px;
+            color: var(--text);
+            font-size: 16px;
+        }
+        
+        .search-input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .search-input::placeholder {
+            color: var(--text-muted);
+        }
+        
+        .search-results-info {
+            font-size: 14px;
+            color: var(--text-muted);
+        }
+        
+        .search-results-info strong {
+            color: var(--primary-light);
+        }
+        
+        /* Results Table */
+        .results-section {
+            flex: 1 1 0;
+            min-height: 0;
+            max-height: 30vh;
+            overflow: hidden;
+            padding: 10px 20px;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .results-table-container {
+            flex: 1 1 0;
+            min-height: 80px;
+            overflow: auto;
+            background: var(--bg-medium);
+            border-radius: 8px;
+            border: 1px solid var(--border);
+        }
+        
+        .results-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        
+        .results-table th,
+        .results-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+            white-space: nowrap;
+        }
+        
+        .results-table th {
+            background: var(--bg-light);
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            z-index: 1;
+        }
+        
+        .results-table tr:hover {
+            background: var(--bg-light);
+        }
+        
+        .results-table tr.selected {
+            background: rgba(33, 115, 70, 0.3);
+        }
+        
+        .results-table td[contenteditable="true"] {
+            cursor: text;
+            min-width: 50px;
+        }
+        
+        .results-table td[contenteditable="true"]:focus {
+            outline: 2px solid var(--primary);
+            outline-offset: -2px;
+            background: var(--bg-darker);
+        }
+        
+        .results-table td.edited {
+            background: rgba(255, 193, 7, 0.2);
+            border-left: 3px solid var(--warning);
+        }
+        
+        .row-select {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+        
+        .highlight {
+            background: var(--warning);
+            color: black;
+            padding: 1px 2px;
+            border-radius: 2px;
+        }
+        
+        /* New Row Panel */
+        .new-row-panel {
+            background: var(--bg-medium);
+            border: 2px solid var(--success);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        
+        .new-row-panel.hidden {
+            display: none;
+        }
+        
+        .new-row-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+        
+        .new-row-title {
+            font-weight: 600;
+            font-size: 16px;
+            color: var(--success);
+        }
+        
+        .new-row-form {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+            margin-bottom: 15px;
+            padding: 15px;
+            background: var(--bg-dark);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+        
+        .new-row-field {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        
+        .new-row-field label {
+            font-size: 12px;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        
+        .new-row-field input {
+            padding: 8px 10px;
+            background: var(--bg-lighter);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-size: 13px;
+        }
+        
+        .new-row-field input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .new-row-actions {
+            display: flex;
+            gap: 15px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+        
+        .btn-sm {
+            padding: 6px 12px;
+            font-size: 12px;
+        }
+        
+        /* Transfer Panel */
+        .transfer-panel {
+            background: var(--bg-medium);
+            border-top: 1px solid var(--border);
+            padding: 20px;
+        }
+        
+        .transfer-panel.hidden {
+            display: none;
+        }
+        
+        .transfer-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 15px;
+        }
+        
+        .transfer-title {
+            font-weight: 600;
+            font-size: 16px;
+        }
+        
+        .transfer-form {
+            display: flex;
+            gap: 20px;
+            align-items: flex-end;
+            flex-wrap: wrap;
+        }
+        
+        .transfer-field {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        
+        .transfer-field label {
+            font-size: 13px;
+            color: var(--text-muted);
+        }
+        
+        .transfer-field select,
+        .transfer-field input {
+            padding: 10px 12px;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-size: 14px;
+            min-width: 150px;
+        }
+        
+        .transfer-field select:focus,
+        .transfer-field input:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .transfer-field input[type="text"] {
+            min-width: 250px;
+        }
+        
+        /* Status Messages */
+        .status {
+            padding: 10px 15px;
+            border-radius: 4px;
+            margin: 10px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        
+        .status.success {
+            background: rgba(76, 175, 80, 0.2);
+            border: 1px solid var(--success);
+            color: var(--success);
+        }
+        
+        .status.error {
+            background: rgba(244, 67, 54, 0.2);
+            border: 1px solid var(--error);
+            color: var(--error);
+        }
+        
+        .status.info {
+            background: rgba(33, 150, 243, 0.2);
+            border: 1px solid var(--info);
+            color: var(--info);
+        }
+        
+        /* Empty State */
+        .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            color: var(--text-muted);
+            padding: 40px;
+            text-align: center;
+        }
+        
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            opacity: 0.5;
+        }
+        
+        .empty-state-title {
+            font-size: 20px;
+            margin-bottom: 10px;
+            color: var(--text);
+        }
+        
+        .empty-state-text {
+            max-width: 400px;
+            line-height: 1.6;
+        }
+        
+        /* Column Mapping Modal */
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            overflow: hidden;
+        }
+        
+        .modal-overlay.hidden {
+            display: none;
+        }
+        
+        .modal {
+            background: var(--bg-medium);
+            border-radius: 8px;
+            max-width: 700px;
+            width: 90%;
+            max-height: 80vh;
+            display: flex;
+            flex-direction: column;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+            resize: both;
+            overflow: hidden;
+            min-width: 400px;
+            min-height: 300px;
+        }
+        
+        .modal.modal-large {
+            resize: both;
+            overflow: hidden;
+        }
+        
+        /* Verhindert Scroll-Durchgang bei offenen Modals */
+        body.modal-open {
+            overflow: hidden;
+        }
+        
+        .modal-header {
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+        }
+        
+        .modal-close {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 24px;
+            cursor: pointer;
+            padding: 0;
+            line-height: 1;
+        }
+        
+        .modal-close:hover {
+            color: var(--text);
+        }
+        
+        .modal-body {
+            padding: 20px;
+            overflow-y: auto;
+            flex: 1;
+        }
+        
+        .modal-footer {
+            padding: 15px 20px;
+            border-top: 1px solid var(--border);
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+        
+        /* Mapping List Styles */
+        .mapping-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        
+        .mapping-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            background: var(--bg-light);
+            border-radius: 6px;
+            border: 1px solid var(--border);
+        }
+        
+        .mapping-item select {
+            flex: 1;
+            padding: 8px 10px;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            color: var(--text);
+            font-size: 14px;
+            min-width: 150px;
+        }
+        
+        .mapping-item select:focus {
+            outline: none;
+            border-color: var(--primary);
+        }
+        
+        .mapping-arrow {
+            color: var(--primary-light);
+            font-size: 18px;
+            font-weight: bold;
+            padding: 0 5px;
+        }
+        
+        .mapping-target {
+            color: var(--text-muted);
+            font-size: 13px;
+            min-width: 150px;
+        }
+        
+        .mapping-remove {
+            background: none;
+            border: 1px solid var(--border);
+            color: var(--text-muted);
+            padding: 6px 10px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.2s;
+        }
+        
+        .mapping-remove:hover {
+            background: var(--error);
+            border-color: var(--error);
+            color: white;
+        }
+        
+        /* Column Visibility Control */
+        .column-toggle-container {
+            display: flex;
+            flex-direction: row;
+            flex-wrap: wrap;
+            gap: 8px;
+            padding: 15px;
+            background: var(--bg-light);
+            border-radius: 6px;
+            margin-bottom: 10px;
+            min-height: 80px;
+            max-height: 250px;
+            overflow-y: auto;
+            border: 1px solid var(--border);
+        }
+        
+        .column-toggle {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            background: var(--bg-dark);
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .column-toggle:hover {
+            border-color: var(--primary);
+        }
+        
+        .column-toggle.hidden-col {
+            opacity: 0.5;
+            background: var(--bg-lighter);
+        }
+        
+        .column-toggle input {
+            cursor: pointer;
+        }
+        
+        .column-toggle label {
+            cursor: pointer;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 150px;
+        }
+        
+        /* Transfer History */
+        .history-section {
+            margin-top: 20px;
+        }
+        
+        .history-list {
+            max-height: 200px;
+            overflow-y: auto;
+            background: var(--bg-light);
+            border-radius: 6px;
+            padding: 10px;
+        }
+        
+        .history-item {
+            font-size: 12px;
+            padding: 6px 8px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            gap: 8px;
+        }
+        
+        .history-item:last-child {
+            border-bottom: none;
+        }
+        
+        .history-time {
+            color: var(--text-muted);
+            font-size: 11px;
+            white-space: nowrap;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="logo">
+            <div class="logo-icon" style="font-size: 10px; line-height: 1.2;">✈</div>
+            <span>MVMS-Vertragslisten aktualisieren</span>
+        </div>
+        <div class="header-actions">
+            <button class="btn btn-primary" id="btnImportConfig" title="Gemeinsame config.json aus Programmordner laden">
+                📂 config.json laden
+            </button>
+            <button class="btn btn-primary" id="btnExportConfig" title="Konfiguration als config.json speichern">
+                💾 config.json speichern
+            </button>
+            <button class="btn btn-secondary" id="btnHelp" title="Hilfe (F1)">
+                ❓ Hilfe
+            </button>
+        </div>
+    </header>
+    
+    <main class="main">
+        <!-- Sidebar - Konfiguration -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-header-left">
+                    <span>⚙️</span>
+                    <span class="sidebar-header-text">Konfiguration</span>
+                </div>
+                <button class="sidebar-toggle" id="sidebarToggle" title="Sidebar ein-/ausklappen">◀</button>
+            </div>
+            <div class="sidebar-content">
+                <!-- Datei 1 - Quelle -->
+                <div class="config-section">
+                    <div class="config-section-title" data-i18n="file1Source">📄 Datei 1 (Quelle)</div>
+                    <div class="config-group">
+                        <button class="btn btn-primary" id="btnLoadFile1" style="width: 100%; margin-bottom: 10px;" data-i18n="loadSourceFile">
+                            📂 Quelldatei laden
+                        </button>
+                        <div class="file-info" id="file1Info" data-i18n="noFileLoaded">Keine Datei geladen</div>
+                        
+                        <label class="config-label" style="margin-top: 12px;" data-i18n="worksheet">Arbeitsblatt:</label>
+                        <select class="config-select" id="selectSheet1" disabled>
+                            <option value="" data-i18n="loadFileFirst">-- Erst Datei laden --</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Datei 2 - Ziel -->
+                <div class="config-section">
+                    <div class="config-section-title" data-i18n="file2Target">📄 Datei 2 (Ziel)</div>
+                    <div class="config-group">
+                        <button class="btn btn-primary" id="btnLoadFile2" style="width: 100%; margin-bottom: 10px;" data-i18n="loadTargetFile">
+                            📂 Zieldatei laden
+                        </button>
+                        <div class="file-info" id="file2Info" data-i18n="noFileLoaded">Keine Datei geladen</div>
+                        
+                        <label class="config-label" style="margin-top: 12px;" data-i18n="worksheet">Arbeitsblatt:</label>
+                        <select class="config-select" id="selectSheet2" disabled>
+                            <option value="" data-i18n="loadFileFirst">-- Erst Datei laden --</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Spalten-Mapping -->
+                <div class="config-section">
+                    <div class="config-section-title" data-i18n="columnMapping">🔗 Spalten-Zuordnung</div>
+                    <div class="config-group">
+                        <button class="btn btn-primary" id="btnConfigMapping" style="width: 100%;" data-i18n="configureColumns">
+                            ⚙️ Spalten konfigurieren
+                        </button>
+                        <div class="file-info" id="mappingInfo" data-i18n="loadBothFiles">Laden Sie beide Dateien</div>
+                        <div id="mappingPreview" style="margin-top: 10px; font-size: 12px; color: var(--text-muted);"></div>
+                    </div>
+                </div>
+                
+                <!-- Template für neuen Monat -->
+                <div class="config-section">
+                    <div class="config-section-title" data-i18n="monthTemplate">📄 Monats-Template</div>
+                    <div class="config-group">
+                        <button class="btn btn-primary" id="btnLoadTemplate" style="width: 100%; margin-bottom: 10px;" data-i18n="loadTemplate">
+                            📂 Template laden
+                        </button>
+                        <div class="file-info" id="templateInfo" data-i18n="noTemplateLoaded">Kein Template geladen</div>
+                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;" data-i18n="templateHint">
+                            Leere Excel-Vorlage für "📅 Neue Monatsdatei"
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Transfer History -->
+                <div class="config-section history-section">
+                    <div class="config-section-title" data-i18n="lastTransfers">📋 Letzte Übertragungen</div>
+                    <div class="history-list" id="historyList">
+                        <div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;" data-i18n="noTransfersYet">
+                            Noch keine Übertragungen
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Einstellungen: Sprache & Theme (unten) -->
+                <div class="config-section">
+                    <div class="config-section-title" data-i18n="settings">⚙️ Einstellungen</div>
+                    <div class="config-group" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 100px;">
+                            <label class="config-label" data-i18n="language">Sprache</label>
+                            <select class="config-select" id="selectLanguage" style="width: 100%;">
+                                <option value="de">🇩🇪 Deutsch</option>
+                                <option value="en">🇬🇧 English</option>
+                            </select>
+                        </div>
+                        <div style="flex: 1; min-width: 100px;">
+                            <label class="config-label" data-i18n="theme">Design</label>
+                            <select class="config-select" id="selectTheme" style="width: 100%;">
+                                <option value="dark" data-i18n="themeDark">🌙 Dunkel</option>
+                                <option value="light" data-i18n="themeLight">☀️ Hell</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div style="margin-top: 15px;">
+                        <button class="btn btn-secondary" id="btnLicense" style="width: 100%;">
+                            📜 <span data-i18n="license">Lizenz</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </aside>
+        
+        <!-- Content -->
+        <div class="content">
+            <!-- Search Section -->
+            <div class="search-section">
+                <div class="search-box">
+                    <input type="text" class="search-input" id="searchInput" 
+                           placeholder="Suche... (Platzhalter: * = beliebig, ? = ein Zeichen)" disabled>
+                    <button class="btn btn-primary" id="btnSearch" disabled>
+                        🔍 Suchen
+                    </button>
+                    <button class="btn btn-primary" id="btnNewRow" disabled title="Neue Zeile manuell erstellen">
+                        ➕ Neue Zeile
+                    </button>
+                </div>
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <div class="search-results-info" id="searchResultsInfo"></div>
+                    
+                    <!-- Search Results Pagination -->
+                    <div id="searchPagination" style="display: none; align-items: center; gap: 8px;">
+                        <button class="btn btn-secondary btn-sm" id="btnSearchFirstPage" title="Erste Seite">⏮</button>
+                        <button class="btn btn-secondary btn-sm" id="btnSearchPrevPage" title="Vorherige Seite">◀</button>
+                        <span id="searchPageInfo" style="color: var(--text-muted); font-size: 13px; min-width: 120px; text-align: center;">Seite 1 von 1</span>
+                        <button class="btn btn-secondary btn-sm" id="btnSearchNextPage" title="Nächste Seite">▶</button>
+                        <button class="btn btn-secondary btn-sm" id="btnSearchLastPage" title="Letzte Seite">⏭</button>
+                        <select id="searchPageSize" style="padding: 4px 8px; border-radius: 4px; background: var(--bg-light); border: 1px solid var(--border); color: var(--text-primary);">
+                            <option value="50">50 / Seite</option>
+                            <option value="100" selected>100 / Seite</option>
+                            <option value="250">250 / Seite</option>
+                            <option value="500">500 / Seite</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- New Row Panel (editierbare Vorlage) -->
+            <div class="new-row-panel hidden" id="newRowPanel">
+                <div class="new-row-header">
+                    <div class="new-row-title">✏️ Neue Zeile erstellen</div>
+                    <button class="btn btn-secondary btn-sm" id="btnCloseNewRow">✕ Schließen</button>
+                </div>
+                <div class="new-row-form" id="newRowForm">
+                    <!-- Wird dynamisch mit den konfigurierten Spalten gefüllt -->
+                </div>
+                <div class="new-row-actions">
+                    <div class="transfer-field">
+                        <label>Flag:</label>
+                        <select id="newRowFlag">
+                            <option value="A">A (Add)</option>
+                            <option value="D">D (Delete)</option>
+                            <option value="C">C (Change)</option>
+                            <option value="leer">Leerzeile</option>
+                        </select>
+                    </div>
+                    <div class="transfer-field">
+                        <label>Kommentar:</label>
+                        <input type="text" id="newRowComment" placeholder="Freier Text...">
+                    </div>
+                    <button class="btn btn-primary" id="btnAddNewRowToQueue">
+                        ➕ Zur Warteschlange
+                    </button>
+                    <button class="btn btn-primary" id="btnTransferNewRowDirect">
+                        ➡️ Direkt übertragen
+                    </button>
+                </div>
+                <div id="newRowStatus"></div>
+            </div>
+            
+            <!-- Results -->
+            <div class="results-section" id="resultsSection">
+                <div class="empty-state" id="emptyState">
+                    <div class="empty-state-icon">📊</div>
+                    <div class="empty-state-title">Bereit zum Starten</div>
+                    <div class="empty-state-text">
+                        1. Laden Sie die Quelldatei (Datei 1)<br>
+                        2. Laden Sie die Zieldatei (Datei 2)<br>
+                        3. Konfigurieren Sie die Spalten-Zuordnung<br>
+                        4. Suchen Sie nach Zeilen und übertragen Sie diese
+                    </div>
+                </div>
+                
+                <div class="results-table-container" id="resultsTableContainer" style="display: none;">
+                    <table class="results-table" id="resultsTable">
+                        <thead id="resultsTableHead"></thead>
+                        <tbody id="resultsTableBody"></tbody>
+                    </table>
+                </div>
+            </div>
+            
+            <!-- Transfer Panel -->
+            <div class="transfer-panel hidden" id="transferPanel">
+                <div class="transfer-header">
+                    <div class="transfer-title">📤 Zeile(n) zur Übertragung vorbereiten (<span id="selectedCount">1</span> ausgewählt)</div>
+                </div>
+                <div class="transfer-form">
+                    <div class="transfer-field">
+                        <label>Spalte 1 - Flag:</label>
+                        <select id="transferFlag">
+                            <option value="A">A (Add)</option>
+                            <option value="D">D (Delete)</option>
+                            <option value="C">C (Change)</option>
+                            <option value="leer">Leerzeile</option>
+                        </select>
+                    </div>
+                    <div class="transfer-field">
+                        <label>Spalte 2 - Kommentar:</label>
+                        <input type="text" id="transferComment" placeholder="Freier Text...">
+                    </div>
+                    <button class="btn btn-primary" id="btnAddToQueue">
+                        ➕ Markierte zur Warteschlange
+                    </button>
+                    <button class="btn btn-primary" id="btnTransferDirect">
+                        ➡️ Markierte direkt übertragen
+                    </button>
+                    <button class="btn btn-primary" id="btnSelectAll" style="margin-left: auto;">
+                        ☑️ Alle auswählen
+                    </button>
+                    <button class="btn btn-primary" id="btnDeselectAll">
+                        ☐Alles abwählen
+                    </button>
+                </div>
+                <div id="transferStatus"></div>
+            </div>
+            
+            <!-- Queue Panel -->
+            <div class="transfer-panel" id="queuePanel" style="border-top: 2px solid var(--primary);">
+                <div class="transfer-header">
+                    <div class="transfer-title">📋 Warteschlange (<span id="queueCount">0</span> Zeilen)</div>
+                    <div style="display: flex; gap: 10px;">
+                        <button class="btn btn-primary" id="btnClearQueue" disabled>
+                            🗑️ Leeren
+                        </button>
+                        <button class="btn btn-primary" id="btnExportPS" disabled title="Exportiert Warteschlange als JSON zur Zieldatei" style="border: 2px solid white; box-shadow: 0 0 4px rgba(255,255,255,0.5);">
+                            📤 Export zur Zieldatei
+                        </button>
+                        <button class="btn btn-primary" id="btnDataExplorer" disabled title="Datenexplorer - Zieldatei anzeigen und exportieren">
+                            📊 Datenexplorer
+                        </button>
+                        <button class="btn btn-primary" id="btnNewMonth" disabled title="Erstellt neue Monatsdatei aus Template">
+                            📅 Neue Monatsdatei
+                        </button>
+                    </div>
+                </div>
+                <div class="queue-list" id="queueList">
+                    <div class="queue-empty">Keine Zeilen in der Warteschlange</div>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <!-- Footer -->
+    <footer style="background: var(--bg-medium); border-top: 1px solid var(--border); padding: 8px 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
+        © Norbert Jander 2025 · v1.0.5
+    </footer>
+    
+    <!-- Mapping Modal -->
+    <div class="modal-overlay hidden" id="mappingModal">
+        <div class="modal">
+            <div class="modal-header">
+                <div class="modal-title">🔗 Spalten-Zuordnung konfigurieren</div>
+                <button class="modal-close" id="btnCloseMappingModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 15px; color: var(--text-muted);">
+                    Wählen Sie, welche Spalten aus Datei 1 in welche Spalten von Datei 2 kopiert werden sollen.
+                    Spalte 1 und 2 in Datei 2 sind für Flag und Kommentar reserviert.
+                </p>
+                
+                <div class="config-group">
+                    <label class="config-label">Start-Spalte in Datei 2 (für Quelldaten):</label>
+                    <select class="config-select" id="targetStartColumn">
+                        <option value="3">Spalte 3 (C)</option>
+                        <option value="4">Spalte 4 (D)</option>
+                        <option value="5">Spalte 5 (E)</option>
+                    </select>
+                </div>
+                
+                <div class="config-group">
+                    <label class="config-label">Duplikat-Prüfung (Spalte aus Datei 1):</label>
+                    <select class="config-select" id="duplicateCheckColumn"></select>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
+                        Diese Spalte wird geprüft, ob der Wert bereits in Datei 2 existiert.
+                    </div>
+                </div>
+                
+                <div class="config-section-title" style="margin-top: 20px;">Zu kopierende Spalten aus Datei 1:</div>
+                <div class="mapping-list" id="mappingList"></div>
+                
+                <button class="btn btn-primary" id="btnAddMapping" style="margin-top: 10px;">
+                    ➕ Spalte hinzufügen
+                </button>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btnCancelMapping">Abbrechen</button>
+                <button class="btn btn-primary" id="btnSaveMapping">💾 Speichern</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- New Month Modal -->
+    <div class="modal-overlay hidden" id="newMonthModal">
+        <div class="modal" style="max-width: 500px; resize: none;">
+            <div class="modal-header">
+                <div class="modal-title">📅 Neue Monatsdatei erstellen</div>
+                <button class="modal-close" id="btnCloseNewMonthModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 15px; color: var(--text-muted);">
+                    Erstellt eine Kopie der Template-Datei unter neuem Namen und setzt sie als Datei 2.
+                </p>
+                <label class="config-label">Neuer Dateiname:</label>
+                <input type="text" class="search-input" id="newMonthFilename" style="width: 100%; margin-bottom: 15px;" placeholder="z.B. Vertragsliste_2025-01.xlsx">
+                <p style="font-size: 12px; color: var(--text-muted);">
+                    💡 Template: <strong id="newMonthTemplateName">-</strong>
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btnCancelNewMonth">Abbrechen</button>
+                <button class="btn btn-primary" id="btnConfirmNewMonth">📅 Erstellen & Laden</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Help Modal -->
+    <div class="modal-overlay hidden" id="helpModal">
+        <div class="modal" style="max-width: 800px;">
+            <div class="modal-header">
+                <div class="modal-title">❓ Hilfe - MVMS-Vertragslisten aktualisieren</div>
+                <button class="modal-close" id="btnCloseHelpModal">&times;</button>
+            </div>
+            <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                <h3 style="margin-bottom: 10px;">🚀 Schnellstart</h3>
+                <ol style="line-height: 2; padding-left: 20px; margin-bottom: 20px;">
+                    <li><strong>Quelldatei laden:</strong> Klicken Sie auf "📂 Quelldatei laden" und wählen Sie die Excel-Datei, aus der Zeilen kopiert werden sollen.</li>
+                    <li><strong>Zieldatei laden:</strong> Laden Sie die Excel-Datei, in die die Zeilen eingefügt werden sollen.</li>
+                    <li><strong>Spalten konfigurieren:</strong> Legen Sie fest, welche Spalten kopiert werden sollen.</li>
+                    <li><strong>Suchen & Übertragen:</strong> Suchen Sie nach Zeilen und übertragen Sie diese zur Zieldatei.</li>
+                </ol>
+                
+                <h3 style="margin-bottom: 10px;">📂 Dateien laden</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    <strong>Quelldatei (Datei 1):</strong> Die Excel-Datei, aus der Sie Daten kopieren möchten.<br>
+                    <strong>Zieldatei (Datei 2):</strong> Die Excel-Datei, in die die Daten eingefügt werden.<br>
+                    Nach dem Laden können Sie das gewünschte Arbeitsblatt auswählen.
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">🔗 Spalten-Zuordnung</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Klicken Sie auf "⚙️ Spalten konfigurieren" um festzulegen:<br>
+                    • <strong>Start-Spalte:</strong> Ab welcher Spalte die Daten in Datei 2 eingefügt werden (Spalte 1+2 = Flag & Kommentar)<br>
+                    • <strong>Duplikat-Prüfung:</strong> Welche Spalte zur Erkennung von Duplikaten verwendet wird<br>
+                    • <strong>Zu kopierende Spalten:</strong> Welche Spalten aus Datei 1 übertragen werden
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">🔍 Suche</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Geben Sie einen Suchbegriff ein und drücken Sie Enter oder klicken Sie auf "🔍 Suchen".<br>
+                    Die Suche durchsucht alle Spalten der Quelldatei.
+                </p>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin-bottom: 20px;">
+                    <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">*</code>
+                    <span>Beliebig viele Zeichen (z.B. <code>ABC*</code>, <code>*123*</code>)</span>
+                    <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">?</code>
+                    <span>Genau ein Zeichen (z.B. <code>A?C</code> findet ABC, ADC, ...)</span>
+                </div>
+                
+                <h3 style="margin-bottom: 10px;">✏️ Suchergebnisse bearbeiten</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Die Zellen in den Suchergebnissen sind <strong>direkt editierbar</strong>!<br>
+                    Klicken Sie in eine Zelle und ändern Sie den Wert. Bearbeitete Zellen werden gelb markiert.<br>
+                    Die Änderungen werden beim Übertragen zur Zieldatei übernommen.
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📤 Übertragung</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    <strong>Flag:</strong> A (Add), D (Delete), C (Change) oder Leerzeile<br>
+                    <strong>Kommentar:</strong> Optionaler Text für Spalte 2<br>
+                    <strong>Zur Warteschlange:</strong> Sammelt mehrere Zeilen für gemeinsame Übertragung<br>
+                    <strong>Direkt übertragen:</strong> Fügt die Zeilen sofort zur Warteschlange und überträgt
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📋 Warteschlange</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;
+                ">
+                    Die Warteschlange zeigt alle zur Übertragung vorgemerkten Zeilen.<br>
+                    <strong>✅ Direkt übertragen:</strong> Schreibt alle Zeilen direkt in die Excel-Zieldatei<br>
+                    <strong>🗑️ Leeren:</strong> Entfernt alle Zeilen aus der Warteschlange
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">➕ Neue Zeile manuell erstellen</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Mit "➕ Neue Zeile" können Sie Zeilen manuell eingeben, ohne sie in der Quelldatei suchen zu müssen.<br>
+                    Ideal für Leerzeilen oder Daten, die nicht in der Quelldatei vorhanden sind.
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📊 Datenexplorer</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Der Datenexplorer ermöglicht es, Excel-Dateien zu öffnen, zu durchsuchen und zu filtern:<br>
+                    • <strong>Volltextsuche:</strong> Durchsucht alle Spalten<br>
+                    • <strong>Spaltenfilter:</strong> Filtern nach bestimmten Spalten mit verschiedenen Operatoren<br>
+                    • <strong>Spalten ein-/ausblenden:</strong> Nur relevante Spalten anzeigen<br>
+                    • <strong>Export:</strong> Gefilterte Daten als neue Excel-Datei speichern
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">💾 Konfiguration</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    <strong>config.json laden:</strong> Lädt eine gespeicherte Konfiguration (Spalten-Zuordnung, Dateipfade)<br>
+                    <strong>config.json speichern:</strong> Speichert die aktuelle Konfiguration für späteren Zugriff<br>
+                    💡 Ideal für Teams: Eine config.json auf dem Netzlaufwerk für alle Nutzer!
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">⌨️ Tastenkürzel</h3>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin-bottom: 20px;">
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">F1</kbd>
+                    <span>Diese Hilfe öffnen/schließen</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Enter</kbd>
+                    <span>Suche starten (im Suchfeld)</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Esc</kbd>
+                    <span>Dialog schließen</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Tab</kbd>
+                    <span>Zur nächsten Zelle in den Suchergebnissen</span>
+                </div>
+                
+                <h3 style="margin-bottom: 10px;">⚠️ Wichtige Hinweise</h3>
+                <p style="color: var(--text-muted); line-height: 1.6;">
+                    • Die Zieldatei (Datei 2) muss in Excel <strong>geschlossen</strong> sein, bevor Sie übertragen<br>
+                    • Duplikate werden automatisch erkannt und als Warnung angezeigt<br>
+                    • Änderungen werden direkt in die Excel-Datei geschrieben (kein separater Export nötig)<br>
+                    • Die Sidebar kann mit dem ◀ Button eingeklappt werden
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="btnCloseHelp">Schließen</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- License Modal -->
+    <div class="modal-overlay hidden" id="licenseModal">
+        <div class="modal" style="max-width: 900px;">
+            <div class="modal-header">
+                <div class="modal-title">📜 <span data-i18n="licenseTitle">Lizenzinformationen</span></div>
+                <button class="modal-close" id="btnCloseLicenseModal">&times;</button>
+            </div>
+            <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                <!-- MVMS-Tool License -->
+                <h3 style="margin-bottom: 10px;">🛡️ MVMS-Tool Lizenz</h3>
+                <div style="background: var(--bg-lighter); padding: 15px; border-radius: 6px; margin-bottom: 20px; font-family: monospace; font-size: 12px; line-height: 1.6;">
+                    <strong>MIT License</strong><br><br>
+                    Copyright (c) 2025 Norbert Jander<br><br>
+                    Permission is hereby granted, free of charge, to any person obtaining a copy
+                    of this software and associated documentation files (the "Software"), to deal
+                    in the Software without restriction, including without limitation the rights
+                    to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+                    copies of the Software, and to permit persons to whom the Software is
+                    furnished to do so, subject to the following conditions:<br><br>
+                    The above copyright notice and this permission notice shall be included in all
+                    copies or substantial portions of the Software.<br><br>
+                    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+                    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+                    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+                    AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+                    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+                    OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+                    SOFTWARE.
+                </div>
+                
+                <!-- German Explanation -->
+                <h3 style="margin-bottom: 10px;">🇩🇪 Was bedeutet die MIT-Lizenz? (Deutsch)</h3>
+                <div style="color: var(--text-muted); line-height: 1.6; margin-bottom: 20px; padding: 15px; background: var(--bg-light); border-radius: 6px; border-left: 4px solid var(--primary);">
+                    <p style="margin-bottom: 10px;"><strong>Die MIT-Lizenz ist eine der freizügigsten Open-Source-Lizenzen.</strong></p>
+                    <p style="margin-bottom: 10px;">Sie dürfen diese Software:</p>
+                    <ul style="margin-left: 20px; margin-bottom: 10px;">
+                        <li>✅ <strong>Nutzen</strong> – für private und kommerzielle Zwecke</li>
+                        <li>✅ <strong>Kopieren</strong> – beliebig viele Kopien erstellen</li>
+                        <li>✅ <strong>Modifizieren</strong> – den Quellcode anpassen</li>
+                        <li>✅ <strong>Verbreiten</strong> – weitergeben oder veröffentlichen</li>
+                        <li>✅ <strong>Verkaufen</strong> – auch kommerzielle Nutzung ist erlaubt</li>
+                    </ul>
+                    <p style="margin-bottom: 10px;"><strong>Einzige Bedingung:</strong> Der Urheberrechtshinweis und der Lizenztext müssen in allen Kopien enthalten sein.</p>
+                    <p><strong>⚠️ Haftungsausschluss:</strong> Die Software wird "wie sie ist" bereitgestellt, ohne jegliche Garantie.</p>
+                </div>
+                
+                <!-- English Explanation -->
+                <h3 style="margin-bottom: 10px;">🇬🇧 What does the MIT License mean? (English)</h3>
+                <div style="color: var(--text-muted); line-height: 1.6; margin-bottom: 20px; padding: 15px; background: var(--bg-light); border-radius: 6px; border-left: 4px solid var(--primary);">
+                    <p style="margin-bottom: 10px;"><strong>The MIT License is one of the most permissive open-source licenses.</strong></p>
+                    <p style="margin-bottom: 10px;">You are allowed to:</p>
+                    <ul style="margin-left: 20px; margin-bottom: 10px;">
+                        <li>✅ <strong>Use</strong> – for private and commercial purposes</li>
+                        <li>✅ <strong>Copy</strong> – create as many copies as you want</li>
+                        <li>✅ <strong>Modify</strong> – adapt the source code</li>
+                        <li>✅ <strong>Distribute</strong> – share or publish it</li>
+                        <li>✅ <strong>Sell</strong> – commercial use is allowed</li>
+                    </ul>
+                    <p style="margin-bottom: 10px;"><strong>Only requirement:</strong> The copyright notice and license text must be included in all copies.</p>
+                    <p><strong>⚠️ Disclaimer:</strong> The software is provided "as is", without warranty of any kind.</p>
+                </div>
+                
+                <!-- Third Party Licenses -->
+                <h3 style="margin-bottom: 10px;">📦 <span data-i18n="thirdPartyLicenses">Drittanbieter-Lizenzen</span></h3>
+                <p style="color: var(--text-muted); margin-bottom: 15px;" data-i18n="thirdPartyDesc">MVMS-Tool verwendet folgende Open-Source-Bibliotheken:</p>
+                
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <!-- Electron -->
+                    <div style="background: var(--bg-light); padding: 12px; border-radius: 6px; border: 1px solid var(--border);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <strong style="color: var(--text-primary);">⚡ Electron</strong>
+                            <span style="background: var(--success); color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;">MIT</span>
+                        </div>
+                        <p style="color: var(--text-muted); font-size: 12px; margin-top: 5px;">Cross-platform desktop app framework</p>
+                        <a href="https://www.electronjs.org/" style="color: var(--primary-light); font-size: 12px;">electronjs.org</a>
+                    </div>
+                    
+                    <!-- xlsx-populate -->
+                    <div style="background: var(--bg-light); padding: 12px; border-radius: 6px; border: 1px solid var(--border);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <strong style="color: var(--text-primary);">📊 xlsx-populate</strong>
+                            <span style="background: var(--success); color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;">MIT</span>
+                        </div>
+                        <p style="color: var(--text-muted); font-size: 12px; margin-top: 5px;">Excel XLSX manipulation with formatting preservation</p>
+                        <a href="https://github.com/dtjohnson/xlsx-populate" style="color: var(--primary-light); font-size: 12px;">github.com/dtjohnson/xlsx-populate</a>
+                    </div>
+                    
+                    <!-- electron-builder -->
+                    <div style="background: var(--bg-light); padding: 12px; border-radius: 6px; border: 1px solid var(--border);">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <strong style="color: var(--text-primary);">📦 electron-builder</strong>
+                            <span style="background: var(--success); color: white; padding: 2px 8px; border-radius: 4px; font-size: 11px;">MIT</span>
+                        </div>
+                        <p style="color: var(--text-muted); font-size: 12px; margin-top: 5px;">Build and publish Electron apps</p>
+                        <a href="https://www.electron.build/" style="color: var(--primary-light); font-size: 12px;">electron.build</a>
+                    </div>
+                </div>
+                
+                <div style="margin-top: 20px; padding: 15px; background: var(--bg-lighter); border-radius: 6px; text-align: center;">
+                    <p style="color: var(--text-muted); font-size: 13px;" data-i18n="allLicensesMIT">
+                        Alle verwendeten Bibliotheken sind unter der MIT-Lizenz oder kompatiblen Open-Source-Lizenzen lizenziert.
+                    </p>
+                    <p style="color: var(--text-muted); font-size: 12px; margin-top: 8px;">
+                        <strong>387</strong> <span data-i18n="packagesTotal">Pakete gesamt</span> · 
+                        <strong>MIT:</strong> 287 · 
+                        <strong>ISC:</strong> 62 · 
+                        <strong>Apache-2.0:</strong> 10 · 
+                        <strong>BSD:</strong> 13
+                    </p>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-primary" id="btnCloseLicense" data-i18n="close">Schließen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Data Explorer Modal -->
+    <div class="modal-overlay hidden" id="dataExplorerModal">
+        <div class="modal modal-large" style="max-width: 95vw; width: 1400px; max-height: 90vh; min-width: 600px; min-height: 400px;">
+            <div class="modal-header">
+                <div class="modal-title">📊 Datenexplorer - <span id="explorerFileName">Keine Datei geladen</span></div>
+                <button class="modal-close" id="btnCloseExplorerX">&times;</button>
+            </div>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px; padding: 15px; overflow-y: auto; flex: 1; min-height: 0;">
+                <!-- Explorer Controls -->
+                <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end; flex-shrink: 0;">
+                    <button class="btn btn-primary" id="btnExplorerOpenFile">
+                        📂 Datei öffnen
+                    </button>
+                    <div class="transfer-field">
+                        <label>Arbeitsblatt:</label>
+                        <select id="explorerSheetSelect" class="config-select" style="min-width: 200px;">
+                            <option value="">-- Datei laden --</option>
+                        </select>
+                    </div>
+                    <div class="transfer-field" style="flex: 1;">
+                        <label>Volltextsuche:</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="explorerSearch" class="config-input" placeholder="Suchbegriff eingeben..." style="flex: 1; min-width: 200px;">
+                            <button class="btn btn-primary btn-sm" id="btnExplorerSearch" title="Suche starten (Enter)">🔍</button>
+                        </div>
+                    </div>
+                    <button class="btn btn-primary" id="btnToggleColumns" title="Spalten ein-/ausblenden">
+                        👁️ Spalten
+                    </button>
+                    <button class="btn btn-primary" id="btnExplorerExport">
+                        💾 Als XLSX exportieren
+                    </button>
+                </div>
+                
+                <!-- Filter Controls -->
+                <div id="explorerFilterControls" style="display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--bg-light); border-radius: 6px; border: 1px solid var(--border); flex-shrink: 0;">
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <span style="font-weight: 600; font-size: 14px;">🔍 Filter</span>
+                        <button class="btn btn-primary btn-sm" id="btnAddExplorerFilter">➕ Filter hinzufügen</button>
+                        <button class="btn btn-secondary btn-sm" id="btnClearExplorerFilters" disabled>🗑️ Filter zurücksetzen</button>
+                    </div>
+                    <div id="explorerFilters" style="display: flex; flex-direction: column; gap: 8px;"></div>
+                </div>
+                
+                <!-- Column Visibility Panel (initially hidden) -->
+                <div id="columnTogglePanel" style="display: none; flex-direction: column; gap: 10px; padding: 15px; background: var(--bg-light); border-radius: 6px; margin-bottom: 10px; border: 1px solid var(--border); flex-shrink: 0;">
+                    <div style="display: flex; gap: 10px; margin-bottom: 5px;">
+                        <button class="btn btn-secondary btn-sm" id="btnShowAllColumns">Alle anzeigen</button>
+                        <button class="btn btn-secondary btn-sm" id="btnHideAllColumns">Alle ausblenden</button>
+                    </div>
+                    <div id="columnToggles" style="display: flex; flex-wrap: wrap; gap: 8px; max-height: 200px; overflow-y: auto;"></div>
+                </div>
+                
+                <!-- Results Info -->
+                <div style="display: flex; justify-content: space-between; align-items: center; flex-shrink: 0; flex-wrap: wrap; gap: 10px;">
+                    <span id="explorerResultCount" style="color: var(--text-muted);">Keine Daten geladen.</span>
+                    
+                    <!-- Pagination Controls -->
+                    <div id="explorerPagination" style="display: none; align-items: center; gap: 8px;">
+                        <button class="btn btn-secondary btn-sm" id="btnExplorerFirstPage" title="Erste Seite">⏮</button>
+                        <button class="btn btn-secondary btn-sm" id="btnExplorerPrevPage" title="Vorherige Seite">◀</button>
+                        <span id="explorerPageInfo" style="color: var(--text-muted); font-size: 13px; min-width: 120px; text-align: center;">Seite 1 von 1</span>
+                        <button class="btn btn-secondary btn-sm" id="btnExplorerNextPage" title="Nächste Seite">▶</button>
+                        <button class="btn btn-secondary btn-sm" id="btnExplorerLastPage" title="Letzte Seite">⏭</button>
+                        <select id="explorerPageSize" style="padding: 4px 8px; border-radius: 4px; background: var(--bg-light); border: 1px solid var(--border); color: var(--text-primary);">
+                            <option value="50">50 / Seite</option>
+                            <option value="100" selected>100 / Seite</option>
+                            <option value="250">250 / Seite</option>
+                            <option value="500">500 / Seite</option>
+                            <option value="1000">1000 / Seite</option>
+                        </select>
+                    </div>
+                    
+                    <span id="explorerStatus" style="color: var(--text-muted); font-size: 12px;"></span>
+                </div>
+                
+                <!-- Table Container -->
+                <div id="explorerTableContainer" style="flex: 1; min-height: 200px; overflow: auto; background: var(--bg-dark); border-radius: 6px; border: 1px solid var(--border);">
+                    <table class="results-table" id="explorerTable">
+                        <thead id="explorerTableHead"></thead>
+                        <tbody id="explorerTableBody">
+                            <tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btnCloseExplorerFooter">Schließen</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Filter Template für Explorer -->
+    <template id="explorerFilterTemplate">
+        <div class="explorer-filter-row" style="display: flex; gap: 10px; align-items: center; padding: 8px; background: var(--bg-dark); border-radius: 4px;">
+            <select class="filter-column config-select" style="min-width: 180px;"></select>
+            <select class="filter-operator config-select" style="min-width: 120px;">
+                <option value="contains">enthält</option>
+                <option value="equals">gleich</option>
+                <option value="startsWith">beginnt mit</option>
+                <option value="endsWith">endet mit</option>
+            </select>
+            <input type="text" class="filter-value config-input" placeholder="Filterwert" style="flex: 1; min-width: 150px;">
+            <button type="button" class="btn btn-secondary btn-sm remove-filter">✕</button>
+        </div>
+    </template>
+
+    <script>
+        // ============================================
+        // ELECTRON-ONLY MODE
+        // ============================================
+        console.log('🚀 Electron-Modus aktiv');
+        
+        // ============================================
+        // INTERNATIONALIZATION (i18n)
+        // ============================================
+        const translations = {
+            de: {
+                // Header
+                appTitle: 'MVMS-Vertragslisten aktualisieren',
+                loadConfig: '📂 config.json laden',
+                saveConfig: '💾 config.json speichern',
+                help: '❓ Hilfe',
+                
+                // Sidebar
+                configuration: 'Konfiguration',
+                settings: '⚙️ Einstellungen',
+                language: 'Sprache',
+                theme: 'Design',
+                themeDark: '🌙 Dunkel',
+                themeLight: '☀️ Hell',
+                
+                // Files
+                file1Source: '📄 Datei 1 (Quelle)',
+                file2Target: '📄 Datei 2 (Ziel)',
+                loadSourceFile: '📂 Quelldatei laden',
+                loadTargetFile: '📂 Zieldatei laden',
+                noFileLoaded: 'Keine Datei geladen',
+                worksheet: 'Arbeitsblatt:',
+                loadFileFirst: '-- Erst Datei laden --',
+                
+                // Mapping
+                columnMapping: '🔗 Spalten-Zuordnung',
+                configureColumns: '⚙️ Spalten konfigurieren',
+                loadBothFiles: 'Laden Sie beide Dateien',
+                columnsConfigured: 'Spalte(n) konfiguriert',
+                
+                // Template
+                monthTemplate: '📄 Monats-Template',
+                loadTemplate: '📂 Template laden',
+                noTemplateLoaded: 'Kein Template geladen',
+                templateHint: 'Leere Excel-Vorlage für "📅 Neue Monatsdatei"',
+                
+                // History
+                lastTransfers: '📋 Letzte Übertragungen',
+                noTransfersYet: 'Noch keine Übertragungen',
+                
+                // Search
+                searchPlaceholder: 'Suche... (Platzhalter: * = beliebig, ? = ein Zeichen)',
+                search: '🔍 Suchen',
+                newRow: '➕ Neue Zeile',
+                
+                // Results
+                readyToStart: 'Bereit zum Starten',
+                instructions: '1. Laden Sie die Quelldatei (Datei 1)<br>2. Laden Sie die Zieldatei (Datei 2)<br>3. Konfigurieren Sie die Spalten-Zuordnung<br>4. Suchen Sie nach Zeilen und übertragen Sie diese',
+                noResults: 'Keine Treffer für',
+                results: 'Treffer für',
+                
+                // Transfer
+                prepareTransfer: '📤 Zeile(n) zur Übertragung vorbereiten',
+                selected: 'ausgewählt',
+                flag: 'Spalte 1 - Flag:',
+                comment: 'Spalte 2 - Kommentar:',
+                commentPlaceholder: 'Freier Text...',
+                addToQueue: '➕ Markierte zur Warteschlange',
+                transferDirect: '➡️ Markierte direkt übertragen',
+                selectAll: '☑️ Alle auswählen',
+                deselectAll: '☐Alles abwählen',
+                
+                // Queue
+                queue: '📋 Warteschlange',
+                rows: 'Zeilen',
+                clear: '🗑️ Leeren',
+                directTransfer: '✅ Direkt übertragen',
+                dataExplorer: '📊 Datenexplorer',
+                newMonthFile: '📅 Neue Monatsdatei',
+                noRowsInQueue: 'Keine Zeilen in der Warteschlange',
+                
+                // New Row
+                createNewRow: '✏️ Neue Zeile erstellen',
+                close: '✕ Schließen',
+                toQueue: '➕ Zur Warteschlange',
+                transferDirectly: '➡️ Direkt übertragen',
+                
+                // Messages
+                noTargetFile: 'Keine Zieldatei geladen',
+                selectAtLeastOne: 'Bitte wählen Sie mindestens eine Zeile aus',
+                rowsTransferred: 'Zeile(n) direkt übertragen!',
+                rowsAdded: 'Zeile(n) zur Warteschlange hinzugefügt',
+                edited: 'bearbeitet',
+                duplicates: 'Duplikat(e)',
+                configFirst: 'Bitte zuerst Spalten konfigurieren',
+                
+                // Data Explorer
+                explorerTitle: '📊 Datenexplorer',
+                noFileLoadedExplorer: 'Keine Datei geladen',
+                openFile: '📂 Datei öffnen',
+                fullTextSearch: 'Volltextsuche:',
+                searchPlaceholderExplorer: 'Suchbegriff eingeben...',
+                columns: '👁️ Spalten',
+                exportXlsx: '💾 Als XLSX exportieren',
+                filter: '🔍 Filter',
+                addFilter: '➕ Filter hinzufügen',
+                resetFilters: '🗑️ Filter zurücksetzen',
+                showAll: 'Alle anzeigen',
+                hideAll: 'Alle ausblenden',
+                noDataLoaded: 'No data loaded.',
+                pleaseLoadFile: '📂 Please load an Excel file',
+                contains: 'enthält',
+                equals: 'gleich',
+                startsWith: 'beginnt mit',
+                endsWith: 'endet mit',
+                selectColumn: 'Spalte wählen',
+                filterValue: 'Filterwert',
+                
+                // New Month Modal
+                createNewMonthFile: '📅 Neue Monatsdatei erstellen',
+                newMonthDescription: 'Erschafft eine Kopie der Template-Datei unter neuem Namen und setzt sie als Datei 2.',
+                newFilename: 'Neuer Dateiname:',
+                filenamePlaceholder: 'z.B. Vertragsliste_2025-01.xlsx',
+                templateLabel: '💡 Template:',
+                cancel: 'Abbrechen',
+                createAndLoad: '📅 Erstellen & Laden',
+                
+                // Footer
+                copyright: '© Norbert Jander 2025 · v1.0.4',
+                
+                // License
+                license: 'Lizenz',
+                licenseTitle: 'Lizenzinformationen',
+                thirdPartyLicenses: 'Drittanbieter-Lizenzen',
+                thirdPartyDesc: 'MVMS-Tool verwendet folgende Open-Source-Bibliotheken:',
+                allLicensesMIT: 'Alle verwendeten Bibliotheken sind unter der MIT-Lizenz oder kompatiblen Open-Source-Lizenzen lizenziert.',
+                packagesTotal: 'Pakete gesamt'
+            },
+            en: {
+                // Header
+                appTitle: 'MVMS Contract Lists Update',
+                loadConfig: '📂 Load config.json',
+                saveConfig: '💾 Save config.json',
+                help: '❓ Help',
+                
+                // Sidebar
+                configuration: 'Configuration',
+                settings: '⚙️ Settings',
+                language: 'Language',
+                theme: 'Theme',
+                themeDark: '🌙 Dark',
+                themeLight: '☀️ Light',
+                
+                // Files
+                file1Source: '📄 File 1 (Source)',
+                file2Target: '📄 File 2 (Target)',
+                loadSourceFile: '📂 Load Source File',
+                loadTargetFile: '📂 Load Target File',
+                noFileLoaded: 'No file loaded',
+                worksheet: 'Worksheet:',
+                loadFileFirst: '-- Load file first --',
+                
+                // Mapping
+                columnMapping: '🔗 Column Mapping',
+                configureColumns: '⚙️ Configure Columns',
+                loadBothFiles: 'Load both files',
+                columnsConfigured: 'column(s) configured',
+                
+                // Template
+                monthTemplate: '📄 Month Template',
+                loadTemplate: '📂 Load Template',
+                noTemplateLoaded: 'No template loaded',
+                templateHint: 'Empty Excel template for "📅 New Month File"',
+                
+                // History
+                lastTransfers: '📋 Recent Transfers',
+                noTransfersYet: 'No transfers yet',
+                
+                // Search
+                searchPlaceholder: 'Search... (Wildcards: * = any, ? = one character)',
+                search: '🔍 Search',
+                newRow: '➕ New Row',
+                
+                // Results
+                readyToStart: 'Ready to Start',
+                instructions: '1. Load the source file (File 1)<br>2. Load the target file (File 2)<br>3. Configure the column mapping<br>4. Search for rows and transfer them',
+                noResults: 'No results for',
+                results: 'results for',
+                
+                // Transfer
+                prepareTransfer: '📤 Prepare row(s) for transfer',
+                selected: 'selected',
+                flag: 'Column 1 - Flag:',
+                comment: 'Column 2 - Comment:',
+                commentPlaceholder: 'Free text...',
+                addToQueue: '➕ Add to Queue',
+                transferDirect: '➡️ Transfer Directly',
+                selectAll: '☑️ Select All',
+                deselectAll: '☐ Deselect All',
+                
+                // Queue
+                queue: '📋 Queue',
+                rows: 'rows',
+                clear: '🗑️ Clear',
+                directTransfer: '✅ Transfer Directly',
+                dataExplorer: '📊 Data Explorer',
+                newMonthFile: '📅 New Month File',
+                noRowsInQueue: 'No rows in queue',
+                
+                // New Row
+                createNewRow: '✏️ Create New Row',
+                close: '✕ Close',
+                toQueue: '➕ To Queue',
+                transferDirectly: '➡️ Transfer Directly',
+                
+                // Messages
+                noTargetFile: 'No target file loaded',
+                selectAtLeastOne: 'Please select at least one row',
+                rowsTransferred: 'row(s) transferred directly!',
+                rowsAdded: 'row(s) added to queue',
+                edited: 'edited',
+                duplicates: 'duplicate(s)',
+                configFirst: 'Please configure columns first',
+                
+                // Data Explorer
+                explorerTitle: '📊 Data Explorer',
+                noFileLoadedExplorer: 'No file loaded',
+                openFile: '📂 Open File',
+                fullTextSearch: 'Full-text search:',
+                searchPlaceholderExplorer: 'Enter search term...',
+                columns: '👁️ Columns',
+                exportXlsx: '💾 Export as XLSX',
+                filter: '🔍 Filter',
+                addFilter: '➕ Add Filter',
+                resetFilters: '🗑️ Reset Filters',
+                showAll: 'Show all',
+                hideAll: 'Hide all',
+                noDataLoaded: 'No data loaded.',
+                pleaseLoadFile: '📂 Please load an Excel file',
+                contains: 'contains',
+                equals: 'equals',
+                startsWith: 'starts with',
+                endsWith: 'ends with',
+                selectColumn: 'Select column',
+                filterValue: 'Filter value',
+                
+                // New Month Modal
+                createNewMonthFile: '📅 Create New Month File',
+                newMonthDescription: 'Creates a copy of the template file with a new name and sets it as File 2.',
+                newFilename: 'New filename:',
+                filenamePlaceholder: 'e.g. ContractList_2025-01.xlsx',
+                templateLabel: '💡 Template:',
+                cancel: 'Cancel',
+                createAndLoad: '📅 Create & Load',
+                
+                // Footer
+                copyright: '© Norbert Jander 2025 · v1.0.5',
+                
+                // License
+                license: 'License',
+                licenseTitle: 'License Information',
+                thirdPartyLicenses: 'Third-Party Licenses',
+                thirdPartyDesc: 'MVMS-Tool uses the following open-source libraries:',
+                allLicensesMIT: 'All libraries used are licensed under the MIT License or compatible open-source licenses.',
+                packagesTotal: 'packages total'
+            }
+        };
+        
+        let currentLanguage = localStorage.getItem('mvmsLanguage') || 'de';
+        let currentTheme = localStorage.getItem('mvmsTheme') || 'dark';
+        
+        function t(key) {
+            return translations[currentLanguage]?.[key] || translations['de'][key] || key;
+        }
+        
+        function setLanguage(lang) {
+            currentLanguage = lang;
+            localStorage.setItem('mvmsLanguage', lang);
+            applyTranslations();
+        }
+        
+        function setTheme(theme) {
+            currentTheme = theme;
+            localStorage.setItem('mvmsTheme', theme);
+            if (theme === 'light') {
+                document.body.classList.add('light-theme');
+            } else {
+                document.body.classList.remove('light-theme');
+            }
+        }
+        
+        function applyTranslations() {
+            // Update all elements with data-i18n attribute
+            document.querySelectorAll('[data-i18n]').forEach(el => {
+                const key = el.getAttribute('data-i18n');
+                const text = t(key);
+                if (el.tagName === 'INPUT' && el.type === 'text') {
+                    el.placeholder = text;
+                } else if (el.tagName === 'OPTION') {
+                    el.textContent = text;
+                } else {
+                    // Keep existing content if it's a dynamic element (like file info)
+                    const dynamicElements = ['file1Info', 'file2Info', 'templateInfo', 'mappingInfo'];
+                    if (!dynamicElements.includes(el.id)) {
+                        el.innerHTML = text;
+                    }
+                }
+            });
+            
+            // Header
+            document.querySelector('.logo span').textContent = t('appTitle');
+            document.getElementById('btnImportConfig').innerHTML = t('loadConfig');
+            document.getElementById('btnExportConfig').innerHTML = t('saveConfig');
+            document.getElementById('btnHelp').innerHTML = t('help');
+            document.querySelector('.sidebar-header-text').textContent = t('configuration');
+            
+            // Search section
+            document.getElementById('searchInput').placeholder = t('searchPlaceholder');
+            document.getElementById('btnSearch').innerHTML = t('search');
+            document.getElementById('btnNewRow').innerHTML = t('newRow');
+            
+            // Empty state
+            document.querySelector('.empty-state-title').textContent = t('readyToStart');
+            document.querySelector('.empty-state-text').innerHTML = t('instructions');
+            
+            // Footer
+            document.querySelector('footer').innerHTML = t('copyright');
+            
+            // Queue panel
+            document.getElementById('btnClearQueue').innerHTML = t('clear');
+            document.getElementById('btnDataExplorer').innerHTML = t('dataExplorer');
+            document.getElementById('btnNewMonth').innerHTML = t('newMonthFile');
+            
+            // Transfer panel
+            document.getElementById('btnAddToQueue').innerHTML = t('addToQueue');
+            document.getElementById('btnTransferDirect').innerHTML = t('transferDirect');
+            document.getElementById('btnSelectAll').innerHTML = t('selectAll');
+            document.getElementById('btnDeselectAll').innerHTML = t('deselectAll');
+            
+            // Theme dropdown options
+            const darkOpt = document.querySelector('#selectTheme option[value="dark"]');
+            const lightOpt = document.querySelector('#selectTheme option[value="light"]');
+            if (darkOpt) darkOpt.textContent = t('themeDark');
+            if (lightOpt) lightOpt.textContent = t('themeLight');
+            
+            // Sidebar buttons
+            const btnLoadFile1 = document.getElementById('btnLoadFile1');
+            const btnLoadFile2 = document.getElementById('btnLoadFile2');
+            const btnConfigMapping = document.getElementById('btnConfigMapping');
+            const btnLoadTemplate = document.getElementById('btnLoadTemplate');
+            if (btnLoadFile1) btnLoadFile1.innerHTML = t('loadSourceFile');
+            if (btnLoadFile2) btnLoadFile2.innerHTML = t('loadTargetFile');
+            if (btnConfigMapping) btnConfigMapping.innerHTML = t('configureColumns');
+            if (btnLoadTemplate) btnLoadTemplate.innerHTML = t('loadTemplate');
+            
+            // New row panel
+            const newRowTitle = document.querySelector('.new-row-title');
+            const btnCloseNewRow = document.getElementById('btnCloseNewRow');
+            const btnAddNewRowToQueue = document.getElementById('btnAddNewRowToQueue');
+            const btnTransferNewRowDirect = document.getElementById('btnTransferNewRowDirect');
+            if (newRowTitle) newRowTitle.textContent = t('createNewRow');
+            if (btnCloseNewRow) btnCloseNewRow.innerHTML = t('close');
+            if (btnAddNewRowToQueue) btnAddNewRowToQueue.innerHTML = t('toQueue');
+            if (btnTransferNewRowDirect) btnTransferNewRowDirect.innerHTML = t('transferDirectly');
+            
+            // Data Explorer Modal
+            const explorerTitle = document.querySelector('#dataExplorerModal .modal-title');
+            if (explorerTitle) {
+                const fileName = document.getElementById('explorerFileName');
+                explorerTitle.innerHTML = `${t('explorerTitle')} - <span id="explorerFileName">${fileName ? fileName.textContent : t('noFileLoadedExplorer')}</span>`;
+            }
+            const btnExplorerOpenFile = document.getElementById('btnExplorerOpenFile');
+            const btnToggleColumns = document.getElementById('btnToggleColumns');
+            const btnExplorerExport = document.getElementById('btnExplorerExport');
+            const btnAddExplorerFilter = document.getElementById('btnAddExplorerFilter');
+            const btnClearExplorerFilters = document.getElementById('btnClearExplorerFilters');
+            const btnShowAllColumns = document.getElementById('btnShowAllColumns');
+            const btnHideAllColumns = document.getElementById('btnHideAllColumns');
+            const btnCloseExplorerFooter = document.getElementById('btnCloseExplorerFooter');
+            const explorerResultCount = document.getElementById('explorerResultCount');
+            const explorerSearch = document.getElementById('explorerSearch');
+            
+            if (btnExplorerOpenFile) btnExplorerOpenFile.innerHTML = t('openFile');
+            if (btnToggleColumns) btnToggleColumns.innerHTML = t('columns');
+            if (btnExplorerExport) btnExplorerExport.innerHTML = t('exportXlsx');
+            if (btnAddExplorerFilter) btnAddExplorerFilter.innerHTML = t('addFilter');
+            if (btnClearExplorerFilters) btnClearExplorerFilters.innerHTML = t('resetFilters');
+            if (btnShowAllColumns) btnShowAllColumns.textContent = t('showAll');
+            if (btnHideAllColumns) btnHideAllColumns.textContent = t('hideAll');
+            if (btnCloseExplorerFooter) btnCloseExplorerFooter.textContent = t('close');
+            if (explorerResultCount && (explorerResultCount.textContent === 'Keine Daten geladen.' || explorerResultCount.textContent === 'No data loaded.')) {
+                explorerResultCount.textContent = t('noDataLoaded');
+            }
+            if (explorerSearch) explorerSearch.placeholder = t('searchPlaceholderExplorer');
+            
+            // Explorer filter section label
+            const filterLabel = document.querySelector('#explorerFilterControls > div > span');
+            if (filterLabel) filterLabel.textContent = t('filter');
+            
+            // Explorer worksheet label and full-text search label
+            const worksheetLabels = document.querySelectorAll('#dataExplorerModal .transfer-field label');
+            worksheetLabels.forEach(label => {
+                if (label.textContent === 'Arbeitsblatt:' || label.textContent === 'Worksheet:') {
+                    label.textContent = t('worksheet');
+                }
+                if (label.textContent === 'Volltextsuche:' || label.textContent === 'Full-text search:') {
+                    label.textContent = t('fullTextSearch');
+                }
+            });
+            
+            // Explorer filter operator options
+            document.querySelectorAll('#explorerFilters .filter-operator').forEach(select => {
+                const options = select.querySelectorAll('option');
+                options.forEach(opt => {
+                    if (opt.value === 'contains') opt.textContent = t('contains');
+                    if (opt.value === 'equals') opt.textContent = t('equals');
+                    if (opt.value === 'startsWith') opt.textContent = t('startsWith');
+                    if (opt.value === 'endsWith') opt.textContent = t('endsWith');
+                });
+            });
+            
+            // New Month Modal
+            const newMonthTitle = document.querySelector('#newMonthModal .modal-title');
+            const newMonthDesc = document.querySelector('#newMonthModal .modal-body > p:first-of-type');
+            const newMonthLabel = document.querySelector('#newMonthModal .config-label');
+            const newMonthFilename = document.getElementById('newMonthFilename');
+            const newMonthTemplateLabel = document.querySelector('#newMonthModal .modal-body > p:last-of-type');
+            const btnCancelNewMonth = document.getElementById('btnCancelNewMonth');
+            const btnConfirmNewMonth = document.getElementById('btnConfirmNewMonth');
+            
+            if (newMonthTitle) newMonthTitle.textContent = t('createNewMonthFile');
+            if (newMonthDesc) newMonthDesc.textContent = t('newMonthDescription');
+            if (newMonthLabel) newMonthLabel.textContent = t('newFilename');
+            if (newMonthFilename) newMonthFilename.placeholder = t('filenamePlaceholder');
+            if (newMonthTemplateLabel) {
+                const templateName = document.getElementById('newMonthTemplateName');
+                newMonthTemplateLabel.innerHTML = `${t('templateLabel')} <strong id="newMonthTemplateName">${templateName ? templateName.textContent : '-'}</strong>`; 
+            }
+            if (btnCancelNewMonth) btnCancelNewMonth.textContent = t('cancel');
+            if (btnConfirmNewMonth) btnConfirmNewMonth.innerHTML = t('createAndLoad');
+        }
+        
+        // ==================== JSDoc Type Definitions ====================
+        /**
+         * @typedef {Object} FileState
+         * @property {string|null} name - File name
+         * @property {Object|null} workbook - Workbook object
+         * @property {string[]} sheets - List of sheet names
+         * @property {string|null} selectedSheet - Currently selected sheet
+         * @property {Array<Array<string|number>>} data - Sheet data
+         * @property {string[]} headers - Column headers
+         * @property {string|null} filePath - Full file path
+         */
+
+        /**
+         * @typedef {Object} MappingConfig
+         * @property {number[]} sourceColumns - Source column indices to copy
+         * @property {number} targetStartColumn - Target start column (default 3)
+         * @property {number} duplicateCheckColumn - Column index for duplicate check
+         */
+
+        /**
+         * @typedef {Object} TransferQueueItem
+         * @property {Array<string|number>} data - Row data array
+         * @property {string} flag - Flag value (A/D/C or empty)
+         * @property {string} comment - Comment text
+         * @property {string} checkValue - Value used for duplicate checking
+         * @property {boolean} [wasEdited] - Whether the row was edited
+         */
+
+        /**
+         * @typedef {Object} TemplateState
+         * @property {string|null} name - Template file name
+         * @property {Object|null} data - Template data
+         * @property {string|null} filePath - Template file path
+         */
+
+        /**
+         * @typedef {Object} PaginationState
+         * @property {number} currentPage - Current page number (1-based)
+         * @property {number} pageSize - Items per page
+         * @property {number[]} pageSizeOptions - Available page size options
+         */
+
+        /**
+         * @typedef {Object} AppState
+         * @property {FileState} file1 - Source file state
+         * @property {FileState} file2 - Target file state
+         * @property {MappingConfig} mapping - Column mapping configuration
+         * @property {number|null} selectedRow - Currently selected row index
+         * @property {number[]} selectedRows - Array of selected row indices
+         * @property {Array<Array<string|number>>} searchResults - Search results
+         * @property {Array<Object>} history - Transfer history
+         * @property {TransferQueueItem[]} transferQueue - Items queued for transfer
+         * @property {TemplateState} template - Template file state
+         * @property {Object|null} lastDirectoryHandle - Last used directory handle
+         * @property {PaginationState} searchPagination - Search results pagination
+         */
+
+        // ==================== State ====================
+        /** @type {AppState} */
+        const state = {
+            file1: {
+                name: null,
+                workbook: null,
+                sheets: [],
+                selectedSheet: null,
+                data: [],
+                headers: [],
+                filePath: null
+            },
+            file2: {
+                name: null,
+                workbook: null,
+                sheets: [],
+                selectedSheet: null,
+                data: [],
+                headers: [],
+                filePath: null
+            },
+            mapping: {
+                sourceColumns: [],
+                targetStartColumn: 3,
+                duplicateCheckColumn: 0
+            },
+            selectedRow: null,
+            selectedRows: [],
+            searchResults: [],
+            history: [],
+            transferQueue: [],
+            template: {
+                name: null,
+                data: null
+            },
+            lastDirectoryHandle: null,
+            // Pagination für Suchergebnisse
+            searchPagination: {
+                currentPage: 1,
+                pageSize: 100,
+                pageSizeOptions: [50, 100, 250, 500]
+            }
+        };
+        
+        // ==================== DOM Elements ====================
+        const elements = {
+            // File 1
+            btnLoadFile1: document.getElementById('btnLoadFile1'),
+            fileInput1: document.getElementById('fileInput1'),
+            file1Info: document.getElementById('file1Info'),
+            selectSheet1: document.getElementById('selectSheet1'),
+            
+            // File 2
+            btnLoadFile2: document.getElementById('btnLoadFile2'),
+            fileInput2: document.getElementById('fileInput2'),
+            file2Info: document.getElementById('file2Info'),
+            selectSheet2: document.getElementById('selectSheet2'),
+            
+            // Mapping
+            btnConfigMapping: document.getElementById('btnConfigMapping'),
+            mappingInfo: document.getElementById('mappingInfo'),
+            mappingModal: document.getElementById('mappingModal'),
+            mappingList: document.getElementById('mappingList'),
+            targetStartColumn: document.getElementById('targetStartColumn'),
+            
+            // Search
+            searchInput: document.getElementById('searchInput'),
+            btnSearch: document.getElementById('btnSearch'),
+            btnNewRow: document.getElementById('btnNewRow'),
+            searchResultsInfo: document.getElementById('searchResultsInfo'),
+            
+            // New Row
+            newRowPanel: document.getElementById('newRowPanel'),
+            newRowForm: document.getElementById('newRowForm'),
+            newRowFlag: document.getElementById('newRowFlag'),
+            newRowComment: document.getElementById('newRowComment'),
+            btnCloseNewRow: document.getElementById('btnCloseNewRow'),
+            btnAddNewRowToQueue: document.getElementById('btnAddNewRowToQueue'),
+            btnTransferNewRowDirect: document.getElementById('btnTransferNewRowDirect'),
+            newRowStatus: document.getElementById('newRowStatus'),
+            
+            // Results
+            emptyState: document.getElementById('emptyState'),
+            resultsTableContainer: document.getElementById('resultsTableContainer'),
+            resultsTable: document.getElementById('resultsTable'),
+            resultsTableHead: document.getElementById('resultsTableHead'),
+            resultsTableBody: document.getElementById('resultsTableBody'),
+            
+            // Transfer
+            transferPanel: document.getElementById('transferPanel'),
+            transferFlag: document.getElementById('transferFlag'),
+            transferComment: document.getElementById('transferComment'),
+            btnAddToQueue: document.getElementById('btnAddToQueue'),
+            btnTransferDirect: document.getElementById('btnTransferDirect'),
+            btnSelectAll: document.getElementById('btnSelectAll'),
+            btnDeselectAll: document.getElementById('btnDeselectAll'),
+            transferStatus: document.getElementById('transferStatus'),
+            
+            // Queue
+            queuePanel: document.getElementById('queuePanel'),
+            queueList: document.getElementById('queueList'),
+            queueCount: document.getElementById('queueCount'),
+            btnClearQueue: document.getElementById('btnClearQueue'),
+            btnExportPS: document.getElementById('btnExportPS'),
+            btnNewMonth: document.getElementById('btnNewMonth'),
+            btnDataExplorer: document.getElementById('btnDataExplorer'),
+            
+            // Template
+            btnLoadTemplate: document.getElementById('btnLoadTemplate'),
+            templateInput: document.getElementById('templateInput'),
+            templateInfo: document.getElementById('templateInfo'),
+            
+            // New Month Modal
+            newMonthModal: document.getElementById('newMonthModal'),
+            newMonthFilename: document.getElementById('newMonthFilename'),
+            newMonthTemplateName: document.getElementById('newMonthTemplateName'),
+            
+            // History
+            historyList: document.getElementById('historyList'),
+            
+            // Config
+            btnExportConfig: document.getElementById('btnExportConfig'),
+            btnImportConfig: document.getElementById('btnImportConfig'),
+            configInput: document.getElementById('configInput'),
+            
+            // Data Explorer
+            dataExplorerModal: document.getElementById('dataExplorerModal'),
+            explorerFileName: document.getElementById('explorerFileName'),
+            explorerSheetSelect: document.getElementById('explorerSheetSelect'),
+            explorerSearch: document.getElementById('explorerSearch'),
+            explorerResultCount: document.getElementById('explorerResultCount'),
+            explorerStatus: document.getElementById('explorerStatus'),
+            explorerTableHead: document.getElementById('explorerTableHead'),
+            explorerTableBody: document.getElementById('explorerTableBody'),
+            btnExplorerExport: document.getElementById('btnExplorerExport'),
+            btnExplorerOpenFile: document.getElementById('btnExplorerOpenFile'),
+            
+            // Help
+            btnHelp: document.getElementById('btnHelp'),
+            helpModal: document.getElementById('helpModal')
+        };
+
+        // ==================== Local Storage ====================
+        const STORAGE_KEY = 'mvmcVertragslistenConfig';
+        const LAST_EXPORT_KEY = 'mvmcVertragslistenLastExport';
+        const DB_NAME = 'MVMCVertragsListenDB';
+        const DB_VERSION = 1;
+        let db = null;
+        
+        // ==================== Helper Functions ====================
+        function showStatus(element, message, type = 'info') {
+            if (!element) return;
+            element.innerHTML = `<div class="status ${type}">${message}</div>`;
+            // Auto-clear after 10 seconds for success messages
+            if (type === 'success') {
+                setTimeout(() => {
+                    if (element.querySelector('.status.success')) {
+                        element.innerHTML = '';
+                    }
+                }, 10000);
+            }
+        }
+        
+        // Im Electron-Modus werden Datei-Downloads via electronAPI gehandhabt
+        
+        function updateWorkbook() {
+            // Im Electron-Modus nicht benötigt - Änderungen gehen direkt in die Datei
+            return;
+        }
+        
+        function updateHistoryDisplay() {
+            if (!elements.historyList) return;
+            
+            if (state.history.length === 0) {
+                elements.historyList.innerHTML = `
+
+                    <div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;">
+                        Noch keine Übertragungen
+                    </div>`;
+                return;
+            }
+            
+            let html = '';
+            state.history.forEach(entry => {
+                html += `
+                    <div class="history-item">
+                        <span><strong>[${entry.flag}]</strong> ${escapeHtml(entry.preview || entry.searchValue || '')}</span>
+                        <span class="history-time">${entry.time}</span>
+                    </div>`;
+            });
+            elements.historyList.innerHTML = html;
+        }
+        
+        // IndexedDB für große Dateien
+        function initDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(DB_NAME, DB_VERSION);
+                
+                request.onerror = () => reject(request.error);
+                request.onsuccess = () => {
+                    db = request.result;
+                    resolve(db);
+                };
+                
+                request.onupgradeneeded = (event) => {
+                    const database = event.target.result;
+                    if (!database.objectStoreNames.contains('files')) {
+                        database.createObjectStore('files', { keyPath: 'id' });
+                    }
+                    if (!database.objectStoreNames.contains('config')) {
+                        database.createObjectStore('config', { keyPath: 'id' });
+                    }
+                };
+            });
+        }
+        
+        function saveToIndexedDB(storeName, id, data) {
+            return new Promise((resolve, reject) => {
+                if (!db) { reject('DB not initialized'); return; }
+                const transaction = db.transaction(storeName, 'readwrite');
+                const store = transaction.objectStore(storeName);
+                const request = store.put({ id, data, timestamp: Date.now() });
+                request.onsuccess = () => resolve();
+                request.onerror = () => reject(request.error);
+            });
+        }
+        
+        function loadFromIndexedDB(storeName, id) {
+            return new Promise((resolve, reject) => {
+                if (!db) { reject('DB not initialized'); return; }
+                const transaction = db.transaction(storeName, 'readonly');
+                const store = transaction.objectStore(storeName);
+                const request = store.get(id);
+                request.onsuccess = () => resolve(request.result?.data);
+                request.onerror = () => reject(request.error);
+            });
+        }
+        
+        function saveConfig() {
+            const config = {
+                file1SheetName: state.file1.selectedSheet,
+                file2SheetName: state.file2.selectedSheet,
+                mapping: state.mapping,
+                history: state.history.slice(-50)  // Keep last 50 entries
+            };
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
+        }
+        
+        function loadConfig() {
+            try {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) {
+                    const config = JSON.parse(saved);
+                    state.mapping = config.mapping || state.mapping;
+                    state.history = config.history || [];
+                    updateHistoryDisplay();
+                    return config;
+                }
+            } catch (e) {
+                console.error('Error loading config:', e);
+            }
+            return null;
+        }
+        
+        async function exportConfig() {
+            const config = {
+                file1SheetName: state.file1.selectedSheet,
+                file2SheetName: state.file2.selectedSheet,
+                mapping: state.mapping,
+                exportDate: new Date().toISOString()
+            };
+            
+            // Im Electron-Modus: Nur Mapping und Dateipfade speichern
+            if (state.file1.filePath) {
+                config.file1Path = state.file1.filePath;
+                config.file1Name = state.file1.name;
+            }
+            if (state.file2.filePath) {
+                config.file2Path = state.file2.filePath;
+                config.file2Name = state.file2.name;
+            }
+            // Template-Pfad speichern
+            if (state.template.filePath) {
+                config.templatePath = state.template.filePath;
+                config.templateName = state.template.name;
+            }
+            
+            // Template speichern (falls vorhanden) - für Browser-Modus als Base64
+            if (state.template.data) {
+                config.templateData = state.template.data;
+                config.templateName = state.template.name;
+            }
+            
+            // In IndexedDB speichern (für große Dateien)
+            if (db) {
+                saveToIndexedDB('config', 'lastExport', config)
+                    .then(() => console.log('Konfig in IndexedDB gespeichert'))
+                    .catch(e => console.error('IndexedDB Fehler:', e));
+            }
+            
+            // Kleine Konfig (ohne Dateien) auch in LocalStorage für Fallback
+            const configSmall = { ...config };
+            delete configSmall.file1Data;
+            delete configSmall.file2Data;
+            try {
+                localStorage.setItem(LAST_EXPORT_KEY, JSON.stringify(configSmall));
+            } catch (e) {
+                console.warn('LocalStorage Fehler:', e);
+            }
+            
+            const blob = new Blob([JSON.stringify(config, null, 2)], { type: 'application/json' });
+            
+            // Electron-Modus: Verwende Electron-API zum Speichern
+            try {
+                const savePath = await window.electronAPI.saveFileDialog({
+                    title: 'Konfiguration speichern',
+                    defaultPath: 'config.json',
+                    filters: [{ name: 'JSON Dateien', extensions: ['json'] }]
+                });
+                if (savePath) {
+                    await window.electronAPI.saveConfig(savePath, config);
+                    showStatus(elements.transferStatus, `✓ config.json gespeichert: ${savePath}`, 'success');
+                }
+            } catch (e) {
+                console.error('Fehler beim Speichern:', e);
+                showStatus(elements.transferStatus, `Fehler: ${e.message}`, 'error');
+            }
+        }
+        
+        function importConfig(file) {
+            const reader = new FileReader();
+            reader.onload = async (e) => {
+                try {
+                    const config = JSON.parse(e.target.result);
+                    state.mapping = config.mapping || state.mapping;
+                    
+                    // Speichere in IndexedDB (kann große Dateien speichern)
+                    if (db) {
+                        try {
+                            await saveToIndexedDB('config', 'lastExport', config);
+                            console.log('Importierte Konfig in IndexedDB gespeichert');
+                        } catch (dbErr) {
+                            console.warn('IndexedDB Fehler:', dbErr);
+                        }
+                    }
+                    
+                    // Fallback: Speichere auch in LocalStorage (ohne Dateiinhalt wenn zu groß)
+                    try {
+                        localStorage.setItem(LAST_EXPORT_KEY, e.target.result);
+                    } catch (lsErr) {
+                        // LocalStorage zu klein - speichere ohne Dateien
+                        const smallConfig = { ...config };
+                        delete smallConfig.file1Data;
+                        delete smallConfig.file2Data;
+                        localStorage.setItem(LAST_EXPORT_KEY, JSON.stringify(smallConfig));
+                        console.log('LocalStorage zu klein für Dateien, nur Mapping gespeichert');
+                    }
+                    
+                    // Lade eingebettete Excel-Dateien
+                    if (config.file1Data) {
+                        await loadWorkbookFromBase64(config.file1Data, config.file1Name, 1, config.file1SheetName);
+                    } else if (config.file1SheetName) {
+                        state.file1.pendingSheet = config.file1SheetName;
+                        elements.file1Info.textContent = `⏳ Arbeitsblatt: ${config.file1SheetName}`;
+                        elements.file1Info.style.color = 'var(--warning)';
+                    }
+                    
+                    if (config.file2Data) {
+                        await loadWorkbookFromBase64(config.file2Data, config.file2Name, 2, config.file2SheetName);
+                    } else if (config.file2SheetName) {
+                        state.file2.pendingSheet = config.file2SheetName;
+                        elements.file2Info.textContent = `⏳ Arbeitsblatt: ${config.file2SheetName}`;
+                        elements.file2Info.style.color = 'var(--warning)';
+                    }
+                    
+                    // Template laden (falls vorhanden)
+                    if (config.templateData) {
+                        state.template.data = config.templateData;
+                        state.template.name = config.templateName;
+                        elements.templateInfo.textContent = config.templateName;
+                        elements.btnNewMonth.disabled = false;
+                    }
+                    
+                    updateMappingInfo();
+                    updateMappingPreview();
+                    saveConfig();
+                    
+                    // Zeige geladene Konfig-Details
+                    const date = config.exportDate ? new Date(config.exportDate).toLocaleString('de-DE') : 'unbekannt';
+                    const mappingCount = state.mapping.sourceColumns?.length || 0;
+                    const filesIncluded = (config.file1Data ? 1 : 0) + (config.file2Data ? 1 : 0);
+
+                    showStatus(elements.transferStatus, 
+                        `✓ Konfiguration importiert! (${mappingCount} Spalten, ${filesIncluded} Datei(en), vom ${date})`, 'success');
+
+                    elements.mappingInfo.textContent = `${mappingCount} Spalte(n) konfiguriert`;
+                    
+                } catch (err) {
+                    showStatus(elements.transferStatus, 'Fehler beim Importieren: ' + err.message, 'error');
+                }
+            };
+            reader.readAsText(file);
+        }
+        
+        // ==================== File Loading (Electron-Modus) ====================
+        // Dateien werden über electronAPI.openFileDialog() geladen
+        // Die Browser-Funktionen loadFile(), processFile(), loadWorkbookFromBase64() wurden entfernt
+        // selectSheet1/2 im Browser-Modus wurden entfernt (XLSX-basiert)
+        
+        function checkReadyState() {
+            const hasFile1 = state.file1.filePath;
+            const hasFile2 = state.file2.filePath;
+            const bothLoaded = hasFile1 && hasFile2;
+            
+            // Mapping-Button nur deaktivieren wenn KEINE Konfig geladen AND kein Dateien
+            const hasMapping = state.mapping.sourceColumns && state.mapping.sourceColumns.length > 0;
+            elements.btnConfigMapping.disabled = !bothLoaded && !hasMapping;
+            
+            elements.searchInput.disabled = !state.file1.selectedSheet;
+            elements.btnSearch.disabled = !state.file1.selectedSheet;
+            
+            // "Neue Zeile" Button aktivieren wenn Mapping vorhanden und Datei 2 geladen
+            elements.btnNewRow.disabled = !hasMapping || !hasFile2;
+            
+            // Datenexplorer ist immer aktiviert (kann eigene Dateien öffnen)
+            elements.btnDataExplorer.disabled = false;
+            
+            updateMappingInfo();
+            updateMappingPreview();
+        }
+        
+        function updateMappingPreview() {
+            const preview = document.getElementById('mappingPreview');
+            if (!preview) return;
+            
+            if (!state.mapping.sourceColumns || state.mapping.sourceColumns.length === 0) {
+                preview.innerHTML = '';
+                return;
+            }
+            
+            let html = '<strong>Aktuelle Konfig:</strong><br>';
+            html += `Start-Spalte: ${getColumnLetter(state.mapping.targetStartColumn)}<br>`;
+            html += `Duplikat-Check: Spalte ${state.mapping.duplicateCheckColumn + 1}<br>`;
+            html += `Spalten: ${state.mapping.sourceColumns.length}`;
+            
+            preview.innerHTML = html;
+        }
+        
+        function updateMappingInfo() {
+            const hasFile1 = state.file1.filePath;
+            const hasFile2 = state.file2.filePath;
+            
+            if (!hasFile1 || !hasFile2) {
+                if (state.mapping.sourceColumns && state.mapping.sourceColumns.length > 0) {
+                    elements.mappingInfo.textContent = `${state.mapping.sourceColumns.length} Spalte(n) konfiguriert (Dateien laden)`;
+                    elements.mappingInfo.style.color = 'var(--warning)';
+                } else {
+                    elements.mappingInfo.textContent = 'Laden Sie beide Dateien';
+                    elements.mappingInfo.style.color = '';
+                }
+                return;
+            }
+            
+            elements.mappingInfo.style.color = '';
+            if (state.mapping.sourceColumns.length === 0) {
+                elements.mappingInfo.textContent = 'Klicken Sie auf "Spalten konfigurieren"';
+            } else {
+                elements.mappingInfo.textContent = `${state.mapping.sourceColumns.length} Spalte(n) konfiguriert ✓`;
+            }
+        }
+        
+        function openMappingModal() {
+            elements.mappingModal.classList.remove('hidden');
+            renderMappingList();
+        }
+        
+        function closeMappingModal() {
+            elements.mappingModal.classList.add('hidden');
+        }
+        
+        function renderMappingList() {
+            elements.mappingList.innerHTML = '';
+            
+            // If no mappings yet, add all columns by default (skip first column - usually row numbers)
+            if (state.mapping.sourceColumns.length === 0 && state.file1.headers.length > 1) {
+                state.mapping.sourceColumns = state.file1.headers.slice(1).map((_, i) => i + 1);
+            } else if (state.mapping.sourceColumns.length === 0 && state.file1.headers.length === 1) {
+                state.mapping.sourceColumns = [0];
+            }
+            
+            // Populate duplicate check column dropdown
+            const dupSelect = document.getElementById('duplicateCheckColumn');
+            dupSelect.innerHTML = '';
+            state.file1.headers.forEach((header, idx) => {
+                const option = document.createElement('option');
+                option.value = idx;
+                option.textContent = `${getColumnLetter(idx + 1)}: ${header || '(leer)'}`;
+                if (idx === state.mapping.duplicateCheckColumn) option.selected = true;
+                dupSelect.appendChild(option);
+            });
+            
+            state.mapping.sourceColumns.forEach((colIndex, i) => {
+                const item = document.createElement('div');
+                item.className = 'mapping-item';
+                
+                const select = document.createElement('select');
+                state.file1.headers.forEach((header, idx) => {
+                    const option = document.createElement('option');
+                    option.value = idx;
+                    option.textContent = `${getColumnLetter(idx + 1)}: ${header || '(leer)'}`;
+                    if (idx === colIndex) option.selected = true;
+                    select.appendChild(option);
+                });
+                select.addEventListener('change', () => {
+                    state.mapping.sourceColumns[i] = parseInt(select.value);
+                });
+                
+                const arrow = document.createElement('span');
+                arrow.className = 'mapping-arrow';
+                arrow.textContent = '→';
+                
+                const target = document.createElement('span');
+                target.className = 'mapping-target';
+                const targetCol = state.mapping.targetStartColumn + i;
+                target.textContent = `Spalte ${getColumnLetter(targetCol)} in Datei 2`;
+                
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'mapping-remove';
+                removeBtn.textContent = '✕';
+                removeBtn.onclick = () => {
+                    state.mapping.sourceColumns.splice(i, 1);
+                    renderMappingList();
+                };
+                
+                item.appendChild(select);
+                item.appendChild(arrow);
+                item.appendChild(target);
+                item.appendChild(removeBtn);
+                elements.mappingList.appendChild(item);
+            });
+            
+            // Update target start column
+            elements.targetStartColumn.value = state.mapping.targetStartColumn;
+        }
+        
+        function addMappingColumn() {
+            const nextCol = state.mapping.sourceColumns.length;
+            if (nextCol < state.file1.headers.length) {
+                state.mapping.sourceColumns.push(nextCol);
+                renderMappingList();
+            }
+        }
+        
+        function saveMapping() {
+            state.mapping.targetStartColumn = parseInt(elements.targetStartColumn.value);
+            state.mapping.duplicateCheckColumn = parseInt(document.getElementById('duplicateCheckColumn').value);
+            saveConfig();
+            updateMappingInfo();
+            closeMappingModal();
+        }
+        
+        function getColumnLetter(num) {
+            let result = '';
+            while (num > 0) {
+                num--;
+                result = String.fromCharCode(65 + (num % 26)) + result;
+                num = Math.floor(num / 26);
+            }
+            return result;
+        }
+        
+        // ==================== Search Functions ====================
+        function wildcardToRegex(pattern) {
+            let escaped = pattern.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+            escaped = escaped.replace(/\*/g, '.*');
+            escaped = escaped.replace(/\?/g, '.');
+            return new RegExp('^' + escaped + '$', 'i');
+        }
+        
+        function search() {
+            const query = elements.searchInput.value.trim();
+            if (!query || !state.file1.data.length) return;
+            
+            const hasWildcards = query.includes('*') || query.includes('?');
+            state.searchResults = [];
+            
+            if (hasWildcards) {
+                const regex = wildcardToRegex(query);
+                state.file1.data.forEach((row, rowIndex) => {
+                    for (let col of row) {
+                        if (col && regex.test(String(col))) {
+                            state.searchResults.push({ rowIndex: rowIndex, data: row });
+                            break;
+                        }
+                    }
+                });
+            } else {
+                const lowerQuery = query.toLowerCase();
+                state.file1.data.forEach((row, rowIndex) => {
+                    for (let col of row) {
+                        if (col && String(col).toLowerCase().includes(lowerQuery)) {
+                            state.searchResults.push({ rowIndex: rowIndex, data: row });
+                            break;
+                        }
+                    }
+                });
+            }
+            
+            displaySearchResults(query, hasWildcards);
+        }
+        
+        function displaySearchResults(query, hasWildcards = false) {
+            state.selectedRows = [];
+            state.searchPagination.currentPage = 1; // Bei neuer Suche zur ersten Seite
+            
+            if (state.searchResults.length === 0) {
+                elements.searchResultsInfo.innerHTML = `Keine Treffer für "<strong>${escapeHtml(query)}</strong>"`;
+                elements.emptyState.style.display = 'flex';
+                elements.resultsTableContainer.style.display = 'none';
+                elements.transferPanel.classList.add('hidden');
+                document.getElementById('searchPagination').style.display = 'none';
+                return;
+            }
+            
+            renderSearchResultsPage(query, hasWildcards);
+        }
+        
+        function renderSearchResultsPage(query = '', hasWildcards = false) {
+            const totalResults = state.searchResults.length;
+            const pageSize = state.searchPagination.pageSize;
+            const totalPages = Math.max(1, Math.ceil(totalResults / pageSize));
+            
+            // Sicherstellen, dass currentPage gültig ist
+            if (state.searchPagination.currentPage > totalPages) {
+                state.searchPagination.currentPage = totalPages;
+            }
+            if (state.searchPagination.currentPage < 1) {
+                state.searchPagination.currentPage = 1;
+            }
+            
+            const startIndex = (state.searchPagination.currentPage - 1) * pageSize;
+            const endIndex = Math.min(startIndex + pageSize, totalResults);
+            const pageResults = state.searchResults.slice(startIndex, endIndex);
+            
+            const wildcardInfo = hasWildcards ? ' (Platzhalter)' : '';
+            if (totalResults > pageSize) {
+                elements.searchResultsInfo.innerHTML = 
+                    `Zeige <strong>${startIndex + 1}-${endIndex}</strong> von <strong>${totalResults}</strong> Treffern für "<strong>${escapeHtml(query)}</strong>"${wildcardInfo}`;
+            } else {
+                elements.searchResultsInfo.innerHTML = 
+                    `<strong>${totalResults}</strong> Treffer für "<strong>${escapeHtml(query)}</strong>"${wildcardInfo}`;
+            }
+            
+            elements.emptyState.style.display = 'none';
+            elements.resultsTableContainer.style.display = 'block';
+            
+            let headerHtml = '<tr><th style="width: 40px;"><input type="checkbox" id="selectAllCheckbox" title="Alle auf dieser Seite auswählen"></th>';
+            state.file1.headers.forEach((header, i) => {
+                headerHtml += `<th>${escapeHtml(header || `Spalte ${getColumnLetter(i + 1)}`)}</th>`;
+            });
+            headerHtml += '</tr>';
+            elements.resultsTableHead.innerHTML = headerHtml;
+            
+            // Nur die aktuelle Seite rendern
+            let bodyHtml = '';
+            pageResults.forEach((result, pageIndex) => {
+                const globalIndex = startIndex + pageIndex;
+                bodyHtml += `<tr data-index="${globalIndex}">`;
+                bodyHtml += `<td><input type="checkbox" class="row-checkbox" data-index="${globalIndex}" onclick="event.stopPropagation()"></td>`;
+                state.file1.headers.forEach((_, colIndex) => {
+                    const cell = result.data[colIndex];
+                    const cellStr = String(cell ?? '');
+                    bodyHtml += `<td contenteditable="true" data-row="${globalIndex}" data-col="${colIndex}" data-original="${escapeHtml(cellStr)}" onclick="event.stopPropagation()">${escapeHtml(cellStr)}</td>`;
+                });
+                bodyHtml += '</tr>';
+            });
+            elements.resultsTableBody.innerHTML = bodyHtml;
+            
+            document.querySelectorAll('#resultsTableBody td[contenteditable]').forEach(td => {
+                td.addEventListener('input', function() {
+                    const original = this.dataset.original;
+                    const current = this.textContent;
+                    this.classList.toggle('edited', original !== current);
+                });
+                td.addEventListener('focus', function() {
+                    const rowIndex = parseInt(this.dataset.row);
+                    if (!state.selectedRows.includes(rowIndex)) {
+                        toggleRowSelection(rowIndex, true);
+                    }
+                });
+            });
+            
+            document.getElementById('selectAllCheckbox').addEventListener('change', (e) => {
+                selectAllRows(e.target.checked);
+            });
+            
+            document.querySelectorAll('.row-checkbox').forEach(cb => {
+                cb.addEventListener('change', (e) => {
+                    toggleRowSelection(parseInt(e.target.dataset.index), e.target.checked);
+                });
+            });
+            
+            // Pagination UI aktualisieren
+            updateSearchPagination(totalPages);
+            
+            // Erste Zeile auf der aktuellen Seite auswählen
+            if (pageResults.length > 0) {
+                toggleRowSelection(startIndex, true);
+            }
+            elements.transferPanel.classList.remove('hidden');
+        }
+        
+        function updateSearchPagination(totalPages) {
+            const paginationEl = document.getElementById('searchPagination');
+            const pageInfoEl = document.getElementById('searchPageInfo');
+            const firstBtn = document.getElementById('btnSearchFirstPage');
+            const prevBtn = document.getElementById('btnSearchPrevPage');
+            const nextBtn = document.getElementById('btnSearchNextPage');
+            const lastBtn = document.getElementById('btnSearchLastPage');
+            
+            // Pagination nur anzeigen wenn mehr als eine Seite
+            if (state.searchResults.length > state.searchPagination.pageSize) {
+                paginationEl.style.display = 'flex';
+                pageInfoEl.textContent = `Seite ${state.searchPagination.currentPage} von ${totalPages}`;
+                
+                // Buttons aktivieren/deaktivieren
+                firstBtn.disabled = state.searchPagination.currentPage === 1;
+                prevBtn.disabled = state.searchPagination.currentPage === 1;
+                nextBtn.disabled = state.searchPagination.currentPage === totalPages;
+                lastBtn.disabled = state.searchPagination.currentPage === totalPages;
+            } else {
+                paginationEl.style.display = 'none';
+            }
+        }
+        
+        function searchGoToPage(page) {
+            const totalPages = Math.ceil(state.searchResults.length / state.searchPagination.pageSize);
+            state.searchPagination.currentPage = Math.max(1, Math.min(page, totalPages));
+            renderSearchResultsPage(elements.searchInput.value.trim());
+            
+            // Zum Tabellenanfang scrollen
+            elements.resultsTableContainer.scrollTop = 0;
+        }
+        
+        function searchChangePageSize(newSize) {
+            state.searchPagination.pageSize = parseInt(newSize);
+            state.searchPagination.currentPage = 1;
+            renderSearchResultsPage(elements.searchInput.value.trim());
+        }
+        
+        function getEditedRowData(rowIndex) {
+            const cells = document.querySelectorAll(`#resultsTableBody td[data-row="${rowIndex}"]`);
+            const data = [];
+            cells.forEach(cell => {
+                const colIndex = parseInt(cell.dataset.col);
+                data[colIndex] = cell.textContent;
+            });
+            return data;
+        }
+        
+        function isRowEdited(rowIndex) {
+            const cells = document.querySelectorAll(`#resultsTableBody td[data-row="${rowIndex}"].edited`);
+            return cells.length > 0;
+        }
+        
+        function selectAllRows(selected) {
+            const checkboxes = document.querySelectorAll('.row-checkbox');
+            checkboxes.forEach(cb => {
+                const index = parseInt(cb.dataset.index);
+                toggleRowSelection(index, selected);
+            });
+        }
+        
+        function toggleRowSelection(index, forceState) {
+            const checkbox = document.querySelector(`.row-checkbox[data-index="${index}"]`);
+            const tr = document.querySelector(`#resultsTableBody tr[data-index="${index}"]`);
+            if (!checkbox || !tr) return;
+            
+            const isSelected = forceState !== undefined ? forceState : !checkbox.checked;
+            checkbox.checked = isSelected;
+            tr.classList.toggle('selected', isSelected);
+            
+            if (isSelected) {
+                if (!state.selectedRows.includes(index)) {
+                    state.selectedRows.push(index);
+                }
+            } else {
+                state.selectedRows = state.selectedRows.filter(i => i !== index);
+            }
+            
+            document.getElementById('selectedCount').textContent = state.selectedRows.length;
+            
+            const allCheckbox = document.getElementById('selectAllCheckbox');
+            const allCheckboxes = document.querySelectorAll('.row-checkbox');
+            const checkedCount = document.querySelectorAll('.row-checkbox:checked').length;
+            if (allCheckbox) {
+                allCheckbox.checked = checkedCount === allCheckboxes.length;
+                allCheckbox.indeterminate = checkedCount > 0 && checkedCount < allCheckboxes.length;
+            }
+            
+            if (state.selectedRows.length > 0) {
+                state.selectedRow = state.searchResults[state.selectedRows[state.selectedRows.length - 1]];
+            } else {
+                state.selectedRow = null;
+            }
+        }
+
+        function removeFromQueue(index) {
+            if (typeof index !== 'number' || index < 0 || index >= state.transferQueue.length) return;
+            state.transferQueue.splice(index, 1);
+            updateQueueDisplay();
+        }
+        
+        // Sichere globale Funktionen mit Object.defineProperty (nicht überschreibbar)
+        Object.defineProperty(window, 'removeFromQueue', {
+            value: removeFromQueue,
+            writable: false,
+            configurable: false
+        });
+        Object.defineProperty(window, 'toggleRowSelection', {
+            value: toggleRowSelection,
+            writable: false,
+            configurable: false
+        });
+
+        // ==================== New Row Functions ====================
+        function openNewRowPanel() {
+            if (!state.mapping.sourceColumns || state.mapping.sourceColumns.length === 0) {
+                showStatus(elements.transferStatus, 'Bitte zuerst Spalten konfigurieren', 'error');
+                return;
+            }
+            
+            // Formular mit konfigurierten Spalten aufbauen
+            let html = '';
+            state.mapping.sourceColumns.forEach((colIndex, i) => {
+                const headerName = state.file1.headers[colIndex] || `Spalte ${colIndex + 1}`;
+                html += `
+                    <div class="new-row-field">
+                        <label title="${headerName}">${headerName}</label>
+                        <input type="text" id="newRowField_${i}" data-col-index="${colIndex}" placeholder="${headerName}">
+                    </div>`;
+            });
+            
+            elements.newRowForm.innerHTML = html;
+            elements.newRowPanel.classList.remove('hidden');
+            
+            // Fokus auf erstes Feld
+            const firstField = document.getElementById('newRowField_0');
+            if (firstField) firstField.focus();
+        }
+        
+        function closeNewRowPanel() {
+            elements.newRowPanel.classList.add('hidden');
+            // Felder leeren
+            elements.newRowForm.innerHTML = '';
+            elements.newRowComment.value = '';
+            elements.newRowFlag.value = 'A';
+        }
+        
+        function getNewRowData() {
+            // Sammle alle Werte aus den Eingabefeldern
+            const data = new Array(Math.max(...state.mapping.sourceColumns) + 1).fill(''); 
+            
+            state.mapping.sourceColumns.forEach((colIndex, i) => {
+                const field = document.getElementById(`newRowField_${i}`);
+                if (field) {
+                    data[colIndex] = field.value;
+                }
+            });
+            
+            return data;
+        }
+        
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+        
+        function escapeRegex(string) {
+            return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        }
+        
+        // ==================== New Row Functions ====================
+        function addNewRowToQueue() {
+            const data = getNewRowData();
+            const flag = elements.newRowFlag.value;
+            const comment = elements.newRowComment.value;
+            const checkValue = data[state.mapping.duplicateCheckColumn] || '';
+            
+            state.transferQueue.push({
+                data: data,
+                flag: flag,
+                comment: comment,
+                checkValue: checkValue,
+                isManual: true
+            });
+            
+            updateQueueDisplay();
+            const successMsg = '✅ Neue Zeile zur Warteschlange hinzugefügt!';
+            showStatus(elements.transferStatus, successMsg, 'success');
+            showStatus(elements.newRowStatus, successMsg, 'success');
+            
+            // Felder leeren für nächste Eingabe
+            state.mapping.sourceColumns.forEach((colIndex, i) => {
+                const field = document.getElementById(`newRowField_${i}`);
+                if (field) field.value = '';
+            });
+            elements.newRowComment.value = '';
+            
+            const firstField = document.getElementById('newRowField_0');
+            if (firstField) firstField.focus();
+        }
+        
+        async function transferNewRowDirect() {
+            const data = getNewRowData();
+            const flag = elements.newRowFlag.value;
+            const comment = elements.newRowComment.value;
+            
+            // Prüfe ob Zieldatei verfügbar ist
+            const hasTargetFile = state.file2.filePath;
+            if (!hasTargetFile) {
+                const errorMsg = 'Keine Zieldatei geladen';
+                showStatus(elements.transferStatus, errorMsg, 'error');
+                showStatus(elements.newRowStatus, errorMsg, 'error');
+                return;
+            }
+            
+            // Zur Warteschlange hinzufügen und direkt übertragen
+            if (state.file2.filePath) {
+                const checkValue = data[state.mapping.duplicateCheckColumn] || '';
+                
+                state.transferQueue.push({
+                    data: data,
+                    flag: flag,
+                    comment: comment,
+                    checkValue: checkValue,
+                    isManual: true
+                });
+                
+                updateQueueDisplay();
+                
+                try {
+                    // Direkt übertragen
+                    await transferQueueToExcel();
+                    
+                    // Felder leeren für nächste Eingabe
+                    state.mapping.sourceColumns.forEach((colIndex, i) => {
+                        const field = document.getElementById(`newRowField_${i}`);
+                        if (field) field.value = '';
+                    });
+                    elements.newRowComment.value = '';
+                    
+                    const firstField = document.getElementById('newRowField_0');
+                    if (firstField) firstField.focus();
+                    
+                    // Erfolgsmeldung auch im Modal anzeigen
+                    showStatus(elements.newRowStatus, '✅ Zeile erfolgreich übertragen!', 'success');
+                } catch (err) {
+                    console.error('Fehler bei Übertragung:', err);
+                    const errorMsg = `Fehler: ${err.message}`;
+                    showStatus(elements.transferStatus, errorMsg, 'error');
+                    showStatus(elements.newRowStatus, errorMsg, 'error');
+                }
+                
+                return;
+            }
+            
+            // Browser-Modus: Original-Logik
+            const newRow = new Array(Math.max(
+                state.file2.headers.length,
+                state.mapping.targetStartColumn + state.mapping.sourceColumns.length
+            )).fill('');
+            
+            newRow[0] = flag;
+            newRow[1] = comment;
+            
+            state.mapping.sourceColumns.forEach((srcColIndex, i) => {
+                const targetColIndex = state.mapping.targetStartColumn - 1 + i;
+                newRow[targetColIndex] = data[srcColIndex] || '';
+            });
+            
+            state.file2.data.push(newRow);
+            updateWorkbook();
+            
+            state.history.unshift({
+                time: new Date().toLocaleTimeString(),
+                flag: flag,
+                searchValue: '(Manuelle Eingabe)',
+                preview: data[state.mapping.duplicateCheckColumn] || '(Neue Zeile)'
+            });
+            if (state.history.length > 50) state.history = state.history.slice(0, 50);
+            updateHistoryDisplay();
+            
+            showStatus(elements.transferStatus, '✅ Neue Zeile direkt übertragen!', 'success');
+            
+            state.mapping.sourceColumns.forEach((colIndex, i) => {
+                const field = document.getElementById(`newRowField_${i}`);
+                if (field) field.value = '';
+            });
+            elements.newRowComment.value = '';
+            
+            const firstField = document.getElementById('newRowField_0');
+            if (firstField) firstField.focus();
+            
+            saveConfig();
+        }
+        
+        // ==================== Transfer ====================
+        function checkForDuplicate(value) {
+            if (!value || !state.file2.data.length) return null;
+            
+            const valueStr = String(value).toLowerCase().trim();
+            
+            for (let i = 0; i < state.file2.data.length; i++) {
+                const row = state.file2.data[i];
+                for (let j = state.mapping.targetStartColumn - 1; j < row.length; j++) {
+                    if (row[j] && String(row[j]).toLowerCase().trim() === valueStr) {
+                        return { rowIndex: i + 2, value: row[j] };
+                    }
+                }
+            }
+            return null;
+        }
+        
+        async function transferSelectedDirect() {
+            if (state.selectedRows.length === 0) {
+                showStatus(elements.transferStatus, 'Bitte wählen Sie mindestens eine Zeile aus', 'error');
+                return;
+            }
+            
+            // Prüfe ob Zieldatei verfügbar ist
+            const hasTargetFile = state.file2.filePath;
+            if (!hasTargetFile) {
+                showStatus(elements.transferStatus, 'Keine Zieldatei geladen', 'error');
+                return;
+            }
+            
+            const flag = elements.transferFlag.value;
+            const comment = elements.transferComment.value;
+            
+            // Zur Warteschlange hinzufügen und direkt übertragen
+            if (state.file2.filePath) {
+                // Zeilen zur Warteschlange hinzufügen
+                for (const rowIndex of state.selectedRows) {
+                    const row = state.searchResults[rowIndex];
+                    if (!row) continue;
+                    
+                    const rowData = getEditedRowData(rowIndex);
+                    const checkValue = rowData[state.mapping.duplicateCheckColumn];
+                    
+                    state.transferQueue.push({
+                        data: [...rowData],
+                        flag: flag,
+                        comment: comment,
+                        checkValue: checkValue,
+                        wasEdited: isRowEdited(rowIndex)
+                    });
+                }
+                
+                updateQueueDisplay();
+                
+                try {
+                    // Direkt übertragen
+                    await transferQueueToExcel();
+                } catch (err) {
+                    console.error('Fehler bei Übertragung:', err);
+                    showStatus(elements.transferStatus, `Fehler: ${err.message}`, 'error');
+                }
+                
+                selectAllRows(false);
+                elements.transferComment.value = '';
+                elements.searchInput.value = '';
+                elements.searchInput.focus();
+                return;
+            }
+            
+            // Browser-Modus: Original-Logik
+            let transferredCount = 0;
+            let editedCount = 0;
+            let duplicatesFound = [];
+            
+            for (const rowIndex of state.selectedRows) {
+                const row = state.searchResults[rowIndex];
+                if (!row) continue;
+                
+                const rowData = getEditedRowData(rowIndex);
+                const wasEdited = isRowEdited(rowIndex);
+                if (wasEdited) editedCount++;
+                
+                const checkValue = rowData[state.mapping.duplicateCheckColumn];
+                
+                if (checkValue) {
+                    const duplicate = checkForDuplicate(checkValue);
+                    if (duplicate) {
+                        duplicatesFound.push({ value: checkValue, row: duplicate.rowIndex });
+                    }
+                }
+                
+                const newRow = new Array(Math.max(
+                    state.file2.headers.length,
+                    state.mapping.targetStartColumn + state.mapping.sourceColumns.length
+                )).fill('');
+                
+                newRow[0] = flag;
+                newRow[1] = comment;
+            
+                state.mapping.sourceColumns.forEach((srcColIndex, i) => {
+                    const targetColIndex = state.mapping.targetStartColumn - 1 + i;
+                    newRow[targetColIndex] = rowData[srcColIndex] || '';
+                });
+                
+                state.file2.data.push(newRow);
+                transferredCount++;
+                
+                state.history.unshift({
+                    time: new Date().toLocaleTimeString(),
+                    flag: flag,
+                    searchValue: checkValue,
+                    preview: rowData[state.mapping.duplicateCheckColumn] || '(Neue Zeile)'
+                });
+            }
+            
+            updateWorkbook();
+            
+            if (state.history.length > 50) state.history.length = 50;
+            updateHistoryDisplay();
+            saveConfig();
+            
+            let message = `✓ ${transferredCount} Zeile(n) direkt übertragen!`;
+            let status = 'success';
+            if (editedCount > 0) {
+                message += ` (${editedCount} bearbeitet ✏️)`;
+            }
+            if (duplicatesFound.length > 0) {
+                message += ` ⚠️ ${duplicatesFound.length} Duplikat(e)!`;
+                status = 'warning';
+            }
+            
+            showStatus(elements.transferStatus, message, status);
+            
+            selectAllRows(false);
+            elements.transferComment.value = '';
+            elements.searchInput.value = '';
+            elements.searchInput.focus();
+        }
+        
+        // ==================== Queue Functions ====================
+        function addToQueue() {
+            if (state.selectedRows.length === 0) {
+                showStatus(elements.transferStatus, 'Bitte wählen Sie mindestens eine Zeile aus', 'error');
+                return;
+            }
+            
+            const flag = elements.transferFlag.value;
+            const comment = elements.transferComment.value;
+            
+            let addedCount = 0;
+            let editedCount = 0;
+            let skippedQueue = 0;
+            const duplicatesFound = [];
+            
+            for (const rowIndex of state.selectedRows) {
+                const row = state.searchResults[rowIndex];
+                if (!row) continue;
+                
+                const rowData = getEditedRowData(rowIndex);
+                const wasEdited = isRowEdited(rowIndex);
+                if (wasEdited) editedCount++;
+                
+                const checkValue = rowData[state.mapping.duplicateCheckColumn];
+                
+                const rowAlreadyInQueue = state.transferQueue.some(item => item.rowIndex === row.rowIndex);
+                if (rowAlreadyInQueue) {
+                    skippedQueue++;
+                    continue;
+                }
+                
+                if (checkValue) {
+                    const duplicate = checkForDuplicate(checkValue);
+                    if (duplicate) {
+                        duplicatesFound.push({ value: checkValue, row: duplicate.rowIndex });
+                    }
+                }
+                
+                state.transferQueue.push({
+                    data: [...rowData],
+                    rowIndex: row.rowIndex,
+                    flag: flag,
+                    comment: comment,
+                    checkValue: checkValue,
+                    wasEdited: wasEdited
+                });
+                addedCount++;
+            }
+            
+            updateQueueDisplay();
+            elements.transferComment.value = '';
+            
+            let message = `✓ ${addedCount} Zeile(n) zur Warteschlange hinzugefügt`;
+            let status = 'success';
+            
+            if (editedCount > 0) {
+                message += ` (${editedCount} bearbeitet ✏️)`;
+            }
+            if (skippedQueue > 0) {
+                message += ` (${skippedQueue} bereits vorhanden)`;
+            }
+            if (duplicatesFound.length > 0) {
+                message += ` ⚠️ ${duplicatesFound.length} Duplikat(e) in Zieldatei!`;
+                status = 'warning';
+            }
+            
+            showStatus(elements.transferStatus, message, status);
+            
+            selectAllRows(false);
+            elements.searchInput.value = '';
+            elements.searchInput.focus();
+        }
+        
+        function clearQueue() {
+            if (state.transferQueue.length > 0 && 
+                !confirm(`Warteschlange mit ${state.transferQueue.length} Zeilen wirklich leeren?`)) {
+                return;
+            }
+            state.transferQueue = [];
+            updateQueueDisplay();
+        }
+        
+        function updateQueueDisplay() {
+            const hasFile2 = state.file2.filePath;
+            
+            elements.queueCount.textContent = state.transferQueue.length;
+            elements.btnClearQueue.disabled = state.transferQueue.length === 0;
+            elements.btnExportPS.disabled = state.transferQueue.length === 0 || !hasFile2;
+            
+            if (state.transferQueue.length === 0) {
+                elements.queueList.innerHTML = '<div class="queue-empty">Keine Zeilen in der Warteschlange</div>';
+                return;
+            }
+            
+            let html = '';
+            state.transferQueue.forEach((item, index) => {
+                const preview = String(item.checkValue || item.data[0] || '').substring(0, 40);
+                const editedBadge = item.wasEdited ? '<span class="queue-item-edited" title="Bearbeitet">✏️</span>' : '';
+                html += `
+                    <div class="queue-item" style="display: flex; gap: 10px; padding: 8px; background: var(--bg-light); border-radius: 4px; margin-bottom: 5px; align-items: center;">
+                        <span style="background: var(--primary); color: white; padding: 2px 8px; border-radius: 3px; font-weight: bold;">${item.flag}</span>
+                        ${editedBadge}
+                        <span style="flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(String(item.data))}">${escapeHtml(preview)}</span>
+                        ${item.comment ? `<span style="color: var(--text-muted); font-size: 12px;" title="${escapeHtml(item.comment)}">${escapeHtml(item.comment.substring(0, 20))}</span>` : '' }
+                        <button class="btn btn-secondary btn-sm" data-remove-index="${index}" title="Entfernen">✕</button>
+                    </div>`;
+            });
+            elements.queueList.innerHTML = html;
+            
+            // Event-Delegation für Remove-Buttons
+            elements.queueList.querySelectorAll('[data-remove-index]').forEach(btn => {
+                btn.onclick = () => removeFromQueue(parseInt(btn.dataset.removeIndex, 10));
+            });
+        }
+        
+        async function transferQueueToExcel() {
+            if (state.transferQueue.length === 0) {
+                showStatus(elements.transferStatus, 'Keine Zeilen in der Warteschlange', 'error');
+                return;
+            }
+            
+            if (!state.file2.filePath) {
+                showStatus(elements.transferStatus, 'Keine Zieldatei geladen', 'error');
+                return;
+            }
+            
+            const rows = state.transferQueue.map(item => {
+                // Konvertiere item.data (Array) zu rowData (Objekt mit Index als Key)
+                const rowData = {};
+                state.mapping.sourceColumns.forEach((srcColIndex, i) => {
+                    rowData[i] = item.data[srcColIndex] || '';
+                });
+                return {
+                    flag: item.flag,
+                    comment: item.comment,
+                    data: rowData
+                };
+            });
+            
+            const result = await window.electronAPI.insertExcelRows({
+                filePath: state.file2.filePath,
+                sheetName: state.file2.selectedSheet,
+                rows: rows,
+                startColumn: state.mapping.targetStartColumn
+            });
+            
+            if (result.success) {
+                state.transferQueue.forEach(item => {
+                    state.history.unshift({
+                        time: new Date().toLocaleTimeString(),
+                        flag: item.flag,
+                        searchValue: item.checkValue,
+                        preview: String(item.checkValue || item.data[0] || '').substring(0, 30)
+                    });
+                });
+                if (state.history.length > 50) state.history = state.history.slice(0, 50);
+                updateHistoryDisplay();
+                
+                state.transferQueue = [];
+                updateQueueDisplay();
+                
+                await loadSheet2Electron(state.file2.selectedSheet);
+                
+                const successMsg = `✅ ${result.insertedCount} Zeile(n) direkt in Excel eingefügt!`;
+                showStatus(elements.transferStatus, successMsg, 'success');
+                showStatus(elements.newRowStatus, successMsg, 'success');
+            } else {
+                const errorMsg = `❌ Fehler: ${result.error}`;
+                showStatus(elements.transferStatus, errorMsg, 'error');
+                showStatus(elements.newRowStatus, errorMsg, 'error');
+            }
+        }
+        
+        // ==================== Electron-Specific Functions ====================
+        async function loadFile1Electron() {
+            const filePath = await window.electronAPI.openFileDialog({
+                title: 'Quelldatei öffnen',
+                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
+            });
+            if (!filePath) return;
+            
+            const result = await window.electronAPI.readExcelFile(filePath);
+            if (!result.success) {
+                showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
+                return;
+            }
+            
+            state.file1.name = result.fileName;
+            state.file1.filePath = filePath;
+            state.file1.sheets = result.sheets;
+            state.file1.workbook = { SheetNames: result.sheets };
+            
+            elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+            elements.selectSheet1.disabled = false;
+            elements.file1Info.textContent = `✓ ${result.fileName}`;
+            elements.file1Info.classList.add('loaded');
+            
+            await loadSheet1Electron(result.sheets[0]);
+        }
+        
+        async function loadFile2Electron() {
+            const filePath = await window.electronAPI.openFileDialog({
+                title: 'Zieldatei öffnen',
+                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
+            });
+            if (!filePath) return;
+            
+            const result = await window.electronAPI.readExcelFile(filePath);
+            if (!result.success) {
+                showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
+                return;
+            }
+            
+            state.file2.name = result.fileName;
+            state.file2.filePath = filePath;
+            state.file2.sheets = result.sheets;
+            state.file2.workbook = { SheetNames: result.sheets };
+            
+            elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+            elements.selectSheet2.disabled = false;
+            elements.file2Info.textContent = `✓ ${result.fileName}`;
+            elements.file2Info.classList.add('loaded');
+            
+            await loadSheet2Electron(result.sheets[0]);
+        }
+        
+        async function loadSheet1Electron(sheetName) {
+            if (!state.file1.filePath || !sheetName) return;
+            
+            const result = await window.electronAPI.readExcelSheet(state.file1.filePath, sheetName);
+            if (!result.success) {
+                showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
+                return;
+            }
+            
+            state.file1.selectedSheet = sheetName;
+            state.file1.headers = result.headers;
+            state.file1.data = result.data.slice(1);
+            
+            saveConfig();
+            checkReadyState();
+        }
+        
+        async function loadSheet2Electron(sheetName) {
+            if (!state.file2.filePath || !sheetName) return;
+            
+            const result = await window.electronAPI.readExcelSheet(state.file2.filePath, sheetName);
+            if (!result.success) {
+                showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
+                return;
+            }
+            
+            state.file2.selectedSheet = sheetName;
+            state.file2.headers = result.headers;
+            state.file2.data = result.data.slice(1);
+            
+            saveConfig();
+            checkReadyState();
+        }
+        
+        async function loadTemplateElectron() {
+            const filePath = await window.electronAPI.openFileDialog({
+                title: 'Template-Datei öffnen',
+                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
+            });
+            if (!filePath) return;
+            
+            const result = await window.electronAPI.readExcelFile(filePath);
+            if (!result.success) {
+                showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
+                return;
+            }
+            
+            state.template.filePath = filePath;
+            state.template.name = result.fileName;
+            
+            elements.templateInfo.textContent = `✓ ${result.fileName}`;
+            elements.templateInfo.classList.add('loaded');
+            elements.btnNewMonth.disabled = false;
+            
+            showStatus(elements.transferStatus, `✓ Template geladen: ${result.fileName}`, 'success');
+        }
+        
+        async function applyLoadedConfig(config) {
+            state.mapping = config.mapping || state.mapping;
+            
+            // Lade Dateien aus Pfaden
+            if (config.file1Path) {
+                try {
+                    const result = await window.electronAPI.readExcelFile(config.file1Path);
+                    if (result.success) {
+                        state.file1.name = result.fileName;
+                        state.file1.filePath = config.file1Path;
+                        state.file1.sheets = result.sheets;
+                        state.file1.workbook = { SheetNames: result.sheets };
+                        
+                        elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+                        elements.selectSheet1.disabled = false;
+                        elements.file1Info.textContent = `✓ ${result.fileName}`;
+                        elements.file1Info.classList.add('loaded');
+                        
+                        const sheetToLoad = config.file1SheetName && result.sheets.includes(config.file1SheetName) 
+                            ? config.file1SheetName : result.sheets[0];
+                        elements.selectSheet1.value = sheetToLoad;
+                        await loadSheet1Electron(sheetToLoad);
+                    }
+                } catch (e) {
+                    console.warn('Konnte Datei 1 nicht laden:', e);
+                }
+            }
+            
+            if (config.file2Path) {
+                try {
+                    const result = await window.electronAPI.readExcelFile(config.file2Path);
+                    if (result.success) {
+                        state.file2.name = result.fileName;
+                        state.file2.filePath = config.file2Path;
+                        state.file2.sheets = result.sheets;
+                        state.file2.workbook = { SheetNames: result.sheets };
+            
+                        elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+                        elements.selectSheet2.disabled = false;
+                        elements.file2Info.textContent = `✓ ${result.fileName}`;
+                        elements.file2Info.classList.add('loaded');
+                        
+                        const sheetToLoad = config.file2SheetName && result.sheets.includes(config.file2SheetName) 
+                            ? config.file2SheetName : result.sheets[0];
+                        elements.selectSheet2.value = sheetToLoad;
+                        await loadSheet2Electron(sheetToLoad);
+                    }
+                } catch (e) {
+                    console.warn('Konnte Datei 2 nicht laden:', e);
+                }
+            }
+            
+            if (config.templatePath) {
+                try {
+                    const result = await window.electronAPI.readExcelFile(config.templatePath);
+                    if (result.success) {
+                        state.template.filePath = config.templatePath;
+                        state.template.name = result.fileName;
+                        elements.templateInfo.textContent = `✓ ${result.fileName}`;
+                        elements.templateInfo.classList.add('loaded');
+                        elements.btnNewMonth.disabled = false;
+                    }
+                } catch (e) {
+                    console.warn('Konnte Template nicht laden:', e);
+                }
+            }
+            
+            updateMappingInfo();
+            updateMappingPreview();
+            saveConfig();
+        }
+        
+        async function loadConfigFromAppDirOrDialog() {
+            try {
+                // Zuerst Dialog öffnen
+                const filePath = await window.electronAPI.openFileDialog({
+                    title: 'config.json laden',
+                    filters: [{ name: 'JSON', extensions: ['json'] }]
+                });
+                
+                if (filePath) {
+                    const result = await window.electronAPI.loadConfig(filePath);
+                    if (result.success && result.config) {
+                        await applyLoadedConfig(result.config);
+                        showStatus(elements.transferStatus, `✓ config.json geladen: ${filePath}`, 'success');
+                    } else {
+                        showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
+                    }
+                }
+            } catch (e) {
+                showStatus(elements.transferStatus, `Fehler: ${e.message}`, 'error');
+            }
+        }
+        
+        // ==================== Data Explorer Functions ====================
+        const explorerState = {
+            filePath: null,
+            fileName: null,
+            sheets: [],
+            selectedSheet: null,
+            headers: [],
+            data: [],
+            filteredData: [],
+            searchTerm: '',
+            filters: [],
+            visibleColumns: [],
+            // Pagination
+            currentPage: 1,
+            pageSize: 100, // Zeilen pro Seite (konfigurierbar)
+            pageSizeOptions: [50, 100, 250, 500, 1000]
+        };
+        
+        function openDataExplorer() {
+            elements.dataExplorerModal.classList.remove('hidden');
+            document.body.classList.add('modal-open');
+        }
+        
+        function closeDataExplorer() {
+            elements.dataExplorerModal.classList.add('hidden');
+            document.body.classList.remove('modal-open');
+        }
+        
+        async function loadExplorerFile() {
+            const filePath = await window.electronAPI.openFileDialog({
+                title: 'Excel-Datei öffnen',
+                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
+            });
+            if (!filePath) return;
+            
+            const result = await window.electronAPI.readExcelFile(filePath);
+            if (!result.success) {
+                elements.explorerStatus.textContent = `Fehler: ${result.error}`;
+                return;
+            }
+            
+            explorerState.filePath = filePath;
+            explorerState.fileName = result.fileName;
+            explorerState.sheets = result.sheets;
+            
+            elements.explorerFileName.textContent = result.fileName;
+            elements.explorerSheetSelect.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+            
+            await loadExplorerSheet(result.sheets[0]);
+        }
+        
+        async function loadExplorerSheet(sheetName) {
+            if (!explorerState.filePath || !sheetName) return;
+            
+            // Loading-Status anzeigen
+            elements.explorerStatus.textContent = 'Lade Daten...';
+            
+            const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName);
+            if (!result.success) {
+                elements.explorerStatus.textContent = `Fehler: ${result.error}`;
+                return;
+            }
+            
+            explorerState.selectedSheet = sheetName;
+            explorerState.headers = result.headers;
+            explorerState.data = result.data.slice(1);
+            // Alle Spalten standardmäßig sichtbar machen
+            explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
+            explorerState.filteredData = [...explorerState.data];
+            explorerState.currentPage = 1; // Pagination zurücksetzen
+            explorerState.searchTerm = ''; // Suche zurücksetzen
+            elements.explorerSearch.value = '';
+            
+            // Status-Meldung für große Dateien
+            if (explorerState.data.length > 1000) {
+                elements.explorerStatus.textContent = `${explorerState.data.length} Zeilen geladen (Pagination aktiv)`;
+            } else {
+                elements.explorerStatus.textContent = '';
+            }
+            
+            renderExplorerTable();
+            updateColumnToggles();
+        }
+        
+        function filterExplorerData() {
+            let filtered = [...explorerState.data];
+            
+            // Volltextsuche mit Platzhalter-Unterstützung (* und ?)
+            if (explorerState.searchTerm) {
+                const term = explorerState.searchTerm;
+                const hasWildcards = term.includes('*') || term.includes('?');
+                
+                if (hasWildcards) {
+                    // Platzhalter-Suche: * = beliebig viele Zeichen, ? = ein Zeichen
+                    const regex = wildcardToRegex(term);
+                    filtered = filtered.filter(row => 
+                        row.some(cell => cell && regex.test(String(cell)))
+                    );
+                } else {
+                    // Normale Suche (case-insensitive, enthält)
+                    const lowerTerm = term.toLowerCase();
+                    filtered = filtered.filter(row => 
+                        row.some(cell => cell && String(cell).toLowerCase().includes(lowerTerm))
+                    );
+                }
+            }
+            
+            // Spaltenfilter
+            explorerState.filters.forEach(filter => {
+                if (!filter.column || !filter.value) return;
+                const colIndex = parseInt(filter.column);
+                const value = filter.value.toLowerCase();
+                
+                filtered = filtered.filter(row => {
+                    const cellValue = String(row[colIndex] || '').toLowerCase();
+                    switch (filter.operator) {
+                        case 'contains': return cellValue.includes(value);
+                        case 'equals': return cellValue === value;
+                        case 'startsWith': return cellValue.startsWith(value);
+                        case 'endsWith': return cellValue.endsWith(value);
+                        default: return true;
+                    }
+                });
+            });
+            
+            explorerState.filteredData = filtered;
+            explorerState.currentPage = 1; // Bei Filteränderung zurück zur ersten Seite
+            renderExplorerTable();
+        }
+        
+        function renderExplorerTable() {
+            if (!explorerState.headers.length) {
+                elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>';
+                elements.explorerResultCount.textContent = t('noDataLoaded');
+                document.getElementById('explorerPagination').style.display = 'none';
+                return;
+            }
+            
+            // Pagination berechnen
+            const totalRows = explorerState.filteredData.length;
+            const totalPages = Math.max(1, Math.ceil(totalRows / explorerState.pageSize));
+            
+            // Sicherstellen, dass currentPage gültig ist
+            if (explorerState.currentPage > totalPages) {
+                explorerState.currentPage = totalPages;
+            }
+            if (explorerState.currentPage < 1) {
+                explorerState.currentPage = 1;
+            }
+            
+            const startIndex = (explorerState.currentPage - 1) * explorerState.pageSize;
+            const endIndex = Math.min(startIndex + explorerState.pageSize, totalRows);
+            const pageData = explorerState.filteredData.slice(startIndex, endIndex);
+            
+            // Header
+            let headerHtml = '<tr>';
+            explorerState.visibleColumns.forEach(colIndex => {
+                headerHtml += `<th>${escapeHtml(explorerState.headers[colIndex] || `Spalte ${colIndex + 1}`)}</th>`;
+            });
+            headerHtml += '</tr>';
+            elements.explorerTableHead.innerHTML = headerHtml;
+            
+            // Body - nur die aktuelle Seite rendern
+            let bodyHtml = '';
+            pageData.forEach(row => {
+                bodyHtml += '<tr>';
+                explorerState.visibleColumns.forEach(colIndex => {
+                    bodyHtml += `<td>${escapeHtml(String(row[colIndex] ?? ''))}</td>`;
+                });
+                bodyHtml += '</tr>';
+            });
+            elements.explorerTableBody.innerHTML = bodyHtml || '<tr><td colspan="100" style="text-align: center; padding: 20px;">Keine Daten gefunden</td></tr>';
+            
+            // Ergebnis-Info mit Pagination
+            if (totalRows > 0) {
+                elements.explorerResultCount.textContent = `Zeige ${startIndex + 1}-${endIndex} von ${totalRows} Zeilen (gesamt: ${explorerState.data.length})`;
+            } else {
+                elements.explorerResultCount.textContent = `0 von ${explorerState.data.length} Zeilen`;
+            }
+            
+            // Pagination UI aktualisieren
+            updateExplorerPagination(totalPages);
+        }
+        
+        function updateExplorerPagination(totalPages) {
+            const paginationEl = document.getElementById('explorerPagination');
+            const pageInfoEl = document.getElementById('explorerPageInfo');
+            const firstBtn = document.getElementById('btnExplorerFirstPage');
+            const prevBtn = document.getElementById('btnExplorerPrevPage');
+            const nextBtn = document.getElementById('btnExplorerNextPage');
+            const lastBtn = document.getElementById('btnExplorerLastPage');
+            
+            // Pagination nur anzeigen wenn mehr als eine Seite
+            if (explorerState.filteredData.length > explorerState.pageSize) {
+                paginationEl.style.display = 'flex';
+                pageInfoEl.textContent = `Seite ${explorerState.currentPage} von ${totalPages}`;
+                
+                // Buttons aktivieren/deaktivieren
+                firstBtn.disabled = explorerState.currentPage === 1;
+                prevBtn.disabled = explorerState.currentPage === 1;
+                nextBtn.disabled = explorerState.currentPage === totalPages;
+                lastBtn.disabled = explorerState.currentPage === totalPages;
+            } else {
+                paginationEl.style.display = 'none';
+            }
+        }
+        
+        function explorerGoToPage(page) {
+            const totalPages = Math.ceil(explorerState.filteredData.length / explorerState.pageSize);
+            explorerState.currentPage = Math.max(1, Math.min(page, totalPages));
+            renderExplorerTable();
+            
+            // Zum Tabellenanfang scrollen
+            document.getElementById('explorerTableContainer').scrollTop = 0;
+        }
+        
+        function explorerChangePageSize(newSize) {
+            explorerState.pageSize = parseInt(newSize);
+            explorerState.currentPage = 1; // Zurück zur ersten Seite
+            renderExplorerTable();
+        }
+        
+        function toggleColumnPanel() {
+            const panel = document.getElementById('columnTogglePanel');
+            panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+        }
+        
+        function updateColumnToggles() {
+            const container = document.getElementById('columnToggles');
+            container.innerHTML = explorerState.headers.map((header, i) => `
+                <div class="column-toggle ${explorerState.visibleColumns.includes(i) ? '' : 'hidden-col'}">
+                    <input type="checkbox" id="colToggle_${i}" ${explorerState.visibleColumns.includes(i) ? 'checked' : ''} 
+                           onchange="toggleExplorerColumn(${i}, this.checked)">
+                    <label for="colToggle_${i}">${escapeHtml(header || `Spalte ${i + 1}`)}</label>
+                </div>
+            `).join('');
+        }
+        
+        window.toggleExplorerColumn = function(colIndex, visible) {
+            if (visible) {
+                if (!explorerState.visibleColumns.includes(colIndex)) {
+                    explorerState.visibleColumns.push(colIndex);
+                    explorerState.visibleColumns.sort((a, b) => a - b);
+                }
+            } else {
+                explorerState.visibleColumns = explorerState.visibleColumns.filter(i => i !== colIndex);
+            }
+            renderExplorerTable();
+            updateColumnToggles();
+        };
+        
+        function showAllExplorerColumns() {
+            explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
+            renderExplorerTable();
+            updateColumnToggles();
+        }
+        
+        function hideAllExplorerColumns() {
+            explorerState.visibleColumns = [];
+            renderExplorerTable();
+            updateColumnToggles();
+        }
+        
+        function addExplorerFilter() {
+            const template = document.getElementById('explorerFilterTemplate');
+            const clone = template.content.cloneNode(true);
+            const row = clone.querySelector('.explorer-filter-row');
+            
+            // Spalten-Dropdown befüllen
+            const colSelect = row.querySelector('.filter-column');
+            colSelect.innerHTML = `<option value="">${t('selectColumn')}</option>` + 
+                explorerState.headers.map((h, i) => `<option value="${i}">${escapeHtml(h || `Spalte ${i + 1}`)}</option>`).join('');
+            
+            // Event-Listener
+            row.querySelector('.remove-filter').onclick = () => {
+                row.remove();
+                updateFiltersFromDOM();
+            };
+            row.querySelector('.filter-column').onchange = updateFiltersFromDOM;
+            row.querySelector('.filter-operator').onchange = updateFiltersFromDOM;
+            row.querySelector('.filter-value').oninput = updateFiltersFromDOM;
+            
+            document.getElementById('explorerFilters').appendChild(row);
+            document.getElementById('btnClearExplorerFilters').disabled = false;
+        }
+        
+        function updateFiltersFromDOM() {
+            const rows = document.querySelectorAll('.explorer-filter-row');
+            explorerState.filters = Array.from(rows).map(row => ({
+                column: row.querySelector('.filter-column').value,
+                operator: row.querySelector('.filter-operator').value,
+                value: row.querySelector('.filter-value').value
+            })).filter(f => f.column && f.value);
+            filterExplorerData();
+        }
+        
+        function clearExplorerFilters() {
+            document.getElementById('explorerFilters').innerHTML = '';
+            explorerState.filters = [];
+            document.getElementById('btnClearExplorerFilters').disabled = true;
+            filterExplorerData();
+        }
+        
+        async function exportExplorerData() {
+            if (!explorerState.filteredData.length) {
+                elements.explorerStatus.textContent = 'Keine Daten zum Exportieren';
+                return;
+            }
+            
+            // Dateiname ohne doppelte .xlsx Endung
+            let baseName = explorerState.fileName || 'Daten';
+            baseName = baseName.replace(/\.xlsx$/i, '');
+            
+            const savePath = await window.electronAPI.saveFileDialog({
+                title: 'Export speichern',
+                defaultPath: `Export_${baseName}.xlsx`,
+                filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+            });
+            
+            if (savePath) {
+                let result;
+                
+                // Wenn Quelldatei vorhanden, exportiere mit allen Sheets
+                if (explorerState.filePath && explorerState.selectedSheet) {
+                    result = await window.electronAPI.exportWithAllSheets({
+                        sourcePath: explorerState.filePath,
+                        targetPath: savePath,
+                        sheetName: explorerState.selectedSheet,
+                        headers: explorerState.headers,
+                        data: explorerState.filteredData,
+                        visibleColumns: explorerState.visibleColumns
+                    });
+                } else {
+                    // Fallback: Nur sichtbare Spalten als neues Workbook
+                    const visibleHeaders = explorerState.visibleColumns.map(i => explorerState.headers[i]);
+                    const visibleData = explorerState.filteredData.map(row => 
+                        explorerState.visibleColumns.map(i => row[i])
+                    );
+                    
+                    result = await window.electronAPI.exportData({
+                        filePath: savePath,
+                        headers: visibleHeaders,
+                        data: visibleData
+                    });
+                }
+                
+                if (result.success) {
+                    elements.explorerStatus.textContent = `✓ Exportiert mit allen Sheets: ${savePath}`;
+                } else {
+                    elements.explorerStatus.textContent = `Fehler: ${result.error}`;
+                }
+            }
+        }
+        
+        // ==================== New Month Modal Functions ====================
+        function openNewMonthModal() {
+            if (!state.template.filePath && !state.template.data) {
+                showStatus(elements.transferStatus, 'Bitte erst ein Template laden', 'error');
+                return;
+            }
+            
+            elements.newMonthTemplateName.textContent = state.template.name || '-';
+            
+            // Vorschlag für neuen Dateinamen: Template-Name als Basis verwenden
+            let baseName = state.template.name || 'Vertragsliste.xlsx';
+            // Entferne .xlsx/.xls Endung falls vorhanden
+            baseName = baseName.replace(/\.(xlsx|xls)$/i, '');
+            // Füge aktuellen Monat hinzu
+            const now = new Date();
+            const year = now.getFullYear();
+            const month = String(now.getMonth() + 1).padStart(2, '0');
+            elements.newMonthFilename.value = `${baseName}_${year}-${month}.xlsx`;
+            
+            elements.newMonthModal.classList.remove('hidden');
+        }
+        
+        function closeNewMonthModal() {
+            elements.newMonthModal.classList.add('hidden');
+        }
+        
+        async function confirmNewMonth() {
+            const filename = elements.newMonthFilename.value.trim();
+            if (!filename) {
+                showStatus(elements.transferStatus, 'Bitte einen Dateinamen eingeben', 'error');
+                return;
+            }
+            
+            const finalFilename = filename.endsWith('.xlsx') ? filename : filename + '.xlsx';
+            
+            if (state.template.filePath) {
+                const savePath = await window.electronAPI.saveFileDialog({
+                    title: 'Neue Monatsdatei speichern',
+                    defaultPath: finalFilename,
+                    filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+                });
+                
+                if (savePath) {
+                    // Verwende copyExcelFile (wie in preload.js definiert)
+                    const result = await window.electronAPI.copyExcelFile({
+                        sourcePath: state.template.filePath,
+                        targetPath: savePath
+                    });
+                    
+                    if (result.success) {
+                        closeNewMonthModal();
+                        
+                        // Neue Datei als Datei 2 laden
+                        const readResult = await window.electronAPI.readExcelFile(savePath);
+                        if (readResult.success) {
+                            state.file2.name = readResult.fileName;
+                            state.file2.filePath = savePath;
+                            state.file2.sheets = readResult.sheets;
+                            state.file2.workbook = { SheetNames: readResult.sheets };
+                            
+                            elements.selectSheet2.innerHTML = readResult.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+                            elements.selectSheet2.disabled = false;
+                            elements.file2Info.textContent = `✓ ${readResult.fileName}`;
+                            elements.file2Info.classList.add('loaded');
+                            
+                            await loadSheet2Electron(readResult.sheets[0]);
+                            
+                            showStatus(elements.transferStatus, `✓ Neue Monatsdatei erstellt: ${readResult.fileName}`, 'success');
+                        }
+                    } else {
+                        showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
+                    }
+                }
+            }
+        }
+        
+        // ==================== Initialize App ====================
+        async function initApp() {
+            // Initialize theme and language first
+            setTheme(currentTheme);
+            setLanguage(currentLanguage);
+            document.getElementById('selectLanguage').value = currentLanguage;
+            document.getElementById('selectTheme').value = currentTheme;
+            document.getElementById('selectLanguage').onchange = (e) => setLanguage(e.target.value);
+            document.getElementById('selectTheme').onchange = (e) => setTheme(e.target.value);
+            
+            try { await initDB(); } catch (e) { console.warn('IndexedDB nicht verfügbar'); }
+            loadConfig(); updateMappingPreview(); checkReadyState();
+            
+            // Prüfung beim Schließen der App
+            window.electronAPI.onBeforeClose(() => {
+                if (state.transferQueue.length > 0) {
+                    const msg = `Es befinden sich noch ${state.transferQueue.length} Einträge in der Warteschlange.\n\nWirklich schließen? Ungespeicherte Daten gehen verloren!`;
+                    if (confirm(msg)) {
+                        window.electronAPI.confirmClose(true);
+                    } else {
+                        window.electronAPI.confirmClose(false);
+                    }
+                } else {
+                    window.electronAPI.confirmClose(true);
+                }
+            });
+            
+            // Search Event Listeners - WICHTIG!
+            elements.searchInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    search();
+                }
+            });
+            elements.btnSearch.onclick = search;
+            
+            elements.btnNewRow.onclick = openNewRowPanel;
+            elements.btnCloseNewRow.onclick = closeNewRowPanel;
+            elements.btnAddNewRowToQueue.onclick = addNewRowToQueue;
+            elements.btnTransferNewRowDirect.onclick = transferNewRowDirect;
+            elements.btnAddToQueue.onclick = addToQueue;
+            elements.btnTransferDirect.onclick = transferSelectedDirect;
+            elements.btnSelectAll.onclick = () => selectAllRows(true);
+            elements.btnDeselectAll.onclick = () => selectAllRows(false);
+            elements.btnClearQueue.onclick = clearQueue;
+            elements.btnConfigMapping.onclick = openMappingModal;
+            document.getElementById('btnCloseMappingModal').onclick = closeMappingModal;
+            document.getElementById('btnCancelMapping').onclick = closeMappingModal;
+            document.getElementById('btnSaveMapping').onclick = saveMapping;
+            document.getElementById('btnAddMapping').onclick = addMappingColumn;
+            
+            // Data Explorer Event Listeners
+            elements.btnDataExplorer.onclick = openDataExplorer;
+            document.getElementById('btnCloseExplorerX').onclick = closeDataExplorer;
+            document.getElementById('btnCloseExplorerFooter').onclick = closeDataExplorer;
+            elements.btnExplorerOpenFile.onclick = loadExplorerFile;
+            elements.explorerSheetSelect.onchange = (e) => loadExplorerSheet(e.target.value);
+            elements.explorerSearch.onkeydown = (e) => { 
+                if (e.key === 'Enter') {
+                    explorerState.searchTerm = e.target.value; 
+                    filterExplorerData(); 
+                }
+            };
+            document.getElementById('btnExplorerSearch').onclick = () => {
+                explorerState.searchTerm = elements.explorerSearch.value;
+                filterExplorerData();
+            };
+            document.getElementById('btnToggleColumns').onclick = toggleColumnPanel;
+            document.getElementById('btnShowAllColumns').onclick = showAllExplorerColumns;
+            document.getElementById('btnHideAllColumns').onclick = hideAllExplorerColumns;
+            document.getElementById('btnAddExplorerFilter').onclick = addExplorerFilter;
+            document.getElementById('btnClearExplorerFilters').onclick = clearExplorerFilters;
+            elements.btnExplorerExport.onclick = exportExplorerData;
+            
+            // Pagination Event Listeners (Data Explorer)
+            document.getElementById('btnExplorerFirstPage').onclick = () => explorerGoToPage(1);
+            document.getElementById('btnExplorerPrevPage').onclick = () => explorerGoToPage(explorerState.currentPage - 1);
+            document.getElementById('btnExplorerNextPage').onclick = () => explorerGoToPage(explorerState.currentPage + 1);
+            document.getElementById('btnExplorerLastPage').onclick = () => explorerGoToPage(Math.ceil(explorerState.filteredData.length / explorerState.pageSize));
+            document.getElementById('explorerPageSize').onchange = (e) => explorerChangePageSize(e.target.value);
+            
+            // Pagination Event Listeners (Suchergebnisse)
+            document.getElementById('btnSearchFirstPage').onclick = () => searchGoToPage(1);
+            document.getElementById('btnSearchPrevPage').onclick = () => searchGoToPage(state.searchPagination.currentPage - 1);
+            document.getElementById('btnSearchNextPage').onclick = () => searchGoToPage(state.searchPagination.currentPage + 1);
+            document.getElementById('btnSearchLastPage').onclick = () => searchGoToPage(Math.ceil(state.searchResults.length / state.searchPagination.pageSize));
+            document.getElementById('searchPageSize').onchange = (e) => searchChangePageSize(e.target.value);
+            
+            // New Month Modal Event Listeners
+            elements.btnNewMonth.onclick = openNewMonthModal;
+            document.getElementById('btnCloseNewMonthModal').onclick = closeNewMonthModal;
+            document.getElementById('btnCancelNewMonth').onclick = closeNewMonthModal;
+            document.getElementById('btnConfirmNewMonth').onclick = confirmNewMonth;
+            
+            // Help Modal Event Listeners
+            elements.btnHelp.onclick = () => elements.helpModal.classList.remove('hidden');
+            document.getElementById('btnCloseHelpModal').onclick = () => elements.helpModal.classList.add('hidden');
+            document.getElementById('btnCloseHelp').onclick = () => elements.helpModal.classList.add('hidden');
+            
+            // License Modal Event Listeners
+            document.getElementById('btnLicense').onclick = () => document.getElementById('licenseModal').classList.remove('hidden');
+            document.getElementById('btnCloseLicenseModal').onclick = () => document.getElementById('licenseModal').classList.add('hidden');
+            document.getElementById('btnCloseLicense').onclick = () => document.getElementById('licenseModal').classList.add('hidden');
+            
+            // Sidebar Toggle
+            document.getElementById('sidebarToggle').onclick = () => {
+                document.getElementById('sidebar').classList.toggle('collapsed');
+            };
+            
+            // Keyboard shortcuts
+            document.onkeydown = (e) => {
+                if (e.key === 'F1') {
+                    e.preventDefault();
+                    elements.helpModal.classList.toggle('hidden');
+                }
+                if (e.key === 'Escape') {
+                    elements.helpModal.classList.add('hidden');
+                    elements.mappingModal.classList.add('hidden');
+                    elements.newMonthModal.classList.add('hidden');
+                    document.getElementById('licenseModal').classList.add('hidden');
+                    closeDataExplorer();
+                }
+            };
+            
+            // Electron-Modus: Verwende Electron-API für Dateioperationen
+            elements.btnLoadFile1.onclick = loadFile1Electron;
+            elements.btnLoadFile2.onclick = loadFile2Electron;
+            elements.btnLoadTemplate.onclick = loadTemplateElectron;
+            elements.selectSheet1.onchange = (e) => loadSheet1Electron(e.target.value);
+            elements.selectSheet2.onchange = (e) => loadSheet2Electron(e.target.value);
+            elements.btnImportConfig.onclick = loadConfigFromAppDirOrDialog;
+            elements.btnExportConfig.onclick = exportConfig;
+            elements.btnExportPS.onclick = transferQueueToExcel;
+            
+            // Automatisch config.json aus Programmordner laden beim Start
+            console.log('[Config] Suche automatisch nach config.json...');
+            try {
+                const autoResult = await window.electronAPI.loadConfigFromAppDir();
+                console.log('[Config] loadConfigFromAppDir Ergebnis:', autoResult);
+                
+                if (autoResult.success && autoResult.config) {
+                    await applyLoadedConfig(autoResult.config);
+                    console.log('[Config] config.json automatisch geladen:', autoResult.path);
+                    showStatus(elements.transferStatus, `✓ config.json geladen: ${autoResult.path}`, 'success');
+                } else {
+                    console.log('[Config] Keine config.json gefunden.');
+                    if (autoResult.searchedPaths) {
+                        console.log('[Config] Gesuchte Pfade:', autoResult.searchedPaths);
+                    }
+                }
+            } catch (e) {
+                console.error('[Config] Fehler beim automatischen Laden:', e);
+            }
+        }
+
+        initApp();
+    </script>
+</body>
+</html>

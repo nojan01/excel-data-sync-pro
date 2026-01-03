@@ -1,0 +1,1008 @@
+const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
+const path = require('path');
+const XlsxPopulate = require('xlsx-populate');
+const fs = require('fs');
+
+// ============================================
+// JSDoc TYPE DEFINITIONS
+// ============================================
+
+/**
+ * @typedef {Object} FileDialogOptions
+ * @property {string} [title] - Dialog title
+ * @property {string} [defaultPath] - Default file path
+ * @property {Array<{name: string, extensions: string[]}>} [filters] - File type filters
+ */
+
+/**
+ * @typedef {Object} ExcelReadResult
+ * @property {boolean} success - Whether the operation succeeded
+ * @property {string} [filePath] - Path to the file
+ * @property {string[]} [sheets] - List of sheet names
+ * @property {string} [error] - Error message if failed
+ */
+
+/**
+ * @typedef {Object} ExcelSheetData
+ * @property {boolean} success - Whether the operation succeeded
+ * @property {string[]} [headers] - Column headers
+ * @property {Array<Array<string|number|Date>>} [data] - Row data
+ * @property {number} [rowCount] - Total number of rows
+ * @property {string} [error] - Error message if failed
+ */
+
+/**
+ * @typedef {Object} TransferRow
+ * @property {string} flag - Row flag (A/D/C or empty)
+ * @property {string} comment - Row comment
+ * @property {Object<number, string>} data - Column index to value mapping
+ */
+
+/**
+ * @typedef {Object} InsertRowsParams
+ * @property {string} filePath - Path to target Excel file
+ * @property {string} sheetName - Target sheet name
+ * @property {TransferRow[]} rows - Rows to insert
+ * @property {number} startColumn - Starting column index
+ */
+
+/**
+ * @typedef {Object} ConfigData
+ * @property {string} [file1Path] - Source file path
+ * @property {string} [file2Path] - Target file path
+ * @property {string} [templatePath] - Template file path
+ * @property {string} [sheet1Name] - Source sheet name
+ * @property {string} [sheet2Name] - Target sheet name
+ * @property {number} [startColumn] - Start column for insertion
+ * @property {number} [checkColumn] - Column for duplicate checking
+ * @property {number[]} [sourceColumns] - Source columns to copy
+ */
+
+/**
+ * @typedef {Object} ExportParams
+ * @property {string} filePath - Path to save the file
+ * @property {string[]} headers - Column headers
+ * @property {Array<Array<string|number>>} data - Row data
+ */
+
+let mainWindow = null;
+
+// ============================================
+// FENSTER ERSTELLEN
+// ============================================
+function createWindow() {
+    mainWindow = new BrowserWindow({
+        width: 1400,
+        height: 900,
+        minWidth: 800,
+        minHeight: 600,
+        resizable: true,
+        maximizable: true,
+        fullscreenable: true,
+        fullscreen: false,  // Explizit kein Vollbild
+        simpleFullscreen: false,  // Kein einfacher Vollbildmodus
+        title: 'MVMS-Tool',
+        icon: path.join(__dirname, 'assets', 'icon.ico'),
+        frame: true,
+        // Wichtig f�r korrekte Dialog-Darstellung
+        useContentSize: false,
+        webPreferences: {
+            nodeIntegration: false,
+            contextIsolation: true,
+            preload: path.join(__dirname, 'preload.js')
+        }
+    });
+
+    mainWindow.loadFile('src/index.html');
+    
+    // Kontextmen� f�r Texteingabefelder aktivieren
+    mainWindow.webContents.on('context-menu', (event, params) => {
+        const { isEditable, selectionText, editFlags } = params;
+        
+        if (isEditable) {
+            const menuTemplate = [
+                {
+                    label: 'Ausschneiden',
+                    role: 'cut',
+                    enabled: editFlags.canCut
+                },
+                {
+                    label: 'Kopieren',
+                    role: 'copy',
+                    enabled: editFlags.canCopy
+                },
+                {
+                    label: 'Einf\u00FCgen',
+                    role: 'paste',
+                    enabled: editFlags.canPaste
+                },
+                { type: 'separator' },
+                {
+                    label: 'Alles ausw\u00E4hlen',
+                    role: 'selectAll',
+                    enabled: editFlags.canSelectAll
+                }
+            ];
+            
+            const menu = Menu.buildFromTemplate(menuTemplate);
+            menu.popup({ window: mainWindow });
+        } else if (selectionText) {
+            // Kontextmen� f�r markierten Text (nicht editierbar)
+            const menuTemplate = [
+                {
+                    label: 'Kopieren',
+                    role: 'copy',
+                    enabled: editFlags.canCopy
+                }
+            ];
+            
+            const menu = Menu.buildFromTemplate(menuTemplate);
+            menu.popup({ window: mainWindow });
+        }
+    });
+    
+    // DevTools oeffnen (nur waehrend Entwicklung)
+    if (process.argv.includes('--dev')) {
+        mainWindow.webContents.openDevTools();
+    }
+    
+    // Menueleiste ausblenden (optional)
+    mainWindow.setMenuBarVisibility(false);
+    
+    // Schließen-Anfrage abfangen für Warteschlangen-Prüfung
+    let closeConfirmed = false;
+    
+    mainWindow.on('close', (e) => {
+        if (!closeConfirmed) {
+            e.preventDefault();
+            // Renderer fragen, ob Warteschlange leer ist
+            mainWindow.webContents.send('app:beforeClose');
+        }
+    });
+    
+    ipcMain.on('app:confirmClose', (event, canClose) => {
+        if (canClose) {
+            closeConfirmed = true;
+            mainWindow.close();
+        }
+    });
+    
+    // Fenster-Referenz aufräumen wenn geschlossen
+    mainWindow.on('closed', () => {
+        mainWindow = null;
+    });
+}
+
+app.whenReady().then(createWindow);
+
+app.on('window-all-closed', () => {
+    if (process.platform !== 'darwin') {
+        app.quit();
+    }
+});
+
+app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+    }
+});
+
+// ============================================
+// DATEI-DIALOGE - Windows-Workaround f�r Dialog-Problem
+// ============================================
+
+// Datei oeffnen Dialog
+ipcMain.handle('dialog:openFile', async (event, options) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        console.error('mainWindow nicht verf�gbar f�r Dialog');
+        return null;
+    }
+    
+    // Fenster vorbereiten
+    if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+    }
+    mainWindow.focus();
+    
+    try {
+        // Standard-Pfad setzen (hilft bei Dialog-Gr��enproblemen unter Windows)
+        const defaultPath = options.defaultPath || app.getPath('documents');
+        
+        const result = await dialog.showOpenDialog({
+            title: options.title || 'Datei oeffnen',
+            defaultPath: defaultPath,
+            filters: options.filters || [
+                { name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] },
+                { name: 'Alle Dateien', extensions: ['*'] }
+            ],
+            properties: ['openFile']
+        });
+        
+        // Nach Dialog: Hauptfenster wieder fokussieren
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.focus();
+        }
+        
+        if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+            return null;
+        }
+        return result.filePaths[0];
+    } catch (err) {
+        console.error('Dialog Fehler:', err);
+        return null;
+    }
+});
+
+// Datei speichern Dialog
+ipcMain.handle('dialog:saveFile', async (event, options) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        console.error('mainWindow nicht verf�gbar f�r Dialog');
+        return null;
+    }
+    
+    // Fenster vorbereiten
+    if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+    }
+    mainWindow.focus();
+    
+    try {
+        // Standard-Pfad setzen falls nicht angegeben
+        const defaultPath = options.defaultPath || app.getPath('documents');
+        
+        const result = await dialog.showSaveDialog({
+            title: options.title || 'Datei speichern',
+            defaultPath: defaultPath,
+            filters: options.filters || [
+                { name: 'Excel-Dateien', extensions: ['xlsx'] }
+            ]
+        });
+        
+        // Nach Dialog: Hauptfenster wieder fokussieren
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.focus();
+        }
+        
+        if (result.canceled || !result.filePath) {
+            return null;
+        }
+        return result.filePath;
+    } catch (err) {
+        console.error('Dialog Fehler:', err);
+        return null;
+    }
+});
+
+// ============================================
+// EXCEL OPERATIONEN (xlsx-populate - erh�lt Formatierung!)
+// ============================================
+
+// Excel-Datei lesen
+ipcMain.handle('excel:readFile', async (event, filePath) => {
+    try {
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const sheets = workbook.sheets().map(ws => ws.name());
+        
+        return {
+            success: true,
+            fileName: path.basename(filePath),
+            filePath: filePath,
+            sheets: sheets
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Sheet-Daten lesen
+ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
+    try {
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const worksheet = workbook.sheet(sheetName);
+        
+        if (!worksheet) {
+            return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
+        }
+        
+        // Benutzte Range ermitteln
+        const usedRange = worksheet.usedRange();
+        if (!usedRange) {
+            return { success: true, headers: [], data: [] };
+        }
+        
+        const startRow = usedRange.startCell().rowNumber();
+        const endRow = usedRange.endCell().rowNumber();
+        const startCol = usedRange.startCell().columnNumber();
+        const endCol = usedRange.endCell().columnNumber();
+        
+        const data = [];
+        const headers = [];
+        
+        // Hilfsfunktion: Excel-Datum zu lesbarem String konvertieren
+        function excelDateToString(excelDate) {
+            // Excel-Datum: Tage seit 1.1.1900 (mit falschem Schaltjahr 1900)
+            // JavaScript: Millisekunden seit 1.1.1970
+            const excelEpoch = new Date(Date.UTC(1899, 11, 30)); // 30.12.1899 UTC
+            const jsDate = new Date(excelEpoch.getTime() + excelDate * 86400000);
+            
+            // Pr�fen ob es ein reines Datum oder Datum mit Uhrzeit ist
+            const hasTime = (excelDate % 1) !== 0;
+            
+            if (hasTime) {
+                // Datum mit Uhrzeit
+                const day = String(jsDate.getUTCDate()).padStart(2, '0');
+                const month = String(jsDate.getUTCMonth() + 1).padStart(2, '0');
+                const year = jsDate.getUTCFullYear();
+                const hours = String(jsDate.getUTCHours()).padStart(2, '0');
+                const minutes = String(jsDate.getUTCMinutes()).padStart(2, '0');
+                return `${day}.${month}.${year} ${hours}:${minutes}`;
+            } else {
+                // Nur Datum
+                const day = String(jsDate.getUTCDate()).padStart(2, '0');
+                const month = String(jsDate.getUTCMonth() + 1).padStart(2, '0');
+                const year = jsDate.getUTCFullYear();
+                return `${day}.${month}.${year}`;
+            }
+        }
+        
+        // Hilfsfunktion: Prüfen ob ein Zellwert ein Datum ist
+        function isExcelDate(cell, value) {
+            if (typeof value !== 'number') return false;
+            
+            // Prüfe das Zahlenformat der Zelle
+            let numFmt;
+            try {
+                numFmt = cell.style('numberFormat');
+            } catch (e) {
+                numFmt = null;
+            }
+            
+            if (numFmt && typeof numFmt === 'string') {
+                // Standard-Excel-Datumsformate (Format-IDs als Strings)
+                // Diese werden von xlsx-populate oft als Strings zur�ckgegeben
+                const dateFormatIds = [
+                    '14', '15', '16', '17', '18', '19', '20', '21', '22',
+                    '45', '46', '47', '27', '30', '36', '50', '57'
+                ];
+                
+                // Pr�fe auf numerische Format-ID
+                if (dateFormatIds.includes(String(numFmt))) {
+                    return true;
+                }
+                
+                // Explizite Nicht-Datum-Formate
+                const nonDatePatterns = [
+                    /^General$/i,
+                    /^[#0,]+(\.[#0]+)?$/,        // Zahlenformat wie #,##0.00
+                    /^[#0,]+(\.[#0]+)?%$/,       // Prozent
+                    /%/,                          // Prozentzeichen
+                    /�|EUR|\$/,                   // W�hrung
+                    /^@$/,                        // Text
+                    /^\[.*?\][#0]/,               // Buchhaltungsformat
+                ];
+                
+                for (const pattern of nonDatePatterns) {
+                    if (pattern.test(numFmt)) {
+                        return false;
+                    }
+                }
+                
+                // Typische Datumsformate erkennen (Strings)
+                const datePatterns = [
+                    /d+[\/\-.\s]m+[\/\-.\s]y+/i,     // d.m.y, d/m/y, d-m-y, d m y
+                    /m+[\/\-.\s]d+[\/\-.\s]y+/i,     // m/d/y (US-Format)
+                    /y+[\/\-.\s]m+[\/\-.\s]d+/i,     // y-m-d (ISO-Format)
+                    /dd\.mm\.yyyy/i,                  // Deutsches Format
+                    /dd\/mm\/yyyy/i,                  // Britisches Format
+                    /mm\/dd\/yyyy/i,                  // US-Format
+                    /yyyy-mm-dd/i,                    // ISO-Format
+                    /\[.*?\]dd/i,                     // Benutzerdefinierte Formate
+                    /mmm/i,                           // Monatsname (mmm, mmmm)
+                    /^d+$/i,                          // Nur "d" oder "dd"
+                    /^[$-].*d.*m.*y/i,                // Locale-spezifische Formate
+                    /[$-F800]/,                       // Windows Locale Format
+                    /[$-407]/,                        // Deutsches Locale
+                ];
+                
+                for (const pattern of datePatterns) {
+                    if (pattern.test(numFmt)) {
+                        return true;
+                    }
+                }
+            }
+            
+            // Heuristik f�r Werte ohne explizites Format oder mit "General"
+            // Excel-Datum: 1 = 1.1.1900, 44197 = 1.1.2021, 47848 = 1.1.2031
+            // Typischer Bereich f�r aktuelle Daten: 35000 (1995) bis 55000 (2050)
+            if (value >= 1 && value <= 73050) {
+                // Nur ganzzahlige Werte oder Werte mit Zeitanteil pr�fen
+                // Sehr kleine Zahlen (< 365) sind wahrscheinlich keine Daten
+                if (value < 365) {
+                    return false; // Wahrscheinlich eine normale Zahl (Tage im Jahr etc.)
+                }
+                
+                // Pr�fe ob es vern�nftig aussieht
+                // Moderne Daten liegen zwischen 30000 (1982) und 55000 (2050)
+                if (value >= 30000 && value <= 55000) {
+                    // Wenn kein explizites Nicht-Datum-Format, k�nnte es ein Datum sein
+                    if (!numFmt || numFmt === 'General' || numFmt === 'general') {
+                        // Zus�tzliche Heuristik: Ganzzahlige Werte in diesem Bereich 
+                        // sind sehr wahrscheinlich Daten
+                        if (Number.isInteger(value)) {
+                            return true;
+                        }
+                    }
+                }
+            }
+            
+            return false;
+        }
+        
+        for (let row = startRow; row <= endRow; row++) {
+            const rowData = [];
+            for (let col = startCol; col <= endCol; col++) {
+                const cell = worksheet.cell(row, col);
+                const value = cell.value();
+                
+                let textValue = '';
+                if (value !== undefined && value !== null) {
+                    // Pr�fe ob es ein Datum ist
+                    if (value instanceof Date) {
+                        // Falls xlsx-populate bereits ein Date-Objekt zur�ckgibt
+                        const day = String(value.getDate()).padStart(2, '0');
+                        const month = String(value.getMonth() + 1).padStart(2, '0');
+                        const year = value.getFullYear();
+                        textValue = `${day}.${month}.${year}`;
+                    } else if (isExcelDate(cell, value)) {
+                        textValue = excelDateToString(value);
+                    } else {
+                        textValue = String(value);
+                    }
+                }
+                
+                // Header-Zeile (erste Zeile)
+                if (row === startRow) {
+                    headers[col - 1] = textValue || `Spalte ${col}`;
+                }
+                rowData[col - 1] = textValue;
+            }
+            
+            // Zeilen auffuellen bis zur maximalen Spaltenanzahl
+            while (rowData.length < headers.length) {
+                rowData.push('');
+            }
+            
+            data.push(rowData);
+        }
+        
+        return {
+            success: true,
+            headers: headers,
+            data: data
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Zeilen in Excel einfuegen (MIT Formatierungserhalt dank xlsx-populate!)
+ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, startColumn }) => {
+    try {
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const worksheet = workbook.sheet(sheetName);
+        
+        if (!worksheet) {
+            return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
+        }
+        
+        // Hilfsfunktion: Deutsches Datum zu Excel-Datum konvertieren
+        function parseGermanDateToExcel(dateStr) {
+            if (!dateStr || typeof dateStr !== 'string') return null;
+            
+            // Deutsches Datum: dd.mm.yyyy oder dd.mm.yyyy hh:mm
+            const dateTimeMatch = dateStr.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})\s+(\d{1,2}):(\d{2})$/);
+            const dateMatch = dateStr.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})$/);
+            
+            if (dateTimeMatch) {
+                const day = parseInt(dateTimeMatch[1], 10);
+                const month = parseInt(dateTimeMatch[2], 10);
+                const year = parseInt(dateTimeMatch[3], 10);
+                const hours = parseInt(dateTimeMatch[4], 10);
+                const minutes = parseInt(dateTimeMatch[5], 10);
+                
+                // Validierung
+                if (day < 1 || day > 31 || month < 1 || month > 12 || year < 1900 || year > 2100) {
+                    return null;
+                }
+                
+                // Excel-Datum berechnen (UTC um Zeitzonenproblemen vorzubeugen)
+                const jsDate = Date.UTC(year, month - 1, day, hours, minutes);
+                const excelEpoch = Date.UTC(1899, 11, 30);
+                const excelDate = (jsDate - excelEpoch) / 86400000;
+                return excelDate;
+            } else if (dateMatch) {
+                const day = parseInt(dateMatch[1], 10);
+                const month = parseInt(dateMatch[2], 10);
+                const year = parseInt(dateMatch[3], 10);
+                
+                // Validierung
+                if (day < 1 || day > 31 || month < 1 || month > 12 || year < 1900 || year > 2100) {
+                    return null;
+                }
+                
+                // Excel-Datum berechnen (UTC)
+                const jsDate = Date.UTC(year, month - 1, day);
+                const excelEpoch = Date.UTC(1899, 11, 30);
+                const excelDate = Math.floor((jsDate - excelEpoch) / 86400000);
+                return excelDate;
+            }
+            
+            return null;
+        }
+        
+        // Hilfsfunktion: Wert intelligent konvertieren
+        function convertValue(value, targetCell) {
+            if (value === null || value === undefined || value === '') {
+                return { value: value, isDate: false };
+            }
+            
+            // Pr�fe ob es ein deutsches Datum ist
+            const excelDate = parseGermanDateToExcel(value);
+            if (excelDate !== null) {
+                return { value: excelDate, isDate: true };
+            }
+            
+            // Pr�fe ob es eine Zahl ist (mit deutschen Dezimaltrennzeichen)
+            if (typeof value === 'string') {
+                // Deutsche Zahlen: 1.234,56 -> 1234.56
+                const germanNumberMatch = value.match(/^-?\d{1,3}(\.\d{3})*(,\d+)?$/);
+                if (germanNumberMatch) {
+                    const normalized = value.replace(/\./g, '').replace(',', '.');
+                    const num = parseFloat(normalized);
+                    if (!isNaN(num)) {
+                        return { value: num, isDate: false };
+                    }
+                }
+                
+                // Englische Zahlen oder einfache Zahlen
+                const simpleNumber = value.match(/^-?\d+(\.\d+)?$/);
+                if (simpleNumber) {
+                    const num = parseFloat(value);
+                    if (!isNaN(num)) {
+                        return { value: num, isDate: false };
+                    }
+                }
+            }
+            
+            // Als String belassen
+            return { value: value, isDate: false };
+        }
+        
+        // Formatvorlage aus Header-Zeile oder vorhandenen Zeilen ermitteln
+        function getColumnFormat(colNumber) {
+            // Suche nach dem ersten nicht-leeren Wert in dieser Spalte (ab Zeile 2)
+            const usedRange = worksheet.usedRange();
+            if (!usedRange) return null;
+            
+            const endRow = Math.min(usedRange.endCell().rowNumber(), 100); // Max 100 Zeilen pr�fen
+            
+            for (let row = 2; row <= endRow; row++) {
+                const cell = worksheet.cell(row, colNumber);
+                const value = cell.value();
+                if (value !== undefined && value !== null && value !== '') {
+                    const numFmt = cell.style('numberFormat');
+                    if (numFmt && numFmt !== 'General') {
+                        return numFmt;
+                    }
+                }
+            }
+            return null;
+        }
+        
+        // Erste leere Zeile finden (ab Zeile 2, da Zeile 1 = Header)
+        let insertRow = 2;  // Standard: direkt nach Header
+        
+        const usedRange = worksheet.usedRange();
+        if (usedRange) {
+            const endRow = usedRange.endCell().rowNumber();
+            
+            // Pr�fe ab Zeile 2, ob es Daten gibt
+            for (let row = 2; row <= endRow; row++) {
+                const flagCell = worksheet.cell(row, 1).value();
+                const dataCell = worksheet.cell(row, startColumn).value();
+                
+                // Zeile ist leer wenn beide Zellen leer sind
+                const flagEmpty = flagCell === undefined || flagCell === null || flagCell === '';
+                const dataEmpty = dataCell === undefined || dataCell === null || dataCell === '';
+                
+                if (flagEmpty && dataEmpty) {
+                    // Erste leere Zeile gefunden
+                    insertRow = row;
+                    break;
+                }
+                // Wenn wir hier sind, ist die Zeile nicht leer - gehe zur n�chsten
+                insertRow = row + 1;
+            }
+        }
+        
+        console.log(`Einf�gen ab Zeile: ${insertRow}`);
+        
+        // Spaltenformate vorab ermitteln
+        const columnFormats = {};
+        
+        // Neue Zeilen einfuegen
+        let insertedCount = 0;
+        for (const row of rows) {
+            const newRowNum = insertRow + insertedCount;
+            
+            // Bei Leerzeile: Leerzeichen in Spalte A setzen, damit die Zeile als "belegt" gilt
+            if (row.flag === 'leer') {
+                worksheet.cell(newRowNum, 1).value(' ');
+                // Kommentar trotzdem schreiben wenn vorhanden
+                if (row.comment) {
+                    worksheet.cell(newRowNum, 2).value(row.comment);
+                }
+                insertedCount++;
+                continue;
+            }
+            
+            // Flag in Spalte A
+            if (row.flag) {
+                worksheet.cell(newRowNum, 1).value(row.flag);
+            }
+            
+            // Kommentar in Spalte B
+            if (row.comment) {
+                worksheet.cell(newRowNum, 2).value(row.comment);
+            }
+            
+            // Daten ab Startspalte - row.data ist ein Objekt mit Index als Key
+            if (row.data) {
+                const dataKeys = Object.keys(row.data);
+                dataKeys.forEach(key => {
+                    const index = parseInt(key);
+                    const value = row.data[key];
+                    if (value !== null && value !== undefined && value !== '') {
+                        const colNumber = startColumn + index;
+                        const targetCell = worksheet.cell(newRowNum, colNumber);
+                        const converted = convertValue(value, targetCell);
+                        
+                        targetCell.value(converted.value);
+                        
+                        // Wenn es ein Datum ist und die Zelle kein Format hat, 
+                        // versuche das Format aus der Spalte zu �bernehmen
+                        if (converted.isDate) {
+                            const currentFormat = targetCell.style('numberFormat');
+                            if (!currentFormat || currentFormat === 'General') {
+                                // Spaltenformat aus Cache oder neu ermitteln
+                                if (!(colNumber in columnFormats)) {
+                                    columnFormats[colNumber] = getColumnFormat(colNumber);
+                                }
+                                
+                                const colFormat = columnFormats[colNumber];
+                                if (colFormat) {
+                                    targetCell.style('numberFormat', colFormat);
+                                } else {
+                                    // Standard deutsches Datumsformat setzen
+                                    targetCell.style('numberFormat', 'DD.MM.YYYY');
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+            
+            insertedCount++;
+        }
+        
+        // Speichern (xlsx-populate erh�lt die originale Formatierung!)
+        await workbook.toFileAsync(filePath);
+        
+        return { 
+            success: true, 
+            message: `${insertedCount} Zeile(n) ab Zeile ${insertRow} eingefuegt`,
+            insertedCount: insertedCount,
+            startRow: insertRow
+        };
+    } catch (error) {
+        console.error('Fehler beim Einf�gen:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Datei kopieren (fuer "Neuer Monat") - BINÄRE KOPIE erhält 100% Formatierung!
+ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetName, keepHeader }) => {
+    try {
+        // Prüfe ob Quelldatei existiert
+        if (!fs.existsSync(sourcePath)) {
+            return { success: false, error: `Quelldatei nicht gefunden: ${sourcePath}` };
+        }
+        
+        // Wenn keepHeader false ist oder nicht gesetzt, einfach binär kopieren
+        // Das erhält 100% der Formatierung!
+        if (!keepHeader) {
+            try {
+                fs.copyFileSync(sourcePath, targetPath);
+            } catch (copyErr) {
+                return { success: false, error: `Kopieren fehlgeschlagen: ${copyErr.message}` };
+            }
+            return { success: true, message: `Datei kopiert: ${targetPath}` };
+        }
+        
+        // Wenn keepHeader true ist, müssen wir die Daten löschen
+        // Aber zuerst: Binär kopieren, dann nur die Werte löschen
+        try {
+            fs.copyFileSync(sourcePath, targetPath);
+        } catch (copyErr) {
+            return { success: false, error: `Kopieren fehlgeschlagen: ${copyErr.message}` };
+        }
+        
+        // Jetzt die kopierte Datei �ffnen und nur die Datenwerte l�schen
+        const workbook = await XlsxPopulate.fromFileAsync(targetPath);
+        
+        // Wenn sheetName angegeben und existiert, nutze dieses Sheet
+        // Ansonsten nimm das erste Sheet
+        let worksheet = null;
+        if (sheetName) {
+            worksheet = workbook.sheet(sheetName);
+        }
+        if (!worksheet) {
+            // Erstes verfuegbares Sheet nehmen
+            worksheet = workbook.sheets()[0];
+        }
+        
+        if (!worksheet) {
+            return { success: false, error: 'Keine Worksheets in der Template-Datei gefunden' };
+        }
+        
+        // Nur die Werte ab Zeile 2 l�schen (Header in Zeile 1 bleibt)
+        // Formatierung bleibt erhalten!
+        const usedRange = worksheet.usedRange();
+        if (usedRange) {
+            const endRow = usedRange.endCell().rowNumber();
+            const endCol = usedRange.endCell().columnNumber();
+            
+            // Alle Datenwerte ab Zeile 2 l�schen
+            for (let row = 2; row <= endRow; row++) {
+                for (let col = 1; col <= endCol; col++) {
+                    worksheet.cell(row, col).value(undefined);
+                }
+            }
+        }
+        
+        await workbook.toFileAsync(targetPath);
+        
+        return { success: true, message: `Datei erstellt: ${targetPath}` };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Daten exportieren (fuer Datenexplorer) - nur ein Sheet
+ipcMain.handle('excel:exportData', async (event, { filePath, headers, data }) => {
+    try {
+        // Neue leere Workbook erstellen
+        const workbook = await XlsxPopulate.fromBlankAsync();
+        
+        // Erstes Sheet umbenennen
+        const worksheet = workbook.sheet(0);
+        worksheet.name('Export');
+        
+        // Header-Zeile
+        headers.forEach((header, colIndex) => {
+            worksheet.cell(1, colIndex + 1).value(header);
+        });
+        
+        // Daten-Zeilen (data ist ein Array von Arrays)
+        data.forEach((row, rowIndex) => {
+            row.forEach((value, colIndex) => {
+                worksheet.cell(rowIndex + 2, colIndex + 1).value(value || '');
+            });
+        });
+        
+        await workbook.toFileAsync(filePath);
+        
+        return { success: true, message: `Export erstellt: ${filePath}` };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Daten exportieren MIT allen Sheets (fuer Datenexplorer - Vollexport)
+ipcMain.handle('excel:exportWithAllSheets', async (event, { sourcePath, targetPath, sheetName, headers, data, visibleColumns }) => {
+    try {
+        // Originaldatei laden (mit allen Sheets und Formatierung)
+        const workbook = await XlsxPopulate.fromFileAsync(sourcePath);
+        const allSheets = workbook.sheets().map(s => s.name());
+        
+        // Das aktive Sheet finden
+        const worksheet = workbook.sheet(sheetName);
+        if (!worksheet) {
+            return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
+        }
+        
+        // Alle vorhandenen Daten im Sheet löschen
+        const usedRange = worksheet.usedRange();
+        if (usedRange) {
+            usedRange.clear();
+        }
+        
+        // Wenn nur bestimmte Spalten sichtbar sind, diese exportieren
+        if (visibleColumns && visibleColumns.length > 0 && visibleColumns.length < headers.length) {
+            // Header-Zeile mit sichtbaren Spalten
+            visibleColumns.forEach((colIdx, newColIdx) => {
+                worksheet.cell(1, newColIdx + 1).value(headers[colIdx] || '');
+            });
+            
+            // Daten-Zeilen mit sichtbaren Spalten
+            data.forEach((row, rowIndex) => {
+                visibleColumns.forEach((colIdx, newColIdx) => {
+                    worksheet.cell(rowIndex + 2, newColIdx + 1).value(row[colIdx] || '');
+                });
+            });
+        } else {
+            // Alle Spalten exportieren
+            // Header-Zeile
+            headers.forEach((header, colIndex) => {
+                worksheet.cell(1, colIndex + 1).value(header);
+            });
+            
+            // Daten-Zeilen
+            data.forEach((row, rowIndex) => {
+                row.forEach((value, colIndex) => {
+                    worksheet.cell(rowIndex + 2, colIndex + 1).value(value || '');
+                });
+            });
+        }
+        
+        // Speichern (alle anderen Sheets bleiben unverändert)
+        await workbook.toFileAsync(targetPath);
+        
+        return { success: true, message: `Export erstellt: ${targetPath}`, sheets: allSheets };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// ============================================
+// KONFIGURATION
+// ============================================
+
+// Config speichern
+ipcMain.handle('config:save', async (event, { filePath, config }) => {
+    try {
+        fs.writeFileSync(filePath, JSON.stringify(config, null, 2), 'utf8');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Config laden
+ipcMain.handle('config:load', async (event, filePath) => {
+    try {
+        if (!fs.existsSync(filePath)) {
+            return { success: false, error: 'Datei nicht gefunden' };
+        }
+        const content = fs.readFileSync(filePath, 'utf8');
+        return { success: true, config: JSON.parse(content) };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// App-Pfad ermitteln (fuer Config im Programmordner)
+ipcMain.handle('app:getPath', async (event) => {
+    const exePath = app.getPath('exe');
+    const exeDir = path.dirname(exePath);
+    
+    return {
+        appPath: app.getAppPath(),
+        userData: app.getPath('userData'),
+        exe: exePath,
+        exeDir: exeDir
+    };
+});
+
+// Loading-State für config:loadFromAppDir um Race Conditions zu verhindern
+let configLoadingState = {
+    isLoading: false,
+    pendingPromise: null
+};
+
+// Automatisch config.json im Programmordner oder Benutzerordnern suchen
+ipcMain.handle('config:loadFromAppDir', async (event) => {
+    // Race Condition verhindern: Wenn bereits geladen wird, auf das Ergebnis warten
+    if (configLoadingState.isLoading && configLoadingState.pendingPromise) {
+        console.log('config:loadFromAppDir - Warte auf laufenden Ladevorgang...');
+        return configLoadingState.pendingPromise;
+    }
+    
+    // Ladevorgang starten
+    configLoadingState.isLoading = true;
+    
+    const loadConfigAsync = async () => {
+        console.log('=== config:loadFromAppDir aufgerufen ===');
+    
+        try {
+            const exePath = app.getPath('exe');
+            const exeDir = path.dirname(exePath);
+            const documentsDir = app.getPath('documents');
+            const downloadsDir = app.getPath('downloads');
+            
+            // PORTABLE EXE: Der Ordner wo die portable EXE gestartet wurde
+            const portableDir = process.env.PORTABLE_EXECUTABLE_DIR || '';
+            
+            console.log('EXE Pfad:', exePath);
+            console.log('EXE Ordner:', exeDir);
+            console.log('Dokumente Ordner:', documentsDir);
+            console.log('Downloads Ordner:', downloadsDir);
+            console.log('Portable Ordner:', portableDir || '(nicht gesetzt)');
+            console.log('App gepackt:', app.isPackaged);
+            
+            // Suchpfade in Prioritätsreihenfolge
+            const possiblePaths = [];
+            
+            // 1. Portable EXE: Neben der EXE (höchste Priorität für portable Version)
+            if (portableDir) {
+                possiblePaths.push(path.join(portableDir, 'config.json'));
+            }
+            
+            // 2. Installationsordner (neben der EXE)
+            possiblePaths.push(path.join(exeDir, 'config.json'));
+            
+            // 3. Dokumente-Ordner des Benutzers
+            possiblePaths.push(path.join(documentsDir, 'config.json'));
+            possiblePaths.push(path.join(documentsDir, 'MVMS-Tool', 'config.json'));
+            
+            // 4. Downloads-Ordner des Benutzers
+            possiblePaths.push(path.join(downloadsDir, 'config.json'));
+            
+            // 5. Im Entwicklungsmodus: Projektordner
+            if (process.argv.includes('--dev') || !app.isPackaged) {
+                possiblePaths.push(path.join(__dirname, 'config.json'));
+                possiblePaths.push(path.join(process.cwd(), 'config.json'));
+            }
+            
+            console.log('Suche in folgenden Pfaden:');
+            possiblePaths.forEach((p, i) => {
+                const exists = fs.existsSync(p);
+                console.log(`  ${i + 1}. ${p} - ${exists ? 'GEFUNDEN' : 'nicht vorhanden'}`);
+            });
+            
+            // Schnelle Suche - bei erstem Treffer abbrechen
+            for (const configPath of possiblePaths) {
+                if (fs.existsSync(configPath)) {
+                    console.log('>>> config.json gefunden:', configPath);
+                    const content = fs.readFileSync(configPath, 'utf8');
+                    const config = JSON.parse(content);
+                    console.log('>>> Konfig geladen, Mapping:', config.mapping?.sourceColumns?.length || 0, 'Spalten');
+                    return { 
+                        success: true, 
+                        config: config,
+                        path: configPath
+                    };
+                }
+            }
+            
+            // Keine config.json gefunden - kein Fehler, nur Info
+            console.log('>>> Keine config.json in den Suchpfaden gefunden');
+            return { 
+                success: false, 
+                error: 'Keine config.json gefunden',
+                searchedPaths: possiblePaths
+            };
+        } catch (error) {
+            console.error('Fehler beim Laden der config.json:', error);
+            return { success: false, error: error.message };
+        } finally {
+            // Loading-State zurücksetzen
+            configLoadingState.isLoading = false;
+            configLoadingState.pendingPromise = null;
+        }
+    };
+    
+    // Promise speichern für parallele Aufrufe
+    configLoadingState.pendingPromise = loadConfigAsync();
+    return configLoadingState.pendingPromise;
+});
