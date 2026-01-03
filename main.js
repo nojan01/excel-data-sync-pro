@@ -68,6 +68,39 @@ const fs = require('fs');
 let mainWindow = null;
 
 // ============================================
+// SICHERHEITSFUNKTIONEN
+// ============================================
+
+/**
+ * Prüft ob ein Dateipfad sicher ist (keine Path Traversal-Angriffe)
+ * @param {string} filePath - Der zu prüfende Pfad
+ * @returns {boolean} true wenn der Pfad sicher ist
+ */
+function isValidFilePath(filePath) {
+    if (!filePath || typeof filePath !== 'string') {
+        console.warn('Ungültiger Dateipfad (nicht String):', typeof filePath);
+        return false;
+    }
+    
+    // Normalisiere den Pfad
+    const normalized = path.normalize(filePath);
+    
+    // Prüfe auf Path Traversal-Muster
+    if (normalized.includes('..')) {
+        console.warn('Path Traversal-Versuch erkannt:', filePath);
+        return false;
+    }
+    
+    // Prüfe auf null-bytes (kann Sicherheitsprüfungen umgehen)
+    if (filePath.includes('\0')) {
+        console.warn('Null-Byte im Pfad erkannt:', filePath);
+        return false;
+    }
+    
+    return true;
+}
+
+// ============================================
 // FENSTER ERSTELLEN
 // ============================================
 function createWindow() {
@@ -279,6 +312,11 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
 
 // Excel-Datei lesen
 ipcMain.handle('excel:readFile', async (event, filePath) => {
+    // Sicherheitsprüfung: Pfad validieren
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    
     try {
         const workbook = await XlsxPopulate.fromFileAsync(filePath);
         const sheets = workbook.sheets().map(ws => ws.name());
@@ -296,6 +334,11 @@ ipcMain.handle('excel:readFile', async (event, filePath) => {
 
 // Sheet-Daten lesen
 ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
+    // Sicherheitsprüfung: Pfad validieren
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    
     try {
         const workbook = await XlsxPopulate.fromFileAsync(filePath);
         const worksheet = workbook.sheet(sheetName);
@@ -487,6 +530,11 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
 
 // Zeilen in Excel einfuegen (MIT Formatierungserhalt dank xlsx-populate!)
 ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, startColumn }) => {
+    // Sicherheitsprüfung: Pfad validieren
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    
     try {
         const workbook = await XlsxPopulate.fromFileAsync(filePath);
         const worksheet = workbook.sheet(sheetName);
@@ -712,6 +760,11 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
 
 // Datei kopieren (fuer "Neuer Monat") - BINÄRE KOPIE erhält 100% Formatierung!
 ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetName, keepHeader }) => {
+    // Sicherheitsprüfung: Pfade validieren
+    if (!isValidFilePath(sourcePath) || !isValidFilePath(targetPath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    
     try {
         // Prüfe ob Quelldatei existiert
         if (!fs.existsSync(sourcePath)) {
@@ -780,6 +833,11 @@ ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetNa
 
 // Daten exportieren (fuer Datenexplorer) - nur ein Sheet
 ipcMain.handle('excel:exportData', async (event, { filePath, headers, data }) => {
+    // Sicherheitsprüfung: Pfad validieren
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    
     try {
         // Neue leere Workbook erstellen
         const workbook = await XlsxPopulate.fromBlankAsync();
@@ -810,6 +868,11 @@ ipcMain.handle('excel:exportData', async (event, { filePath, headers, data }) =>
 
 // Daten exportieren MIT allen Sheets (fuer Datenexplorer - Vollexport)
 ipcMain.handle('excel:exportWithAllSheets', async (event, { sourcePath, targetPath, sheetName, headers, data, visibleColumns }) => {
+    // Sicherheitsprüfung: Pfade validieren
+    if (!isValidFilePath(sourcePath) || !isValidFilePath(targetPath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    
     try {
         // Originaldatei laden (mit allen Sheets und Formatierung)
         const workbook = await XlsxPopulate.fromFileAsync(sourcePath);
@@ -870,6 +933,11 @@ ipcMain.handle('excel:exportWithAllSheets', async (event, { sourcePath, targetPa
 
 // Config speichern
 ipcMain.handle('config:save', async (event, { filePath, config }) => {
+    // Sicherheitsprüfung: Pfad validieren
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    
     try {
         fs.writeFileSync(filePath, JSON.stringify(config, null, 2), 'utf8');
         return { success: true };
@@ -880,12 +948,23 @@ ipcMain.handle('config:save', async (event, { filePath, config }) => {
 
 // Config laden
 ipcMain.handle('config:load', async (event, filePath) => {
+    // Sicherheitsprüfung: Pfad validieren
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    
     try {
         if (!fs.existsSync(filePath)) {
             return { success: false, error: 'Datei nicht gefunden' };
         }
         const content = fs.readFileSync(filePath, 'utf8');
-        return { success: true, config: JSON.parse(content) };
+        let config;
+        try {
+            config = JSON.parse(content);
+        } catch (parseError) {
+            return { success: false, error: 'Ungültige JSON-Syntax' };
+        }
+        return { success: true, config: config };
     } catch (error) {
         return { success: false, error: error.message };
     }
@@ -975,7 +1054,13 @@ ipcMain.handle('config:loadFromAppDir', async (event) => {
                 if (fs.existsSync(configPath)) {
                     console.log('>>> config.json gefunden:', configPath);
                     const content = fs.readFileSync(configPath, 'utf8');
-                    const config = JSON.parse(content);
+                    let config;
+                    try {
+                        config = JSON.parse(content);
+                    } catch (parseError) {
+                        console.error('Ungültige JSON-Syntax in:', configPath, parseError);
+                        continue; // Nächsten Pfad probieren
+                    }
                     console.log('>>> Konfig geladen, Mapping:', config.mapping?.sourceColumns?.length || 0, 'Spalten');
                     return { 
                         success: true, 
