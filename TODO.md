@@ -47,18 +47,20 @@
 
 ## 🟢 Niedrige Priorität (Nice-to-have)
 
-- [ ] **8. Statistiken/Dashboard**
+- [ ] ~~**8. Statistiken/Dashboard**~~ *(Nicht benötigt)*
   - Anzahl Zeilen pro Monat
   - Letzte Übertragungen
   - Grafische Auswertung
 
-- [ ] **9. Vorlagen für häufige Transfers**
+- [ ] ~~**9. Vorlagen für häufige Transfers**~~ *(Nicht benötigt)*
   - Oft verwendete Spalten-Mappings speichern
   - Schnellauswahl
 
-- [ ] **10. Diff-Ansicht vor Transfer**
-  - Zeige was sich ändern wird bevor übertragen wird
-  - "Vorschau"-Button
+- [x] **10. Diff-Ansicht vor Transfer** ✅ 2026-01-03
+  - "👁️ Vorschau"-Button in der Warteschlange
+  - Modal zeigt Zieldatei, Blatt und Startzeile
+  - Farbcodierte Tabelle (A=Grün, D=Rot, C=Orange)
+  - Bestätigen oder Abbrechen vor dem Transfer
 
 ---
 

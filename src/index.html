@@ -540,6 +540,56 @@
             border: 1px solid rgba(255,255,255,0.3);
         }
         
+        /* Diff/Preview Tabelle */
+        .diff-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        
+        .diff-table th,
+        .diff-table td {
+            padding: 8px 10px;
+            text-align: left;
+            border: 1px solid var(--border);
+            white-space: nowrap;
+        }
+        
+        .diff-table th {
+            background: var(--bg-light);
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+        }
+        
+        .diff-row-add {
+            background: rgba(76, 175, 80, 0.15);
+        }
+        
+        .diff-row-delete {
+            background: rgba(244, 67, 54, 0.15);
+        }
+        
+        .diff-row-change {
+            background: rgba(255, 152, 0, 0.15);
+        }
+        
+        .diff-row-empty {
+            background: var(--bg-light);
+            font-style: italic;
+            color: var(--text-muted);
+        }
+        
+        .diff-flag {
+            font-weight: 700;
+            text-align: center;
+            min-width: 30px;
+        }
+        
+        .diff-flag-A { color: #4CAF50; }
+        .diff-flag-D { color: #F44336; }
+        .diff-flag-C { color: #FF9800; }
+        
         .results-table tr:hover {
             background: var(--bg-light);
         }
@@ -1274,6 +1324,9 @@
                         <button class="btn btn-primary" id="btnClearQueue" disabled>
                             🗑️ Leeren
                         </button>
+                        <button class="btn btn-secondary" id="btnPreviewTransfer" disabled title="Vorschau der Änderungen anzeigen">
+                            👁️ Vorschau
+                        </button>
                         <button class="btn btn-primary" id="btnExportPS" disabled title="Exportiert Warteschlange als JSON zur Zieldatei" style="border: 2px solid white; box-shadow: 0 0 4px rgba(255,255,255,0.5);">
                             📤 Export zur Zieldatei
                         </button>
@@ -1438,6 +1491,7 @@
                 <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;
                 ">
                     Die Warteschlange zeigt alle zur Übertragung vorgemerkten Zeilen.<br>
+                    <strong>👁️ Vorschau:</strong> Zeigt eine Diff-Ansicht mit allen Änderungen vor der Übertragung<br>
                     <strong>✅ Direkt übertragen:</strong> Schreibt alle Zeilen direkt in die Excel-Zieldatei<br>
                     <strong>🗑️ Leeren:</strong> Entfernt alle Zeilen aus der Warteschlange
                 </p>
@@ -1617,6 +1671,46 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-primary" id="btnCloseLicense" data-i18n="close">Schließen</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Transfer Preview / Diff Modal -->
+    <div class="modal-overlay hidden" id="diffPreviewModal">
+        <div class="modal" style="max-width: 1000px; width: 90vw; max-height: 85vh;">
+            <div class="modal-header">
+                <div class="modal-title">👁️ Vorschau: <span id="diffPreviewCount">0</span> Zeile(n) werden übertragen</div>
+                <button class="modal-close" id="btnCloseDiffModal">&times;</button>
+            </div>
+            <div class="modal-body" style="max-height: 60vh; overflow-y: auto; padding: 15px;">
+                <div id="diffPreviewInfo" style="margin-bottom: 15px; padding: 12px; background: var(--bg-light); border-radius: 6px; border-left: 4px solid var(--primary);">
+                    <strong>Zieldatei:</strong> <span id="diffTargetFile">-</span><br>
+                    <strong>Arbeitsblatt:</strong> <span id="diffTargetSheet">-</span><br>
+                    <strong>Neue Zeilen ab Zeile:</strong> <span id="diffTargetRow">-</span>
+                </div>
+                
+                <div style="margin-bottom: 10px; display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                    <span style="display: flex; align-items: center; gap: 6px;">
+                        <span style="display: inline-block; width: 16px; height: 16px; background: rgba(76, 175, 80, 0.3); border: 1px solid #4CAF50; border-radius: 3px;"></span>
+                        <span style="font-size: 13px;">Neue Zeile</span>
+                    </span>
+                    <span style="display: flex; align-items: center; gap: 6px;">
+                        <span style="display: inline-block; width: 16px; height: 16px; background: rgba(244, 67, 54, 0.3); border: 1px solid #F44336; border-radius: 3px;"></span>
+                        <span style="font-size: 13px;">Delete-Flag</span>
+                    </span>
+                    <span style="display: flex; align-items: center; gap: 6px;">
+                        <span style="display: inline-block; width: 16px; height: 16px; background: rgba(255, 152, 0, 0.3); border: 1px solid #FF9800; border-radius: 3px;"></span>
+                        <span style="font-size: 13px;">Change-Flag</span>
+                    </span>
+                </div>
+                
+                <div id="diffPreviewTable" style="overflow-x: auto;">
+                    <!-- Wird dynamisch gefüllt -->
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button class="btn btn-secondary" id="btnCancelDiff">Abbrechen</button>
+                <button class="btn btn-success" id="btnConfirmTransfer">✅ Jetzt übertragen</button>
             </div>
         </div>
     </div>
@@ -2780,8 +2874,12 @@
             queueCount: document.getElementById('queueCount'),
             btnClearQueue: document.getElementById('btnClearQueue'),
             btnExportPS: document.getElementById('btnExportPS'),
+            btnPreviewTransfer: document.getElementById('btnPreviewTransfer'),
             btnNewMonth: document.getElementById('btnNewMonth'),
             btnDataExplorer: document.getElementById('btnDataExplorer'),
+            
+            // Diff Preview Modal
+            diffPreviewModal: document.getElementById('diffPreviewModal'),
             
             // Template
             btnLoadTemplate: document.getElementById('btnLoadTemplate'),
@@ -4047,6 +4145,7 @@
             elements.queueCount.textContent = state.transferQueue.length;
             elements.btnClearQueue.disabled = state.transferQueue.length === 0;
             elements.btnExportPS.disabled = state.transferQueue.length === 0 || !hasFile2;
+            elements.btnPreviewTransfer.disabled = state.transferQueue.length === 0 || !hasFile2;
             
             if (state.transferQueue.length === 0) {
                 elements.queueList.innerHTML = '<div class="queue-empty">Keine Zeilen in der Warteschlange</div>';
@@ -4133,6 +4232,84 @@
                 showStatus(elements.transferStatus, errorMsg, 'error');
                 showStatus(elements.newRowStatus, errorMsg, 'error');
             }
+        }
+        
+        // Diff-Vorschau vor Transfer anzeigen
+        function showDiffPreview() {
+            if (state.transferQueue.length === 0 || !state.file2.filePath) {
+                return;
+            }
+            
+            const modal = elements.diffPreviewModal;
+            const targetFileName = state.file2.name || 'Zieldatei';
+            const targetSheet = state.file2.selectedSheet || 'Sheet1';
+            const currentRowCount = state.file2.data ? state.file2.data.length : 0;
+            const startRow = currentRowCount + 1; // 1-basiert für Anzeige
+            
+            // Info-Bereich aktualisieren
+            document.getElementById('diffTargetFile').textContent = targetFileName;
+            document.getElementById('diffTargetSheet').textContent = targetSheet;
+            document.getElementById('diffStartRow').textContent = startRow;
+            
+            // Tabelle rendern
+            const tableContainer = document.getElementById('diffTableContainer');
+            
+            // Header aus Mapping erstellen
+            let headerHtml = '<tr><th style="width: 60px;">Flag</th><th style="width: 40px;">Zeile</th>';
+            
+            // Spaltenüberschriften aus der Zieldatei verwenden
+            const targetHeaders = state.file2.headers || [];
+            const targetStartCol = state.mapping.targetStartColumn || 0;
+            
+            state.mapping.sourceColumns.forEach((srcIdx, i) => {
+                const targetColIdx = targetStartCol + i;
+                const headerName = targetHeaders[targetColIdx] || `Spalte ${targetColIdx + 1}`;
+                headerHtml += `<th>${escapeHtml(headerName)}</th>`;
+            });
+            headerHtml += '</tr>';
+            
+            // Zeilen rendern
+            let rowsHtml = '';
+            state.transferQueue.forEach((item, idx) => {
+                const rowNum = startRow + idx;
+                const flagClass = item.flag === 'A' ? 'diff-row-add' : 
+                                  item.flag === 'D' ? 'diff-row-delete' : 
+                                  item.flag === 'C' ? 'diff-row-change' : '';
+                const flagText = item.flag === 'A' ? 'Hinzufügen' : 
+                                 item.flag === 'D' ? 'Löschen' : 
+                                 item.flag === 'C' ? 'Ändern' : item.flag;
+                
+                rowsHtml += `<tr class="${flagClass}">`;
+                rowsHtml += `<td><span class="diff-flag">${item.flag}</span> ${flagText}</td>`;
+                rowsHtml += `<td style="text-align: center; font-weight: bold;">${rowNum}</td>`;
+                
+                // Daten aus dem Mapping
+                state.mapping.sourceColumns.forEach(srcIdx => {
+                    const cellValue = item.data[srcIdx] !== undefined ? item.data[srcIdx] : '';
+                    rowsHtml += `<td>${escapeHtml(String(cellValue))}</td>`;
+                });
+                
+                rowsHtml += '</tr>';
+            });
+            
+            tableContainer.innerHTML = `
+                <table class="diff-table">
+                    <thead>${headerHtml}</thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            `;
+            
+            // Modal anzeigen
+            modal.classList.remove('hidden');
+        }
+        
+        function closeDiffPreview() {
+            elements.diffPreviewModal.classList.add('hidden');
+        }
+        
+        function confirmTransferFromDiff() {
+            closeDiffPreview();
+            transferQueueToExcel();
         }
         
         // ==================== Electron-Specific Functions ====================
@@ -5405,6 +5582,12 @@
             elements.btnImportConfig.onclick = loadConfigFromAppDirOrDialog;
             elements.btnExportConfig.onclick = exportConfig;
             elements.btnExportPS.onclick = transferQueueToExcel;
+            elements.btnPreviewTransfer.onclick = showDiffPreview;
+            
+            // Diff-Vorschau Modal Event Handler
+            document.getElementById('btnCloseDiffModal').onclick = closeDiffPreview;
+            document.getElementById('btnCancelDiff').onclick = closeDiffPreview;
+            document.getElementById('btnConfirmTransfer').onclick = confirmTransferFromDiff;
             
             // Automatisch config.json aus Programmordner laden beim Start
             console.log('[Config] Suche automatisch nach config.json...');
