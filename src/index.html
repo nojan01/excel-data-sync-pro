@@ -407,6 +407,16 @@
             border-left: 3px solid var(--warning);
         }
         
+        .results-table td[contenteditable]:focus {
+            outline: 2px solid var(--primary);
+            outline-offset: -2px;
+            background: rgba(0, 123, 255, 0.1);
+        }
+        
+        .results-table tr.editing-row {
+            background: rgba(0, 123, 255, 0.05);
+        }
+        
         .row-select {
             width: 18px;
             height: 18px;
@@ -3564,10 +3574,11 @@
             selectedSheet: null,
             headers: [],
             data: [],
-            filteredData: [],
+            filteredData: [],  // Enthält jetzt {originalIndex, row} Objekte
             searchTerm: '',
             filters: [],
             visibleColumns: [],
+            editedCells: new Map(),  // Speichert editierte Zellen: "rowIndex-colIndex" -> neuer Wert
             // Pagination
             currentPage: 1,
             pageSize: 100, // Zeilen pro Seite (konfigurierbar)
@@ -3624,9 +3635,11 @@
             explorerState.data = result.data.slice(1);
             // Alle Spalten standardmäßig sichtbar machen
             explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
-            explorerState.filteredData = [...explorerState.data];
+            // filteredData mit originalIndex initialisieren
+            explorerState.filteredData = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
             explorerState.currentPage = 1; // Pagination zurücksetzen
             explorerState.searchTerm = ''; // Suche zurücksetzen
+            explorerState.editedCells.clear(); // Bearbeitungen zurücksetzen
             elements.explorerSearch.value = '';
             
             // Status-Meldung für große Dateien
@@ -3641,7 +3654,8 @@
         }
         
         function filterExplorerData() {
-            let filtered = [...explorerState.data];
+            // Erstelle Array mit originalem Index für jede Zeile
+            let filtered = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
             
             // Volltextsuche mit Platzhalter-Unterstützung (* und ?)
             if (explorerState.searchTerm) {
@@ -3651,14 +3665,14 @@
                 if (hasWildcards) {
                     // Platzhalter-Suche: * = beliebig viele Zeichen, ? = ein Zeichen
                     const regex = wildcardToRegex(term);
-                    filtered = filtered.filter(row => 
-                        row.some(cell => cell && regex.test(String(cell)))
+                    filtered = filtered.filter(item => 
+                        item.row.some(cell => cell && regex.test(String(cell)))
                     );
                 } else {
                     // Normale Suche (case-insensitive, enthält)
                     const lowerTerm = term.toLowerCase();
-                    filtered = filtered.filter(row => 
-                        row.some(cell => cell && String(cell).toLowerCase().includes(lowerTerm))
+                    filtered = filtered.filter(item => 
+                        item.row.some(cell => cell && String(cell).toLowerCase().includes(lowerTerm))
                     );
                 }
             }
@@ -3669,8 +3683,8 @@
                 const colIndex = parseInt(filter.column);
                 const value = filter.value.toLowerCase();
                 
-                filtered = filtered.filter(row => {
-                    const cellValue = String(row[colIndex] || '').toLowerCase();
+                filtered = filtered.filter(item => {
+                    const cellValue = String(item.row[colIndex] || '').toLowerCase();
                     switch (filter.operator) {
                         case 'contains': return cellValue.includes(value);
                         case 'equals': return cellValue === value;
@@ -3718,26 +3732,104 @@
             headerHtml += '</tr>';
             elements.explorerTableHead.innerHTML = headerHtml;
             
-            // Body - nur die aktuelle Seite rendern
+            // Body - nur die aktuelle Seite rendern (mit editierbaren Zellen)
             let bodyHtml = '';
-            pageData.forEach(row => {
-                bodyHtml += '<tr>';
+            pageData.forEach(item => {
+                const originalIndex = item.originalIndex;
+                const row = item.row;
+                bodyHtml += `<tr data-original-index="${originalIndex}">`;
                 explorerState.visibleColumns.forEach(colIndex => {
-                    bodyHtml += `<td>${escapeHtml(String(row[colIndex] ?? ''))}</td>`;
+                    const cellValue = String(row[colIndex] ?? '');
+                    const cellKey = `${originalIndex}-${colIndex}`;
+                    const isEdited = explorerState.editedCells.has(cellKey);
+                    const editedClass = isEdited ? ' class="edited"' : '';
+                    bodyHtml += `<td contenteditable="true" data-row="${originalIndex}" data-col="${colIndex}" data-original="${escapeHtml(cellValue)}"${editedClass}>${escapeHtml(cellValue)}</td>`;
                 });
                 bodyHtml += '</tr>';
             });
             elements.explorerTableBody.innerHTML = bodyHtml || '<tr><td colspan="100" style="text-align: center; padding: 20px;">Keine Daten gefunden</td></tr>';
             
+            // Event-Listener für editierbare Zellen
+            document.querySelectorAll('#explorerTableBody td[contenteditable]').forEach(td => {
+                td.addEventListener('input', function() {
+                    const rowIndex = parseInt(this.dataset.row);
+                    const colIndex = parseInt(this.dataset.col);
+                    const original = this.dataset.original;
+                    const current = this.textContent;
+                    const cellKey = `${rowIndex}-${colIndex}`;
+                    
+                    if (original !== current) {
+                        // Änderung speichern
+                        explorerState.editedCells.set(cellKey, current);
+                        explorerState.data[rowIndex][colIndex] = current;
+                        this.classList.add('edited');
+                    } else {
+                        // Zurück zum Original
+                        explorerState.editedCells.delete(cellKey);
+                        this.classList.remove('edited');
+                    }
+                    
+                    // Status aktualisieren
+                    updateExplorerEditStatus();
+                });
+                
+                // Fokus-Verhalten
+                td.addEventListener('focus', function() {
+                    this.parentElement.classList.add('editing-row');
+                });
+                
+                td.addEventListener('blur', function() {
+                    this.parentElement.classList.remove('editing-row');
+                });
+                
+                // Enter-Taste: Zur nächsten Zeile springen
+                td.addEventListener('keydown', function(e) {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        const nextRow = this.parentElement.nextElementSibling;
+                        if (nextRow) {
+                            const colIndex = parseInt(this.dataset.col);
+                            const nextCell = nextRow.querySelector(`td[data-col="${colIndex}"]`);
+                            if (nextCell) nextCell.focus();
+                        }
+                    } else if (e.key === 'Escape') {
+                        // Escape: Änderung verwerfen
+                        this.textContent = this.dataset.original;
+                        const rowIndex = parseInt(this.dataset.row);
+                        const colIndex = parseInt(this.dataset.col);
+                        const cellKey = `${rowIndex}-${colIndex}`;
+                        explorerState.editedCells.delete(cellKey);
+                        explorerState.data[rowIndex][colIndex] = this.dataset.original;
+                        this.classList.remove('edited');
+                        this.blur();
+                        updateExplorerEditStatus();
+                    }
+                });
+            });
+            
             // Ergebnis-Info mit Pagination
             if (totalRows > 0) {
-                elements.explorerResultCount.textContent = `Zeige ${startIndex + 1}-${endIndex} von ${totalRows} Zeilen (gesamt: ${explorerState.data.length})`;
+                const editedCount = explorerState.editedCells.size;
+                const editedInfo = editedCount > 0 ? ` (${editedCount} bearbeitet)` : '';
+                elements.explorerResultCount.textContent = `Zeige ${startIndex + 1}-${endIndex} von ${totalRows} Zeilen (gesamt: ${explorerState.data.length})${editedInfo}`;
             } else {
                 elements.explorerResultCount.textContent = `0 von ${explorerState.data.length} Zeilen`;
             }
             
             // Pagination UI aktualisieren
             updateExplorerPagination(totalPages);
+        }
+        
+        function updateExplorerEditStatus() {
+            const editedCount = explorerState.editedCells.size;
+            const resultCount = elements.explorerResultCount.textContent;
+            // Aktualisiere die Anzeige wenn sich die Anzahl geänderter Zellen ändert
+            if (editedCount > 0) {
+                elements.explorerStatus.textContent = `${editedCount} Zelle(n) bearbeitet`;
+                elements.explorerStatus.style.color = 'var(--warning-color)';
+            } else {
+                elements.explorerStatus.textContent = '';
+            }
         }
         
         function updateExplorerPagination(totalPages) {
@@ -3878,6 +3970,9 @@
             if (savePath) {
                 let result;
                 
+                // Extrahiere die Zeilen aus den filteredData Objekten
+                const exportData = explorerState.filteredData.map(item => item.row);
+                
                 // Wenn Quelldatei vorhanden, exportiere mit allen Sheets
                 if (explorerState.filePath && explorerState.selectedSheet) {
                     result = await window.electronAPI.exportWithAllSheets({
@@ -3885,13 +3980,13 @@
                         targetPath: savePath,
                         sheetName: explorerState.selectedSheet,
                         headers: explorerState.headers,
-                        data: explorerState.filteredData,
+                        data: exportData,
                         visibleColumns: explorerState.visibleColumns
                     });
                 } else {
                     // Fallback: Nur sichtbare Spalten als neues Workbook
                     const visibleHeaders = explorerState.visibleColumns.map(i => explorerState.headers[i]);
-                    const visibleData = explorerState.filteredData.map(row => 
+                    const visibleData = exportData.map(row => 
                         explorerState.visibleColumns.map(i => row[i])
                     );
                     
