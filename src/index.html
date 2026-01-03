@@ -487,13 +487,23 @@
         
         /* Sortierbare Header */
         .sortable-header {
-            cursor: pointer;
+            cursor: grab;
             user-select: none;
-            transition: background 0.15s;
+            transition: background 0.15s, opacity 0.15s;
         }
         
         .sortable-header:hover {
             background: var(--bg-lighter);
+        }
+        
+        .sortable-header.dragging {
+            opacity: 0.5;
+            cursor: grabbing;
+        }
+        
+        .sortable-header.drag-over {
+            background: var(--primary);
+            color: white;
         }
         
         /* Zeilen-Highlighting */
@@ -4530,6 +4540,7 @@
             searchTerm: '',
             filters: [],
             visibleColumns: [],
+            columnOrder: [],  // Benutzerdefinierte Spaltenreihenfolge
             editedCells: new Map(),  // Speichert editierte Zellen: "rowIndex-colIndex" -> neuer Wert
             // Pagination
             currentPage: 1,
@@ -4539,7 +4550,9 @@
             sortColumn: null,
             sortDirection: null,  // 'asc', 'desc' oder null
             // Zeilen-Markierungen
-            rowHighlights: new Map()  // rowIndex -> 'green'|'yellow'|'orange'|'red'|'blue'|'purple'
+            rowHighlights: new Map(),  // rowIndex -> 'green'|'yellow'|'orange'|'red'|'blue'|'purple'
+            // Drag & Drop State
+            draggedColumn: null
         };
         
         // Kontextmenü für Zeilen-Markierung
@@ -4863,6 +4876,39 @@
             });
         }
         
+        /**
+         * Verschiebt eine Spalte per Drag & Drop
+         */
+        function moveExplorerColumn(fromColIndex, toColIndex) {
+            // Initialisiere columnOrder wenn nötig
+            if (explorerState.columnOrder.length === 0) {
+                explorerState.columnOrder = [...explorerState.visibleColumns];
+            }
+            
+            // Finde die Positionen in columnOrder
+            const fromPos = explorerState.columnOrder.indexOf(fromColIndex);
+            const toPos = explorerState.columnOrder.indexOf(toColIndex);
+            
+            if (fromPos === -1 || toPos === -1) return;
+            
+            // Entferne die Spalte von der alten Position
+            explorerState.columnOrder.splice(fromPos, 1);
+            
+            // Füge sie an der neuen Position ein
+            explorerState.columnOrder.splice(toPos, 0, fromColIndex);
+            
+            // Tabelle neu rendern
+            renderExplorerTable();
+        }
+        
+        /**
+         * Setzt die Spaltenreihenfolge zurück
+         */
+        function resetExplorerColumnOrder() {
+            explorerState.columnOrder = [];
+            renderExplorerTable();
+        }
+        
         function renderExplorerTable() {
             if (!explorerState.headers.length) {
                 elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>';
@@ -4887,24 +4933,81 @@
             const endIndex = Math.min(startIndex + explorerState.pageSize, totalRows);
             const pageData = explorerState.filteredData.slice(startIndex, endIndex);
             
-            // Header mit Sortierung
+            // Header mit Sortierung und Drag & Drop
+            // Verwende columnOrder wenn gesetzt, sonst visibleColumns
+            const displayColumns = explorerState.columnOrder.length > 0 
+                ? explorerState.columnOrder.filter(col => explorerState.visibleColumns.includes(col))
+                : explorerState.visibleColumns;
+            
             let headerHtml = '<tr>';
-            explorerState.visibleColumns.forEach(colIndex => {
+            displayColumns.forEach(colIndex => {
                 const headerText = escapeHtml(explorerState.headers[colIndex] || `Spalte ${colIndex + 1}`);
                 let sortIcon = '';
                 if (explorerState.sortColumn === colIndex) {
                     sortIcon = explorerState.sortDirection === 'asc' ? ' ▲' : ' ▼';
                 }
-                headerHtml += `<th class="sortable-header" data-col="${colIndex}" title="Klicken zum Sortieren">${headerText}${sortIcon}</th>`;
+                headerHtml += `<th class="sortable-header" data-col="${colIndex}" draggable="true" title="Klicken zum Sortieren, Ziehen zum Verschieben">${headerText}${sortIcon}</th>`;
             });
             headerHtml += '</tr>';
             elements.explorerTableHead.innerHTML = headerHtml;
             
-            // Sortier-Event-Listener
+            // Sortier- und Drag-Event-Listener
             document.querySelectorAll('#explorerTableHead .sortable-header').forEach(th => {
-                th.addEventListener('click', () => {
-                    const colIndex = parseInt(th.dataset.col);
-                    sortExplorerByColumn(colIndex);
+                // Klick zum Sortieren
+                th.addEventListener('click', (e) => {
+                    // Nur sortieren wenn nicht gerade gedraggt wurde
+                    if (!th.classList.contains('was-dragged')) {
+                        const colIndex = parseInt(th.dataset.col);
+                        sortExplorerByColumn(colIndex);
+                    }
+                    th.classList.remove('was-dragged');
+                });
+                
+                // Drag Start
+                th.addEventListener('dragstart', (e) => {
+                    explorerState.draggedColumn = parseInt(th.dataset.col);
+                    th.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', th.dataset.col);
+                });
+                
+                // Drag Over
+                th.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    if (parseInt(th.dataset.col) !== explorerState.draggedColumn) {
+                        th.classList.add('drag-over');
+                    }
+                });
+                
+                // Drag Leave
+                th.addEventListener('dragleave', () => {
+                    th.classList.remove('drag-over');
+                });
+                
+                // Drag End
+                th.addEventListener('dragend', () => {
+                    th.classList.remove('dragging');
+                    document.querySelectorAll('.sortable-header').forEach(h => h.classList.remove('drag-over'));
+                });
+                
+                // Drop
+                th.addEventListener('drop', (e) => {
+                    e.preventDefault();
+                    th.classList.remove('drag-over');
+                    
+                    const fromCol = explorerState.draggedColumn;
+                    const toCol = parseInt(th.dataset.col);
+                    
+                    if (fromCol !== toCol && fromCol !== null) {
+                        // Markiere dass gedraggt wurde (verhindert Sortierung beim Klick)
+                        th.classList.add('was-dragged');
+                        
+                        // Aktualisiere die Spaltenreihenfolge
+                        moveExplorerColumn(fromCol, toCol);
+                    }
+                    
+                    explorerState.draggedColumn = null;
                 });
             });
             
@@ -4914,7 +5017,7 @@
                 const originalIndex = item.originalIndex;
                 const row = item.row;
                 bodyHtml += `<tr data-original-index="${originalIndex}">`;
-                explorerState.visibleColumns.forEach(colIndex => {
+                displayColumns.forEach(colIndex => {
                     const cellValue = String(row[colIndex] ?? '');
                     const cellKey = `${originalIndex}-${colIndex}`;
                     const isEdited = explorerState.editedCells.has(cellKey);
