@@ -23,21 +23,25 @@
 
 ## 🟡 Mittlere Priorität (UX)
 
-- [ ] **4. Such-Historie**
-  - Letzte 10 Suchbegriffe merken
-  - Dropdown mit Vorschlägen
+- [x] **4. Such-Historie** ✅ 2026-01-03
+  - Letzte 15 Suchbegriffe merken
+  - Dropdown mit Vorschlägen (Pfeiltasten navigieren)
+  - Gespeichert in LocalStorage
 
-- [ ] **5. Mehrfach-Suche (AND/OR)**
+- [x] **5. Mehrfach-Suche (AND/OR)** ✅ 2026-01-03
   - z.B. `Eurofighter AND 2025` oder `A400M OR C-130`
-  - Erweiterte Suchsyntax
+  - Erweiterte Suchsyntax mit AND/OR Operatoren
+  - Kombinierbar mit Platzhaltern (* ?)
 
-- [ ] **6. Spalten-Sortierung im Datenexplorer**
-  - Klick auf Header → aufsteigend/absteigend sortieren
-  - Sehr nützlich bei großen Datensätzen
+- [x] **6. Spalten-Sortierung im Datenexplorer** ✅ 2026-01-03
+  - Klick auf Header → aufsteigend sortieren
+  - Zweiter Klick → absteigend sortieren
+  - Dritter Klick → Sortierung aufheben
 
-- [ ] **7. Zeilen-Markierung/Highlighting**
-  - Wichtige Zeilen farblich markieren
-  - z.B. Rechtsklick → "Als wichtig markieren"
+- [x] **7. Zeilen-Markierung/Highlighting** ✅ 2026-01-03
+  - Rechtsklick auf Zeile → Kontextmenü mit 6 Farben
+  - Grün, Gelb, Orange, Rot, Blau, Lila
+  - Markierung entfernen möglich
 
 ---
 

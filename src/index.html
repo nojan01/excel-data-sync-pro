@@ -332,6 +332,106 @@
             color: var(--text-muted);
         }
         
+        /* Such-Historie Dropdown */
+        .search-wrapper {
+            position: relative;
+            flex: 1;
+        }
+        
+        .search-history-dropdown {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--bg-medium);
+            border: 1px solid var(--border);
+            border-top: none;
+            border-radius: 0 0 6px 6px;
+            max-height: 250px;
+            overflow-y: auto;
+            z-index: 100;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            display: none;
+        }
+        
+        .search-history-dropdown.show {
+            display: block;
+        }
+        
+        .search-history-item {
+            padding: 10px 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            border-bottom: 1px solid var(--border);
+            transition: background 0.15s;
+        }
+        
+        .search-history-item:last-child {
+            border-bottom: none;
+        }
+        
+        .search-history-item:hover {
+            background: var(--bg-light);
+        }
+        
+        .search-history-item.selected {
+            background: var(--bg-lighter);
+        }
+        
+        .search-history-text {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        
+        .search-history-count {
+            font-size: 11px;
+            color: var(--text-muted);
+            margin-left: 10px;
+        }
+        
+        .search-history-delete {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 2px 6px;
+            margin-left: 8px;
+            border-radius: 3px;
+            font-size: 14px;
+        }
+        
+        .search-history-delete:hover {
+            color: var(--error);
+            background: rgba(244, 67, 54, 0.1);
+        }
+        
+        .search-history-header {
+            padding: 8px 14px;
+            font-size: 11px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            background: var(--bg-light);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .search-history-clear {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 11px;
+        }
+        
+        .search-history-clear:hover {
+            color: var(--error);
+        }
+        
         .search-results-info {
             font-size: 14px;
             color: var(--text-muted);
@@ -381,6 +481,63 @@
             position: sticky;
             top: 0;
             z-index: 1;
+        }
+        
+        /* Sortierbare Header */
+        .sortable-header {
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.15s;
+        }
+        
+        .sortable-header:hover {
+            background: var(--bg-lighter);
+        }
+        
+        /* Zeilen-Highlighting */
+        .row-highlight-green { background: rgba(76, 175, 80, 0.2) !important; }
+        .row-highlight-yellow { background: rgba(255, 235, 59, 0.25) !important; }
+        .row-highlight-orange { background: rgba(255, 152, 0, 0.25) !important; }
+        .row-highlight-red { background: rgba(244, 67, 54, 0.2) !important; }
+        .row-highlight-blue { background: rgba(33, 150, 243, 0.2) !important; }
+        .row-highlight-purple { background: rgba(156, 39, 176, 0.2) !important; }
+        
+        /* Kontextmenü */
+        .context-menu {
+            position: fixed;
+            background: var(--bg-medium);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 4px 0;
+            min-width: 180px;
+            z-index: 10000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        }
+        
+        .context-menu-item {
+            padding: 8px 16px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 13px;
+        }
+        
+        .context-menu-item:hover {
+            background: var(--bg-light);
+        }
+        
+        .context-menu-divider {
+            height: 1px;
+            background: var(--border);
+            margin: 4px 0;
+        }
+        
+        .color-dot {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 1px solid rgba(255,255,255,0.3);
         }
         
         .results-table tr:hover {
@@ -988,8 +1145,11 @@
             <!-- Search Section -->
             <div class="search-section">
                 <div class="search-box">
-                    <input type="text" class="search-input" id="searchInput" 
-                           placeholder="Suche... (Platzhalter: * = beliebig, ? = ein Zeichen)" disabled>
+                    <div class="search-wrapper">
+                        <input type="text" class="search-input" id="searchInput" 
+                               placeholder="Suche... (* ? für Platzhalter, AND/OR für Verknüpfung)" disabled autocomplete="off">
+                        <div class="search-history-dropdown" id="searchHistoryDropdown"></div>
+                    </div>
                     <button class="btn btn-primary" id="btnSearch" disabled>
                         🔍 Suchen
                     </button>
@@ -1239,13 +1399,24 @@
                 <h3 style="margin-bottom: 10px;">🔍 Suche</h3>
                 <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
                     Geben Sie einen Suchbegriff ein und drücken Sie Enter oder klicken Sie auf "🔍 Suchen".<br>
-                    Die Suche durchsucht alle Spalten der Quelldatei.
+                    Die Suche durchsucht alle Spalten der Quelldatei. Die letzten 15 Suchen werden gespeichert.
                 </p>
-                <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin-bottom: 20px;">
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin-bottom: 10px;">
                     <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">*</code>
                     <span>Beliebig viele Zeichen (z.B. <code>ABC*</code>, <code>*123*</code>)</span>
                     <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">?</code>
                     <span>Genau ein Zeichen (z.B. <code>A?C</code> findet ABC, ADC, ...)</span>
+                </div>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Erweiterte Suche mit AND/OR:</strong>
+                </p>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin-bottom: 20px;">
+                    <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">A AND B</code>
+                    <span>Findet Zeilen die sowohl A als auch B enthalten</span>
+                    <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">A OR B</code>
+                    <span>Findet Zeilen die A oder B (oder beides) enthalten</span>
+                    <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Eurofighter AND 2025</code>
+                    <span>Beispiel: Eurofighter-Einträge aus 2025</span>
                 </div>
                 
                 <h3 style="margin-bottom: 10px;">✏️ Suchergebnisse bearbeiten</h3>
@@ -1283,6 +1454,8 @@
                     • <strong>Volltextsuche:</strong> Durchsucht alle Spalten<br>
                     • <strong>Spaltenfilter:</strong> Filtern nach bestimmten Spalten mit verschiedenen Operatoren<br>
                     • <strong>Spalten ein-/ausblenden:</strong> Nur relevante Spalten anzeigen<br>
+                    • <strong>Spalten-Sortierung:</strong> Klick auf Spaltenüberschrift zum Sortieren (⬆/⬇)<br>
+                    • <strong>Zeilen-Markierung:</strong> Rechtsklick auf Zeile zum farbigen Markieren<br>
                     • <strong>Export:</strong> Gefilterte Daten als neue Excel-Datei speichern
                 </p>
                 
@@ -2349,6 +2522,159 @@
             }
         }
 
+        // ==================== Such-Historie System ====================
+        const SEARCH_HISTORY_KEY = 'mvms_search_history';
+        const SEARCH_HISTORY_MAX = 15;
+        let searchHistorySelectedIndex = -1;
+        
+        function getSearchHistory() {
+            try {
+                const saved = localStorage.getItem(SEARCH_HISTORY_KEY);
+                return saved ? JSON.parse(saved) : [];
+            } catch (e) {
+                return [];
+            }
+        }
+        
+        function saveSearchHistory(history) {
+            try {
+                localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history));
+            } catch (e) {
+                console.warn('Such-Historie speichern fehlgeschlagen:', e);
+            }
+        }
+        
+        function addToSearchHistory(term, resultCount) {
+            if (!term || term.trim().length === 0) return;
+            
+            const trimmed = term.trim();
+            let history = getSearchHistory();
+            
+            // Existierenden Eintrag entfernen (wird oben neu eingefügt)
+            history = history.filter(item => item.term.toLowerCase() !== trimmed.toLowerCase());
+            
+            // Neuen Eintrag am Anfang einfügen
+            history.unshift({
+                term: trimmed,
+                count: resultCount,
+                timestamp: Date.now()
+            });
+            
+            // Auf Maximum begrenzen
+            if (history.length > SEARCH_HISTORY_MAX) {
+                history = history.slice(0, SEARCH_HISTORY_MAX);
+            }
+            
+            saveSearchHistory(history);
+        }
+        
+        function removeFromSearchHistory(term) {
+            let history = getSearchHistory();
+            history = history.filter(item => item.term !== term);
+            saveSearchHistory(history);
+            renderSearchHistoryDropdown();
+        }
+        
+        function clearSearchHistory() {
+            localStorage.removeItem(SEARCH_HISTORY_KEY);
+            renderSearchHistoryDropdown();
+            hideSearchHistoryDropdown();
+        }
+        
+        function renderSearchHistoryDropdown(filterText = '') {
+            const dropdown = document.getElementById('searchHistoryDropdown');
+            if (!dropdown) return;
+            
+            let history = getSearchHistory();
+            
+            // Nach Filter filtern
+            if (filterText) {
+                const lower = filterText.toLowerCase();
+                history = history.filter(item => item.term.toLowerCase().includes(lower));
+            }
+            
+            if (history.length === 0) {
+                dropdown.innerHTML = '';
+                dropdown.classList.remove('show');
+                return;
+            }
+            
+            let html = `
+                <div class="search-history-header">
+                    <span>🕐 Letzte Suchen</span>
+                    <button class="search-history-clear" onclick="clearSearchHistory()">Alle löschen</button>
+                </div>
+            `;
+            
+            history.forEach((item, index) => {
+                const selected = index === searchHistorySelectedIndex ? ' selected' : '';
+                html += `
+                    <div class="search-history-item${selected}" 
+                         data-index="${index}"
+                         data-term="${escapeHtml(item.term)}">
+                        <span class="search-history-text">${escapeHtml(item.term)}</span>
+                        <span class="search-history-count">${item.count} Treffer</span>
+                        <button class="search-history-delete" 
+                                onclick="event.stopPropagation(); removeFromSearchHistory('${escapeHtml(item.term).replace(/'/g, "\\'")}')">✕</button>
+                    </div>
+                `;
+            });
+            
+            dropdown.innerHTML = html;
+            
+            // Click-Handler für Items
+            dropdown.querySelectorAll('.search-history-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const term = item.dataset.term;
+                    elements.searchInput.value = term;
+                    hideSearchHistoryDropdown();
+                    performSearch();
+                });
+            });
+        }
+        
+        function showSearchHistoryDropdown() {
+            const dropdown = document.getElementById('searchHistoryDropdown');
+            const history = getSearchHistory();
+            
+            if (history.length === 0) return;
+            
+            searchHistorySelectedIndex = -1;
+            renderSearchHistoryDropdown(elements.searchInput.value);
+            dropdown.classList.add('show');
+        }
+        
+        function hideSearchHistoryDropdown() {
+            const dropdown = document.getElementById('searchHistoryDropdown');
+            if (dropdown) {
+                dropdown.classList.remove('show');
+            }
+            searchHistorySelectedIndex = -1;
+        }
+        
+        function navigateSearchHistory(direction) {
+            const history = getSearchHistory();
+            const filterText = elements.searchInput.value;
+            const filtered = filterText 
+                ? history.filter(item => item.term.toLowerCase().includes(filterText.toLowerCase()))
+                : history;
+            
+            if (filtered.length === 0) return;
+            
+            if (direction === 'down') {
+                searchHistorySelectedIndex = Math.min(searchHistorySelectedIndex + 1, filtered.length - 1);
+            } else if (direction === 'up') {
+                searchHistorySelectedIndex = Math.max(searchHistorySelectedIndex - 1, -1);
+            }
+            
+            renderSearchHistoryDropdown(filterText);
+            
+            // Bei Auswahl den Text ins Feld setzen
+            if (searchHistorySelectedIndex >= 0 && filtered[searchHistorySelectedIndex]) {
+                elements.searchInput.value = filtered[searchHistorySelectedIndex].term;
+            }
+        }
+
         // ==================== State ====================
         /** @type {AppState} */
         const state = {
@@ -2416,6 +2742,7 @@
             
             // Search
             searchInput: document.getElementById('searchInput'),
+            searchHistoryDropdown: document.getElementById('searchHistoryDropdown'),
             btnSearch: document.getElementById('btnSearch'),
             btnNewRow: document.getElementById('btnNewRow'),
             searchResultsInfo: document.getElementById('searchResultsInfo'),
@@ -2928,14 +3255,117 @@
             return new RegExp('^' + escaped + '$', 'i');
         }
         
+        /**
+         * Prüft ob ein Text einem Suchterm entspricht (mit Platzhalter-Unterstützung)
+         */
+        function matchesTerm(text, term, hasWildcards) {
+            if (!text) return false;
+            const str = String(text);
+            if (hasWildcards) {
+                return wildcardToRegex(term).test(str);
+            }
+            return str.toLowerCase().includes(term.toLowerCase());
+        }
+        
+        /**
+         * Parst eine Suchanfrage mit AND/OR Operatoren
+         * Beispiele: "Eurofighter AND 2025", "Boeing OR Airbus", "Tiger AND (2024 OR 2025)"
+         */
+        function parseSearchQuery(query) {
+            const trimmed = query.trim();
+            
+            // Prüfen ob AND oder OR Operatoren vorhanden sind
+            const hasAnd = / AND /i.test(trimmed);
+            const hasOr = / OR /i.test(trimmed);
+            
+            if (!hasAnd && !hasOr) {
+                // Einfache Suche
+                return { type: 'simple', term: trimmed };
+            }
+            
+            if (hasAnd && !hasOr) {
+                // Nur AND
+                const terms = trimmed.split(/ AND /i).map(t => t.trim()).filter(t => t);
+                return { type: 'and', terms };
+            }
+            
+            if (hasOr && !hasAnd) {
+                // Nur OR
+                const terms = trimmed.split(/ OR /i).map(t => t.trim()).filter(t => t);
+                return { type: 'or', terms };
+            }
+            
+            // Gemischt: OR hat niedrigere Priorität, AND wird zuerst ausgewertet
+            // "A AND B OR C AND D" → (A AND B) OR (C AND D)
+            const orParts = trimmed.split(/ OR /i).map(part => {
+                const andTerms = part.split(/ AND /i).map(t => t.trim()).filter(t => t);
+                if (andTerms.length === 1) {
+                    return { type: 'simple', term: andTerms[0] };
+                }
+                return { type: 'and', terms: andTerms };
+            });
+            
+            return { type: 'or', parts: orParts };
+        }
+        
+        /**
+         * Prüft ob eine Zeile der geparsten Suchanfrage entspricht
+         */
+        function rowMatchesQuery(row, parsed) {
+            const rowStr = row.join(' ').toLowerCase();
+            
+            function termHasWildcards(term) {
+                return term.includes('*') || term.includes('?');
+            }
+            
+            function rowContainsTerm(term) {
+                const hasWc = termHasWildcards(term);
+                for (const cell of row) {
+                    if (matchesTerm(cell, term, hasWc)) return true;
+                }
+                return false;
+            }
+            
+            if (parsed.type === 'simple') {
+                return rowContainsTerm(parsed.term);
+            }
+            
+            if (parsed.type === 'and') {
+                // Alle Terme müssen in der Zeile vorkommen
+                return parsed.terms.every(term => rowContainsTerm(term));
+            }
+            
+            if (parsed.type === 'or') {
+                if (parsed.terms) {
+                    // Einfache OR-Verknüpfung
+                    return parsed.terms.some(term => rowContainsTerm(term));
+                }
+                if (parsed.parts) {
+                    // Gemischte Anfrage mit AND-Gruppen
+                    return parsed.parts.some(part => rowMatchesQuery(row, part));
+                }
+            }
+            
+            return false;
+        }
+        
         function search() {
             const query = elements.searchInput.value.trim();
             if (!query || !state.file1.data.length) return;
             
             const hasWildcards = query.includes('*') || query.includes('?');
+            const hasOperators = / (AND|OR) /i.test(query);
             state.searchResults = [];
             
-            if (hasWildcards) {
+            if (hasOperators) {
+                // Erweiterte Suche mit AND/OR
+                const parsed = parseSearchQuery(query);
+                state.file1.data.forEach((row, rowIndex) => {
+                    if (rowMatchesQuery(row, parsed)) {
+                        state.searchResults.push({ rowIndex: rowIndex, data: row });
+                    }
+                });
+            } else if (hasWildcards) {
                 const regex = wildcardToRegex(query);
                 state.file1.data.forEach((row, rowIndex) => {
                     for (let col of row) {
@@ -2957,7 +3387,11 @@
                 });
             }
             
-            displaySearchResults(query, hasWildcards);
+            // Such-Historie aktualisieren
+            addToSearchHistory(query, state.searchResults.length);
+            hideSearchHistoryDropdown();
+            
+            displaySearchResults(query, hasWildcards || hasOperators);
         }
         
         function displaySearchResults(query, hasWildcards = false) {
@@ -3921,8 +4355,124 @@
             // Pagination
             currentPage: 1,
             pageSize: 100, // Zeilen pro Seite (konfigurierbar)
-            pageSizeOptions: [50, 100, 250, 500, 1000]
+            pageSizeOptions: [50, 100, 250, 500, 1000],
+            // Sortierung
+            sortColumn: null,
+            sortDirection: null,  // 'asc', 'desc' oder null
+            // Zeilen-Markierungen
+            rowHighlights: new Map()  // rowIndex -> 'green'|'yellow'|'orange'|'red'|'blue'|'purple'
         };
+        
+        // Kontextmenü für Zeilen-Markierung
+        const highlightColors = [
+            { name: 'Grün', value: 'green', hex: '#4CAF50' },
+            { name: 'Gelb', value: 'yellow', hex: '#FFEB3B' },
+            { name: 'Orange', value: 'orange', hex: '#FF9800' },
+            { name: 'Rot', value: 'red', hex: '#F44336' },
+            { name: 'Blau', value: 'blue', hex: '#2196F3' },
+            { name: 'Lila', value: 'purple', hex: '#9C27B0' }
+        ];
+        
+        function showRowContextMenu(e, rowIndex) {
+            e.preventDefault();
+            
+            // Altes Menü entfernen
+            const oldMenu = document.querySelector('.context-menu');
+            if (oldMenu) oldMenu.remove();
+            
+            const currentColor = explorerState.rowHighlights.get(rowIndex);
+            
+            let menuHtml = '<div class="context-menu">';
+            menuHtml += '<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">🎨 Zeile markieren</div>';
+            menuHtml += '<div class="context-menu-divider"></div>';
+            
+            highlightColors.forEach(color => {
+                const selected = currentColor === color.value ? ' ✓' : '';
+                menuHtml += `
+                    <div class="context-menu-item" data-action="highlight" data-color="${color.value}" data-row="${rowIndex}">
+                        <span class="color-dot" style="background: ${color.hex};"></span>
+                        <span>${color.name}${selected}</span>
+                    </div>
+                `;
+            });
+            
+            menuHtml += '<div class="context-menu-divider"></div>';
+            menuHtml += `<div class="context-menu-item" data-action="clear" data-row="${rowIndex}">🚫 Markierung entfernen</div>`;
+            menuHtml += '</div>';
+            
+            const menu = document.createElement('div');
+            menu.innerHTML = menuHtml;
+            document.body.appendChild(menu.firstElementChild);
+            
+            const menuEl = document.querySelector('.context-menu');
+            
+            // Positionierung
+            let x = e.clientX;
+            let y = e.clientY;
+            
+            // Sicherstellen, dass das Menü im Viewport bleibt
+            const menuRect = menuEl.getBoundingClientRect();
+            if (x + menuRect.width > window.innerWidth) {
+                x = window.innerWidth - menuRect.width - 5;
+            }
+            if (y + menuRect.height > window.innerHeight) {
+                y = window.innerHeight - menuRect.height - 5;
+            }
+            
+            menuEl.style.left = x + 'px';
+            menuEl.style.top = y + 'px';
+            
+            // Event-Handler
+            menuEl.querySelectorAll('[data-action="highlight"]').forEach(item => {
+                item.addEventListener('click', () => {
+                    const color = item.dataset.color;
+                    const row = parseInt(item.dataset.row);
+                    setRowHighlight(row, color);
+                    menuEl.remove();
+                });
+            });
+            
+            menuEl.querySelector('[data-action="clear"]').addEventListener('click', () => {
+                const row = parseInt(menuEl.querySelector('[data-action="clear"]').dataset.row);
+                clearRowHighlight(row);
+                menuEl.remove();
+            });
+            
+            // Menü bei Klick außerhalb schließen
+            const closeHandler = (event) => {
+                if (!menuEl.contains(event.target)) {
+                    menuEl.remove();
+                    document.removeEventListener('click', closeHandler);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', closeHandler), 10);
+        }
+        
+        function setRowHighlight(rowIndex, color) {
+            explorerState.rowHighlights.set(rowIndex, color);
+            applyRowHighlights();
+        }
+        
+        function clearRowHighlight(rowIndex) {
+            explorerState.rowHighlights.delete(rowIndex);
+            applyRowHighlights();
+        }
+        
+        function applyRowHighlights() {
+            // Alle Highlights entfernen
+            document.querySelectorAll('#explorerTableBody tr').forEach(tr => {
+                tr.classList.remove('row-highlight-green', 'row-highlight-yellow', 'row-highlight-orange', 
+                                   'row-highlight-red', 'row-highlight-blue', 'row-highlight-purple');
+            });
+            
+            // Neue Highlights setzen
+            explorerState.rowHighlights.forEach((color, rowIndex) => {
+                const tr = document.querySelector(`#explorerTableBody tr[data-original-index="${rowIndex}"]`);
+                if (tr) {
+                    tr.classList.add(`row-highlight-${color}`);
+                }
+            });
+        }
         
         function openDataExplorer() {
             elements.dataExplorerModal.classList.remove('hidden');
@@ -3978,6 +4528,8 @@
             explorerState.filteredData = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
             explorerState.currentPage = 1; // Pagination zurücksetzen
             explorerState.searchTerm = ''; // Suche zurücksetzen
+            explorerState.sortColumn = null; // Sortierung zurücksetzen
+            explorerState.sortDirection = null;
             explorerState.editedCells.clear(); // Bearbeitungen zurücksetzen
             elements.explorerSearch.value = '';
             
@@ -4063,7 +4615,73 @@
             
             explorerState.filteredData = filtered;
             explorerState.currentPage = 1; // Bei Filteränderung zurück zur ersten Seite
+            
+            // Sortierung anwenden, wenn eine gesetzt ist
+            if (explorerState.sortColumn !== null && explorerState.sortDirection !== null) {
+                applyExplorerSort();
+            }
+            
             renderExplorerTable();
+        }
+        
+        /**
+         * Sortiert die Explorer-Daten nach einer Spalte
+         */
+        function sortExplorerByColumn(colIndex) {
+            // Toggle Sortierrichtung
+            if (explorerState.sortColumn === colIndex) {
+                if (explorerState.sortDirection === 'asc') {
+                    explorerState.sortDirection = 'desc';
+                } else if (explorerState.sortDirection === 'desc') {
+                    // Dritter Klick: Sortierung aufheben
+                    explorerState.sortColumn = null;
+                    explorerState.sortDirection = null;
+                    filterExplorerData(); // Neu filtern ohne Sortierung
+                    return;
+                }
+            } else {
+                explorerState.sortColumn = colIndex;
+                explorerState.sortDirection = 'asc';
+            }
+            
+            applyExplorerSort();
+            renderExplorerTable();
+        }
+        
+        /**
+         * Wendet die aktuelle Sortierung auf filteredData an
+         */
+        function applyExplorerSort() {
+            if (explorerState.sortColumn === null) return;
+            
+            const colIndex = explorerState.sortColumn;
+            const direction = explorerState.sortDirection;
+            
+            explorerState.filteredData.sort((a, b) => {
+                const valA = a.row[colIndex];
+                const valB = b.row[colIndex];
+                
+                // Null-Werte ans Ende
+                if (valA == null && valB == null) return 0;
+                if (valA == null) return 1;
+                if (valB == null) return -1;
+                
+                // Numerische Werte
+                const numA = parseFloat(valA);
+                const numB = parseFloat(valB);
+                
+                if (!isNaN(numA) && !isNaN(numB)) {
+                    return direction === 'asc' ? numA - numB : numB - numA;
+                }
+                
+                // String-Vergleich (case-insensitive)
+                const strA = String(valA).toLowerCase();
+                const strB = String(valB).toLowerCase();
+                
+                if (strA < strB) return direction === 'asc' ? -1 : 1;
+                if (strA > strB) return direction === 'asc' ? 1 : -1;
+                return 0;
+            });
         }
         
         function renderExplorerTable() {
@@ -4090,13 +4708,26 @@
             const endIndex = Math.min(startIndex + explorerState.pageSize, totalRows);
             const pageData = explorerState.filteredData.slice(startIndex, endIndex);
             
-            // Header
+            // Header mit Sortierung
             let headerHtml = '<tr>';
             explorerState.visibleColumns.forEach(colIndex => {
-                headerHtml += `<th>${escapeHtml(explorerState.headers[colIndex] || `Spalte ${colIndex + 1}`)}</th>`;
+                const headerText = escapeHtml(explorerState.headers[colIndex] || `Spalte ${colIndex + 1}`);
+                let sortIcon = '';
+                if (explorerState.sortColumn === colIndex) {
+                    sortIcon = explorerState.sortDirection === 'asc' ? ' ▲' : ' ▼';
+                }
+                headerHtml += `<th class="sortable-header" data-col="${colIndex}" title="Klicken zum Sortieren">${headerText}${sortIcon}</th>`;
             });
             headerHtml += '</tr>';
             elements.explorerTableHead.innerHTML = headerHtml;
+            
+            // Sortier-Event-Listener
+            document.querySelectorAll('#explorerTableHead .sortable-header').forEach(th => {
+                th.addEventListener('click', () => {
+                    const colIndex = parseInt(th.dataset.col);
+                    sortExplorerByColumn(colIndex);
+                });
+            });
             
             // Body - nur die aktuelle Seite rendern (mit editierbaren Zellen)
             let bodyHtml = '';
@@ -4114,6 +4745,19 @@
                 bodyHtml += '</tr>';
             });
             elements.explorerTableBody.innerHTML = bodyHtml || '<tr><td colspan="100" style="text-align: center; padding: 20px;">Keine Daten gefunden</td></tr>';
+            
+            // Zeilen-Highlights anwenden
+            applyRowHighlights();
+            
+            // Rechtsklick-Kontextmenü für Zeilen
+            document.querySelectorAll('#explorerTableBody tr').forEach(tr => {
+                tr.addEventListener('contextmenu', (e) => {
+                    const rowIndex = parseInt(tr.dataset.originalIndex);
+                    if (!isNaN(rowIndex)) {
+                        showRowContextMenu(e, rowIndex);
+                    }
+                });
+            });
             
             // Event-Listener für editierbare Zellen
             document.querySelectorAll('#explorerTableBody td[contenteditable]').forEach(td => {
@@ -4617,11 +5261,51 @@
             
             // Search Event Listeners - WICHTIG!
             elements.searchInput.addEventListener('keydown', (e) => {
+                const dropdown = document.getElementById('searchHistoryDropdown');
+                const isDropdownOpen = dropdown && dropdown.classList.contains('show');
+                
                 if (e.key === 'Enter') {
                     e.preventDefault();
+                    hideSearchHistoryDropdown();
                     search();
+                } else if (e.key === 'ArrowDown') {
+                    if (!isDropdownOpen) {
+                        showSearchHistoryDropdown();
+                    }
+                    navigateSearchHistory('down');
+                    e.preventDefault();
+                } else if (e.key === 'ArrowUp') {
+                    navigateSearchHistory('up');
+                    e.preventDefault();
+                } else if (e.key === 'Escape') {
+                    hideSearchHistoryDropdown();
                 }
             });
+            
+            elements.searchInput.addEventListener('focus', () => {
+                showSearchHistoryDropdown();
+            });
+            
+            elements.searchInput.addEventListener('input', () => {
+                renderSearchHistoryDropdown(elements.searchInput.value);
+                const dropdown = document.getElementById('searchHistoryDropdown');
+                const history = getSearchHistory();
+                const filterText = elements.searchInput.value;
+                const filtered = filterText 
+                    ? history.filter(item => item.term.toLowerCase().includes(filterText.toLowerCase()))
+                    : history;
+                if (filtered.length > 0) {
+                    dropdown.classList.add('show');
+                }
+            });
+            
+            // Dropdown schließen bei Klick außerhalb
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('.search-wrapper')) {
+                    hideSearchHistoryDropdown();
+                }
+            });
+            
             elements.btnSearch.onclick = search;
             
             elements.btnNewRow.onclick = openNewRowPanel;
