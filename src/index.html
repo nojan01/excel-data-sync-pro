@@ -1295,12 +1295,24 @@
                 
                 <h3 style="margin-bottom: 10px;">⌨️ Tastenkürzel</h3>
                 <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin-bottom: 20px;">
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Strg+F</kbd>
+                    <span>Fokus auf Suchfeld setzen</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Strg+S</kbd>
+                    <span>Warteschlange exportieren / Daten speichern</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Strg+Enter</kbd>
+                    <span>Ausgewählte Zeilen direkt übertragen</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Strg+Z</kbd>
+                    <span>Letzte Bearbeitung rückgängig machen</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Strg+Y</kbd>
+                    <span>Rückgängig gemachte Bearbeitung wiederherstellen</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">F5</kbd>
+                    <span>Suche aktualisieren / Daten neu laden</span>
                     <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">F1</kbd>
                     <span>Diese Hilfe öffnen/schließen</span>
                     <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Enter</kbd>
-                    <span>Suche starten (im Suchfeld)</span>
+                    <span>Suche starten (im Suchfeld) / Nächste Zeile (in Tabelle)</span>
                     <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Esc</kbd>
-                    <span>Dialog schließen</span>
+                    <span>Dialog schließen / Bearbeitung abbrechen</span>
                     <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Tab</kbd>
                     <span>Zur nächsten Zelle in den Suchergebnissen</span>
                 </div>
@@ -2042,6 +2054,301 @@
          * @property {PaginationState} searchPagination - Search results pagination
          */
 
+        // ==================== Undo/Redo System ====================
+        const undoRedoState = {
+            // Suchergebnisse
+            searchUndoStack: [],
+            searchRedoStack: [],
+            // Datenexplorer
+            explorerUndoStack: [],
+            explorerRedoStack: [],
+            maxStackSize: 50
+        };
+        
+        function pushSearchUndo(action) {
+            undoRedoState.searchUndoStack.push(action);
+            if (undoRedoState.searchUndoStack.length > undoRedoState.maxStackSize) {
+                undoRedoState.searchUndoStack.shift();
+            }
+            undoRedoState.searchRedoStack = []; // Redo-Stack leeren bei neuer Aktion
+        }
+        
+        function pushExplorerUndo(action) {
+            undoRedoState.explorerUndoStack.push(action);
+            if (undoRedoState.explorerUndoStack.length > undoRedoState.maxStackSize) {
+                undoRedoState.explorerUndoStack.shift();
+            }
+            undoRedoState.explorerRedoStack = []; // Redo-Stack leeren bei neuer Aktion
+        }
+        
+        function undoSearch() {
+            if (undoRedoState.searchUndoStack.length === 0) return false;
+            
+            const action = undoRedoState.searchUndoStack.pop();
+            undoRedoState.searchRedoStack.push(action);
+            
+            // Ursprünglichen Wert wiederherstellen
+            const { rowIndex, colIndex, oldValue, newValue } = action;
+            state.searchResults[rowIndex].data[colIndex] = oldValue;
+            
+            // UI aktualisieren
+            const cell = document.querySelector(`#resultsTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+            if (cell) {
+                cell.textContent = oldValue;
+                cell.classList.toggle('edited', oldValue !== cell.dataset.original);
+            }
+            return true;
+        }
+        
+        function redoSearch() {
+            if (undoRedoState.searchRedoStack.length === 0) return false;
+            
+            const action = undoRedoState.searchRedoStack.pop();
+            undoRedoState.searchUndoStack.push(action);
+            
+            // Neuen Wert wiederherstellen
+            const { rowIndex, colIndex, oldValue, newValue } = action;
+            state.searchResults[rowIndex].data[colIndex] = newValue;
+            
+            // UI aktualisieren
+            const cell = document.querySelector(`#resultsTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+            if (cell) {
+                cell.textContent = newValue;
+                cell.classList.toggle('edited', newValue !== cell.dataset.original);
+            }
+            return true;
+        }
+        
+        function undoExplorer() {
+            if (undoRedoState.explorerUndoStack.length === 0) return false;
+            
+            const action = undoRedoState.explorerUndoStack.pop();
+            undoRedoState.explorerRedoStack.push(action);
+            
+            // Ursprünglichen Wert wiederherstellen
+            const { rowIndex, colIndex, oldValue, newValue } = action;
+            explorerState.data[rowIndex][colIndex] = oldValue;
+            
+            const cellKey = `${rowIndex}-${colIndex}`;
+            if (oldValue === action.originalValue) {
+                explorerState.editedCells.delete(cellKey);
+            } else {
+                explorerState.editedCells.set(cellKey, oldValue);
+            }
+            
+            // UI aktualisieren
+            const cell = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+            if (cell) {
+                cell.textContent = oldValue;
+                cell.classList.toggle('edited', oldValue !== cell.dataset.original);
+            }
+            updateExplorerEditStatus();
+            return true;
+        }
+        
+        function redoExplorer() {
+            if (undoRedoState.explorerRedoStack.length === 0) return false;
+            
+            const action = undoRedoState.explorerRedoStack.pop();
+            undoRedoState.explorerUndoStack.push(action);
+            
+            // Neuen Wert wiederherstellen
+            const { rowIndex, colIndex, oldValue, newValue, originalValue } = action;
+            explorerState.data[rowIndex][colIndex] = newValue;
+            
+            const cellKey = `${rowIndex}-${colIndex}`;
+            if (newValue === originalValue) {
+                explorerState.editedCells.delete(cellKey);
+            } else {
+                explorerState.editedCells.set(cellKey, newValue);
+            }
+            
+            // UI aktualisieren
+            const cell = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+            if (cell) {
+                cell.textContent = newValue;
+                cell.classList.toggle('edited', newValue !== cell.dataset.original);
+            }
+            updateExplorerEditStatus();
+            return true;
+        }
+        
+        function showUndoRedoFeedback(action) {
+            // Kurzes visuelles Feedback
+            const toast = document.createElement('div');
+            toast.style.cssText = `
+                position: fixed;
+                bottom: 80px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: var(--bg-lighter);
+                color: var(--text);
+                padding: 8px 16px;
+                border-radius: 4px;
+                font-size: 13px;
+                z-index: 10000;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                animation: fadeInOut 1.5s ease-in-out;
+            `;
+            toast.textContent = action;
+            document.body.appendChild(toast);
+            setTimeout(() => toast.remove(), 1500);
+        }
+        
+        // CSS für Toast-Animation hinzufügen
+        const undoRedoStyle = document.createElement('style');
+        undoRedoStyle.textContent = `
+            @keyframes fadeInOut {
+                0% { opacity: 0; transform: translateX(-50%) translateY(10px); }
+                20% { opacity: 1; transform: translateX(-50%) translateY(0); }
+                80% { opacity: 1; transform: translateX(-50%) translateY(0); }
+                100% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+            }
+        `;
+        document.head.appendChild(undoRedoStyle);
+
+        // ==================== Auto-Save System ====================
+        const AUTO_SAVE_KEY = 'mvms_autosave';
+        const AUTO_SAVE_INTERVAL = 30000; // 30 Sekunden
+        let autoSaveTimer = null;
+        
+        function getAutoSaveData() {
+            // Sammle alle bearbeiteten Daten
+            const data = {
+                timestamp: Date.now(),
+                version: '1.0',
+                // Datenexplorer
+                explorer: {
+                    filePath: explorerState.filePath,
+                    fileName: explorerState.fileName,
+                    selectedSheet: explorerState.selectedSheet,
+                    editedCells: Array.from(explorerState.editedCells.entries())
+                },
+                // Warteschlange
+                transferQueue: state.transferQueue,
+                // Suchergebnisse-Bearbeitungen (nur wenn Suche aktiv)
+                searchEdits: []
+            };
+            
+            // Suchergebnis-Bearbeitungen sammeln
+            document.querySelectorAll('#resultsTableBody td.edited').forEach(td => {
+                data.searchEdits.push({
+                    row: parseInt(td.dataset.row),
+                    col: parseInt(td.dataset.col),
+                    original: td.dataset.original,
+                    current: td.textContent
+                });
+            });
+            
+            return data;
+        }
+        
+        function autoSave() {
+            const data = getAutoSaveData();
+            
+            // Nur speichern wenn es etwas zu speichern gibt
+            const hasExplorerEdits = data.explorer.editedCells.length > 0;
+            const hasQueueItems = data.transferQueue.length > 0;
+            const hasSearchEdits = data.searchEdits.length > 0;
+            
+            if (hasExplorerEdits || hasQueueItems || hasSearchEdits) {
+                try {
+                    localStorage.setItem(AUTO_SAVE_KEY, JSON.stringify(data));
+                    console.log('Auto-Save: Daten gesichert', {
+                        explorerEdits: data.explorer.editedCells.length,
+                        queueItems: data.transferQueue.length,
+                        searchEdits: data.searchEdits.length
+                    });
+                } catch (e) {
+                    console.warn('Auto-Save fehlgeschlagen:', e);
+                }
+            }
+        }
+        
+        function clearAutoSave() {
+            localStorage.removeItem(AUTO_SAVE_KEY);
+        }
+        
+        function checkAutoSaveRecovery() {
+            try {
+                const saved = localStorage.getItem(AUTO_SAVE_KEY);
+                if (!saved) return;
+                
+                const data = JSON.parse(saved);
+                const age = Date.now() - data.timestamp;
+                const ageMinutes = Math.round(age / 60000);
+                
+                // Nur wiederherstellen wenn weniger als 24 Stunden alt
+                if (age > 24 * 60 * 60 * 1000) {
+                    clearAutoSave();
+                    return;
+                }
+                
+                const hasExplorerEdits = data.explorer?.editedCells?.length > 0;
+                const hasQueueItems = data.transferQueue?.length > 0;
+                const hasSearchEdits = data.searchEdits?.length > 0;
+                
+                if (!hasExplorerEdits && !hasQueueItems && !hasSearchEdits) {
+                    clearAutoSave();
+                    return;
+                }
+                
+                // Zusammenfassung erstellen
+                let summary = 'Ungespeicherte Daten gefunden:\n\n';
+                if (hasQueueItems) {
+                    summary += `• ${data.transferQueue.length} Einträge in der Warteschlange\n`;
+                }
+                if (hasExplorerEdits) {
+                    summary += `• ${data.explorer.editedCells.length} bearbeitete Zellen im Datenexplorer\n`;
+                    if (data.explorer.fileName) {
+                        summary += `  (Datei: ${data.explorer.fileName})\n`;
+                    }
+                }
+                if (hasSearchEdits) {
+                    summary += `• ${data.searchEdits.length} bearbeitete Suchergebnisse\n`;
+                }
+                summary += `\nGespeichert vor ${ageMinutes} Minuten.\n\nMöchten Sie diese Daten wiederherstellen?`;
+                
+                if (confirm(summary)) {
+                    restoreAutoSave(data);
+                } else {
+                    clearAutoSave();
+                }
+            } catch (e) {
+                console.warn('Auto-Save Recovery fehlgeschlagen:', e);
+                clearAutoSave();
+            }
+        }
+        
+        function restoreAutoSave(data) {
+            // Warteschlange wiederherstellen
+            if (data.transferQueue?.length > 0) {
+                state.transferQueue = data.transferQueue;
+                updateQueueDisplay();
+                showUndoRedoFeedback(`${data.transferQueue.length} Einträge wiederhergestellt`);
+            }
+            
+            // Datenexplorer-Bearbeitungen werden beim Öffnen der Datei wiederhergestellt
+            if (data.explorer?.editedCells?.length > 0 && data.explorer.filePath) {
+                // Speichere für spätere Wiederherstellung
+                window._pendingExplorerRestore = data.explorer;
+            }
+            
+            // Auto-Save nach Wiederherstellung nicht löschen (wird bei nächster Aktion überschrieben)
+        }
+        
+        function startAutoSave() {
+            if (autoSaveTimer) clearInterval(autoSaveTimer);
+            autoSaveTimer = setInterval(autoSave, AUTO_SAVE_INTERVAL);
+        }
+        
+        function stopAutoSave() {
+            if (autoSaveTimer) {
+                clearInterval(autoSaveTimer);
+                autoSaveTimer = null;
+            }
+        }
+
         // ==================== State ====================
         /** @type {AppState} */
         const state = {
@@ -2721,11 +3028,39 @@
             elements.resultsTableBody.innerHTML = bodyHtml;
             
             document.querySelectorAll('#resultsTableBody td[contenteditable]').forEach(td => {
+                // Speichere den letzten bekannten Wert für Undo
+                td.dataset.lastValue = td.textContent;
+                
+                td.addEventListener('blur', function() {
+                    const rowIndex = parseInt(this.dataset.row);
+                    const colIndex = parseInt(this.dataset.col);
+                    const original = this.dataset.original;
+                    const lastValue = this.dataset.lastValue;
+                    const current = this.textContent;
+                    
+                    // Nur Undo speichern wenn sich der Wert geändert hat
+                    if (lastValue !== current) {
+                        pushSearchUndo({
+                            rowIndex,
+                            colIndex,
+                            oldValue: lastValue,
+                            newValue: current,
+                            originalValue: original
+                        });
+                        // Daten im State aktualisieren
+                        state.searchResults[rowIndex].data[colIndex] = current;
+                        this.dataset.lastValue = current;
+                    }
+                    
+                    this.classList.toggle('edited', original !== current);
+                });
+                
                 td.addEventListener('input', function() {
                     const original = this.dataset.original;
                     const current = this.textContent;
                     this.classList.toggle('edited', original !== current);
                 });
+                
                 td.addEventListener('focus', function() {
                     const rowIndex = parseInt(this.dataset.row);
                     if (!state.selectedRows.includes(rowIndex)) {
@@ -3269,6 +3604,7 @@
             }
             state.transferQueue = [];
             updateQueueDisplay();
+            autoSave(); // Auto-Save aktualisieren nach Leeren
         }
         
         function updateQueueDisplay() {
@@ -3349,6 +3685,9 @@
                 
                 state.transferQueue = [];
                 updateQueueDisplay();
+                
+                // Auto-Save löschen nach erfolgreicher Übertragung
+                clearAutoSave();
                 
                 await loadSheet2Electron(state.file2.selectedSheet);
                 
@@ -3642,6 +3981,33 @@
             explorerState.editedCells.clear(); // Bearbeitungen zurücksetzen
             elements.explorerSearch.value = '';
             
+            // Prüfe ob es gespeicherte Bearbeitungen gibt (Auto-Save Recovery)
+            if (window._pendingExplorerRestore && 
+                window._pendingExplorerRestore.filePath === explorerState.filePath &&
+                window._pendingExplorerRestore.selectedSheet === sheetName) {
+                
+                const restore = window._pendingExplorerRestore;
+                let restoredCount = 0;
+                
+                restore.editedCells.forEach(([key, value]) => {
+                    const [rowStr, colStr] = key.split('-');
+                    const rowIndex = parseInt(rowStr);
+                    const colIndex = parseInt(colStr);
+                    
+                    if (rowIndex < explorerState.data.length && colIndex < explorerState.headers.length) {
+                        explorerState.editedCells.set(key, value);
+                        explorerState.data[rowIndex][colIndex] = value;
+                        restoredCount++;
+                    }
+                });
+                
+                if (restoredCount > 0) {
+                    showUndoRedoFeedback(`${restoredCount} Bearbeitungen wiederhergestellt`);
+                }
+                
+                delete window._pendingExplorerRestore;
+            }
+            
             // Status-Meldung für große Dateien
             if (explorerState.data.length > 1000) {
                 elements.explorerStatus.textContent = `${explorerState.data.length} Zeilen geladen (Pagination aktiv)`;
@@ -3751,6 +4117,9 @@
             
             // Event-Listener für editierbare Zellen
             document.querySelectorAll('#explorerTableBody td[contenteditable]').forEach(td => {
+                // Speichere den letzten bekannten Wert für Undo
+                td.dataset.lastValue = td.textContent;
+                
                 td.addEventListener('input', function() {
                     const rowIndex = parseInt(this.dataset.row);
                     const colIndex = parseInt(this.dataset.col);
@@ -3773,13 +4142,32 @@
                     updateExplorerEditStatus();
                 });
                 
+                // Blur: Undo-Aktion speichern
+                td.addEventListener('blur', function() {
+                    this.parentElement.classList.remove('editing-row');
+                    
+                    const rowIndex = parseInt(this.dataset.row);
+                    const colIndex = parseInt(this.dataset.col);
+                    const original = this.dataset.original;
+                    const lastValue = this.dataset.lastValue;
+                    const current = this.textContent;
+                    
+                    // Nur Undo speichern wenn sich der Wert geändert hat
+                    if (lastValue !== current) {
+                        pushExplorerUndo({
+                            rowIndex,
+                            colIndex,
+                            oldValue: lastValue,
+                            newValue: current,
+                            originalValue: original
+                        });
+                        this.dataset.lastValue = current;
+                    }
+                });
+                
                 // Fokus-Verhalten
                 td.addEventListener('focus', function() {
                     this.parentElement.classList.add('editing-row');
-                });
-                
-                td.addEventListener('blur', function() {
-                    this.parentElement.classList.remove('editing-row');
                 });
                 
                 // Enter-Taste: Zur nächsten Zeile springen
@@ -3801,6 +4189,7 @@
                         explorerState.editedCells.delete(cellKey);
                         explorerState.data[rowIndex][colIndex] = this.dataset.original;
                         this.classList.remove('edited');
+                        this.dataset.lastValue = this.dataset.original;
                         this.blur();
                         updateExplorerEditStatus();
                     }
@@ -4091,8 +4480,126 @@
             document.getElementById('selectLanguage').onchange = (e) => setLanguage(e.target.value);
             document.getElementById('selectTheme').onchange = (e) => setTheme(e.target.value);
             
+            // Globaler Keyboard-Handler für Undo/Redo
+            document.addEventListener('keydown', (e) => {
+                // Strg+Z (Windows/Linux) oder Cmd+Z (Mac)
+                if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
+                    e.preventDefault();
+                    
+                    // Prüfe welches Modal aktiv ist
+                    const explorerOpen = !elements.dataExplorerModal.classList.contains('hidden');
+                    
+                    if (explorerOpen) {
+                        if (undoExplorer()) {
+                            showUndoRedoFeedback('Rückgängig');
+                        }
+                    } else {
+                        if (undoSearch()) {
+                            showUndoRedoFeedback('Rückgängig');
+                        }
+                    }
+                }
+                
+                // Strg+Y oder Strg+Shift+Z (Redo)
+                if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+                    e.preventDefault();
+                    
+                    const explorerOpen = !elements.dataExplorerModal.classList.contains('hidden');
+                    
+                    if (explorerOpen) {
+                        if (redoExplorer()) {
+                            showUndoRedoFeedback('Wiederherstellen');
+                        }
+                    } else {
+                        if (redoSearch()) {
+                            showUndoRedoFeedback('Wiederherstellen');
+                        }
+                    }
+                }
+                
+                // Strg+F → Fokus auf Suchfeld
+                if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+                    const explorerOpen = !elements.dataExplorerModal.classList.contains('hidden');
+                    
+                    if (explorerOpen) {
+                        e.preventDefault();
+                        elements.explorerSearch.focus();
+                        elements.explorerSearch.select();
+                    } else if (!document.querySelector('.modal-backdrop:not(.hidden)')) {
+                        // Nur wenn kein Modal offen ist
+                        e.preventDefault();
+                        elements.searchInput.focus();
+                        elements.searchInput.select();
+                    }
+                }
+                
+                // Strg+S → Warteschlange exportieren
+                if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+                    e.preventDefault();
+                    const explorerOpen = !elements.dataExplorerModal.classList.contains('hidden');
+                    
+                    if (explorerOpen) {
+                        // Im Explorer: Exportieren
+                        if (explorerState.data.length > 0) {
+                            exportExplorerData();
+                        }
+                    } else if (state.transferQueue.length > 0) {
+                        // Warteschlange exportieren
+                        transferQueueToExcel();
+                    }
+                }
+                
+                // Strg+Enter → Direkt übertragen
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+                    e.preventDefault();
+                    const explorerOpen = !elements.dataExplorerModal.classList.contains('hidden');
+                    
+                    if (!explorerOpen && state.selectedRows.length > 0) {
+                        transferSelectedDirect();
+                    }
+                }
+                
+                // F5 → Suche wiederholen / Daten neu laden
+                if (e.key === 'F5') {
+                    e.preventDefault();
+                    const explorerOpen = !elements.dataExplorerModal.classList.contains('hidden');
+                    
+                    if (explorerOpen && explorerState.selectedSheet) {
+                        loadExplorerSheet(explorerState.selectedSheet);
+                        showUndoRedoFeedback('Neu geladen');
+                    } else if (elements.searchInput.value) {
+                        search();
+                        showUndoRedoFeedback('Suche aktualisiert');
+                    }
+                }
+                
+                // Escape → Modal schließen
+                if (e.key === 'Escape') {
+                    // Prüfe welche Modals offen sind und schließe das oberste
+                    if (!elements.dataExplorerModal.classList.contains('hidden')) {
+                        closeDataExplorer();
+                    } else if (!document.getElementById('helpModal').classList.contains('hidden')) {
+                        document.getElementById('helpModal').classList.add('hidden');
+                        document.body.classList.remove('modal-open');
+                    } else if (!document.getElementById('mappingModal').classList.contains('hidden')) {
+                        closeMappingModal();
+                    } else if (!document.getElementById('newMonthModal').classList.contains('hidden')) {
+                        closeNewMonthModal();
+                    } else if (!document.getElementById('licenseModal').classList.contains('hidden')) {
+                        document.getElementById('licenseModal').classList.add('hidden');
+                        document.body.classList.remove('modal-open');
+                    } else if (!elements.newRowPanel.classList.contains('hidden')) {
+                        closeNewRowPanel();
+                    }
+                }
+            });
+            
             try { await initDB(); } catch (e) { console.warn('IndexedDB nicht verfügbar'); }
             loadConfig(); updateMappingPreview(); checkReadyState();
+            
+            // Auto-Save starten und Recovery prüfen
+            startAutoSave();
+            setTimeout(() => checkAutoSaveRecovery(), 500); // Kurze Verzögerung für UI-Initialisierung
             
             // Prüfung beim Schließen der App
             window.electronAPI.onBeforeClose(() => {
