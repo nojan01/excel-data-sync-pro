@@ -2,19 +2,19 @@
 
 ## 🔴 Hohe Priorität (Produktivität)
 
-- [ ] **1. Undo/Redo für Bearbeitungen**
+- [x] **1. Undo/Redo für Bearbeitungen** ✅ 2026-01-03
   - Strg+Z / Strg+Y um Änderungen rückgängig zu machen
   - Wichtig für versehentliche Edits im Datenexplorer und Suchergebnissen
   - Undo-Stack mit max. 50 Aktionen
 
-- [ ] **2. Tastenkombinationen (Shortcuts)**
+- [x] **2. Tastenkombinationen (Shortcuts)** ✅ 2026-01-03
   - Strg+S → Warteschlange speichern/exportieren
   - Strg+F → Fokus auf Suchfeld
   - Strg+Enter → Direkt übertragen
   - F5 → Datei neu laden
   - Escape → Modal schließen
 
-- [ ] **3. Auto-Save der Bearbeitungen**
+- [x] **3. Auto-Save der Bearbeitungen** ✅ 2026-01-03
   - Bearbeitete Zellen periodisch sichern (LocalStorage)
   - Bei Absturz/Neustart wiederherstellbar
   - Hinweis beim Start wenn ungespeicherte Änderungen vorhanden
