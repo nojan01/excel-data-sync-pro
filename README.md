@@ -1,9 +1,14 @@
-# MVMS-Vertragslisten aktualisieren
+# Excel Data Sync Pro
 
-Eine Browser-basierte Anwendung zum Kopieren von Zeilen aus einer Excel-Datei in eine andere, mit Flag- und Kommentar-Funktion.
+Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen Excel-Dateien, mit Formatierungserhalt, Flag-/Kommentar-Funktion und Template-Erstellung.
 
-## Funktionen
+## Version
 
+**v1.0.8** - © Norbert Jander 2025
+
+## Hauptfunktionen
+
+### Datentransfer
 - **Quelldatei durchsuchen**: Suchen Sie nach Seriennummern oder Text mit Wildcard-Unterstützung (`*` und `?`)
 - **Multi-Select**: Mehrere Zeilen gleichzeitig auswählen und übertragen
 - **Warteschlange**: Zeilen sammeln und als Batch übertragen
@@ -11,24 +16,51 @@ Eine Browser-basierte Anwendung zum Kopieren von Zeilen aus einer Excel-Datei in
 - **Zeilen kopieren**: Ausgewählte Zeilen in die Zieldatei übertragen
 - **Flag setzen**: Jede übertragene Zeile mit A (Add), D (Delete) oder C (Change) markieren
 - **Kommentar hinzufügen**: Freier Text für jede übertragene Zeile
+- **Duplikat-Erkennung**: Verhindert doppelte Einträge
+
+### Arbeitsblatt-Verwaltung
 - **Arbeitsblatt-Auswahl**: Wählen Sie für beide Dateien das gewünschte Arbeitsblatt
 - **Spalten-Mapping**: Konfigurieren Sie, welche Spalten kopiert werden
-- **Direktes Speichern**: Änderungen werden direkt in Datei 2 gespeichert (kein Download)
-- **Neuer Monat**: Datei 2 kopieren und Sheet für neuen Monat leeren
-- **Duplikat-Erkennung**: Verhindert doppelte Einträge
+- **Direktes Speichern**: Änderungen werden direkt in die Datei gespeichert
+
+### Template-Funktionen
+- **Template laden**: Leere Vorlage mit Formatierungen und Conditional Formatting (CF)
+- **🔧 Template aus Quelldatei erstellen**: 
+  - Erstellt ein neues Template aus einer beliebigen Quelldatei
+  - Behält alle Conditional Formatting Regeln (bis zu 500+)
+  - Auswahl welche Arbeitsblätter übernommen werden
+  - Optional: Flag- und Kommentar-Spalten automatisch einfügen
+  - Alle Spalten werden automatisch verschoben wenn Extra-Spalten aktiviert
+
+### Neuer Monat
+- **📅 Neuen Monat erstellen**: 
+  - Template kopieren und für neuen Monat vorbereiten
+  - Sheet-Name automatisch auf neuen Monat setzen
+  - Alle Formatierungen und CF-Regeln bleiben erhalten
+
+### Export-Funktionen
+- **Export nur geänderter Zeilen**: Nur Zeilen mit Flag exportieren
+- **Export mit allen Arbeitsblättern**: Komplette Datei mit allen Sheets exportieren
+
+### Konfiguration
 - **Export/Import**: Konfiguration als JSON-Datei sichern und wiederherstellen
+- **Automatisches Laden**: config.json aus Downloads-Ordner wird automatisch geladen
 
 ## Installation
 
-Keine Installation erforderlich! Einfach den `excel-tool`-Ordner auf Ihren Windows-PC kopieren.
+### Windows
+1. Laden Sie `Excel-Data-Sync-Pro-x.x.x-Setup.exe` herunter
+2. Führen Sie den Installer aus
+3. Starten Sie die App über das Desktop-Icon oder Startmenü
 
-## Verwendung
+### macOS
+1. Laden Sie `Excel-Data-Sync-Pro-x.x.x.dmg` herunter
+2. Öffnen Sie die DMG-Datei
+3. Ziehen Sie die App in den Programme-Ordner
 
-### Starten
+## Workflow
 
-Doppelklicken Sie auf `START.bat` oder öffnen Sie `index.html` direkt im Browser (Chrome oder Edge empfohlen).
-
-### Workflow
+### Standard-Workflow (Datenübertragung)
 
 1. **Quelldatei laden** (Datei 1)
    - Klicken Sie auf "Quelldatei laden"
@@ -42,38 +74,42 @@ Doppelklicken Sie auf `START.bat` oder öffnen Sie `index.html` direkt im Browse
 
 3. **Spalten konfigurieren**
    - Klicken Sie auf "Spalten konfigurieren"
-   - Wählen Sie welche Spalten aus Datei 1 kopiert werden sollen
+   - Wählen Sie welche Spalten kopiert werden sollen
+   - Aktivieren Sie Flag-Spalte und Kommentar-Spalte nach Bedarf
    - Wählen Sie die Spalte für Duplikat-Erkennung
-   - Die Daten werden ab Spalte C eingefügt (A = Flag, B = Kommentar)
 
 4. **Suchen und Übertragen**
    - Geben Sie eine Seriennummer oder Text in das Suchfeld ein
    - Wildcards: `*` = beliebig viele Zeichen, `?` = genau ein Zeichen
-   - Beispiele: `ABC*`, `*123*`, `A?C`
-   - Klicken Sie auf die gewünschten Zeilen (Checkboxen oder Klick auf Zeile)
+   - Klicken Sie auf die gewünschten Zeilen
    - Setzen Sie Flag (A/D/C) und optional einen Kommentar
    - Klicken Sie auf "Zur Warteschlange" oder "Direkt übertragen"
 
-5. **Neue Zeile manuell erstellen**
-   - Klicken Sie auf "➕ Neue Zeile"
-   - Füllen Sie die Felder aus (oder lassen Sie sie leer für eine Leerzeile)
-   - Setzen Sie Flag und Kommentar
-   - Klicken Sie auf "Zur Warteschlange" oder "Direkt übertragen"
+5. **Speichern**
+   - Klicken Sie auf "💾 Speichern"
+   - Die Datei wird direkt am Ursprungsort gespeichert
 
-6. **Warteschlange übertragen**
-   - Sammeln Sie mehrere Zeilen in der Warteschlange
-   - Klicken Sie auf "✅ Alle übertragen" um alle auf einmal zu übertragen
+### Template-Workflow (Neues Template erstellen)
 
-7. **Speichern**
-   - Klicken Sie auf "💾 Datei 2 speichern"
-   - Die Datei wird in den Download-Ordner heruntergeladen
-   - Verschieben Sie die Datei an den gewünschten Speicherort (überschreiben Sie ggf. die alte Datei)
+1. **Template aus Quelldatei erstellen**
+   - Klicken Sie im Template-Bereich auf "🔧 Template aus Quelldatei"
+   - Wählen Sie Ihre Masterdatei mit allen Formatierungen
+   - Wählen Sie welche Arbeitsblätter ins Template sollen
+   - Aktivieren Sie "Flag-Spalte einfügen" und "Kommentar-Spalte einfügen" falls gewünscht
+   - Speichern Sie das Template
 
-8. **Neuer Monat**
-   - Klicken Sie auf "📅 Neuer Monat"
-   - Geben Sie den neuen Dateinamen ein
-   - Das Sheet wird geleert (nur Kopfzeile bleibt) und als neue Datei heruntergeladen
-   - Verschieben Sie die Datei in den Zielordner
+2. **Template verwenden**
+   - Das erstellte Template wird automatisch geladen
+   - Alle Conditional Formatting Regeln sind erhalten
+   - Spalten sind bereit für Flag/Kommentar wenn aktiviert
+
+### Neuer Monat
+
+1. **Template laden** (falls nicht bereits geladen)
+2. **Auf "📅 Neuer Monat" klicken**
+3. **Dateinamen eingeben** (z.B. mit neuem Datum)
+4. **Sheet-Name für neuen Monat eingeben**
+5. Die neue Datei wird mit allen Formatierungen erstellt
 
 ## Tastenkürzel
 
@@ -95,46 +131,57 @@ Doppelklicken Sie auf `START.bat` oder öffnen Sie `index.html` direkt im Browse
 
 ## Konfiguration
 
-### Netzwerklaufwerk / Mehrere Nutzer
+### Gemeinsame Konfiguration (Netzwerklaufwerk)
 
-Diese App ist für die Nutzung auf einem Netzwerklaufwerk mit mehreren Nutzern optimiert:
-
-1. **Erster Nutzer - Konfiguration erstellen:**
+1. **Konfiguration erstellen:**
    - Laden Sie beide Excel-Dateien
    - Konfigurieren Sie Arbeitsblätter und Spalten-Zuordnung
-   - Klicken Sie auf **"config.json speichern"**
-   - Speichern Sie die Datei **im Programmordner** (neben index.html)
+   - Klicken Sie auf "config.json speichern"
+   - Speichern Sie die Datei im Downloads-Ordner oder Programmordner
 
-2. **Alle Nutzer - Konfiguration laden:**
-   - Beim Start erscheint der Hinweis: "Lade die gemeinsame config.json"
-   - Klicken Sie auf **"📂 config.json laden"** (grüner Button oben)
-   - Wählen Sie die `config.json` aus dem Programmordner
-   - Alle Excel-Dateien und Einstellungen werden automatisch geladen!
+2. **Konfiguration laden:**
+   - Die config.json aus dem Downloads-Ordner wird automatisch beim Start geladen
+   - Alternativ: "📂 config.json laden" und manuell auswählen
 
-3. **Änderungen speichern:**
-   - Wenn sich die Konfiguration ändert, einfach erneut "config.json speichern"
-   - Die Datei im Programmordner überschreiben
-   - Ab jetzt haben alle Nutzer die aktualisierte Konfiguration
+### Einstellungen
 
-### Automatisches Speichern (lokal)
-
-Zusätzlich werden Einstellungen automatisch im Browser gespeichert:
 - Ausgewählte Arbeitsblätter
 - Spalten-Zuordnung
-- Letzte 20 Übertragungen
+- Flag-/Kommentar-Optionen
+- Letzte Übertragungen
 
 ## Technische Details
 
-- **Technologie**: HTML, CSS, JavaScript (keine Installation nötig)
-- **Excel-Bibliothek**: SheetJS (xlsx.js) - CDN-geladen
-- **Speicher**: IndexedDB für große Dateien, LocalStorage für Einstellungen
-- **Unterstützte Browser**: Chrome, Edge, Firefox
+- **Technologie**: Electron, Node.js
+- **Excel-Bibliothek**: xlsx-populate (für CF-Erhalt), JSZip (für Template-Erstellung)
+- **Conditional Formatting**: Vollständig erhalten bei Template-Erstellung
 - **Unterstützte Dateiformate**: .xlsx
-- **Speichern**: Dateien werden in den Download-Ordner heruntergeladen und müssen manuell verschoben werden
+- **Plattformen**: Windows (x64), macOS (Intel & Apple Silicon)
 
-## Offline-Nutzung
+## Changelog
 
-Die App benötigt beim ersten Start eine Internetverbindung um die SheetJS-Bibliothek zu laden. Danach funktioniert sie auch offline (wenn die Bibliothek im Browser-Cache ist).
+### v1.0.8
+- **Fix**: Template aus Quelldatei funktioniert wieder korrekt
+- Behebt Problem mit Sheet-Namen die Sonderzeichen enthalten (z.B. &, <, >)
+- Sheet-Namen werden jetzt korrekt XML-dekodiert beim Mapping
+
+### v1.0.7
+- **Neu**: Template aus Quelldatei erstellen
+- **Neu**: Arbeitsblatt-Auswahl für Template-Erstellung
+- **Neu**: Automatisches Einfügen von Flag-/Kommentar-Spalten
+- **Neu**: CF-Regeln werden auf ganze Spalten erweitert
+
+### v1.0.6
+- Hybrid-Ansatz für Formatierungserhalt
+- Verbessertes CF-Handling
+
+### v1.0.5
+- Neuer Monat Funktion
+- Export mit allen Sheets
+
+### v1.0.4
+- Icon-Anpassungen
+- UI-Verbesserungen
 
 ## Fehlerbehebung
 
@@ -148,21 +195,14 @@ Die App benötigt beim ersten Start eine Internetverbindung um die SheetJS-Bibli
 - Wildcards nutzen: `*text*` findet "text" überall
 - Prüfen Sie das ausgewählte Arbeitsblatt
 
-### "Änderungen nicht sichtbar in Excel"
-- Schließen Sie die Datei in Excel
-- Öffnen Sie die Datei erneut
+### "Template enthält keine Formatierungen"
+- Verwenden Sie "🔧 Template aus Quelldatei" statt manueller Template-Erstellung
+- Die Quelldatei muss die gewünschten CF-Regeln enthalten
 
-### Konfiguration zurücksetzen
-- Drücken Sie F12 → Console
-- Eingeben: `localStorage.removeItem('mvmcVertragslistenConfig'); localStorage.removeItem('mvmcVertragslistenLastExport');`
-- Seite neu laden
+### "Sheet-Name nicht gefunden bei Template-Erstellung"
+- Sheet-Namen mit Sonderzeichen werden seit v1.0.8 korrekt unterstützt
+- Aktualisieren Sie auf die neueste Version
 
-## Bekannte Einschränkungen
+## Lizenz
 
-- Die Datei muss in Excel geschlossen sein, damit Änderungen dort sichtbar werden
-- Firefox unterstützt kein direktes Speichern (Download stattdessen)
-- Sehr große Dateien (>50 MB) können langsam laden
-
-## Version
-
-v1.0.0 - © Norbert Jander 2025
+MIT License - © Norbert Jander 2025
