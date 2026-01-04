@@ -29,3 +29,6 @@ npm-debug.log*
 
 # Package lock
 package-lock.json
+.env
+*.pfx
+certificates/

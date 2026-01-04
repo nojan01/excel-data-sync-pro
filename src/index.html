@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';">
     <title>Excel Data Sync Pro</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='12' fill='%23217346'/><text x='50' y='38' font-size='32' font-weight='bold' text-anchor='middle' fill='white'>X</text><text x='50' y='68' font-size='12' font-weight='bold' text-anchor='middle' fill='white'>SYNC</text></svg>">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='bg' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%231e7145'/%3E%3Cstop offset='100%25' stop-color='%230d5c35'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='12' fill='url(%23bg)'/%3E%3Cpath d='M15 22 L35 22 L45 32 L45 78 L15 78 Z' fill='white'/%3E%3Cpath d='M35 22 L35 32 L45 32 Z' fill='%23ccc'/%3E%3Cline x1='20' y1='42' x2='40' y2='42' stroke='%23217346' stroke-width='2'/%3E%3Cline x1='20' y1='52' x2='40' y2='52' stroke='%23ccc' stroke-width='1'/%3E%3Cline x1='20' y1='62' x2='40' y2='62' stroke='%23ccc' stroke-width='1'/%3E%3Cpath d='M70 35 A20 20 0 1 1 50 15' fill='none' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3Cpolygon points='47 5 57 15 47 25' fill='white'/%3E%3Cpath d='M55 50 L75 50 L85 60 L85 92 L55 92 Z' fill='white'/%3E%3Cpath d='M75 50 L75 60 L85 60 Z' fill='%23ccc'/%3E%3Crect x='58' y='80' width='10' height='8' fill='%234CAF50' opacity='0.6'/%3E%3C/svg%3E">
     <!-- Electron-Modus: Excel wird via Node.js xlsx-populate geladen (erhält Formatierung) -->
     <style>
         :root {
@@ -1302,6 +1302,9 @@
                     <button class="btn btn-primary" id="btnTransferNewRowDirect">
                         ➡️ Direkt übertragen
                     </button>
+                    <button class="btn btn-secondary" id="btnAddEmptyRow" title="Leere Zeile einfügen (unabhängig von Flag-Spalte)">
+                        ⬜ Leerzeile
+                    </button>
                 </div>
                 <div id="newRowStatus"></div>
             </div>
@@ -1393,7 +1396,7 @@
     
     <!-- Footer -->
     <footer style="background: var(--bg-medium); border-top: 1px solid var(--border); padding: 8px 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
-        © Norbert Jander 2025 · v1.0.5
+        © Norbert Jander 2025 · v1.0.7
     </footer>
     
     <!-- Mapping Modal -->
@@ -2184,7 +2187,7 @@
                 createAndLoad: '📅 Erstellen & Laden',
                 
                 // Footer
-                copyright: '© Norbert Jander 2025 · v1.0.5',
+                copyright: '© Norbert Jander 2025 · v1.0.7',
                 
                 // Extra Columns
                 extraColumns: 'Extra-Spalten',
@@ -2317,7 +2320,7 @@
                 createAndLoad: '📅 Create & Load',
                 
                 // Footer
-                copyright: '© Norbert Jander 2025 · v1.0.5',
+                copyright: '© Norbert Jander 2025 · v1.0.7',
                 
                 // Extra Columns
                 extraColumns: 'Extra Columns',
@@ -4319,6 +4322,32 @@
             if (firstField) firstField.focus();
         }
         
+        // Leerzeile hinzufügen - unabhängig von Flag-Spalte
+        function addEmptyRowToQueue() {
+            const comment = elements.newRowComment?.value || '';
+            
+            // Leeres data-Array erstellen
+            const data = new Array(Math.max(...state.mapping.sourceColumns) + 1).fill('');
+            
+            state.transferQueue.push({
+                data: data,
+                flag: 'leer',
+                comment: comment,
+                checkValue: '(Leerzeile)',
+                isManual: true
+            });
+            
+            updateQueueDisplay();
+            const successMsg = '✅ Leerzeile zur Warteschlange hinzugefügt!';
+            showStatus(elements.transferStatus, successMsg, 'success');
+            showStatus(elements.newRowStatus, successMsg, 'success');
+            
+            // Kommentar leeren
+            if (elements.newRowComment) {
+                elements.newRowComment.value = '';
+            }
+        }
+
         async function transferNewRowDirect() {
             const data = getNewRowData();
             const flag = elements.newRowFlag.value;
@@ -4610,7 +4639,8 @@
                     flag: flag,
                     comment: comment,
                     checkValue: checkValue,
-                    wasEdited: wasEdited
+                    wasEdited: wasEdited,
+                    sourceRowIndex: row.rowIndex + 2 // +2: rowIndex ist 0-basiert, Excel ist 1-basiert + Header-Zeile
                 });
                 addedCount++;
             }
@@ -6916,6 +6946,7 @@
             elements.btnCloseNewRow.onclick = closeNewRowPanel;
             elements.btnAddNewRowToQueue.onclick = addNewRowToQueue;
             elements.btnTransferNewRowDirect.onclick = transferNewRowDirect;
+            document.getElementById('btnAddEmptyRow').onclick = addEmptyRowToQueue;
             elements.btnAddToQueue.onclick = addToQueue;
             elements.btnTransferDirect.onclick = transferSelectedDirect;
             elements.btnSelectAll.onclick = () => selectAllRows(true);

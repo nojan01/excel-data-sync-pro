@@ -543,18 +543,6 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
         }
         
-        // Quelldatei öffnen für Formatierungskopie (wenn vorhanden)
-        let sourceWorkbook = null;
-        let sourceWorksheet = null;
-        if (sourceFilePath && isValidFilePath(sourceFilePath)) {
-            try {
-                sourceWorkbook = await XlsxPopulate.fromFileAsync(sourceFilePath);
-                sourceWorksheet = sourceWorkbook.sheet(sourceSheetName || 0);
-            } catch (e) {
-                console.log('Quelldatei für Formatierung nicht verfügbar:', e.message);
-            }
-        }
-        
         // Hilfsfunktion: Deutsches Datum zu Excel-Datum konvertieren
         function parseGermanDateToExcel(dateStr) {
             if (!dateStr || typeof dateStr !== 'string') return null;
@@ -695,22 +683,23 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         // Formatierungsvorlage: Letzte belegte Zeile vor der Einfügeposition
         const templateRow = insertRow > 2 ? insertRow - 1 : 2;
         
-        // Hilfsfunktion: Kopiere Zellformatierung von einer Quellzelle
-        function copyStyleFromSource(targetCell, sourceCell) {
-            if (!sourceCell) return;
-            
+        // Hilfsfunktion: Kopiere Zellformatierung von Template-Zeile der Zieldatei
+        function copyStyleFromTemplate(targetCell, colNumber) {
             try {
+                const templateCell = worksheet.cell(templateRow, colNumber);
+                if (!templateCell) return;
+                
                 // Verfügbare Styles in xlsx-populate
                 const styles = [
                     'bold', 'italic', 'underline', 'strikethrough',
                     'fontFamily', 'fontSize', 'fontColor',
                     'horizontalAlignment', 'verticalAlignment',
-                    'wrapText', 'fill', 'numberFormat'
+                    'wrapText', 'numberFormat'
                 ];
                 
                 styles.forEach(styleName => {
                     try {
-                        const styleValue = sourceCell.style(styleName);
+                        const styleValue = templateCell.style(styleName);
                         if (styleValue !== undefined && styleValue !== null) {
                             targetCell.style(styleName, styleValue);
                         }
@@ -718,16 +707,18 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                         // Ignoriere Fehler bei einzelnen Styles
                     }
                 });
-            } catch (e) {
-                // Ignoriere Fehler beim Kopieren der Formatierung
-            }
-        }
-        
-        // Hilfsfunktion: Kopiere Zellformatierung von Template-Zeile der Zieldatei
-        function copyStyleFromTemplate(targetCell, colNumber) {
-            try {
-                const templateCell = worksheet.cell(templateRow, colNumber);
-                copyStyleFromSource(targetCell, templateCell);
+                
+                // Fill (Hintergrundfarbe) separat behandeln - ist ein komplexes Objekt
+                try {
+                    const fillValue = templateCell.style('fill');
+                    if (fillValue && typeof fillValue === 'object') {
+                        // Deep copy des Fill-Objekts um Referenzprobleme zu vermeiden
+                        const fillCopy = JSON.parse(JSON.stringify(fillValue));
+                        targetCell.style('fill', fillCopy);
+                    }
+                } catch (e) {
+                    // Ignoriere Fehler beim Kopieren der Fill-Formatierung
+                }
             } catch (e) {
                 // Ignoriere Fehler
             }
@@ -738,12 +729,19 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         for (const row of rows) {
             const newRowNum = insertRow + insertedCount;
             
-            // Bei Leerzeile: Leerzeichen in Flag-Spalte setzen, damit die Zeile als "belegt" gilt
+            // Bei Leerzeile: Zeile als "belegt" markieren
             if (row.flag === 'leer') {
+                // Flag-Spalte setzen wenn aktiviert
                 if (enableFlag) {
                     const flagCell = worksheet.cell(newRowNum, flagColumn);
                     copyStyleFromTemplate(flagCell, flagColumn);
                     flagCell.value(' ');
+                } else {
+                    // Wenn Flag deaktiviert, Leerzeichen in erste Datenspalte setzen
+                    // damit die Zeile als "belegt" gilt und nicht überschrieben wird
+                    const firstDataCell = worksheet.cell(newRowNum, startColumn);
+                    copyStyleFromTemplate(firstDataCell, startColumn);
+                    firstDataCell.value(' ');
                 }
                 // Kommentar trotzdem schreiben wenn vorhanden und aktiviert
                 if (enableComment && row.comment) {
@@ -772,6 +770,7 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             // Daten ab Startspalte - row.data ist ein Objekt mit Index als Key
             if (row.data) {
                 const dataKeys = Object.keys(row.data);
+                
                 dataKeys.forEach(key => {
                     const index = parseInt(key);
                     const value = row.data[key];
@@ -779,25 +778,9 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                         const colNumber = startColumn + index;
                         const targetCell = worksheet.cell(newRowNum, colNumber);
                         
-                        // Formatierung kopieren: Priorität 1 = Quelldatei, Priorität 2 = Template aus Zieldatei
-                        let styleApplied = false;
-                        
-                        // Wenn Quelldatei verfügbar und Zeilen-Index bekannt, kopiere Formatierung von dort
-                        if (sourceWorksheet && row.sourceRowIndex && sourceColumns[index] !== undefined) {
-                            try {
-                                const sourceColNumber = sourceColumns[index] + 1; // 0-basiert zu 1-basiert
-                                const sourceCell = sourceWorksheet.cell(row.sourceRowIndex, sourceColNumber);
-                                copyStyleFromSource(targetCell, sourceCell);
-                                styleApplied = true;
-                            } catch (e) {
-                                // Fallback zu Template
-                            }
-                        }
-                        
-                        // Fallback: Template aus Zieldatei verwenden
-                        if (!styleApplied) {
-                            copyStyleFromTemplate(targetCell, colNumber);
-                        }
+                        // Formatierung von Template-Zeile der Zieldatei kopieren
+                        // (Quelldatei kann bedingte Formatierungen nicht liefern)
+                        copyStyleFromTemplate(targetCell, colNumber);
                         
                         const converted = convertValue(value, targetCell);
                         targetCell.value(converted.value);
