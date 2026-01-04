@@ -1191,6 +1191,9 @@
                         <button class="btn btn-primary" id="btnLoadTemplate" style="width: 100%; margin-bottom: 10px;" data-i18n="loadTemplate">
                             📂 Template laden
                         </button>
+                        <button class="btn btn-secondary" id="btnCreateTemplate" style="width: 100%; margin-bottom: 10px;" data-i18n="createTemplateFromSource" title="Erstellt ein leeres Template aus einer Quelldatei mit allen Formatierungen">
+                            🔧 Template aus Quelldatei
+                        </button>
                         <div class="file-info" id="templateInfo" data-i18n="noTemplateLoaded">Kein Template geladen</div>
                         <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;" data-i18n="templateHint">
                             Leere Excel-Vorlage für "📅 Neue Monatsdatei"
@@ -1477,6 +1480,58 @@
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="btnCancelMapping">Abbrechen</button>
                 <button class="btn btn-primary" id="btnSaveMapping">💾 Speichern</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Create Template Modal -->
+    <div class="modal-overlay hidden" id="createTemplateModal">
+        <div class="modal" style="max-width: 550px; resize: none;">
+            <div class="modal-header">
+                <div class="modal-title" data-i18n="createTemplateTitle">🔧 Template aus Quelldatei erstellen</div>
+                <button class="modal-close" id="btnCloseCreateTemplateModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="margin-bottom: 15px; color: var(--text-muted);" data-i18n="createTemplateDesc">
+                    Erstellt ein leeres Template mit allen Formatierungen und bedingten Formatierungen aus der Quelldatei.
+                </p>
+                <div style="margin-bottom: 15px; padding: 10px; background: var(--bg-dark); border-radius: 6px;">
+                    <strong data-i18n="sourceFileLabel">Quelldatei:</strong> <span id="createTemplateSourceName" style="color: var(--text-muted);">-</span>
+                </div>
+                
+                <!-- Extra-Spalten im Template -->
+                <div style="margin-bottom: 15px; padding: 12px; background: var(--bg-dark); border-radius: 6px; border: 1px solid var(--border);">
+                    <label class="config-label" style="margin-bottom: 10px; display: block;" data-i18n="extraColumnsInTemplate">Extra-Spalten im Template erstellen:</label>
+                    <div style="display: flex; gap: 20px;">
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" id="templateFlagColumn" class="green-checkbox" style="margin-right: 8px;">
+                            <span>🏷️ <span data-i18n="flagColumn">Flag-Spalte (A)</span></span>
+                        </label>
+                        <label style="display: flex; align-items: center; cursor: pointer;">
+                            <input type="checkbox" id="templateCommentColumn" class="green-checkbox" style="margin-right: 8px;">
+                            <span>💬 <span data-i18n="commentColumn">Kommentar-Spalte (B)</span></span>
+                        </label>
+                    </div>
+                    <p style="font-size: 10px; color: var(--text-muted); margin-top: 8px;" data-i18n="extraColumnsHint">
+                        Aktivieren, wenn in "Spalten konfigurieren" die entsprechenden Optionen genutzt werden.
+                    </p>
+                </div>
+                
+                <label class="config-label" data-i18n="selectSheets">Arbeitsblätter auswählen:</label>
+                <div id="createTemplateSheetList" style="max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; padding: 10px; margin-bottom: 15px; background: var(--bg-dark);">
+                    <div style="color: var(--text-muted); text-align: center;" data-i18n="loadSourceFirst">Laden Sie zuerst eine Quelldatei</div>
+                </div>
+                <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                    <button class="btn btn-secondary" id="btnSelectAllSheets" style="flex: 1;" data-i18n="selectAll">✓ Alle auswählen</button>
+                    <button class="btn btn-secondary" id="btnDeselectAllSheets" style="flex: 1;" data-i18n="deselectAll">✗ Alle abwählen</button>
+                </div>
+                <p style="font-size: 11px; color: var(--text-muted);" data-i18n="templateInfoText">
+                    💡 Die Header-Zeile wird behalten, alle Datenzeilen werden gelöscht. CF-Regeln werden auf ganze Spalten erweitert.
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btnCancelCreateTemplate" data-i18n="cancel">Abbrechen</button>
+                <button class="btn btn-primary" id="btnConfirmCreateTemplate" data-i18n="createAndSave">🔧 Template erstellen & speichern</button>
             </div>
         </div>
     </div>
@@ -2102,8 +2157,25 @@
                 // Template
                 monthTemplate: '📄 Monats-Template',
                 loadTemplate: '📂 Template laden',
+                createTemplateFromSource: '🔧 Template aus Quelldatei',
                 noTemplateLoaded: 'Kein Template geladen',
                 templateHint: 'Leere Excel-Vorlage für "📅 Neue Monatsdatei"',
+                createTemplateTitle: '🔧 Template aus Quelldatei erstellen',
+                createTemplateDesc: 'Erstellt ein leeres Template mit allen Formatierungen und bedingten Formatierungen aus der Quelldatei.',
+                sourceFileLabel: 'Quelldatei:',
+                selectSheets: 'Arbeitsblätter auswählen:',
+                loadSourceFirst: 'Laden Sie zuerst eine Quelldatei',
+                selectAll: '✓ Alle auswählen',
+                deselectAll: '✗ Alle abwählen',
+                templateInfoText: '💡 Die Header-Zeile wird behalten, alle Datenzeilen werden gelöscht. CF-Regeln werden auf ganze Spalten erweitert.',
+                createAndSave: '🔧 Template erstellen & speichern',
+                templateCreated: 'Template erfolgreich erstellt',
+                sheetsProcessed: 'Arbeitsblätter verarbeitet',
+                cfRulesPreserved: 'CF-Regeln erhalten',
+                extraColumnsInTemplate: 'Extra-Spalten im Template erstellen:',
+                flagColumn: 'Flag-Spalte (A)',
+                commentColumn: 'Kommentar-Spalte (B)',
+                extraColumnsHint: 'Aktivieren, wenn in "Spalten konfigurieren" die entsprechenden Optionen genutzt werden.',
                 
                 // History
                 lastTransfers: '📋 Letzte Übertragungen',
@@ -2235,8 +2307,25 @@
                 // Template
                 monthTemplate: '📄 Month Template',
                 loadTemplate: '📂 Load Template',
+                createTemplateFromSource: '🔧 Template from Source',
                 noTemplateLoaded: 'No template loaded',
                 templateHint: 'Empty Excel template for "📅 New Month File"',
+                createTemplateTitle: '🔧 Create Template from Source',
+                createTemplateDesc: 'Creates an empty template with all formatting and conditional formatting from the source file.',
+                sourceFileLabel: 'Source file:',
+                selectSheets: 'Select worksheets:',
+                loadSourceFirst: 'Load a source file first',
+                selectAll: '✓ Select all',
+                deselectAll: '✗ Deselect all',
+                templateInfoText: '💡 The header row is kept, all data rows are deleted. CF rules are extended to entire columns.',
+                createAndSave: '🔧 Create & save template',
+                templateCreated: 'Template created successfully',
+                sheetsProcessed: 'Worksheets processed',
+                cfRulesPreserved: 'CF rules preserved',
+                extraColumnsInTemplate: 'Create extra columns in template:',
+                flagColumn: 'Flag column (A)',
+                commentColumn: 'Comment column (B)',
+                extraColumnsHint: 'Enable if these options are used in "Configure columns".',
                 
                 // History
                 lastTransfers: '📋 Recent Transfers',
@@ -3313,8 +3402,14 @@
             
             // Template
             btnLoadTemplate: document.getElementById('btnLoadTemplate'),
+            btnCreateTemplate: document.getElementById('btnCreateTemplate'),
             templateInput: document.getElementById('templateInput'),
             templateInfo: document.getElementById('templateInfo'),
+            
+            // Create Template Modal
+            createTemplateModal: document.getElementById('createTemplateModal'),
+            createTemplateSourceName: document.getElementById('createTemplateSourceName'),
+            createTemplateSheetList: document.getElementById('createTemplateSheetList'),
             
             // New Month Modal
             newMonthModal: document.getElementById('newMonthModal'),
@@ -5046,6 +5141,134 @@
             elements.btnNewMonth.disabled = false;
             
             showStatus(elements.transferStatus, `✓ Template geladen: ${result.fileName}`, 'success');
+        }
+        
+        /**
+         * Erstellt ein Template aus einer Quelldatei mit allen Formatierungen
+         * - Öffnet Quelldatei-Dialog
+         * - Zeigt Sheet-Auswahl Modal
+         * - Öffnet Speicher-Dialog für neues Template
+         * - Erstellt leeres Template mit erweiterten CF-Ranges
+         */
+        
+        // State für Template-Erstellung
+        let createTemplateState = {
+            sourcePath: null,
+            sheets: []
+        };
+        
+        async function createTemplateFromSourceElectron() {
+            const lang = localStorage.getItem('excelSyncLanguage') || 'de';
+            const isDE = lang === 'de';
+            
+            // 1. Quelldatei auswählen
+            const sourcePath = await window.electronAPI.openFileDialog({
+                title: isDE ? 'Quelldatei auswählen (mit Formatierungen)' : 'Select source file (with formatting)',
+                filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+            });
+            if (!sourcePath) return;
+            
+            // 2. Datei lesen um Sheets zu bekommen
+            const fileResult = await window.electronAPI.readExcelFile(sourcePath);
+            if (!fileResult.success) {
+                showStatus(elements.transferStatus, `❌ ${isDE ? 'Fehler' : 'Error'}: ${fileResult.error}`, 'error');
+                return;
+            }
+            
+            // State speichern
+            createTemplateState.sourcePath = sourcePath;
+            createTemplateState.sheets = fileResult.sheets;
+            
+            // 3. Modal mit Sheet-Auswahl anzeigen
+            elements.createTemplateSourceName.textContent = fileResult.fileName;
+            
+            // Sheet-Liste aufbauen
+            const sheetListHtml = fileResult.sheets.map((sheetName, index) => `
+                <label style="display: flex; align-items: center; padding: 6px 8px; cursor: pointer; border-radius: 4px; transition: background 0.2s;" 
+                       onmouseover="this.style.background='var(--bg-medium)'" 
+                       onmouseout="this.style.background='transparent'">
+                    <input type="checkbox" class="template-sheet-checkbox" value="${sheetName}" checked 
+                           style="margin-right: 10px; width: 16px; height: 16px; cursor: pointer;">
+                    <span style="flex: 1;">${sheetName}</span>
+                    <span style="color: var(--text-muted); font-size: 11px;">Sheet ${index + 1}</span>
+                </label>
+            `).join('');
+            
+            elements.createTemplateSheetList.innerHTML = sheetListHtml;
+            
+            // Modal anzeigen
+            elements.createTemplateModal.classList.remove('hidden');
+        }
+        
+        async function confirmCreateTemplate() {
+            const lang = localStorage.getItem('excelSyncLanguage') || 'de';
+            const isDE = lang === 'de';
+            
+            // Ausgewählte Sheets sammeln
+            const checkboxes = document.querySelectorAll('.template-sheet-checkbox:checked');
+            const selectedSheets = Array.from(checkboxes).map(cb => cb.value);
+            
+            if (selectedSheets.length === 0) {
+                showStatus(elements.transferStatus, isDE ? '⚠️ Bitte mindestens ein Arbeitsblatt auswählen' : '⚠️ Please select at least one worksheet', 'error');
+                return;
+            }
+            
+            // Extra-Spalten Optionen lesen
+            const addFlagColumn = document.getElementById('templateFlagColumn').checked;
+            const addCommentColumn = document.getElementById('templateCommentColumn').checked;
+            
+            // Modal schließen
+            elements.createTemplateModal.classList.add('hidden');
+            
+            // Speicherort für Template wählen
+            const outputPath = await window.electronAPI.saveFileDialog({
+                title: isDE ? 'Template speichern als' : 'Save template as',
+                defaultPath: createTemplateState.sourcePath.replace('.xlsx', '_Template.xlsx'),
+                filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+            });
+            if (!outputPath) return;
+            
+            // Template erstellen
+            showStatus(elements.transferStatus, isDE ? '⏳ Template wird erstellt...' : '⏳ Creating template...', 'pending');
+            
+            const result = await window.electronAPI.createTemplateFromSource({
+                sourcePath: createTemplateState.sourcePath,
+                outputPath,
+                selectedSheets,
+                addFlagColumn,
+                addCommentColumn
+            });
+            
+            if (!result.success) {
+                showStatus(elements.transferStatus, `❌ ${isDE ? 'Fehler' : 'Error'}: ${result.error}`, 'error');
+                return;
+            }
+            
+            // Erfolgsmeldung mit Stats
+            const stats = result.stats;
+            const extraInfo = stats.extraColumnsAdded > 0 
+                ? (isDE ? `, ${stats.extraColumnsAdded} Extra-Spalte(n)` : `, ${stats.extraColumnsAdded} extra column(s)`)
+                : '';
+            const msg = isDE 
+                ? `✓ Template erstellt: ${result.fileName}\n   (${stats.sheetsProcessed} Sheet(s), ${stats.cfRulesPreserved} CF-Regeln${extraInfo})`
+                : `✓ Template created: ${result.fileName}\n   (${stats.sheetsProcessed} sheet(s), ${stats.cfRulesPreserved} CF rules${extraInfo})`;
+            
+            showStatus(elements.transferStatus, msg, 'success');
+            
+            // Template automatisch laden
+            const loadResult = await window.electronAPI.readExcelFile(outputPath);
+            if (loadResult.success) {
+                state.template.filePath = outputPath;
+                state.template.name = loadResult.fileName;
+                
+                elements.templateInfo.textContent = `✓ ${loadResult.fileName}`;
+                elements.templateInfo.classList.add('loaded');
+                elements.btnNewMonth.disabled = false;
+            }
+        }
+        
+        function closeCreateTemplateModal() {
+            elements.createTemplateModal.classList.add('hidden');
         }
         
         async function applyLoadedConfig(config) {
@@ -7010,6 +7233,17 @@
             document.getElementById('btnCancelNewMonth').onclick = closeNewMonthModal;
             document.getElementById('btnConfirmNewMonth').onclick = confirmNewMonth;
             
+            // Create Template Modal Event Listeners
+            document.getElementById('btnCloseCreateTemplateModal').onclick = closeCreateTemplateModal;
+            document.getElementById('btnCancelCreateTemplate').onclick = closeCreateTemplateModal;
+            document.getElementById('btnConfirmCreateTemplate').onclick = confirmCreateTemplate;
+            document.getElementById('btnSelectAllSheets').onclick = () => {
+                document.querySelectorAll('.template-sheet-checkbox').forEach(cb => cb.checked = true);
+            };
+            document.getElementById('btnDeselectAllSheets').onclick = () => {
+                document.querySelectorAll('.template-sheet-checkbox').forEach(cb => cb.checked = false);
+            };
+            
             // Help Modal Event Listeners
             elements.btnHelp.onclick = () => elements.helpModal.classList.remove('hidden');
             document.getElementById('btnCloseHelpModal').onclick = () => elements.helpModal.classList.add('hidden');
@@ -7035,6 +7269,7 @@
                     elements.helpModal.classList.add('hidden');
                     elements.mappingModal.classList.add('hidden');
                     elements.newMonthModal.classList.add('hidden');
+                    elements.createTemplateModal.classList.add('hidden');
                     document.getElementById('licenseModal').classList.add('hidden');
                     closeDataExplorer();
                 }
@@ -7044,6 +7279,7 @@
             elements.btnLoadFile1.onclick = loadFile1Electron;
             elements.btnLoadFile2.onclick = loadFile2Electron;
             elements.btnLoadTemplate.onclick = loadTemplateElectron;
+            elements.btnCreateTemplate.onclick = createTemplateFromSourceElectron;
             elements.selectSheet1.onchange = (e) => loadSheet1Electron(e.target.value);
             elements.selectSheet2.onchange = (e) => loadSheet2Electron(e.target.value);
             elements.btnImportConfig.onclick = loadConfigFromAppDirOrDialog;

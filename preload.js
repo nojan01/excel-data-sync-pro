@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     copyExcelFile: (params) => ipcRenderer.invoke('excel:copyFile', params),
     exportData: (params) => ipcRenderer.invoke('excel:exportData', params),
     exportWithAllSheets: (params) => ipcRenderer.invoke('excel:exportWithAllSheets', params),
+    createTemplateFromSource: (params) => ipcRenderer.invoke('excel:createTemplateFromSource', params),
     
     // Konfiguration
     saveConfig: (filePath, config) => ipcRenderer.invoke('config:save', { filePath, config }),

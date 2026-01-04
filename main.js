@@ -1164,3 +1164,299 @@ ipcMain.handle('config:loadFromAppDir', async (event) => {
     configLoadingState.pendingPromise = loadConfigAsync();
     return configLoadingState.pendingPromise;
 });
+
+// ============================================
+// TEMPLATE AUS QUELLDATEI ERSTELLEN
+// ============================================
+
+/**
+ * Hilfsfunktion: Konvertiert Spaltennummer zu Spaltenbuchstabe (1=A, 2=B, 27=AA, etc.)
+ */
+function numberToColumnLetter(num) {
+    let result = '';
+    while (num > 0) {
+        num--;
+        result = String.fromCharCode(65 + (num % 26)) + result;
+        num = Math.floor(num / 26);
+    }
+    return result;
+}
+
+/**
+ * Hilfsfunktion: Konvertiert Spaltenbuchstabe zu Nummer (A=1, B=2, AA=27, etc.)
+ */
+function columnLetterToNumber(col) {
+    let result = 0;
+    for (let i = 0; i < col.length; i++) {
+        result = result * 26 + (col.charCodeAt(i) - 64);
+    }
+    return result;
+}
+
+/**
+ * Hilfsfunktion: Verschiebt alle Spaltenreferenzen in einer Zellreferenz um n Spalten
+ * z.B. "A1" + 2 -> "C1", "H1:H100" + 2 -> "J1:J100"
+ */
+function shiftColumnReference(ref, shiftBy) {
+    return ref.replace(/([A-Z]+)(\d+)/g, (match, col, row) => {
+        const colNum = columnLetterToNumber(col);
+        const newCol = numberToColumnLetter(colNum + shiftBy);
+        return newCol + row;
+    });
+}
+
+/**
+ * Hilfsfunktion: Dekodiert XML-Entities (z.B. &amp; -> &)
+ */
+function decodeXmlEntities(str) {
+    return str
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'");
+}
+
+/**
+ * Hilfsfunktion: Enkodiert XML-Entities (z.B. & -> &amp;)
+ */
+function encodeXmlEntities(str) {
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
+
+/**
+ * Erstellt ein leeres Template aus einer Quelldatei.
+ * - Behält nur ausgewählte Sheets
+ * - Fügt optional Flag- und Kommentar-Spalten am Anfang ein
+ * - Behält die erste Zeile (Header) pro Sheet
+ * - Löscht alle Datenzeilen
+ * - Erweitert Conditional Formatting Ranges auf ganze Spalten
+ * - Erhält alle Formatierungen und Stile
+ */
+ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, outputPath, selectedSheets, addFlagColumn, addCommentColumn }) => {
+    // Sicherheitsprüfungen
+    if (!isValidFilePath(sourcePath)) {
+        return { success: false, error: 'Ungültiger Quellpfad' };
+    }
+    if (!isValidFilePath(outputPath)) {
+        return { success: false, error: 'Ungültiger Ausgabepfad' };
+    }
+    
+    // Berechne wie viele Spalten eingefügt werden
+    const extraColumnsCount = (addFlagColumn ? 1 : 0) + (addCommentColumn ? 1 : 0);
+    console.log(`Extra-Spalten: Flag=${addFlagColumn}, Kommentar=${addCommentColumn}, Gesamt=${extraColumnsCount}`);
+    
+    try {
+        const JSZip = require('jszip');
+        
+        // 1. Quelldatei als ZIP lesen
+        const sourceBuffer = fs.readFileSync(sourcePath);
+        const zip = await JSZip.loadAsync(sourceBuffer);
+        
+        // 2. workbook.xml lesen um Sheet-Zuordnungen zu bekommen
+        const workbookXml = await zip.file('xl/workbook.xml').async('string');
+        
+        // Sheet-Namen und rId extrahieren (Namen sind XML-encoded in der Datei)
+        const sheetMatches = [...workbookXml.matchAll(/<sheet[^>]*name="([^"]+)"[^>]*r:id="([^"]+)"[^>]*>/g)];
+        const sheetRels = {};        // XML-encoded Namen -> rId
+        const sheetRelsDecoded = {}; // Dekodierte Namen -> rId
+        const encodedToDecoded = {}; // Mapping encoded -> decoded
+        sheetMatches.forEach(match => {
+            const encodedName = match[1];
+            const decodedName = decodeXmlEntities(encodedName);
+            sheetRels[encodedName] = match[2];       // encoded name -> rId
+            sheetRelsDecoded[decodedName] = match[2]; // decoded name -> rId
+            encodedToDecoded[encodedName] = decodedName;
+        });
+        
+        // 3. workbook.xml.rels lesen um rId -> sheetX.xml Zuordnung zu bekommen
+        const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+        const rIdToFile = {};
+        const relMatches = [...relsXml.matchAll(/Id="([^"]+)"[^>]*Target="([^"]+)"/g)];
+        relMatches.forEach(match => {
+            rIdToFile[match[1]] = match[2].replace(/^\//, ''); // rId -> worksheets/sheetX.xml
+        });
+        
+        // 4. Mapping: SheetName (dekodiert) -> Dateiname erstellen
+        const sheetToFile = {};
+        const sheetToFileEncoded = {}; // Für das Entfernen aus workbook.xml
+        for (const [encodedName, rId] of Object.entries(sheetRels)) {
+            const target = rIdToFile[rId];
+            const decodedName = encodedToDecoded[encodedName];
+            if (target) {
+                const filePath = 'xl/' + target.replace(/^xl\//, '');
+                sheetToFile[decodedName] = filePath;  // Dekodierter Name -> Datei
+                sheetToFileEncoded[encodedName] = filePath; // Encoded Name -> Datei (für XML-Operationen)
+            }
+        }
+        
+        console.log('Sheet-Zuordnung (dekodiert):', sheetToFile);
+        console.log('Ausgewählte Sheets:', selectedSheets);
+        
+        // 5. Sheets identifizieren, die NICHT ausgewählt wurden (vergleiche mit dekodierten Namen)
+        const allDecodedSheetNames = Object.keys(sheetToFile);
+        const sheetsToRemove = allDecodedSheetNames.filter(name => !selectedSheets.includes(name));
+        console.log('Zu entfernende Sheets:', sheetsToRemove);
+        
+        // 6. Nicht ausgewählte Sheets aus workbook.xml entfernen (verwende encoded Namen für XML)
+        let modifiedWorkbookXml = workbookXml;
+        for (const decodedName of sheetsToRemove) {
+            // XML-encoded Name für Regex verwenden
+            const encodedName = encodeXmlEntities(decodedName);
+            const sheetRegex = new RegExp(`<sheet[^>]*name="${encodedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*/>`, 'g');
+            modifiedWorkbookXml = modifiedWorkbookXml.replace(sheetRegex, '');
+        }
+        zip.file('xl/workbook.xml', modifiedWorkbookXml);
+        
+        // 7. Sheet-Dateien der nicht ausgewählten Sheets entfernen
+        for (const decodedName of sheetsToRemove) {
+            const sheetFile = sheetToFile[decodedName];
+            if (sheetFile && zip.files[sheetFile]) {
+                zip.remove(sheetFile);
+                console.log(`Sheet entfernt: ${sheetFile}`);
+            }
+        }
+        
+        // 8. Ausgewählte Worksheets verarbeiten
+        let totalCfRules = 0;
+        let processedSheets = 0;
+        
+        for (const sheetName of selectedSheets) {
+            const sheetFile = sheetToFile[sheetName];
+            if (!sheetFile || !zip.files[sheetFile]) {
+                console.warn(`Sheet-Datei nicht gefunden: ${sheetName} -> ${sheetFile}`);
+                continue;
+            }
+            
+            let sheetXml = await zip.file(sheetFile).async('string');
+            
+            // Anzahl der CF-Regeln zählen
+            const cfMatches = sheetXml.match(/<conditionalFormatting[^>]*>/g) || [];
+            totalCfRules += cfMatches.length;
+            
+            // Wenn Extra-Spalten hinzugefügt werden sollen
+            if (extraColumnsCount > 0) {
+                // A) Alle Zellreferenzen in <c r="..."> verschieben
+                sheetXml = sheetXml.replace(
+                    /<c\s+r="([A-Z]+)(\d+)"/g,
+                    (match, col, row) => {
+                        const newCol = numberToColumnLetter(columnLetterToNumber(col) + extraColumnsCount);
+                        return `<c r="${newCol}${row}"`;
+                    }
+                );
+                
+                // B) Merge-Cells verschieben (falls vorhanden)
+                sheetXml = sheetXml.replace(
+                    /<mergeCell\s+ref="([A-Z]+\d+):([A-Z]+\d+)"/g,
+                    (match, start, end) => {
+                        const newStart = shiftColumnReference(start, extraColumnsCount);
+                        const newEnd = shiftColumnReference(end, extraColumnsCount);
+                        return `<mergeCell ref="${newStart}:${newEnd}"`;
+                    }
+                );
+                
+                // C) Dimension verschieben (falls vorhanden)
+                sheetXml = sheetXml.replace(
+                    /<dimension\s+ref="([A-Z]+\d+):([A-Z]+\d+)"/g,
+                    (match, start, end) => {
+                        // Start bei A1 lassen wenn Extra-Spalten, Ende verschieben
+                        const newEnd = shiftColumnReference(end, extraColumnsCount);
+                        return `<dimension ref="A1:${newEnd}"`;
+                    }
+                );
+                
+                // D) Neue Header-Zellen am Anfang von Zeile 1 einfügen
+                const newCells = [];
+                if (addFlagColumn) {
+                    newCells.push('<c r="A1" t="inlineStr"><is><t>Flag</t></is></c>');
+                }
+                if (addCommentColumn) {
+                    const col = addFlagColumn ? 'B' : 'A';
+                    newCells.push(`<c r="${col}1" t="inlineStr"><is><t>Kommentar</t></is></c>`);
+                }
+                
+                // Füge neue Zellen in Zeile 1 ein
+                if (newCells.length > 0) {
+                    sheetXml = sheetXml.replace(
+                        /(<row[^>]*r="1"[^>]*>)/,
+                        `$1${newCells.join('')}`
+                    );
+                }
+            }
+            
+            // E) Datenzeilen löschen (behalte nur Zeile 1 = Header)
+            sheetXml = sheetXml.replace(
+                /(<sheetData[^>]*>)([\s\S]*?)(<\/sheetData>)/,
+                (match, open, content, close) => {
+                    const headerRowMatch = content.match(/<row[^>]*r="1"[^>]*>[\s\S]*?<\/row>/);
+                    const headerRow = headerRowMatch ? headerRowMatch[0] : '';
+                    return open + headerRow + close;
+                }
+            );
+            
+            // F) Conditional Formatting Ranges auf ganze Spalten erweitern UND verschieben
+            sheetXml = sheetXml.replace(
+                /sqref="([^"]+)"/g,
+                (match, sqref) => {
+                    const ranges = sqref.split(/\s+/);
+                    const columns = new Set();
+                    
+                    for (const range of ranges) {
+                        const colMatch = range.match(/^([A-Z]+)/);
+                        if (colMatch) {
+                            // Spalte um extraColumnsCount verschieben
+                            const originalCol = colMatch[1];
+                            const shiftedCol = extraColumnsCount > 0 
+                                ? numberToColumnLetter(columnLetterToNumber(originalCol) + extraColumnsCount)
+                                : originalCol;
+                            columns.add(shiftedCol);
+                        }
+                    }
+                    
+                    if (columns.size > 0) {
+                        const newSqref = Array.from(columns).map(col => `${col}:${col}`).join(' ');
+                        return `sqref="${newSqref}"`;
+                    }
+                    return match;
+                }
+            );
+            
+            zip.file(sheetFile, sheetXml);
+            processedSheets++;
+        }
+        
+        // 9. Template speichern
+        const outputBuffer = await zip.generateAsync({ 
+            type: 'nodebuffer',
+            compression: 'DEFLATE',
+            compressionOptions: { level: 6 }
+        });
+        
+        fs.writeFileSync(outputPath, outputBuffer);
+        
+        console.log(`Template erstellt: ${outputPath}`);
+        console.log(`Sheets verarbeitet: ${processedSheets}`);
+        console.log(`CF-Regeln erhalten: ${totalCfRules}`);
+        console.log(`Extra-Spalten hinzugefügt: ${extraColumnsCount}`);
+        
+        return { 
+            success: true, 
+            message: 'Template erfolgreich erstellt',
+            fileName: path.basename(outputPath),
+            stats: {
+                sheetsProcessed: processedSheets,
+                cfRulesPreserved: totalCfRules,
+                extraColumnsAdded: extraColumnsCount
+            }
+        };
+        
+    } catch (error) {
+        console.error('Fehler beim Erstellen des Templates:', error);
+        return { success: false, error: error.message };
+    }
+});
