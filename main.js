@@ -104,6 +104,10 @@ function isValidFilePath(filePath) {
 // FENSTER ERSTELLEN
 // ============================================
 function createWindow() {
+    // Plattformspezifisches Icon
+    const iconFile = process.platform === 'darwin' ? 'icon.icns' : 
+                     process.platform === 'win32' ? 'icon.ico' : 'icon.png';
+    
     mainWindow = new BrowserWindow({
         width: 1600,
         height: 1000,
@@ -115,9 +119,9 @@ function createWindow() {
         fullscreen: false,  // Explizit kein Vollbild
         simpleFullscreen: false,  // Kein einfacher Vollbildmodus
         title: 'Excel Data Sync Pro',
-        icon: path.join(__dirname, 'assets', 'icon.ico'),
+        icon: path.join(__dirname, 'assets', iconFile),
         frame: true,
-        // Wichtig f�r korrekte Dialog-Darstellung
+        // Wichtig für korrekte Dialog-Darstellung
         useContentSize: false,
         webPreferences: {
             nodeIntegration: false,
