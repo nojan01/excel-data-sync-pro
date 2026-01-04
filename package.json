@@ -1,7 +1,7 @@
 {
-  "name": "mvms-tool",
-  "version": "1.0.5",
-  "description": "MVMS-Vertragslisten Tool",
+  "name": "excel-data-sync-pro",
+  "version": "1.0.6",
+  "description": "Excel Data Sync Pro - Daten zwischen Excel-Dateien synchronisieren",
   "main": "main.js",
   "license": "MIT",
   "scripts": {
@@ -16,8 +16,8 @@
     "build:installer": "electron-builder --win nsis --x64"
   },
   "build": {
-    "appId": "de.mvms.tool",
-    "productName": "MVMS-Tool",
+    "appId": "de.excelsync.pro",
+    "productName": "Excel Data Sync Pro",
     "directories": {
       "output": "dist"
     },
@@ -56,12 +56,12 @@
       "installerIcon": "assets/icon.ico",
       "uninstallerIcon": "assets/icon.ico",
       "installerHeaderIcon": "assets/icon.ico",
-      "artifactName": "MVMS-Tool-${version}-Setup.exe",
-      "shortcutName": "MVMS-Tool",
+      "artifactName": "Excel-Data-Sync-Pro-${version}-Setup.exe",
+      "shortcutName": "Excel Data Sync Pro",
       "perMachine": false
     },
     "portable": {
-      "artifactName": "MVMS-Tool-${arch}.exe"
+      "artifactName": "Excel-Data-Sync-Pro-${arch}.exe"
     }
   },
   "author": "Norbert Jander",

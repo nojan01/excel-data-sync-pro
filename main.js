@@ -114,7 +114,7 @@ function createWindow() {
         fullscreenable: true,
         fullscreen: false,  // Explizit kein Vollbild
         simpleFullscreen: false,  // Kein einfacher Vollbildmodus
-        title: 'MVMS-Tool',
+        title: 'Excel Data Sync Pro',
         icon: path.join(__dirname, 'assets', 'icon.ico'),
         frame: true,
         // Wichtig f�r korrekte Dialog-Darstellung
@@ -529,7 +529,7 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
 });
 
 // Zeilen in Excel einfuegen (MIT Formatierungserhalt dank xlsx-populate!)
-ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, startColumn }) => {
+ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, startColumn, enableFlag = true, enableComment = true, flagColumn = 1, commentColumn = 2, sourceFilePath = null, sourceSheetName = null, sourceColumns = [] }) => {
     // Sicherheitsprüfung: Pfad validieren
     if (!isValidFilePath(filePath)) {
         return { success: false, error: 'Ungültiger Dateipfad' };
@@ -541,6 +541,18 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         
         if (!worksheet) {
             return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
+        }
+        
+        // Quelldatei öffnen für Formatierungskopie (wenn vorhanden)
+        let sourceWorkbook = null;
+        let sourceWorksheet = null;
+        if (sourceFilePath && isValidFilePath(sourceFilePath)) {
+            try {
+                sourceWorkbook = await XlsxPopulate.fromFileAsync(sourceFilePath);
+                sourceWorksheet = sourceWorkbook.sheet(sourceSheetName || 0);
+            } catch (e) {
+                console.log('Quelldatei für Formatierung nicht verfügbar:', e.message);
+            }
         }
         
         // Hilfsfunktion: Deutsches Datum zu Excel-Datum konvertieren
@@ -656,7 +668,9 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             
             // Pr�fe ab Zeile 2, ob es Daten gibt
             for (let row = 2; row <= endRow; row++) {
-                const flagCell = worksheet.cell(row, 1).value();
+                // Prüfe Flag-Spalte (wenn aktiviert) oder Datenspalte
+                const checkCol = enableFlag ? flagColumn : startColumn;
+                const flagCell = worksheet.cell(row, checkCol).value();
                 const dataCell = worksheet.cell(row, startColumn).value();
                 
                 // Zeile ist leer wenn beide Zellen leer sind
@@ -678,30 +692,81 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         // Spaltenformate vorab ermitteln
         const columnFormats = {};
         
+        // Formatierungsvorlage: Letzte belegte Zeile vor der Einfügeposition
+        const templateRow = insertRow > 2 ? insertRow - 1 : 2;
+        
+        // Hilfsfunktion: Kopiere Zellformatierung von einer Quellzelle
+        function copyStyleFromSource(targetCell, sourceCell) {
+            if (!sourceCell) return;
+            
+            try {
+                // Verfügbare Styles in xlsx-populate
+                const styles = [
+                    'bold', 'italic', 'underline', 'strikethrough',
+                    'fontFamily', 'fontSize', 'fontColor',
+                    'horizontalAlignment', 'verticalAlignment',
+                    'wrapText', 'fill', 'numberFormat'
+                ];
+                
+                styles.forEach(styleName => {
+                    try {
+                        const styleValue = sourceCell.style(styleName);
+                        if (styleValue !== undefined && styleValue !== null) {
+                            targetCell.style(styleName, styleValue);
+                        }
+                    } catch (e) {
+                        // Ignoriere Fehler bei einzelnen Styles
+                    }
+                });
+            } catch (e) {
+                // Ignoriere Fehler beim Kopieren der Formatierung
+            }
+        }
+        
+        // Hilfsfunktion: Kopiere Zellformatierung von Template-Zeile der Zieldatei
+        function copyStyleFromTemplate(targetCell, colNumber) {
+            try {
+                const templateCell = worksheet.cell(templateRow, colNumber);
+                copyStyleFromSource(targetCell, templateCell);
+            } catch (e) {
+                // Ignoriere Fehler
+            }
+        }
+        
         // Neue Zeilen einfuegen
         let insertedCount = 0;
         for (const row of rows) {
             const newRowNum = insertRow + insertedCount;
             
-            // Bei Leerzeile: Leerzeichen in Spalte A setzen, damit die Zeile als "belegt" gilt
+            // Bei Leerzeile: Leerzeichen in Flag-Spalte setzen, damit die Zeile als "belegt" gilt
             if (row.flag === 'leer') {
-                worksheet.cell(newRowNum, 1).value(' ');
-                // Kommentar trotzdem schreiben wenn vorhanden
-                if (row.comment) {
-                    worksheet.cell(newRowNum, 2).value(row.comment);
+                if (enableFlag) {
+                    const flagCell = worksheet.cell(newRowNum, flagColumn);
+                    copyStyleFromTemplate(flagCell, flagColumn);
+                    flagCell.value(' ');
+                }
+                // Kommentar trotzdem schreiben wenn vorhanden und aktiviert
+                if (enableComment && row.comment) {
+                    const commentCell = worksheet.cell(newRowNum, commentColumn);
+                    copyStyleFromTemplate(commentCell, commentColumn);
+                    commentCell.value(row.comment);
                 }
                 insertedCount++;
                 continue;
             }
             
-            // Flag in Spalte A
-            if (row.flag) {
-                worksheet.cell(newRowNum, 1).value(row.flag);
+            // Flag in konfigurierter Spalte (nur wenn aktiviert)
+            if (enableFlag && row.flag) {
+                const flagCell = worksheet.cell(newRowNum, flagColumn);
+                copyStyleFromTemplate(flagCell, flagColumn);
+                flagCell.value(row.flag);
             }
             
-            // Kommentar in Spalte B
-            if (row.comment) {
-                worksheet.cell(newRowNum, 2).value(row.comment);
+            // Kommentar in konfigurierter Spalte (nur wenn aktiviert)
+            if (enableComment && row.comment) {
+                const commentCell = worksheet.cell(newRowNum, commentColumn);
+                copyStyleFromTemplate(commentCell, commentColumn);
+                commentCell.value(row.comment);
             }
             
             // Daten ab Startspalte - row.data ist ein Objekt mit Index als Key
@@ -713,14 +778,34 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                     if (value !== null && value !== undefined && value !== '') {
                         const colNumber = startColumn + index;
                         const targetCell = worksheet.cell(newRowNum, colNumber);
-                        const converted = convertValue(value, targetCell);
                         
+                        // Formatierung kopieren: Priorität 1 = Quelldatei, Priorität 2 = Template aus Zieldatei
+                        let styleApplied = false;
+                        
+                        // Wenn Quelldatei verfügbar und Zeilen-Index bekannt, kopiere Formatierung von dort
+                        if (sourceWorksheet && row.sourceRowIndex && sourceColumns[index] !== undefined) {
+                            try {
+                                const sourceColNumber = sourceColumns[index] + 1; // 0-basiert zu 1-basiert
+                                const sourceCell = sourceWorksheet.cell(row.sourceRowIndex, sourceColNumber);
+                                copyStyleFromSource(targetCell, sourceCell);
+                                styleApplied = true;
+                            } catch (e) {
+                                // Fallback zu Template
+                            }
+                        }
+                        
+                        // Fallback: Template aus Zieldatei verwenden
+                        if (!styleApplied) {
+                            copyStyleFromTemplate(targetCell, colNumber);
+                        }
+                        
+                        const converted = convertValue(value, targetCell);
                         targetCell.value(converted.value);
                         
-                        // Wenn es ein Datum ist und die Zelle kein Format hat, 
-                        // versuche das Format aus der Spalte zu �bernehmen
+                        // Wenn es ein Datum ist, prüfe ob schon ein Format von Template kopiert wurde
                         if (converted.isDate) {
                             const currentFormat = targetCell.style('numberFormat');
+                            // Nur setzen wenn kein Format vorhanden (Template hatte auch keins)
                             if (!currentFormat || currentFormat === 'General') {
                                 // Spaltenformat aus Cache oder neu ermitteln
                                 if (!(colNumber in columnFormats)) {
@@ -735,6 +820,7 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                                     targetCell.style('numberFormat', 'DD.MM.YYYY');
                                 }
                             }
+                            // Wenn Format vom Template/Source kopiert wurde, behalte es!
                         }
                     }
                 });
@@ -1032,7 +1118,7 @@ ipcMain.handle('config:loadFromAppDir', async (event) => {
             
             // 3. Dokumente-Ordner des Benutzers
             possiblePaths.push(path.join(documentsDir, 'config.json'));
-            possiblePaths.push(path.join(documentsDir, 'MVMS-Tool', 'config.json'));
+            possiblePaths.push(path.join(documentsDir, 'Excel-Data-Sync-Pro', 'config.json'));
             
             // 4. Downloads-Ordner des Benutzers
             possiblePaths.push(path.join(downloadsDir, 'config.json'));

@@ -4,14 +4,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self';">
-    <title>MVMS-Vertragslisten aktualisieren</title>
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='12' fill='%231565C0'/><text x='50' y='32' font-size='18' font-weight='bold' text-anchor='middle' fill='white'>MVMS</text><g transform='translate(50,62) scale(0.9)'><path d='M0,-30 L3,-25 L3,20 L0,28 L-3,20 L-3,-25 Z' fill='white'/><path d='M3,0 L38,15 L35,18 L3,8 Z' fill='white'/><path d='M-3,0 L-38,15 L-35,18 L-3,8 Z' fill='white'/><path d='M3,-18 L18,-12 L16,-10 L3,-14 Z' fill='white'/><path d='M-3,-18 L-18,-12 L-16,-10 L-3,-14 Z' fill='white'/><path d='M2,18 L5,10 L5,20 L2,24 Z' fill='white'/><path d='M-2,18 L-5,10 L-5,20 L-2,24 Z' fill='white'/></g></svg>">
+    <title>Excel Data Sync Pro</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='12' fill='%23217346'/><text x='50' y='38' font-size='32' font-weight='bold' text-anchor='middle' fill='white'>X</text><text x='50' y='68' font-size='12' font-weight='bold' text-anchor='middle' fill='white'>SYNC</text></svg>">
     <!-- Electron-Modus: Excel wird via Node.js xlsx-populate geladen (erhält Formatierung) -->
     <style>
         :root {
-            --primary: #1565C0;
-            --primary-dark: #0D47A1;
-            --primary-light: #1E88E5;
+            --primary: #217346;
+            --primary-dark: #0d5c35;
+            --primary-light: #2e8b57;
             --bg-dark: #1e1e1e;
             --bg-medium: #252526;
             --bg-light: #2d2d30;
@@ -23,6 +23,13 @@
             --warning: #ff9800;
             --error: #f44336;
             --info: #2196f3;
+        }
+        
+        /* Grüne Checkboxen */
+        .green-checkbox {
+            width: 16px;
+            height: 16px;
+            accent-color: var(--primary);
         }
         
         /* Light Theme */
@@ -636,6 +643,33 @@
             background: rgba(0, 123, 255, 0.05);
         }
         
+        /* Row Selection Styles */
+        .results-table tr.row-selected {
+            background: rgba(33, 115, 70, 0.1) !important;
+        }
+        
+        .results-table tr.row-selected:hover {
+            background: rgba(33, 115, 70, 0.15) !important;
+        }
+        
+        .row-select-checkbox {
+            cursor: pointer;
+            accent-color: var(--primary);
+            width: 16px;
+            height: 16px;
+        }
+        
+        .row-checkbox-cell {
+            text-align: center;
+            padding: 8px;
+            background: var(--bg-medium) !important;
+            border-right: 1px solid var(--border);
+        }
+        
+        .row-checkbox-cell.selected {
+            background: rgba(33, 115, 70, 0.3) !important;
+        }
+        
         .row-select {
             width: 18px;
             height: 18px;
@@ -1079,8 +1113,8 @@
     <!-- Header -->
     <header class="header">
         <div class="logo">
-            <div class="logo-icon" style="font-size: 10px; line-height: 1.2;">✈</div>
-            <span>MVMS-Vertragslisten aktualisieren</span>
+            <div class="logo-icon" style="font-size: 16px; line-height: 1.2;">📊</div>
+            <span>Excel Data Sync Pro</span>
         </div>
         <div class="header-actions">
             <button class="btn btn-primary" id="btnImportConfig" title="Gemeinsame config.json aus Programmordner laden">
@@ -1343,7 +1377,7 @@
                             📤 Export zur Zieldatei
                         </button>
                         <button class="btn btn-primary" id="btnDataExplorer" disabled title="Datenexplorer - Zieldatei anzeigen und exportieren">
-                            📊 Datenexplorer
+                            Datenexplorer
                         </button>
                         <button class="btn btn-primary" id="btnNewMonth" disabled title="Erstellt neue Monatsdatei aus Template">
                             📅 Neue Monatsdatei
@@ -1372,16 +1406,16 @@
             <div class="modal-body">
                 <p style="margin-bottom: 15px; color: var(--text-muted);">
                     Wählen Sie, welche Spalten aus Datei 1 in welche Spalten von Datei 2 kopiert werden sollen.
-                    Spalte 1 und 2 in Datei 2 sind für Flag und Kommentar reserviert.
                 </p>
                 
                 <div class="config-group">
                     <label class="config-label">Start-Spalte in Datei 2 (für Quelldaten):</label>
-                    <select class="config-select" id="targetStartColumn">
-                        <option value="3">Spalte 3 (C)</option>
-                        <option value="4">Spalte 4 (D)</option>
-                        <option value="5">Spalte 5 (E)</option>
-                    </select>
+                    <div id="targetStartColumnDisplay" style="padding: 8px 12px; background: var(--bg-light); border-radius: 6px; font-weight: bold; color: var(--excel-green);">
+                        Spalte C (automatisch berechnet)
+                    </div>
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
+                        📌 Die Start-Spalte wird automatisch berechnet: Flag + Kommentar Spalten werden vorangestellt.
+                    </div>
                 </div>
                 
                 <div class="config-group">
@@ -1398,6 +1432,44 @@
                 <button class="btn btn-primary" id="btnAddMapping" style="margin-top: 10px;">
                     ➕ Spalte hinzufügen
                 </button>
+                
+                <!-- Extra-Spalten Konfiguration -->
+                <div class="config-section-title" style="margin-top: 25px; padding-top: 15px; border-top: 1px solid var(--border);">
+                    📝 Extra-Spalten (optional)
+                </div>
+                <p style="margin-bottom: 15px; color: var(--text-muted); font-size: 13px;">
+                    Zusätzliche Spalten für Flag-Markierungen und Kommentare. Diese werden separat von den Quelldaten in die Zieldatei geschrieben.
+                </p>
+                
+                <!-- Flag-Spalte -->
+                <div class="extra-column-config" style="background: var(--bg-light); padding: 12px; border-radius: 6px; margin-bottom: 10px;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                        <input type="checkbox" id="enableFlagColumn" class="green-checkbox">
+                        <label style="font-weight: bold; cursor: pointer;" for="enableFlagColumn">🏷️ Flag-Spalte</label>
+                        <span id="flagColumnDisplay" style="color: var(--text-muted); font-size: 12px; margin-left: auto;">→ Spalte A</span>
+                    </div>
+                    <div id="flagColumnConfig" style="display: flex; flex-wrap: wrap; gap: 10px; padding-left: 26px;">
+                        <div style="flex: 1; min-width: 200px;">
+                            <label class="config-label" style="font-size: 12px;">Verfügbare Werte (kommagetrennt):</label>
+                            <input type="text" class="search-input" id="flagValues" value="A,D,C,leer" style="font-size: 13px; padding: 6px 10px;" placeholder="z.B. A,D,C,leer">
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Kommentar-Spalte -->
+                <div class="extra-column-config" style="background: var(--bg-light); padding: 12px; border-radius: 6px;">
+                    <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+                        <input type="checkbox" id="enableCommentColumn" class="green-checkbox">
+                        <label style="font-weight: bold; cursor: pointer;" for="enableCommentColumn">💬 Kommentar-Spalte</label>
+                        <span id="commentColumnDisplay" style="color: var(--text-muted); font-size: 12px; margin-left: auto;">→ Spalte B</span>
+                    </div>
+                    <div id="commentColumnConfig" style="display: flex; flex-wrap: wrap; gap: 10px; padding-left: 26px;">
+                        <div style="flex: 1; min-width: 200px;">
+                            <label class="config-label" style="font-size: 12px;">Platzhalter-Text:</label>
+                            <input type="text" class="search-input" id="commentPlaceholder" value="Freier Text..." style="font-size: 13px; padding: 6px 10px;" placeholder="Platzhalter für Eingabefeld">
+                        </div>
+                    </div>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="btnCancelMapping">Abbrechen</button>
@@ -1434,7 +1506,7 @@
     <div class="modal-overlay hidden" id="helpModal">
         <div class="modal" style="max-width: 800px;">
             <div class="modal-header">
-                <div class="modal-title">❓ Hilfe - MVMS-Vertragslisten aktualisieren</div>
+                <div class="modal-title">❓ Hilfe - Excel Data Sync Pro</div>
                 <button class="modal-close" id="btnCloseHelpModal">&times;</button>
             </div>
             <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
@@ -1515,14 +1587,69 @@
                 </p>
                 
                 <h3 style="margin-bottom: 10px;">📊 Datenexplorer</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Der Datenexplorer ist ein leistungsstarkes Werkzeug zum Öffnen, Durchsuchen, Bearbeiten und Filtern von Excel-Dateien.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📂 Datei öffnen</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    • Klicken Sie auf "📊 Datenexplorer" und dann "📂 Datei öffnen"<br>
+                    • Wählen Sie das gewünschte Arbeitsblatt aus dem Dropdown
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">🔍 Suche & Filter</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Volltextsuche:</strong> Durchsucht alle Spalten mit Platzhalter-Unterstützung (* und ?)<br>
+                    <strong>Spaltenfilter:</strong> Klicken Sie auf "+ Filter hinzufügen" für gezielte Filterung:<br>
+                </p>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 15px; margin: 0 0 10px 15px; font-size: 13px;">
+                    <code>enthält / enthält nicht</code><span>Teilstring-Suche</span>
+                    <code>gleich / ungleich</code><span>Exakte Übereinstimmung</span>
+                    <code>beginnt mit / endet mit</code><span>Position im Text</span>
+                    <code>ist leer / ist nicht leer</code><span>Leere Zellen finden</span>
+                    <code>&gt; / &lt; / &gt;= / &lt;=</code><span>Numerische Vergleiche</span>
+                </div>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📋 Spalten verwalten</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Spalten ein-/ausblenden:</strong> Über "Spalten" → Checkboxen aktivieren/deaktivieren<br>
+                    <strong>Sortierung:</strong> Rechtsklick auf Spaltenüberschrift öffnet Kontextmenü mit Sortieroptionen:<br>
+                </p>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 15px; margin: 0 0 10px 15px; font-size: 13px;">
+                    <code>A→Z / Z→A</code><span>Alphabetische Sortierung</span>
+                    <code>0→9 / 9→0</code><span>Numerische Sortierung</span>
+                    <code>Datum ↑ / Datum ↓</code><span>Datumsortierung (deutsches Format)</span>
+                </div>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Drag & Drop:</strong> Spalten per Drag & Drop neu anordnen
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">✏️ Zellen bearbeiten</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Alle Zellen sind <strong>direkt editierbar</strong>! Klicken Sie in eine Zelle und ändern Sie den Wert.<br>
+                    Bearbeitete Zellen werden <span style="background: rgba(255, 193, 7, 0.3); padding: 2px 6px; border-radius: 3px;">gelb markiert</span>.<br>
+                    <strong>Strg+Z / Strg+Y:</strong> Änderungen rückgängig machen / wiederherstellen
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">🎨 Zeilen markieren</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Rechtsklick auf Zeile:</strong> Öffnet Kontextmenü zur farbigen Markierung<br>
+                    Verfügbare Farben: 🟢 Grün, 🟡 Gelb, 🟠 Orange, 🔴 Rot, 🔵 Blau, 🟣 Lila<br>
+                    Markierungen helfen beim visuellen Organisieren und bleiben beim Filtern erhalten.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">👁️ Vorschau</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Klicken Sie auf "👁️ Vorschau" um das gesamte Datenblatt mit allen Änderungen zu sehen,<br>
+                    bevor Sie exportieren. Bearbeitete Zellen werden hervorgehoben.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📤 Export</h4>
                 <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
-                    Der Datenexplorer ermöglicht es, Excel-Dateien zu öffnen, zu durchsuchen und zu filtern:<br>
-                    • <strong>Volltextsuche:</strong> Durchsucht alle Spalten<br>
-                    • <strong>Spaltenfilter:</strong> Filtern nach bestimmten Spalten mit verschiedenen Operatoren<br>
-                    • <strong>Spalten ein-/ausblenden:</strong> Nur relevante Spalten anzeigen<br>
-                    • <strong>Spalten-Sortierung:</strong> Klick auf Spaltenüberschrift zum Sortieren (⬆/⬇)<br>
-                    • <strong>Zeilen-Markierung:</strong> Rechtsklick auf Zeile zum farbigen Markieren<br>
-                    • <strong>Export:</strong> Gefilterte Daten als neue Excel-Datei speichern
+                    <strong>Exportieren:</strong> Speichert die gefilterten Daten als neue Excel-Datei<br>
+                    • Alle Bearbeitungen werden übernommen<br>
+                    • Alle anderen Arbeitsblätter der Quelldatei bleiben erhalten<br>
+                    • Nur sichtbare Spalten werden exportiert
                 </p>
                 
                 <h3 style="margin-bottom: 10px;">💾 Konfiguration</h3>
@@ -1578,8 +1705,8 @@
                 <button class="modal-close" id="btnCloseLicenseModal">&times;</button>
             </div>
             <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
-                <!-- MVMS-Tool License -->
-                <h3 style="margin-bottom: 10px;">🛡️ MVMS-Tool Lizenz</h3>
+                <!-- Excel Data Sync Pro License -->
+                <h3 style="margin-bottom: 10px;">🛡️ Excel Data Sync Pro Lizenz</h3>
                 <div style="background: var(--bg-lighter); padding: 15px; border-radius: 6px; margin-bottom: 20px; font-family: monospace; font-size: 12px; line-height: 1.6;">
                     <strong>MIT License</strong><br><br>
                     Copyright (c) 2025 Norbert Jander<br><br>
@@ -1634,7 +1761,7 @@
                 
                 <!-- Third Party Licenses -->
                 <h3 style="margin-bottom: 10px;">📦 <span data-i18n="thirdPartyLicenses">Drittanbieter-Lizenzen</span></h3>
-                <p style="color: var(--text-muted); margin-bottom: 15px;" data-i18n="thirdPartyDesc">MVMS-Tool verwendet folgende Open-Source-Bibliotheken:</p>
+                <p style="color: var(--text-muted); margin-bottom: 15px;" data-i18n="thirdPartyDesc">Excel Data Sync Pro verwendet folgende Open-Source-Bibliotheken:</p>
                 
                 <div style="display: flex; flex-direction: column; gap: 10px;">
                     <!-- Electron -->
@@ -1727,6 +1854,37 @@
         </div>
     </div>
 
+    <!-- Column Context Menu for Data Explorer -->
+    <div id="columnContextMenu" class="context-menu hidden" style="display: none; position: fixed; z-index: 10000; background: var(--bg-medium); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.3); min-width: 180px; padding: 4px 0;">
+        <div class="context-menu-header" style="padding: 8px 12px; font-weight: bold; color: var(--text-muted); font-size: 12px; border-bottom: 1px solid var(--border);">
+            Spalte: <span id="contextMenuColumnName">-</span>
+        </div>
+        <div class="context-menu-item" data-action="sort-alpha-asc" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <span>🔤</span> Alphabetisch A → Z
+        </div>
+        <div class="context-menu-item" data-action="sort-alpha-desc" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <span>🔤</span> Alphabetisch Z → A
+        </div>
+        <div class="context-menu-divider" style="height: 1px; background: var(--border); margin: 4px 0;"></div>
+        <div class="context-menu-item" data-action="sort-num-asc" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <span>🔢</span> Numerisch 1 → 9
+        </div>
+        <div class="context-menu-item" data-action="sort-num-desc" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <span>🔢</span> Numerisch 9 → 1
+        </div>
+        <div class="context-menu-divider" style="height: 1px; background: var(--border); margin: 4px 0;"></div>
+        <div class="context-menu-item" data-action="sort-date-asc" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <span>📅</span> Datum Alt → Neu
+        </div>
+        <div class="context-menu-item" data-action="sort-date-desc" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <span>📅</span> Datum Neu → Alt
+        </div>
+        <div class="context-menu-divider" style="height: 1px; background: var(--border); margin: 4px 0;"></div>
+        <div class="context-menu-item" data-action="hide-column" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <span>👁️‍🗨️</span> Spalte ausblenden
+        </div>
+    </div>
+
     <!-- Data Explorer Modal -->
     <div class="modal-overlay hidden" id="dataExplorerModal">
         <div class="modal modal-large" style="max-width: 95vw; width: 1400px; max-height: 90vh; min-width: 600px; min-height: 400px;">
@@ -1756,6 +1914,9 @@
                     <button class="btn btn-primary" id="btnToggleColumns" title="Spalten ein-/ausblenden">
                         👁️ Spalten
                     </button>
+                    <button class="btn btn-primary" id="btnExplorerPreview" title="Vorschau des gesamten Datenblattes mit Änderungen" disabled>
+                        👁️ Vorschau
+                    </button>
                     <button class="btn btn-primary" id="btnExplorerExport">
                         💾 Als XLSX exportieren
                     </button>
@@ -1778,6 +1939,22 @@
                         <button class="btn btn-secondary btn-sm" id="btnHideAllColumns">Alle ausblenden</button>
                     </div>
                     <div id="columnToggles" style="display: flex; flex-wrap: wrap; gap: 8px; max-height: 200px; overflow-y: auto;"></div>
+                </div>
+                
+                <!-- Row Move Toolbar (initially hidden) -->
+                <div id="rowMoveToolbar" style="display: none; gap: 10px; padding: 12px; background: linear-gradient(135deg, #217346 0%, #1a5c38 100%); border-radius: 6px; align-items: center; flex-wrap: wrap; flex-shrink: 0;">
+                    <span style="color: white; font-weight: 600;">🔀 <span id="selectedRowCount">0</span> Zeile(n) ausgewählt</span>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <span style="color: white;">Verschieben:</span>
+                        <select id="movePosition" class="config-select" style="min-width: 80px; padding: 4px 8px;">
+                            <option value="before">Vor</option>
+                            <option value="after">Nach</option>
+                        </select>
+                        <span style="color: white;">Zeile</span>
+                        <input type="number" id="moveTargetRow" class="config-input" style="width: 80px; padding: 4px 8px;" min="1" placeholder="Nr.">
+                        <button class="btn btn-sm" id="btnExecuteMove" style="background: white; color: #217346; font-weight: 600;">✓ Verschieben</button>
+                    </div>
+                    <button class="btn btn-sm" id="btnClearRowSelection" style="background: rgba(255,255,255,0.2); color: white; margin-left: auto;">✕ Auswahl aufheben</button>
                 </div>
                 
                 <!-- Results Info -->
@@ -1819,6 +1996,51 @@
         </div>
     </div>
     
+    <!-- Explorer Preview Modal -->
+    <div class="modal-overlay hidden" id="explorerPreviewModal">
+        <div class="modal" style="max-width: 95vw; width: 1600px; max-height: 95vh;">
+            <div class="modal-header">
+                <div class="modal-title">👁️ Vorschau: <span id="previewFileName">-</span> - <span id="previewSheetName">-</span></div>
+                <button class="modal-close" id="btnClosePreviewX">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 15px; display: flex; flex-direction: column; gap: 15px; max-height: calc(95vh - 120px); overflow: hidden;">
+                <!-- Info -->
+                <div style="display: flex; gap: 20px; flex-wrap: wrap; padding: 12px; background: var(--bg-light); border-radius: 6px; border-left: 4px solid var(--primary);">
+                    <div>
+                        <strong>Zeilen:</strong> <span id="previewRowCount">0</span>
+                    </div>
+                    <div>
+                        <strong>Spalten:</strong> <span id="previewColCount">0</span>
+                    </div>
+                    <div>
+                        <strong>Bearbeitete Zellen:</strong> <span id="previewEditCount" style="color: var(--warning);">0</span>
+                    </div>
+                </div>
+                
+                <!-- Legende -->
+                <div style="display: flex; gap: 15px; align-items: center; flex-wrap: wrap;">
+                    <span style="font-weight: 600;">Legende:</span>
+                    <span style="display: flex; align-items: center; gap: 6px;">
+                        <span style="display: inline-block; width: 20px; height: 20px; background: rgba(255, 193, 7, 0.3); border: 2px solid #FFC107; border-radius: 3px;"></span>
+                        <span style="font-size: 13px;">Bearbeitete Zelle</span>
+                    </span>
+                    <span style="display: flex; align-items: center; gap: 6px;">
+                        <span style="display: inline-block; width: 20px; height: 20px; background: var(--bg-light); border: 1px solid var(--border); border-radius: 3px;"></span>
+                        <span style="font-size: 13px;">Unverändert</span>
+                    </span>
+                </div>
+                
+                <!-- Tabellen-Container -->
+                <div id="previewTableContainer" style="flex: 1; overflow: auto; background: var(--bg-dark); border-radius: 6px; border: 1px solid var(--border);">
+                    <!-- Wird dynamisch gefüllt -->
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end;">
+                <button class="btn btn-secondary" id="btnClosePreview">Schließen</button>
+            </div>
+        </div>
+    </div>
+    
     <!-- Filter Template für Explorer -->
     <template id="explorerFilterTemplate">
         <div class="explorer-filter-row" style="display: flex; gap: 10px; align-items: center; padding: 8px; background: var(--bg-dark); border-radius: 4px;">
@@ -1846,7 +2068,7 @@
         const translations = {
             de: {
                 // Header
-                appTitle: 'MVMS-Vertragslisten aktualisieren',
+                appTitle: 'Excel Data Sync Pro',
                 loadConfig: '📂 config.json laden',
                 saveConfig: '💾 config.json speichern',
                 help: '❓ Hilfe',
@@ -1911,7 +2133,7 @@
                 rows: 'Zeilen',
                 clear: '🗑️ Leeren',
                 directTransfer: '✅ Direkt übertragen',
-                dataExplorer: '📊 Datenexplorer',
+                dataExplorer: 'Datenexplorer',
                 newMonthFile: '📅 Neue Monatsdatei',
                 noRowsInQueue: 'Keine Zeilen in der Warteschlange',
                 
@@ -1931,7 +2153,7 @@
                 configFirst: 'Bitte zuerst Spalten konfigurieren',
                 
                 // Data Explorer
-                explorerTitle: '📊 Datenexplorer',
+                explorerTitle: 'Datenexplorer',
                 noFileLoadedExplorer: 'Keine Datei geladen',
                 openFile: '📂 Datei öffnen',
                 fullTextSearch: 'Volltextsuche:',
@@ -1964,17 +2186,22 @@
                 // Footer
                 copyright: '© Norbert Jander 2025 · v1.0.5',
                 
+                // Extra Columns
+                extraColumns: 'Extra-Spalten',
+                enableFlag: 'Flag-Spalte (A/D/C)',
+                enableComment: 'Kommentar-Spalte',
+                
                 // License
                 license: 'Lizenz',
                 licenseTitle: 'Lizenzinformationen',
                 thirdPartyLicenses: 'Drittanbieter-Lizenzen',
-                thirdPartyDesc: 'MVMS-Tool verwendet folgende Open-Source-Bibliotheken:',
+                thirdPartyDesc: 'Excel Data Sync Pro verwendet folgende Open-Source-Bibliotheken:',
                 allLicensesMIT: 'Alle verwendeten Bibliotheken sind unter der MIT-Lizenz oder kompatiblen Open-Source-Lizenzen lizenziert.',
                 packagesTotal: 'Pakete gesamt'
             },
             en: {
                 // Header
-                appTitle: 'MVMS Contract Lists Update',
+                appTitle: 'Excel Data Sync Pro',
                 loadConfig: '📂 Load config.json',
                 saveConfig: '💾 Save config.json',
                 help: '❓ Help',
@@ -2039,7 +2266,7 @@
                 rows: 'rows',
                 clear: '🗑️ Clear',
                 directTransfer: '✅ Transfer Directly',
-                dataExplorer: '📊 Data Explorer',
+                dataExplorer: 'Data Explorer',
                 newMonthFile: '📅 New Month File',
                 noRowsInQueue: 'No rows in queue',
                 
@@ -2059,7 +2286,7 @@
                 configFirst: 'Please configure columns first',
                 
                 // Data Explorer
-                explorerTitle: '📊 Data Explorer',
+                explorerTitle: 'Data Explorer',
                 noFileLoadedExplorer: 'No file loaded',
                 openFile: '📂 Open File',
                 fullTextSearch: 'Full-text search:',
@@ -2092,18 +2319,23 @@
                 // Footer
                 copyright: '© Norbert Jander 2025 · v1.0.5',
                 
+                // Extra Columns
+                extraColumns: 'Extra Columns',
+                enableFlag: 'Flag Column (A/D/C)',
+                enableComment: 'Comment Column',
+                
                 // License
                 license: 'License',
                 licenseTitle: 'License Information',
                 thirdPartyLicenses: 'Third-Party Licenses',
-                thirdPartyDesc: 'MVMS-Tool uses the following open-source libraries:',
+                thirdPartyDesc: 'Excel Data Sync Pro uses the following open-source libraries:',
                 allLicensesMIT: 'All libraries used are licensed under the MIT License or compatible open-source licenses.',
                 packagesTotal: 'packages total'
             }
         };
         
-        let currentLanguage = localStorage.getItem('mvmsLanguage') || 'de';
-        let currentTheme = localStorage.getItem('mvmsTheme') || 'dark';
+        let currentLanguage = localStorage.getItem('excelSyncLanguage') || 'de';
+        let currentTheme = localStorage.getItem('excelSyncTheme') || 'dark';
         
         function t(key) {
             return translations[currentLanguage]?.[key] || translations['de'][key] || key;
@@ -2111,13 +2343,13 @@
         
         function setLanguage(lang) {
             currentLanguage = lang;
-            localStorage.setItem('mvmsLanguage', lang);
+            localStorage.setItem('excelSyncLanguage', lang);
             applyTranslations();
         }
         
         function setTheme(theme) {
             currentTheme = theme;
-            localStorage.setItem('mvmsTheme', theme);
+            localStorage.setItem('excelSyncTheme', theme);
             if (theme === 'light') {
                 document.body.classList.add('light-theme');
             } else {
@@ -2164,7 +2396,7 @@
             
             // Queue panel
             document.getElementById('btnClearQueue').innerHTML = t('clear');
-            document.getElementById('btnDataExplorer').innerHTML = t('dataExplorer');
+            document.getElementById('btnDataExplorer').innerHTML = '📊 ' + t('dataExplorer');
             document.getElementById('btnNewMonth').innerHTML = t('newMonthFile');
             
             // Transfer panel
@@ -2202,8 +2434,18 @@
             // Data Explorer Modal
             const explorerTitle = document.querySelector('#dataExplorerModal .modal-title');
             if (explorerTitle) {
-                const fileName = document.getElementById('explorerFileName');
-                explorerTitle.innerHTML = `${t('explorerTitle')} - <span id="explorerFileName">${fileName ? fileName.textContent : t('noFileLoadedExplorer')}</span>`;
+                // Nur den Text vor dem Span aktualisieren, nicht das ganze HTML ersetzen
+                const fileNameSpan = document.getElementById('explorerFileName');
+                const currentFileName = fileNameSpan ? fileNameSpan.textContent : t('noFileLoadedExplorer');
+                // Verwende einen TextNode für den Titel-Prefix
+                explorerTitle.childNodes[0].textContent = `📊 ${t('explorerTitle')} - `;
+                // Falls der Span nicht existiert oder entfernt wurde, neu erstellen
+                if (!explorerTitle.querySelector('#explorerFileName')) {
+                    const newSpan = document.createElement('span');
+                    newSpan.id = 'explorerFileName';
+                    newSpan.textContent = currentFileName;
+                    explorerTitle.appendChild(newSpan);
+                }
             }
             const btnExplorerOpenFile = document.getElementById('btnExplorerOpenFile');
             const btnToggleColumns = document.getElementById('btnToggleColumns');
@@ -2291,7 +2533,7 @@
         /**
          * @typedef {Object} MappingConfig
          * @property {number[]} sourceColumns - Source column indices to copy
-         * @property {number} targetStartColumn - Target start column (default 3)
+         * @property {number} targetStartColumn - Target start column (default 1)
          * @property {number} duplicateCheckColumn - Column index for duplicate check
          */
 
@@ -2404,7 +2646,33 @@
             const action = undoRedoState.explorerUndoStack.pop();
             undoRedoState.explorerRedoStack.push(action);
             
-            // Ursprünglichen Wert wiederherstellen
+            // Prüfe auf moveRows Aktion
+            if (action.type === 'moveRows') {
+                // Stelle den vorherigen Zustand wieder her
+                explorerState.data = JSON.parse(JSON.stringify(action.previousData));
+                explorerState.originalData = JSON.parse(JSON.stringify(action.previousOriginalData));
+                
+                // FilteredData neu erstellen
+                explorerState.filteredData = explorerState.data.map((row, idx) => ({
+                    row: row,
+                    originalIndex: idx
+                }));
+                
+                // Suchfilter erneut anwenden wenn aktiv
+                const searchTerm = elements.explorerSearch?.value?.trim().toLowerCase();
+                if (searchTerm) {
+                    explorerState.filteredData = explorerState.filteredData.filter(item => 
+                        item.row.some(cell => String(cell ?? '').toLowerCase().includes(searchTerm))
+                    );
+                }
+                
+                // Tabelle neu rendern
+                renderExplorerTable();
+                showNotification('Zeilen-Verschiebung rückgängig gemacht', 'info');
+                return true;
+            }
+            
+            // Ursprünglichen Wert wiederherstellen (Standard-Zellbearbeitung)
             const { rowIndex, colIndex, oldValue, newValue } = action;
             explorerState.data[rowIndex][colIndex] = oldValue;
             
@@ -2431,7 +2699,68 @@
             const action = undoRedoState.explorerRedoStack.pop();
             undoRedoState.explorerUndoStack.push(action);
             
-            // Neuen Wert wiederherstellen
+            // Prüfe auf moveRows Aktion
+            if (action.type === 'moveRows') {
+                // Führe die Verschiebung erneut aus
+                const selectedIndices = action.movedIndices;
+                const targetRow = action.targetRow;
+                const movePosition = action.movePosition;
+                let targetIndex = targetRow - 1;
+                
+                // Extrahiere die Zeilen
+                const rowsToMove = [];
+                const sortedDescending = [...selectedIndices].sort((a, b) => b - a);
+                sortedDescending.forEach(idx => {
+                    rowsToMove.unshift({
+                        data: explorerState.data[idx],
+                        original: explorerState.originalData[idx]
+                    });
+                });
+                
+                // Entferne die Zeilen
+                sortedDescending.forEach(idx => {
+                    explorerState.data.splice(idx, 1);
+                    explorerState.originalData.splice(idx, 1);
+                });
+                
+                // Berechne neuen Zielindex
+                let newTargetIndex = targetIndex;
+                selectedIndices.forEach(idx => {
+                    if (idx < targetIndex) {
+                        newTargetIndex--;
+                    }
+                });
+                
+                if (movePosition === 'after') {
+                    newTargetIndex++;
+                }
+                
+                // Füge die Zeilen ein
+                rowsToMove.forEach((row, i) => {
+                    explorerState.data.splice(newTargetIndex + i, 0, row.data);
+                    explorerState.originalData.splice(newTargetIndex + i, 0, row.original);
+                });
+                
+                // FilteredData neu erstellen
+                explorerState.filteredData = explorerState.data.map((row, idx) => ({
+                    row: row,
+                    originalIndex: idx
+                }));
+                
+                // Suchfilter erneut anwenden wenn aktiv
+                const searchTerm = elements.explorerSearch?.value?.trim().toLowerCase();
+                if (searchTerm) {
+                    explorerState.filteredData = explorerState.filteredData.filter(item => 
+                        item.row.some(cell => String(cell ?? '').toLowerCase().includes(searchTerm))
+                    );
+                }
+                
+                renderExplorerTable();
+                showNotification('Zeilen-Verschiebung wiederhergestellt', 'info');
+                return true;
+            }
+            
+            // Neuen Wert wiederherstellen (Standard-Zellbearbeitung)
             const { rowIndex, colIndex, oldValue, newValue, originalValue } = action;
             explorerState.data[rowIndex][colIndex] = newValue;
             
@@ -2487,7 +2816,7 @@
         document.head.appendChild(undoRedoStyle);
 
         // ==================== Auto-Save System ====================
-        const AUTO_SAVE_KEY = 'mvms_autosave';
+        const AUTO_SAVE_KEY = 'excelsync_autosave';
         const AUTO_SAVE_INTERVAL = 30000; // 30 Sekunden
         let autoSaveTimer = null;
         
@@ -2495,7 +2824,21 @@
             // Sammle alle bearbeiteten Daten
             const data = {
                 timestamp: Date.now(),
-                version: '1.0',
+                version: '1.1',
+                // Quelldatei (Datei 1)
+                file1: {
+                    filePath: state.file1.filePath || null,
+                    name: state.file1.name || null,
+                    selectedSheet: state.file1.selectedSheet || null
+                },
+                // Zieldatei (Datei 2)
+                file2: {
+                    filePath: state.file2.filePath || null,
+                    name: state.file2.name || null,
+                    selectedSheet: state.file2.selectedSheet || null
+                },
+                // Mapping
+                mapping: state.mapping,
                 // Datenexplorer
                 explorer: {
                     filePath: explorerState.filePath,
@@ -2548,7 +2891,7 @@
             localStorage.removeItem(AUTO_SAVE_KEY);
         }
         
-        function checkAutoSaveRecovery() {
+        async function checkAutoSaveRecovery() {
             try {
                 const saved = localStorage.getItem(AUTO_SAVE_KEY);
                 if (!saved) return;
@@ -2566,14 +2909,22 @@
                 const hasExplorerEdits = data.explorer?.editedCells?.length > 0;
                 const hasQueueItems = data.transferQueue?.length > 0;
                 const hasSearchEdits = data.searchEdits?.length > 0;
+                const hasFile1 = data.file1?.filePath;
+                const hasFile2 = data.file2?.filePath;
                 
-                if (!hasExplorerEdits && !hasQueueItems && !hasSearchEdits) {
+                if (!hasExplorerEdits && !hasQueueItems && !hasSearchEdits && !hasFile1 && !hasFile2) {
                     clearAutoSave();
                     return;
                 }
                 
                 // Zusammenfassung erstellen
                 let summary = 'Ungespeicherte Daten gefunden:\n\n';
+                if (hasFile1) {
+                    summary += `• Quelldatei: ${data.file1.name || data.file1.filePath}\n`;
+                }
+                if (hasFile2) {
+                    summary += `• Zieldatei: ${data.file2.name || data.file2.filePath}\n`;
+                }
                 if (hasQueueItems) {
                     summary += `• ${data.transferQueue.length} Einträge in der Warteschlange\n`;
                 }
@@ -2589,7 +2940,7 @@
                 summary += `\nGespeichert vor ${ageMinutes} Minuten.\n\nMöchten Sie diese Daten wiederherstellen?`;
                 
                 if (confirm(summary)) {
-                    restoreAutoSave(data);
+                    await restoreAutoSave(data);
                 } else {
                     clearAutoSave();
                 }
@@ -2599,7 +2950,67 @@
             }
         }
         
-        function restoreAutoSave(data) {
+        async function restoreAutoSave(data) {
+            console.log('[Auto-Save] Starte Wiederherstellung...', data);
+            
+            // Mapping wiederherstellen (vor den Dateien, da es für die Anzeige benötigt wird)
+            if (data.mapping) {
+                state.mapping = data.mapping;
+                updateMappingPreview();
+            }
+            
+            // Quelldatei wiederherstellen
+            if (data.file1?.filePath) {
+                try {
+                    console.log('[Auto-Save] Lade Quelldatei:', data.file1.filePath);
+                    const result = await window.electronAPI.readExcelFile(data.file1.filePath);
+                    if (result.success) {
+                        state.file1.name = result.fileName;
+                        state.file1.filePath = data.file1.filePath;
+                        state.file1.sheets = result.sheets;
+                        state.file1.workbook = { SheetNames: result.sheets };
+                        
+                        elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+                        elements.selectSheet1.disabled = false;
+                        elements.file1Info.textContent = `✓ ${result.fileName}`;
+                        elements.file1Info.classList.add('loaded');
+                        
+                        const sheetToLoad = data.file1.selectedSheet || result.sheets[0];
+                        elements.selectSheet1.value = sheetToLoad;
+                        await loadSheet1Electron(sheetToLoad);
+                        console.log('[Auto-Save] Quelldatei wiederhergestellt');
+                    }
+                } catch (e) {
+                    console.warn('[Auto-Save] Quelldatei konnte nicht geladen werden:', e);
+                }
+            }
+            
+            // Zieldatei wiederherstellen
+            if (data.file2?.filePath) {
+                try {
+                    console.log('[Auto-Save] Lade Zieldatei:', data.file2.filePath);
+                    const result = await window.electronAPI.readExcelFile(data.file2.filePath);
+                    if (result.success) {
+                        state.file2.name = result.fileName;
+                        state.file2.filePath = data.file2.filePath;
+                        state.file2.sheets = result.sheets;
+                        state.file2.workbook = { SheetNames: result.sheets };
+                        
+                        elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+                        elements.selectSheet2.disabled = false;
+                        elements.file2Info.textContent = `✓ ${result.fileName}`;
+                        elements.file2Info.classList.add('loaded');
+                        
+                        const sheetToLoad = data.file2.selectedSheet || result.sheets[0];
+                        elements.selectSheet2.value = sheetToLoad;
+                        await loadSheet2Electron(sheetToLoad);
+                        console.log('[Auto-Save] Zieldatei wiederhergestellt');
+                    }
+                } catch (e) {
+                    console.warn('[Auto-Save] Zieldatei konnte nicht geladen werden:', e);
+                }
+            }
+            
             // Warteschlange wiederherstellen
             if (data.transferQueue?.length > 0) {
                 state.transferQueue = data.transferQueue;
@@ -2612,6 +3023,11 @@
                 // Speichere für spätere Wiederherstellung
                 window._pendingExplorerRestore = data.explorer;
             }
+            
+            // Button-Status nochmal aktualisieren (nach allen async Operationen)
+            updateQueueDisplay();
+            
+            console.log('[Auto-Save] Wiederherstellung abgeschlossen. file2.filePath:', state.file2.filePath);
             
             // Auto-Save nach Wiederherstellung nicht löschen (wird bei nächster Aktion überschrieben)
         }
@@ -2629,7 +3045,7 @@
         }
 
         // ==================== Such-Historie System ====================
-        const SEARCH_HISTORY_KEY = 'mvms_search_history';
+        const SEARCH_HISTORY_KEY = 'excelsync_search_history';
         const SEARCH_HISTORY_MAX = 15;
         let searchHistorySelectedIndex = -1;
         
@@ -2804,7 +3220,7 @@
             },
             mapping: {
                 sourceColumns: [],
-                targetStartColumn: 3,
+                targetStartColumn: 1,
                 duplicateCheckColumn: 0
             },
             selectedRow: null,
@@ -2844,7 +3260,6 @@
             mappingInfo: document.getElementById('mappingInfo'),
             mappingModal: document.getElementById('mappingModal'),
             mappingList: document.getElementById('mappingList'),
-            targetStartColumn: document.getElementById('targetStartColumn'),
             
             // Search
             searchInput: document.getElementById('searchInput'),
@@ -3029,7 +3444,16 @@
                 file1SheetName: state.file1.selectedSheet,
                 file2SheetName: state.file2.selectedSheet,
                 mapping: state.mapping,
-                history: state.history.slice(-50)  // Keep last 50 entries
+                history: state.history.slice(-50),  // Keep last 50 entries
+                // Extra-Spalten Konfiguration
+                extraColumns: {
+                    enableFlag: isFlagEnabled(),
+                    enableComment: isCommentEnabled(),
+                    flagColumn: getFlagColumn(),
+                    flagValues: getFlagValues().join(','),
+                    commentColumn: getCommentColumn(),
+                    commentPlaceholder: getCommentPlaceholder()
+                }
             };
             localStorage.setItem(STORAGE_KEY, JSON.stringify(config));
         }
@@ -3041,6 +3465,33 @@
                     const config = JSON.parse(saved);
                     state.mapping = config.mapping || state.mapping;
                     state.history = config.history || [];
+                    
+                    // Extra-Spalten Konfiguration laden
+                    if (config.extraColumns) {
+                        const ec = config.extraColumns;
+                        if (ec.enableFlag !== undefined) {
+                            document.getElementById('enableFlagColumn').checked = ec.enableFlag;
+                            localStorage.setItem('excelSyncEnableFlag', String(ec.enableFlag));
+                        }
+                        if (ec.enableComment !== undefined) {
+                            document.getElementById('enableCommentColumn').checked = ec.enableComment;
+                            localStorage.setItem('excelSyncEnableComment', String(ec.enableComment));
+                        }
+                        if (ec.flagValues) {
+                            document.getElementById('flagValues').value = ec.flagValues;
+                            localStorage.setItem('excelSyncFlagValues', ec.flagValues);
+                        }
+                        if (ec.commentPlaceholder) {
+                            document.getElementById('commentPlaceholder').value = ec.commentPlaceholder;
+                            localStorage.setItem('excelSyncCommentPlaceholder', ec.commentPlaceholder);
+                        }
+                        // UI aktualisieren
+                        updateFlagDropdownOptions();
+                        updateCommentPlaceholders();
+                        updateFlagCommentVisibility();
+                        updateColumnDisplays();
+                    }
+                    
                     updateHistoryDisplay();
                     return config;
                 }
@@ -3055,7 +3506,16 @@
                 file1SheetName: state.file1.selectedSheet,
                 file2SheetName: state.file2.selectedSheet,
                 mapping: state.mapping,
-                exportDate: new Date().toISOString()
+                exportDate: new Date().toISOString(),
+                // Extra-Spalten Konfiguration
+                extraColumns: {
+                    enableFlag: isFlagEnabled(),
+                    enableComment: isCommentEnabled(),
+                    flagColumn: getFlagColumn(),
+                    flagValues: getFlagValues().join(','),
+                    commentColumn: getCommentColumn(),
+                    commentPlaceholder: getCommentPlaceholder()
+                }
             };
             
             // Im Electron-Modus: Nur Mapping und Dateipfade speichern
@@ -3121,6 +3581,31 @@
                 try {
                     const config = JSON.parse(e.target.result);
                     state.mapping = config.mapping || state.mapping;
+                    
+                    // Extra-Spalten Konfiguration importieren
+                    if (config.extraColumns) {
+                        const ec = config.extraColumns;
+                        if (ec.enableFlag !== undefined) {
+                            document.getElementById('enableFlagColumn').checked = ec.enableFlag;
+                            localStorage.setItem('excelSyncEnableFlag', String(ec.enableFlag));
+                        }
+                        if (ec.enableComment !== undefined) {
+                            document.getElementById('enableCommentColumn').checked = ec.enableComment;
+                            localStorage.setItem('excelSyncEnableComment', String(ec.enableComment));
+                        }
+                        if (ec.flagValues) {
+                            document.getElementById('flagValues').value = ec.flagValues;
+                            localStorage.setItem('excelSyncFlagValues', ec.flagValues);
+                        }
+                        if (ec.commentPlaceholder) {
+                            document.getElementById('commentPlaceholder').value = ec.commentPlaceholder;
+                            localStorage.setItem('excelSyncCommentPlaceholder', ec.commentPlaceholder);
+                        }
+                        // UI aktualisieren
+                        updateFlagDropdownOptions();
+                        updateCommentPlaceholders();
+                        updateFlagCommentVisibility();
+                    }
                     
                     // Speichere in IndexedDB (kann große Dateien speichern)
                     if (db) {
@@ -3227,7 +3712,7 @@
             }
             
             let html = '<strong>Aktuelle Konfig:</strong><br>';
-            html += `Start-Spalte: ${getColumnLetter(state.mapping.targetStartColumn)}<br>`;
+            html += `Start-Spalte: ${getColumnLetter(getDataStartColumn())}<br>`;
             html += `Duplikat-Check: Spalte ${state.mapping.duplicateCheckColumn + 1}<br>`;
             html += `Spalten: ${state.mapping.sourceColumns.length}`;
             
@@ -3309,7 +3794,7 @@
                 
                 const target = document.createElement('span');
                 target.className = 'mapping-target';
-                const targetCol = state.mapping.targetStartColumn + i;
+                const targetCol = getDataStartColumn() + i;
                 target.textContent = `Spalte ${getColumnLetter(targetCol)} in Datei 2`;
                 
                 const removeBtn = document.createElement('button');
@@ -3327,8 +3812,8 @@
                 elements.mappingList.appendChild(item);
             });
             
-            // Update target start column
-            elements.targetStartColumn.value = state.mapping.targetStartColumn;
+            // Update column displays
+            updateColumnDisplays();
         }
         
         function addMappingColumn() {
@@ -3340,7 +3825,6 @@
         }
         
         function saveMapping() {
-            state.mapping.targetStartColumn = parseInt(elements.targetStartColumn.value);
             state.mapping.duplicateCheckColumn = parseInt(document.getElementById('duplicateCheckColumn').value);
             saveConfig();
             updateMappingInfo();
@@ -3890,16 +4374,22 @@
             }
             
             // Browser-Modus: Original-Logik
+            const dataStartCol = getDataStartColumn();
             const newRow = new Array(Math.max(
                 state.file2.headers.length,
-                state.mapping.targetStartColumn + state.mapping.sourceColumns.length
+                dataStartCol + state.mapping.sourceColumns.length
             )).fill('');
             
-            newRow[0] = flag;
-            newRow[1] = comment;
+            // Flag und Kommentar in automatisch berechneten Spalten
+            if (isFlagEnabled()) {
+                newRow[getFlagColumn() - 1] = flag;
+            }
+            if (isCommentEnabled()) {
+                newRow[getCommentColumn() - 1] = comment;
+            }
             
             state.mapping.sourceColumns.forEach((srcColIndex, i) => {
-                const targetColIndex = state.mapping.targetStartColumn - 1 + i;
+                const targetColIndex = dataStartCol - 1 + i;
                 newRow[targetColIndex] = data[srcColIndex] || '';
             });
             
@@ -3934,10 +4424,11 @@
             if (!value || !state.file2.data.length) return null;
             
             const valueStr = String(value).toLowerCase().trim();
+            const dataStartCol = getDataStartColumn();
             
             for (let i = 0; i < state.file2.data.length; i++) {
                 const row = state.file2.data[i];
-                for (let j = state.mapping.targetStartColumn - 1; j < row.length; j++) {
+                for (let j = dataStartCol - 1; j < row.length; j++) {
                     if (row[j] && String(row[j]).toLowerCase().trim() === valueStr) {
                         return { rowIndex: i + 2, value: row[j] };
                     }
@@ -3977,7 +4468,8 @@
                         flag: flag,
                         comment: comment,
                         checkValue: checkValue,
-                        wasEdited: isRowEdited(rowIndex)
+                        wasEdited: isRowEdited(rowIndex),
+                        sourceRowIndex: row.rowIndex + 2 // +2: rowIndex ist 0-basiert, Excel ist 1-basiert + Header-Zeile
                     });
                 }
                 
@@ -4002,6 +4494,7 @@
             let transferredCount = 0;
             let editedCount = 0;
             let duplicatesFound = [];
+            const dataStartCol = getDataStartColumn();
             
             for (const rowIndex of state.selectedRows) {
                 const row = state.searchResults[rowIndex];
@@ -4022,14 +4515,19 @@
                 
                 const newRow = new Array(Math.max(
                     state.file2.headers.length,
-                    state.mapping.targetStartColumn + state.mapping.sourceColumns.length
+                    dataStartCol + state.mapping.sourceColumns.length
                 )).fill('');
                 
-                newRow[0] = flag;
-                newRow[1] = comment;
+                // Flag und Kommentar in automatisch berechneten Spalten
+                if (isFlagEnabled()) {
+                    newRow[getFlagColumn() - 1] = flag;
+                }
+                if (isCommentEnabled()) {
+                    newRow[getCommentColumn() - 1] = comment;
+                }
             
                 state.mapping.sourceColumns.forEach((srcColIndex, i) => {
-                    const targetColIndex = state.mapping.targetStartColumn - 1 + i;
+                    const targetColIndex = dataStartCol - 1 + i;
                     newRow[targetColIndex] = rowData[srcColIndex] || '';
                 });
                 
@@ -4203,9 +4701,11 @@
                     rowData[i] = item.data[srcColIndex] || '';
                 });
                 return {
-                    flag: item.flag,
-                    comment: item.comment,
-                    data: rowData
+                    flag: isFlagEnabled() ? item.flag : null,
+                    comment: isCommentEnabled() ? item.comment : null,
+                    data: rowData,
+                    sourceRowIndex: item.sourceRowIndex || null, // Zeilen-Index aus Quelldatei für Formatierung
+                    isManual: item.isManual || false
                 };
             });
             
@@ -4213,7 +4713,15 @@
                 filePath: state.file2.filePath,
                 sheetName: state.file2.selectedSheet,
                 rows: rows,
-                startColumn: state.mapping.targetStartColumn
+                startColumn: getDataStartColumn(),
+                enableFlag: isFlagEnabled(),
+                enableComment: isCommentEnabled(),
+                flagColumn: getFlagColumn(),
+                commentColumn: getCommentColumn(),
+                // Quelldatei-Infos für Formatierungskopie
+                sourceFilePath: state.file1.filePath || null,
+                sourceSheetName: state.file1.selectedSheet || null,
+                sourceColumns: state.mapping.sourceColumns || []
             });
             
             if (result.success) {
@@ -4249,6 +4757,7 @@
         // Diff-Vorschau vor Transfer anzeigen
         function showDiffPreview() {
             if (state.transferQueue.length === 0 || !state.file2.filePath) {
+                showStatus(elements.transferStatus, 'Keine Zeilen in der Warteschlange oder keine Zieldatei geladen', 'error');
                 return;
             }
             
@@ -4261,22 +4770,88 @@
             // Info-Bereich aktualisieren
             document.getElementById('diffTargetFile').textContent = targetFileName;
             document.getElementById('diffTargetSheet').textContent = targetSheet;
-            document.getElementById('diffStartRow').textContent = startRow;
+            document.getElementById('diffTargetRow').textContent = startRow;
+            document.getElementById('diffPreviewCount').textContent = state.transferQueue.length;
             
             // Tabelle rendern
-            const tableContainer = document.getElementById('diffTableContainer');
+            const tableContainer = document.getElementById('diffPreviewTable');
             
-            // Header aus Mapping erstellen
-            let headerHtml = '<tr><th style="width: 60px;">Flag</th><th style="width: 40px;">Zeile</th>';
+            // Ermittle ob Flag/Kommentar aktiv sind
+            const flagEnabled = isFlagEnabled();
+            const commentEnabled = isCommentEnabled();
+            const flagCol = getFlagColumn();      // 1-basiert
+            const commentCol = getCommentColumn(); // 1-basiert
+            
+            // Header erstellen - Zeile zuerst, dann Spalten wie sie in der Zieldatei erscheinen
+            let headerHtml = '<tr><th style="width: 50px; text-align: center;">#</th>';
             
             // Spaltenüberschriften aus der Zieldatei verwenden
             const targetHeaders = state.file2.headers || [];
-            const targetStartCol = state.mapping.targetStartColumn || 0;
+            // Automatisch berechnete Startspalte (0-basiert)
+            const targetStartCol = getDataStartColumn() - 1;
             
+            // Berechne welche Spalten in der Vorschau angezeigt werden sollen
+            // Zeige alle Spalten von der niedrigsten bis zur höchsten belegten Spalte
+            const previewColumns = [];
+            
+            // Sammle alle belegten Spaltenindizes
+            const usedColumns = new Map(); // index -> {type, sourceIndex?, name}
+            
+            // Flag-Spalte (wenn aktiv)
+            if (flagEnabled) {
+                usedColumns.set(flagCol - 1, {
+                    type: 'flag',
+                    name: targetHeaders[flagCol - 1] || `Flag`
+                });
+            }
+            
+            // Kommentar-Spalte (wenn aktiv)
+            if (commentEnabled) {
+                usedColumns.set(commentCol - 1, {
+                    type: 'comment',
+                    name: targetHeaders[commentCol - 1] || `Kommentar`
+                });
+            }
+            
+            // Daten-Spalten aus dem Mapping
             state.mapping.sourceColumns.forEach((srcIdx, i) => {
                 const targetColIdx = targetStartCol + i;
-                const headerName = targetHeaders[targetColIdx] || `Spalte ${targetColIdx + 1}`;
-                headerHtml += `<th>${escapeHtml(headerName)}</th>`;
+                usedColumns.set(targetColIdx, {
+                    type: 'data',
+                    sourceIndex: srcIdx,
+                    name: targetHeaders[targetColIdx] || `Spalte ${String.fromCharCode(65 + targetColIdx)}`
+                });
+            });
+            
+            // Finde min und max Spaltenindex
+            const colIndices = Array.from(usedColumns.keys());
+            const minCol = Math.min(...colIndices);
+            const maxCol = Math.max(...colIndices);
+            
+            // Erstelle Spalten von min bis max (inkl. leerer Spalten)
+            for (let i = minCol; i <= maxCol; i++) {
+                if (usedColumns.has(i)) {
+                    previewColumns.push({
+                        index: i,
+                        ...usedColumns.get(i)
+                    });
+                } else {
+                    // Leere Spalte
+                    previewColumns.push({
+                        index: i,
+                        type: 'empty',
+                        name: targetHeaders[i] || `-`
+                    });
+                }
+            }
+            
+            // Header-Zeile erstellen
+            previewColumns.forEach(col => {
+                const colLetter = String.fromCharCode(65 + col.index);
+                const style = col.type === 'flag' ? 'background: rgba(33, 115, 70, 0.3);' : 
+                              col.type === 'comment' ? 'background: rgba(33, 115, 70, 0.2);' : 
+                              col.type === 'empty' ? 'background: rgba(128, 128, 128, 0.1); color: var(--text-muted);' : '';
+                headerHtml += `<th style="${style}"><small style="color: var(--text-muted);">${colLetter}</small><br>${escapeHtml(col.name)}</th>`;
             });
             headerHtml += '</tr>';
             
@@ -4287,18 +4862,27 @@
                 const flagClass = item.flag === 'A' ? 'diff-row-add' : 
                                   item.flag === 'D' ? 'diff-row-delete' : 
                                   item.flag === 'C' ? 'diff-row-change' : '';
-                const flagText = item.flag === 'A' ? 'Hinzufügen' : 
-                                 item.flag === 'D' ? 'Löschen' : 
-                                 item.flag === 'C' ? 'Ändern' : item.flag;
                 
                 rowsHtml += `<tr class="${flagClass}">`;
-                rowsHtml += `<td><span class="diff-flag">${item.flag}</span> ${flagText}</td>`;
-                rowsHtml += `<td style="text-align: center; font-weight: bold;">${rowNum}</td>`;
+                rowsHtml += `<td style="text-align: center; font-weight: bold; color: var(--text-muted);">${rowNum}</td>`;
                 
-                // Daten aus dem Mapping
-                state.mapping.sourceColumns.forEach(srcIdx => {
-                    const cellValue = item.data[srcIdx] !== undefined ? item.data[srcIdx] : '';
-                    rowsHtml += `<td>${escapeHtml(String(cellValue))}</td>`;
+                // Zellen in der richtigen Reihenfolge
+                previewColumns.forEach(col => {
+                    if (col.type === 'flag') {
+                        const flagValue = item.flag || '';
+                        const flagStyle = 'font-weight: bold; text-align: center; background: rgba(33, 115, 70, 0.15);';
+                        rowsHtml += `<td style="${flagStyle}"><span class="diff-flag">${flagValue}</span></td>`;
+                    } else if (col.type === 'comment') {
+                        const commentValue = item.comment || '';
+                        const commentStyle = 'font-style: italic; background: rgba(33, 115, 70, 0.1);';
+                        rowsHtml += `<td style="${commentStyle}">${escapeHtml(String(commentValue))}</td>`;
+                    } else if (col.type === 'empty') {
+                        // Leere Spalte - wird nicht beschrieben
+                        rowsHtml += `<td style="color: var(--text-muted); text-align: center;">-</td>`;
+                    } else {
+                        const cellValue = item.data[col.sourceIndex] !== undefined ? item.data[col.sourceIndex] : '';
+                        rowsHtml += `<td>${escapeHtml(String(cellValue))}</td>`;
+                    }
                 });
                 
                 rowsHtml += '</tr>';
@@ -4437,6 +5021,38 @@
         async function applyLoadedConfig(config) {
             state.mapping = config.mapping || state.mapping;
             
+            // Extra-Spalten Konfiguration laden
+            if (config.extraColumns) {
+                const ec = config.extraColumns;
+                const flagCheckbox = document.getElementById('enableFlagColumn');
+                const commentCheckbox = document.getElementById('enableCommentColumn');
+                const flagValuesInput = document.getElementById('flagValues');
+                const commentPlaceholderInput = document.getElementById('commentPlaceholder');
+                
+                if (ec.enableFlag !== undefined && flagCheckbox) {
+                    flagCheckbox.checked = ec.enableFlag;
+                    localStorage.setItem('excelSyncEnableFlag', String(ec.enableFlag));
+                }
+                if (ec.enableComment !== undefined && commentCheckbox) {
+                    commentCheckbox.checked = ec.enableComment;
+                    localStorage.setItem('excelSyncEnableComment', String(ec.enableComment));
+                }
+                if (ec.flagValues && flagValuesInput) {
+                    flagValuesInput.value = ec.flagValues;
+                    localStorage.setItem('excelSyncFlagValues', ec.flagValues);
+                }
+                if (ec.commentPlaceholder && commentPlaceholderInput) {
+                    commentPlaceholderInput.value = ec.commentPlaceholder;
+                    localStorage.setItem('excelSyncCommentPlaceholder', ec.commentPlaceholder);
+                }
+                
+                // UI aktualisieren
+                updateFlagDropdownOptions();
+                updateCommentPlaceholders();
+                updateFlagCommentVisibility();
+                updateColumnDisplays();
+            }
+            
             // Lade Dateien aus Pfaden
             if (config.file1Path) {
                 try {
@@ -4536,6 +5152,7 @@
             selectedSheet: null,
             headers: [],
             data: [],
+            originalData: [],  // Kopie der Originaldaten für Vorschau-Vergleich
             filteredData: [],  // Enthält jetzt {originalIndex, row} Objekte
             searchTerm: '',
             filters: [],
@@ -4549,8 +5166,12 @@
             // Sortierung
             sortColumn: null,
             sortDirection: null,  // 'asc', 'desc' oder null
+            sortType: 'auto',  // 'auto', 'alpha-asc', 'alpha-desc', 'num-asc', 'num-desc', 'date-asc', 'date-desc'
             // Zeilen-Markierungen
             rowHighlights: new Map(),  // rowIndex -> 'green'|'yellow'|'orange'|'red'|'blue'|'purple'
+            // Zeilen-Auswahl für Verschiebung
+            selectedRows: new Set(),  // Set von originalIndex Werten
+            moveMode: false,  // Ob Verschiebe-Modus aktiv ist
             // Drag & Drop State
             draggedColumn: null
         };
@@ -4676,6 +5297,86 @@
             document.body.classList.remove('modal-open');
         }
         
+        // Explorer-Vorschau zeigen (zeigt genau das was exportiert wird)
+        function showExplorerPreview() {
+            if (!explorerState.filteredData || explorerState.filteredData.length === 0) {
+                return;
+            }
+            
+            const modal = document.getElementById('explorerPreviewModal');
+            const tableContainer = document.getElementById('previewTableContainer');
+            
+            // Gleiche Daten wie beim Export verwenden
+            const exportData = explorerState.filteredData.map(item => item.row);
+            const visibleColumns = explorerState.visibleColumns;
+            
+            // Info aktualisieren
+            document.getElementById('previewFileName').textContent = explorerState.fileName || 'Unbekannt';
+            document.getElementById('previewSheetName').textContent = explorerState.selectedSheet || 'Sheet1';
+            document.getElementById('previewRowCount').textContent = exportData.length;
+            document.getElementById('previewColCount').textContent = visibleColumns.length;
+            document.getElementById('previewEditCount').textContent = explorerState.editedCells.size;
+            
+            // Header erstellen (nur sichtbare Spalten)
+            let headerHtml = '<tr><th style="width: 50px; text-align: center; position: sticky; left: 0; background: var(--bg-medium); z-index: 2;">#</th>';
+            visibleColumns.forEach(colIdx => {
+                const colLetter = String.fromCharCode(65 + colIdx);
+                const header = explorerState.headers[colIdx] || '-';
+                headerHtml += `<th style="min-width: 120px;"><small style="color: var(--text-muted);">${colLetter}</small><br>${escapeHtml(header)}</th>`;
+            });
+            headerHtml += '</tr>';
+            
+            // Zeilen erstellen (mit bearbeiteten Werten - genau wie beim Export)
+            let rowsHtml = '';
+            explorerState.filteredData.forEach((item, displayIdx) => {
+                const originalIndex = item.originalIndex;
+                const row = item.row;
+                
+                // Prüfe ob diese Zeile bearbeitete Zellen hat
+                let hasEdits = false;
+                for (const colIdx of visibleColumns) {
+                    if (explorerState.editedCells.has(`${originalIndex}-${colIdx}`)) {
+                        hasEdits = true;
+                        break;
+                    }
+                }
+                
+                const rowStyle = hasEdits ? 'background: rgba(255, 193, 7, 0.05);' : '';
+                rowsHtml += `<tr style="${rowStyle}">`;
+                rowsHtml += `<td style="text-align: center; font-weight: bold; color: var(--text-muted); position: sticky; left: 0; background: var(--bg-dark); z-index: 1;">${displayIdx + 1}</td>`;
+                
+                visibleColumns.forEach(colIdx => {
+                    const cellKey = `${originalIndex}-${colIdx}`;
+                    const isEdited = explorerState.editedCells.has(cellKey);
+                    
+                    // Hole den Wert direkt aus der Zeile (enthält bereits Bearbeitungen)
+                    const cellValue = row[colIdx] !== undefined ? String(row[colIdx]) : '';
+                    
+                    const cellStyle = isEdited 
+                        ? 'background: rgba(255, 193, 7, 0.3); border: 2px solid #FFC107;' 
+                        : '';
+                    
+                    rowsHtml += `<td style="${cellStyle}">${escapeHtml(cellValue)}</td>`;
+                });
+                
+                rowsHtml += '</tr>';
+            });
+            
+            tableContainer.innerHTML = `
+                <table class="results-table" style="width: max-content; min-width: 100%;">
+                    <thead style="position: sticky; top: 0; z-index: 3;">${headerHtml}</thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            `;
+            
+            // Modal anzeigen
+            modal.classList.remove('hidden');
+        }
+        
+        function closeExplorerPreview() {
+            document.getElementById('explorerPreviewModal').classList.add('hidden');
+        }
+        
         async function loadExplorerFile() {
             const filePath = await window.electronAPI.openFileDialog({
                 title: 'Excel-Datei öffnen',
@@ -4693,7 +5394,9 @@
             explorerState.fileName = result.fileName;
             explorerState.sheets = result.sheets;
             
-            elements.explorerFileName.textContent = result.fileName;
+            // Element frisch abfragen (kann durch setLanguage ersetzt worden sein)
+            const explorerFileNameEl = document.getElementById('explorerFileName');
+            if (explorerFileNameEl) explorerFileNameEl.textContent = result.fileName;
             elements.explorerSheetSelect.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
             
             await loadExplorerSheet(result.sheets[0]);
@@ -4714,6 +5417,8 @@
             explorerState.selectedSheet = sheetName;
             explorerState.headers = result.headers;
             explorerState.data = result.data.slice(1);
+            // Kopie der Originaldaten speichern (deep copy)
+            explorerState.originalData = explorerState.data.map(row => [...row]);
             // Alle Spalten standardmäßig sichtbar machen
             explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
             // filteredData mit originalIndex initialisieren
@@ -4819,21 +5524,31 @@
         /**
          * Sortiert die Explorer-Daten nach einer Spalte
          */
-        function sortExplorerByColumn(colIndex) {
-            // Toggle Sortierrichtung
-            if (explorerState.sortColumn === colIndex) {
-                if (explorerState.sortDirection === 'asc') {
-                    explorerState.sortDirection = 'desc';
-                } else if (explorerState.sortDirection === 'desc') {
-                    // Dritter Klick: Sortierung aufheben
-                    explorerState.sortColumn = null;
-                    explorerState.sortDirection = null;
-                    filterExplorerData(); // Neu filtern ohne Sortierung
-                    return;
+        function sortExplorerByColumn(colIndex, sortType = 'auto') {
+            // Toggle Sortierrichtung bei 'auto'
+            if (sortType === 'auto') {
+                if (explorerState.sortColumn === colIndex) {
+                    if (explorerState.sortDirection === 'asc') {
+                        explorerState.sortDirection = 'desc';
+                    } else if (explorerState.sortDirection === 'desc') {
+                        // Dritter Klick: Sortierung aufheben
+                        explorerState.sortColumn = null;
+                        explorerState.sortDirection = null;
+                        explorerState.sortType = 'auto';
+                        filterExplorerData(); // Neu filtern ohne Sortierung
+                        return;
+                    }
+                } else {
+                    explorerState.sortColumn = colIndex;
+                    explorerState.sortDirection = 'asc';
                 }
+                explorerState.sortType = 'auto';
             } else {
+                // Expliziter Sortiertyp vom Kontextmenü
                 explorerState.sortColumn = colIndex;
-                explorerState.sortDirection = 'asc';
+                explorerState.sortType = sortType;
+                // Direction aus dem sortType ableiten
+                explorerState.sortDirection = sortType.endsWith('-asc') ? 'asc' : 'desc';
             }
             
             applyExplorerSort();
@@ -4848,6 +5563,7 @@
             
             const colIndex = explorerState.sortColumn;
             const direction = explorerState.sortDirection;
+            const sortType = explorerState.sortType || 'auto';
             
             explorerState.filteredData.sort((a, b) => {
                 const valA = a.row[colIndex];
@@ -4858,23 +5574,178 @@
                 if (valA == null) return 1;
                 if (valB == null) return -1;
                 
-                // Numerische Werte
-                const numA = parseFloat(valA);
-                const numB = parseFloat(valB);
+                let comparison = 0;
                 
-                if (!isNaN(numA) && !isNaN(numB)) {
-                    return direction === 'asc' ? numA - numB : numB - numA;
+                if (sortType === 'alpha-asc' || sortType === 'alpha-desc') {
+                    // Alphabetische Sortierung
+                    const strA = String(valA).toLowerCase();
+                    const strB = String(valB).toLowerCase();
+                    comparison = strA.localeCompare(strB, 'de');
+                } else if (sortType === 'num-asc' || sortType === 'num-desc') {
+                    // Numerische Sortierung
+                    const numA = parseNumericValue(valA);
+                    const numB = parseNumericValue(valB);
+                    if (isNaN(numA) && isNaN(numB)) comparison = 0;
+                    else if (isNaN(numA)) comparison = 1;
+                    else if (isNaN(numB)) comparison = -1;
+                    else comparison = numA - numB;
+                } else if (sortType === 'date-asc' || sortType === 'date-desc') {
+                    // Datums-Sortierung
+                    const dateA = parseDateValue(valA);
+                    const dateB = parseDateValue(valB);
+                    if (!dateA && !dateB) comparison = 0;
+                    else if (!dateA) comparison = 1;
+                    else if (!dateB) comparison = -1;
+                    else comparison = dateA.getTime() - dateB.getTime();
+                } else {
+                    // Auto: Numerisch wenn möglich, sonst alphabetisch
+                    const numA = parseFloat(valA);
+                    const numB = parseFloat(valB);
+                    
+                    if (!isNaN(numA) && !isNaN(numB)) {
+                        comparison = numA - numB;
+                    } else {
+                        const strA = String(valA).toLowerCase();
+                        const strB = String(valB).toLowerCase();
+                        if (strA < strB) comparison = -1;
+                        else if (strA > strB) comparison = 1;
+                        else comparison = 0;
+                    }
                 }
                 
-                // String-Vergleich (case-insensitive)
-                const strA = String(valA).toLowerCase();
-                const strB = String(valB).toLowerCase();
-                
-                if (strA < strB) return direction === 'asc' ? -1 : 1;
-                if (strA > strB) return direction === 'asc' ? 1 : -1;
-                return 0;
+                return direction === 'asc' ? comparison : -comparison;
             });
         }
+        
+        /**
+         * Parst einen Wert als Zahl (berücksichtigt deutsche Zahlenformate)
+         */
+        function parseNumericValue(value) {
+            if (typeof value === 'number') return value;
+            if (value == null) return NaN;
+            const str = String(value).trim();
+            // Deutsche Zahlen: 1.234,56 → 1234.56
+            const normalized = str.replace(/\./g, '').replace(',', '.');
+            return parseFloat(normalized);
+        }
+        
+        /**
+         * Parst einen Wert als Datum (berücksichtigt deutsche Datumsformate)
+         */
+        function parseDateValue(value) {
+            if (value instanceof Date) return value;
+            if (value == null) return null;
+            const str = String(value).trim();
+            
+            // Deutsches Format: DD.MM.YYYY oder DD.MM.YYYY HH:MM
+            const germanMatch = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2}))?$/);
+            if (germanMatch) {
+                const [, day, month, year, hour, min] = germanMatch;
+                return new Date(parseInt(year), parseInt(month) - 1, parseInt(day), 
+                    parseInt(hour || 0), parseInt(min || 0));
+            }
+            
+            // ISO-Format: YYYY-MM-DD
+            const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+            if (isoMatch) {
+                return new Date(str);
+            }
+            
+            // Fallback
+            const parsed = new Date(str);
+            return isNaN(parsed.getTime()) ? null : parsed;
+        }
+        
+        // ==================== Column Context Menu ====================
+        let contextMenuColumn = null;
+        
+        function showColumnContextMenu(e, colIndex) {
+            e.preventDefault();
+            
+            const menu = document.getElementById('columnContextMenu');
+            const columnName = explorerState.headers[colIndex] || `Spalte ${colIndex + 1}`;
+            
+            document.getElementById('contextMenuColumnName').textContent = columnName;
+            contextMenuColumn = colIndex;
+            
+            // Positionierung
+            let x = e.clientX;
+            let y = e.clientY;
+            
+            // Sicherstellen, dass das Menü im Viewport bleibt
+            menu.style.display = 'block';
+            const menuRect = menu.getBoundingClientRect();
+            
+            if (x + menuRect.width > window.innerWidth) {
+                x = window.innerWidth - menuRect.width - 10;
+            }
+            if (y + menuRect.height > window.innerHeight) {
+                y = window.innerHeight - menuRect.height - 10;
+            }
+            
+            menu.style.left = x + 'px';
+            menu.style.top = y + 'px';
+        }
+        
+        function hideColumnContextMenu() {
+            const menu = document.getElementById('columnContextMenu');
+            if (menu) menu.style.display = 'none';
+            contextMenuColumn = null;
+        }
+        
+        function handleContextMenuAction(action) {
+            if (contextMenuColumn === null) return;
+            
+            switch (action) {
+                case 'sort-alpha-asc':
+                    sortExplorerByColumn(contextMenuColumn, 'alpha-asc');
+                    break;
+                case 'sort-alpha-desc':
+                    sortExplorerByColumn(contextMenuColumn, 'alpha-desc');
+                    break;
+                case 'sort-num-asc':
+                    sortExplorerByColumn(contextMenuColumn, 'num-asc');
+                    break;
+                case 'sort-num-desc':
+                    sortExplorerByColumn(contextMenuColumn, 'num-desc');
+                    break;
+                case 'sort-date-asc':
+                    sortExplorerByColumn(contextMenuColumn, 'date-asc');
+                    break;
+                case 'sort-date-desc':
+                    sortExplorerByColumn(contextMenuColumn, 'date-desc');
+                    break;
+                case 'hide-column':
+                    toggleExplorerColumn(contextMenuColumn, false);
+                    break;
+            }
+            
+            hideColumnContextMenu();
+        }
+        
+        // Event-Listener für Kontextmenü
+        document.addEventListener('DOMContentLoaded', () => {
+            // Kontextmenü-Items
+            document.querySelectorAll('#columnContextMenu .context-menu-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    handleContextMenuAction(item.dataset.action);
+                });
+            });
+            
+            // Klick außerhalb schließt Menü
+            document.addEventListener('click', (e) => {
+                if (!e.target.closest('#columnContextMenu')) {
+                    hideColumnContextMenu();
+                }
+            });
+            
+            // Escape schließt Menü
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    hideColumnContextMenu();
+                }
+            });
+        });
         
         /**
          * Verschiebt eine Spalte per Drag & Drop
@@ -4910,12 +5781,18 @@
         }
         
         function renderExplorerTable() {
+            const btnPreview = document.getElementById('btnExplorerPreview');
+            
             if (!explorerState.headers.length) {
                 elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>';
                 elements.explorerResultCount.textContent = t('noDataLoaded');
                 document.getElementById('explorerPagination').style.display = 'none';
+                if (btnPreview) btnPreview.disabled = true;
                 return;
             }
+            
+            // Preview-Button aktivieren, wenn Daten vorhanden sind
+            if (btnPreview) btnPreview.disabled = false;
             
             // Pagination berechnen
             const totalRows = explorerState.filteredData.length;
@@ -4939,7 +5816,15 @@
                 ? explorerState.columnOrder.filter(col => explorerState.visibleColumns.includes(col))
                 : explorerState.visibleColumns;
             
+            // Prüfe ob alle sichtbaren Zeilen ausgewählt sind
+            const allVisibleSelected = pageData.length > 0 && pageData.every(item => explorerState.selectedRows.has(item.originalIndex));
+            
             let headerHtml = '<tr>';
+            // Checkbox-Spalte für Zeilenauswahl
+            headerHtml += `<th style="width: 40px; text-align: center; padding: 8px;">
+                <input type="checkbox" id="selectAllRows" ${allVisibleSelected ? 'checked' : ''} 
+                    title="Alle sichtbaren Zeilen auswählen" style="cursor: pointer; width: 16px; height: 16px;">
+            </th>`;
             displayColumns.forEach(colIndex => {
                 const headerText = escapeHtml(explorerState.headers[colIndex] || `Spalte ${colIndex + 1}`);
                 let sortIcon = '';
@@ -4951,6 +5836,22 @@
             headerHtml += '</tr>';
             elements.explorerTableHead.innerHTML = headerHtml;
             
+            // Select-All Checkbox Event-Listener
+            const selectAllCheckbox = document.getElementById('selectAllRows');
+            if (selectAllCheckbox) {
+                selectAllCheckbox.addEventListener('change', function() {
+                    pageData.forEach(item => {
+                        if (this.checked) {
+                            explorerState.selectedRows.add(item.originalIndex);
+                        } else {
+                            explorerState.selectedRows.delete(item.originalIndex);
+                        }
+                    });
+                    updateRowSelectionUI();
+                    updateRowMoveToolbar();
+                });
+            }
+            
             // Sortier- und Drag-Event-Listener
             document.querySelectorAll('#explorerTableHead .sortable-header').forEach(th => {
                 // Klick zum Sortieren
@@ -4961,6 +5862,12 @@
                         sortExplorerByColumn(colIndex);
                     }
                     th.classList.remove('was-dragged');
+                });
+                
+                // Rechtsklick für Kontextmenü
+                th.addEventListener('contextmenu', (e) => {
+                    const colIndex = parseInt(th.dataset.col);
+                    showColumnContextMenu(e, colIndex);
                 });
                 
                 // Drag Start
@@ -5016,13 +5923,23 @@
             pageData.forEach(item => {
                 const originalIndex = item.originalIndex;
                 const row = item.row;
-                bodyHtml += `<tr data-original-index="${originalIndex}">`;
+                const isSelected = explorerState.selectedRows.has(originalIndex);
+                const selectedClass = isSelected ? ' class="row-selected"' : '';
+                bodyHtml += `<tr data-original-index="${originalIndex}"${selectedClass}>`;
+                // Checkbox-Zelle für Zeilenauswahl
+                bodyHtml += `<td class="row-checkbox-cell ${isSelected ? 'selected' : ''}">
+                    <input type="checkbox" class="row-select-checkbox" data-row-index="${originalIndex}" 
+                        ${isSelected ? 'checked' : ''}>
+                </td>`;
                 displayColumns.forEach(colIndex => {
                     const cellValue = String(row[colIndex] ?? '');
                     const cellKey = `${originalIndex}-${colIndex}`;
                     const isEdited = explorerState.editedCells.has(cellKey);
                     const editedClass = isEdited ? ' class="edited"' : '';
-                    bodyHtml += `<td contenteditable="true" data-row="${originalIndex}" data-col="${colIndex}" data-original="${escapeHtml(cellValue)}"${editedClass}>${escapeHtml(cellValue)}</td>`;
+                    // Hole den echten Original-Wert aus originalData
+                    const originalRow = explorerState.originalData[originalIndex];
+                    const originalValue = originalRow ? String(originalRow[colIndex] ?? '') : cellValue;
+                    bodyHtml += `<td contenteditable="true" data-row="${originalIndex}" data-col="${colIndex}" data-original="${escapeHtml(originalValue)}"${editedClass}>${escapeHtml(cellValue)}</td>`;
                 });
                 bodyHtml += '</tr>';
             });
@@ -5030,6 +5947,29 @@
             
             // Zeilen-Highlights anwenden
             applyRowHighlights();
+            
+            // Event-Listener für Zeilen-Checkboxen
+            document.querySelectorAll('.row-select-checkbox').forEach(checkbox => {
+                checkbox.addEventListener('change', function() {
+                    const rowIndex = parseInt(this.dataset.rowIndex);
+                    if (this.checked) {
+                        explorerState.selectedRows.add(rowIndex);
+                        this.closest('tr').classList.add('row-selected');
+                        this.parentElement.classList.add('selected');
+                    } else {
+                        explorerState.selectedRows.delete(rowIndex);
+                        this.closest('tr').classList.remove('row-selected');
+                        this.parentElement.classList.remove('selected');
+                    }
+                    updateRowMoveToolbar();
+                    // Update Select-All Checkbox
+                    const selectAllCheckbox = document.getElementById('selectAllRows');
+                    if (selectAllCheckbox) {
+                        const allChecked = pageData.every(item => explorerState.selectedRows.has(item.originalIndex));
+                        selectAllCheckbox.checked = allChecked && pageData.length > 0;
+                    }
+                });
+            });
             
             // Rechtsklick-Kontextmenü für Zeilen
             document.querySelectorAll('#explorerTableBody tr').forEach(tr => {
@@ -5133,8 +6073,163 @@
             
             // Pagination UI aktualisieren
             updateExplorerPagination(totalPages);
+            
+            // Row Move Toolbar aktualisieren
+            updateRowMoveToolbar();
         }
         
+        // Aktualisiert die Row Move Toolbar basierend auf der Auswahl
+        function updateRowMoveToolbar() {
+            const toolbar = document.getElementById('rowMoveToolbar');
+            const countSpan = document.getElementById('selectedRowCount');
+            const selectedCount = explorerState.selectedRows.size;
+            
+            if (toolbar && countSpan) {
+                countSpan.textContent = selectedCount;
+                toolbar.style.display = selectedCount > 0 ? 'flex' : 'none';
+            }
+        }
+        
+        // Aktualisiert die visuelle Auswahl der Zeilen
+        function updateRowSelectionUI() {
+            document.querySelectorAll('.row-select-checkbox').forEach(checkbox => {
+                const rowIndex = parseInt(checkbox.dataset.rowIndex);
+                const isSelected = explorerState.selectedRows.has(rowIndex);
+                checkbox.checked = isSelected;
+                const tr = checkbox.closest('tr');
+                const td = checkbox.parentElement;
+                if (tr) {
+                    if (isSelected) {
+                        tr.classList.add('row-selected');
+                        td.classList.add('selected');
+                    } else {
+                        tr.classList.remove('row-selected');
+                        td.classList.remove('selected');
+                    }
+                }
+            });
+        }
+        
+        // Führt das Verschieben der ausgewählten Zeilen aus
+        async function executeRowMove() {
+            const selectedCount = explorerState.selectedRows.size;
+            if (selectedCount === 0) {
+                showNotification('Keine Zeilen ausgewählt', 'warning');
+                return;
+            }
+            
+            const movePosition = document.getElementById('movePosition').value; // 'before' oder 'after'
+            const targetRowInput = document.getElementById('moveTargetRow');
+            const targetRow = parseInt(targetRowInput.value);
+            
+            if (isNaN(targetRow) || targetRow < 1 || targetRow > explorerState.data.length) {
+                showNotification(`Ungültige Zielzeile. Bitte eine Zahl zwischen 1 und ${explorerState.data.length} eingeben.`, 'warning');
+                return;
+            }
+            
+            // Zielindex (0-basiert)
+            let targetIndex = targetRow - 1;
+            
+            // Sortiere die ausgewählten Indizes
+            const selectedIndices = Array.from(explorerState.selectedRows).sort((a, b) => a - b);
+            
+            // Prüfe ob Zielzeile in der Auswahl enthalten ist
+            if (explorerState.selectedRows.has(targetIndex)) {
+                showNotification('Die Zielzeile kann nicht in der Auswahl enthalten sein.', 'warning');
+                return;
+            }
+            
+            // Speichere den aktuellen Zustand für Undo
+            const previousData = JSON.parse(JSON.stringify(explorerState.data));
+            const previousOriginalData = JSON.parse(JSON.stringify(explorerState.originalData));
+            
+            // Extrahiere die ausgewählten Zeilen (von hinten nach vorne um Indizes nicht zu verschieben)
+            const rowsToMove = [];
+            const sortedDescending = [...selectedIndices].sort((a, b) => b - a);
+            sortedDescending.forEach(idx => {
+                rowsToMove.unshift({
+                    data: explorerState.data[idx],
+                    original: explorerState.originalData[idx]
+                });
+            });
+            
+            // Entferne die ausgewählten Zeilen (von hinten nach vorne)
+            sortedDescending.forEach(idx => {
+                explorerState.data.splice(idx, 1);
+                explorerState.originalData.splice(idx, 1);
+            });
+            
+            // Berechne den neuen Zielindex nach dem Entfernen
+            let newTargetIndex = targetIndex;
+            selectedIndices.forEach(idx => {
+                if (idx < targetIndex) {
+                    newTargetIndex--;
+                }
+            });
+            
+            // Füge nach oder vor dem Ziel ein
+            if (movePosition === 'after') {
+                newTargetIndex++;
+            }
+            
+            // Füge die Zeilen an der neuen Position ein
+            rowsToMove.forEach((row, i) => {
+                explorerState.data.splice(newTargetIndex + i, 0, row.data);
+                explorerState.originalData.splice(newTargetIndex + i, 0, row.original);
+            });
+            
+            // Speichere Undo-Aktion
+            pushExplorerUndo({
+                type: 'moveRows',
+                previousData: previousData,
+                previousOriginalData: previousOriginalData,
+                movedIndices: selectedIndices,
+                targetRow: targetRow,
+                movePosition: movePosition
+            });
+            
+            // Auswahl zurücksetzen
+            explorerState.selectedRows.clear();
+            
+            // FilteredData neu erstellen
+            explorerState.filteredData = explorerState.data.map((row, idx) => ({
+                row: row,
+                originalIndex: idx
+            }));
+            
+            // Suchfilter erneut anwenden wenn aktiv
+            const searchTerm = elements.explorerSearch?.value?.trim().toLowerCase();
+            if (searchTerm) {
+                explorerState.filteredData = explorerState.filteredData.filter(item => 
+                    item.row.some(cell => String(cell ?? '').toLowerCase().includes(searchTerm))
+                );
+            }
+            
+            // Markiere als geändert
+            explorerState.hasUnsavedChanges = true;
+            
+            // Tabelle neu rendern
+            renderExplorerTable();
+            
+            showNotification(`${selectedCount} Zeile(n) ${movePosition === 'before' ? 'vor' : 'nach'} Zeile ${targetRow} verschoben`, 'success');
+            
+            // Eingabefeld leeren
+            targetRowInput.value = '';
+        }
+        
+        // Löscht die Zeilenauswahl
+        function clearRowSelection() {
+            explorerState.selectedRows.clear();
+            updateRowSelectionUI();
+            updateRowMoveToolbar();
+            
+            // Select-All Checkbox zurücksetzen
+            const selectAllCheckbox = document.getElementById('selectAllRows');
+            if (selectAllCheckbox) {
+                selectAllCheckbox.checked = false;
+            }
+        }
+
         function updateExplorerEditStatus() {
             const editedCount = explorerState.editedCells.size;
             const resultCount = elements.explorerResultCount.textContent;
@@ -5396,6 +6491,178 @@
             }
         }
         
+        // ==================== Flag/Comment Column Visibility ====================
+        function isFlagEnabled() {
+            return document.getElementById('enableFlagColumn')?.checked ?? true;
+        }
+        
+        function isCommentEnabled() {
+            return document.getElementById('enableCommentColumn')?.checked ?? true;
+        }
+        
+        // Automatische Spaltenberechnung:
+        // - Flag ist immer Spalte 1 (wenn aktiviert)
+        // - Kommentar ist nach Flag (Spalte 1 oder 2)
+        // - Daten beginnen nach Flag und Kommentar
+        function getFlagColumn() {
+            // Flag ist immer Spalte 1 (A)
+            return 1;
+        }
+        
+        function getCommentColumn() {
+            // Kommentar kommt nach Flag:
+            // - Wenn Flag aktiviert: Spalte 2 (B)
+            // - Wenn Flag deaktiviert: Spalte 1 (A)
+            return isFlagEnabled() ? 2 : 1;
+        }
+        
+        function getDataStartColumn() {
+            // Daten beginnen nach Flag und Kommentar:
+            // - Beide aktiviert: Spalte 3 (C)
+            // - Nur eines aktiviert: Spalte 2 (B)
+            // - Beide deaktiviert: Spalte 1 (A)
+            let startCol = 1;
+            if (isFlagEnabled()) startCol++;
+            if (isCommentEnabled()) startCol++;
+            return startCol;
+        }
+        
+        // Aktualisiert die Anzeige der automatischen Spaltenberechnung
+        function updateColumnDisplays() {
+            const flagEnabled = isFlagEnabled();
+            const commentEnabled = isCommentEnabled();
+            
+            const flagDisplay = document.getElementById('flagColumnDisplay');
+            const commentDisplay = document.getElementById('commentColumnDisplay');
+            const startDisplay = document.getElementById('targetStartColumnDisplay');
+            
+            if (flagDisplay) {
+                flagDisplay.textContent = flagEnabled ? '→ Spalte A' : '(deaktiviert)';
+                flagDisplay.style.color = flagEnabled ? 'var(--excel-green)' : 'var(--text-muted)';
+            }
+            
+            if (commentDisplay) {
+                if (commentEnabled) {
+                    const col = getCommentColumn();
+                    commentDisplay.textContent = `→ Spalte ${String.fromCharCode(64 + col)}`;
+                    commentDisplay.style.color = 'var(--excel-green)';
+                } else {
+                    commentDisplay.textContent = '(deaktiviert)';
+                    commentDisplay.style.color = 'var(--text-muted)';
+                }
+            }
+            
+            if (startDisplay) {
+                const startCol = getDataStartColumn();
+                startDisplay.textContent = `Spalte ${String.fromCharCode(64 + startCol)} (automatisch berechnet)`;
+            }
+        }
+        
+        function getFlagValues() {
+            const input = document.getElementById('flagValues')?.value || 'A,D,C,leer';
+            return input.split(',').map(v => v.trim()).filter(v => v);
+        }
+        
+        function getCommentPlaceholder() {
+            return document.getElementById('commentPlaceholder')?.value || 'Freier Text...';
+        }
+        
+        function updateFlagDropdownOptions() {
+            const values = getFlagValues();
+            
+            // Standard-Labels für bekannte Flags
+            const flagLabels = {
+                'A': 'A (Add)',
+                'D': 'D (Delete)',
+                'C': 'C (Change)',
+                'leer': 'Leerzeile'
+            };
+            
+            // Optionen HTML generieren
+            const optionsHtml = values.map(v => {
+                const label = flagLabels[v] || v;
+                return `<option value="${escapeHtml(v)}">${escapeHtml(label)}</option>`;
+            }).join('');
+            
+            // Beide Flag-Dropdowns aktualisieren
+            if (elements.transferFlag) {
+                elements.transferFlag.innerHTML = optionsHtml;
+            }
+            if (elements.newRowFlag) {
+                elements.newRowFlag.innerHTML = optionsHtml;
+            }
+        }
+        
+        function updateCommentPlaceholders() {
+            const placeholder = getCommentPlaceholder();
+            if (elements.transferComment) {
+                elements.transferComment.placeholder = placeholder;
+            }
+            if (elements.newRowComment) {
+                elements.newRowComment.placeholder = placeholder;
+            }
+        }
+        
+        function updateFlagCommentVisibility() {
+            const flagEnabled = isFlagEnabled();
+            const commentEnabled = isCommentEnabled();
+            
+            // Transfer Panel
+            const transferFlagField = elements.transferFlag?.closest('.transfer-field');
+            const transferCommentField = elements.transferComment?.closest('.transfer-field');
+            
+            if (transferFlagField) {
+                transferFlagField.style.display = flagEnabled ? '' : 'none';
+            }
+            if (transferCommentField) {
+                transferCommentField.style.display = commentEnabled ? '' : 'none';
+            }
+            
+            // New Row Panel
+            const newRowFlagField = elements.newRowFlag?.closest('.transfer-field');
+            const newRowCommentField = elements.newRowComment?.closest('.transfer-field');
+            
+            if (newRowFlagField) {
+                newRowFlagField.style.display = flagEnabled ? '' : 'none';
+            }
+            if (newRowCommentField) {
+                newRowCommentField.style.display = commentEnabled ? '' : 'none';
+            }
+            
+            // Modal Config Sections
+            const flagConfig = document.getElementById('flagColumnConfig');
+            const commentConfig = document.getElementById('commentColumnConfig');
+            
+            if (flagConfig) {
+                flagConfig.style.display = flagEnabled ? '' : 'none';
+            }
+            if (commentConfig) {
+                commentConfig.style.display = commentEnabled ? '' : 'none';
+            }
+            
+            // Update Labels mit Spaltennummer
+            const flagColumn = getFlagColumn();
+            const commentColumn = getCommentColumn();
+            const colLetters = ['', 'A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+            
+            if (transferFlagField) {
+                const label = transferFlagField.querySelector('label');
+                if (label) label.textContent = `Spalte ${colLetters[flagColumn]} - Flag:`;
+            }
+            if (transferCommentField) {
+                const label = transferCommentField.querySelector('label');
+                if (label) label.textContent = `Spalte ${colLetters[commentColumn]} - Kommentar:`;
+            }
+            if (newRowFlagField) {
+                const label = newRowFlagField.querySelector('label');
+                if (label) label.textContent = `Flag (Spalte ${colLetters[flagColumn]}):`;
+            }
+            if (newRowCommentField) {
+                const label = newRowCommentField.querySelector('label');
+                if (label) label.textContent = `Kommentar (Spalte ${colLetters[commentColumn]}):`;
+            }
+        }
+        
         // ==================== Initialize App ====================
         async function initApp() {
             // Initialize theme and language first
@@ -5405,6 +6672,61 @@
             document.getElementById('selectTheme').value = currentTheme;
             document.getElementById('selectLanguage').onchange = (e) => setLanguage(e.target.value);
             document.getElementById('selectTheme').onchange = (e) => setTheme(e.target.value);
+            
+            // Flag/Comment Column Options
+            const flagCheckbox = document.getElementById('enableFlagColumn');
+            const commentCheckbox = document.getElementById('enableCommentColumn');
+            const flagValuesInput = document.getElementById('flagValues');
+            const commentPlaceholderInput = document.getElementById('commentPlaceholder');
+            
+            // Load saved preferences
+            const savedFlagEnabled = localStorage.getItem('excelSyncEnableFlag');
+            const savedCommentEnabled = localStorage.getItem('excelSyncEnableComment');
+            const savedFlagValues = localStorage.getItem('excelSyncFlagValues');
+            const savedCommentPlaceholder = localStorage.getItem('excelSyncCommentPlaceholder');
+            
+            if (savedFlagEnabled !== null) {
+                flagCheckbox.checked = savedFlagEnabled === 'true';
+            }
+            if (savedCommentEnabled !== null) {
+                commentCheckbox.checked = savedCommentEnabled === 'true';
+            }
+            if (savedFlagValues) {
+                flagValuesInput.value = savedFlagValues;
+            }
+            if (savedCommentPlaceholder) {
+                commentPlaceholderInput.value = savedCommentPlaceholder;
+            }
+            
+            // Apply initial settings
+            updateFlagDropdownOptions();
+            updateCommentPlaceholders();
+            updateFlagCommentVisibility();
+            updateColumnDisplays();
+            
+            flagCheckbox.onchange = () => {
+                localStorage.setItem('excelSyncEnableFlag', flagCheckbox.checked);
+                updateFlagCommentVisibility();
+                updateColumnDisplays();
+                renderMappingList();
+            };
+            
+            commentCheckbox.onchange = () => {
+                localStorage.setItem('excelSyncEnableComment', commentCheckbox.checked);
+                updateFlagCommentVisibility();
+                updateColumnDisplays();
+                renderMappingList();
+            };
+            
+            flagValuesInput.onchange = () => {
+                localStorage.setItem('excelSyncFlagValues', flagValuesInput.value);
+                updateFlagDropdownOptions();
+            };
+            
+            commentPlaceholderInput.onchange = () => {
+                localStorage.setItem('excelSyncCommentPlaceholder', commentPlaceholderInput.value);
+                updateCommentPlaceholders();
+            };
             
             // Globaler Keyboard-Handler für Undo/Redo
             document.addEventListener('keydown', (e) => {
@@ -5628,6 +6950,15 @@
             document.getElementById('btnClearExplorerFilters').onclick = clearExplorerFilters;
             elements.btnExplorerExport.onclick = exportExplorerData;
             
+            // Explorer-Vorschau Event Listeners
+            document.getElementById('btnExplorerPreview').onclick = showExplorerPreview;
+            document.getElementById('btnClosePreviewX').onclick = closeExplorerPreview;
+            document.getElementById('btnClosePreview').onclick = closeExplorerPreview;
+            
+            // Row Move Toolbar Event Listeners
+            document.getElementById('btnExecuteMove').onclick = executeRowMove;
+            document.getElementById('btnClearRowSelection').onclick = clearRowSelection;
+            
             // Pagination Event Listeners (Data Explorer)
             document.getElementById('btnExplorerFirstPage').onclick = () => explorerGoToPage(1);
             document.getElementById('btnExplorerPrevPage').onclick = () => explorerGoToPage(explorerState.currentPage - 1);
@@ -5686,7 +7017,7 @@
             elements.selectSheet2.onchange = (e) => loadSheet2Electron(e.target.value);
             elements.btnImportConfig.onclick = loadConfigFromAppDirOrDialog;
             elements.btnExportConfig.onclick = exportConfig;
-            elements.btnExportPS.onclick = transferQueueToExcel;
+            elements.btnExportPS.onclick = showDiffPreview;  // Zeigt zuerst Vorschau, dann Export via Modal
             elements.btnPreviewTransfer.onclick = showDiffPreview;
             
             // Diff-Vorschau Modal Event Handler
