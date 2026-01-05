@@ -513,6 +513,17 @@
             color: white;
         }
         
+        /* Zellen-Auswahl */
+        .cell-selected {
+            background: rgba(33, 150, 243, 0.3) !important;
+            outline: 2px solid var(--primary) !important;
+            outline-offset: -2px;
+        }
+        
+        .cell-selection-anchor {
+            background: rgba(33, 150, 243, 0.4) !important;
+        }
+        
         /* Zeilen-Highlighting */
         .row-highlight-green { background: rgba(76, 175, 80, 0.2) !important; }
         .row-highlight-yellow { background: rgba(255, 235, 59, 0.25) !important; }
@@ -1140,6 +1151,20 @@
                 <button class="sidebar-toggle" id="sidebarToggle" title="Sidebar ein-/ausklappen">◀</button>
             </div>
             <div class="sidebar-content">
+                <!-- Arbeitsordner -->
+                <div class="config-section">
+                    <div class="config-section-title" data-i18n="workingDirectory">📁 Arbeitsordner</div>
+                    <div class="config-group">
+                        <button class="btn btn-primary" id="btnSelectWorkingDir" style="width: 100%; margin-bottom: 10px;" data-i18n="selectWorkingDir">
+                            📂 Ordner auswählen
+                        </button>
+                        <div class="file-info" id="workingDirInfo" data-i18n="noWorkingDirSet" style="word-break: break-all;">Kein Ordner gewählt</div>
+                        <button class="btn btn-secondary" id="btnClearWorkingDir" style="width: 100%; margin-top: 8px; display: none;" data-i18n="clearWorkingDir">
+                            ✖️ Arbeitsordner löschen
+                        </button>
+                    </div>
+                </div>
+                
                 <!-- Datei 1 - Quelle -->
                 <div class="config-section">
                     <div class="config-section-title" data-i18n="file1Source">📄 Datei 1 (Quelle)</div>
@@ -1399,7 +1424,7 @@
     
     <!-- Footer -->
     <footer style="background: var(--bg-medium); border-top: 1px solid var(--border); padding: 8px 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
-        © Norbert Jander 2025 · v1.0.8
+        © Norbert Jander 2025 · v1.0.10
     </footer>
     
     <!-- Mapping Modal -->
@@ -1975,8 +2000,11 @@
                     <button class="btn btn-primary" id="btnExplorerPreview" title="Vorschau des gesamten Datenblattes mit Änderungen" disabled>
                         👁️ Vorschau
                     </button>
+                    <button class="btn btn-success" id="btnExplorerSave" title="Änderungen in Originaldatei speichern">
+                        💾 Speichern
+                    </button>
                     <button class="btn btn-primary" id="btnExplorerExport">
-                        💾 Als XLSX exportieren
+                        📤 Als XLSX exportieren
                     </button>
                 </div>
                 
@@ -2139,6 +2167,14 @@
                 themeDark: '🌙 Dunkel',
                 themeLight: '☀️ Hell',
                 
+                // Working Directory
+                workingDirectory: '📁 Arbeitsordner',
+                selectWorkingDir: '📂 Ordner auswählen',
+                noWorkingDirSet: 'Kein Ordner gewählt',
+                clearWorkingDir: '✖️ Arbeitsordner löschen',
+                workingDirSet: '✓ ',
+                workingDirCleared: 'Arbeitsordner gelöscht',
+                
                 // Files
                 file1Source: '📄 Datei 1 (Quelle)',
                 file2Target: '📄 Datei 2 (Ziel)',
@@ -2234,7 +2270,8 @@
                 fullTextSearch: 'Volltextsuche:',
                 searchPlaceholderExplorer: 'Suchbegriff eingeben...',
                 columns: '👁️ Spalten',
-                exportXlsx: '💾 Als XLSX exportieren',
+                exportXlsx: '� Als XLSX exportieren',
+                saveFile: '💾 Speichern',
                 filter: '🔍 Filter',
                 addFilter: '➕ Filter hinzufügen',
                 resetFilters: '🗑️ Filter zurücksetzen',
@@ -2259,7 +2296,7 @@
                 createAndLoad: '📅 Erstellen & Laden',
                 
                 // Footer
-                copyright: '© Norbert Jander 2025 · v1.0.8',
+                copyright: '© Norbert Jander 2025 · v1.0.10',
                 
                 // Extra Columns
                 extraColumns: 'Extra-Spalten',
@@ -2288,6 +2325,14 @@
                 theme: 'Theme',
                 themeDark: '🌙 Dark',
                 themeLight: '☀️ Light',
+                
+                // Working Directory
+                workingDirectory: '📁 Working Directory',
+                selectWorkingDir: '📂 Select Folder',
+                noWorkingDirSet: 'No folder selected',
+                clearWorkingDir: '✖️ Clear Working Directory',
+                workingDirSet: '✓ ',
+                workingDirCleared: 'Working directory cleared',
                 
                 // Files
                 file1Source: '📄 File 1 (Source)',
@@ -2384,7 +2429,8 @@
                 fullTextSearch: 'Full-text search:',
                 searchPlaceholderExplorer: 'Enter search term...',
                 columns: '👁️ Columns',
-                exportXlsx: '💾 Export as XLSX',
+                exportXlsx: '� Export as XLSX',
+                saveFile: '💾 Save',
                 filter: '🔍 Filter',
                 addFilter: '➕ Add Filter',
                 resetFilters: '🗑️ Reset Filters',
@@ -2409,7 +2455,7 @@
                 createAndLoad: '📅 Create & Load',
                 
                 // Footer
-                copyright: '© Norbert Jander 2025 · v1.0.8',
+                copyright: '© Norbert Jander 2025 · v1.0.10',
                 
                 // Extra Columns
                 extraColumns: 'Extra Columns',
@@ -2542,6 +2588,7 @@
             const btnExplorerOpenFile = document.getElementById('btnExplorerOpenFile');
             const btnToggleColumns = document.getElementById('btnToggleColumns');
             const btnExplorerExport = document.getElementById('btnExplorerExport');
+            const btnExplorerSave = document.getElementById('btnExplorerSave');
             const btnAddExplorerFilter = document.getElementById('btnAddExplorerFilter');
             const btnClearExplorerFilters = document.getElementById('btnClearExplorerFilters');
             const btnShowAllColumns = document.getElementById('btnShowAllColumns');
@@ -2553,6 +2600,7 @@
             if (btnExplorerOpenFile) btnExplorerOpenFile.innerHTML = t('openFile');
             if (btnToggleColumns) btnToggleColumns.innerHTML = t('columns');
             if (btnExplorerExport) btnExplorerExport.innerHTML = t('exportXlsx');
+            if (btnExplorerSave) btnExplorerSave.innerHTML = t('saveFile');
             if (btnAddExplorerFilter) btnAddExplorerFilter.innerHTML = t('addFilter');
             if (btnClearExplorerFilters) btnClearExplorerFilters.innerHTML = t('resetFilters');
             if (btnShowAllColumns) btnShowAllColumns.textContent = t('showAll');
@@ -2764,6 +2812,32 @@
                 return true;
             }
             
+            // Prüfe auf Multi-Aktion (mehrere Zellen gleichzeitig)
+            if (action.type === 'multi') {
+                action.actions.forEach(subAction => {
+                    const { rowIndex, colIndex, oldValue, originalValue } = subAction;
+                    explorerState.data[rowIndex][colIndex] = oldValue;
+                    
+                    const cellKey = `${rowIndex}-${colIndex}`;
+                    if (oldValue === originalValue) {
+                        explorerState.editedCells.delete(cellKey);
+                    } else {
+                        explorerState.editedCells.set(cellKey, oldValue);
+                    }
+                    
+                    // UI aktualisieren
+                    const cell = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+                    if (cell) {
+                        cell.textContent = oldValue;
+                        cell.dataset.lastValue = oldValue;
+                        cell.classList.toggle('edited', oldValue !== cell.dataset.original);
+                    }
+                });
+                updateExplorerEditStatus();
+                showNotification(`${action.actions.length} Zelle(n) wiederhergestellt`, 'info');
+                return true;
+            }
+            
             // Ursprünglichen Wert wiederherstellen (Standard-Zellbearbeitung)
             const { rowIndex, colIndex, oldValue, newValue } = action;
             explorerState.data[rowIndex][colIndex] = oldValue;
@@ -2849,6 +2923,32 @@
                 
                 renderExplorerTable();
                 showNotification('Zeilen-Verschiebung wiederhergestellt', 'info');
+                return true;
+            }
+            
+            // Prüfe auf Multi-Aktion (mehrere Zellen gleichzeitig)
+            if (action.type === 'multi') {
+                action.actions.forEach(subAction => {
+                    const { rowIndex, colIndex, newValue, originalValue } = subAction;
+                    explorerState.data[rowIndex][colIndex] = newValue;
+                    
+                    const cellKey = `${rowIndex}-${colIndex}`;
+                    if (newValue === originalValue) {
+                        explorerState.editedCells.delete(cellKey);
+                    } else {
+                        explorerState.editedCells.set(cellKey, newValue);
+                    }
+                    
+                    // UI aktualisieren
+                    const cell = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+                    if (cell) {
+                        cell.textContent = newValue;
+                        cell.dataset.lastValue = newValue;
+                        cell.classList.toggle('edited', newValue !== cell.dataset.original);
+                    }
+                });
+                updateExplorerEditStatus();
+                showNotification(`${action.actions.length} Zelle(n) gelöscht`, 'info');
                 return true;
             }
             
@@ -3330,11 +3430,18 @@
                 currentPage: 1,
                 pageSize: 100,
                 pageSizeOptions: [50, 100, 250, 500]
-            }
+            },
+            // Arbeitsordner
+            workingDirectory: null
         };
         
         // ==================== DOM Elements ====================
         const elements = {
+            // Working Directory
+            btnSelectWorkingDir: document.getElementById('btnSelectWorkingDir'),
+            workingDirInfo: document.getElementById('workingDirInfo'),
+            btnClearWorkingDir: document.getElementById('btnClearWorkingDir'),
+            
             // File 1
             btnLoadFile1: document.getElementById('btnLoadFile1'),
             fileInput1: document.getElementById('fileInput1'),
@@ -3434,6 +3541,7 @@
             explorerTableHead: document.getElementById('explorerTableHead'),
             explorerTableBody: document.getElementById('explorerTableBody'),
             btnExplorerExport: document.getElementById('btnExplorerExport'),
+            btnExplorerSave: document.getElementById('btnExplorerSave'),
             btnExplorerOpenFile: document.getElementById('btnExplorerOpenFile'),
             
             // Help
@@ -3467,6 +3575,14 @@
         function updateWorkbook() {
             // Im Electron-Modus nicht benötigt - Änderungen gehen direkt in die Datei
             return;
+        }
+        
+        // Formatiert Datum und Uhrzeit für History-Einträge
+        function formatHistoryDateTime() {
+            const now = new Date();
+            const date = now.toLocaleDateString('de-DE', { day: '2-digit', month: '2-digit', year: '2-digit' });
+            const time = now.toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+            return `${date} ${time}`;
         }
         
         function updateHistoryDisplay() {
@@ -3542,7 +3658,7 @@
                 file1SheetName: state.file1.selectedSheet,
                 file2SheetName: state.file2.selectedSheet,
                 mapping: state.mapping,
-                history: state.history.slice(-50),  // Keep last 50 entries
+                history: state.history.slice(-100),  // Keep last 100 entries
                 // Extra-Spalten Konfiguration
                 extraColumns: {
                     enableFlag: isFlagEnabled(),
@@ -3660,7 +3776,7 @@
             try {
                 const savePath = await window.electronAPI.saveFileDialog({
                     title: 'Konfiguration speichern',
-                    defaultPath: 'config.json',
+                    defaultPath: getWorkingDirectoryPath() ? (getWorkingDirectoryPath() + '/config.json') : 'config.json',
                     filters: [{ name: 'JSON Dateien', extensions: ['json'] }]
                 });
                 if (savePath) {
@@ -4521,12 +4637,12 @@
             updateWorkbook();
             
             state.history.unshift({
-                time: new Date().toLocaleTimeString(),
+                time: formatHistoryDateTime(),
                 flag: flag,
                 searchValue: '(Manuelle Eingabe)',
                 preview: data[state.mapping.duplicateCheckColumn] || '(Neue Zeile)'
             });
-            if (state.history.length > 50) state.history = state.history.slice(0, 50);
+            if (state.history.length > 100) state.history = state.history.slice(0, 100);
             updateHistoryDisplay();
             
             showStatus(elements.transferStatus, '✅ Neue Zeile direkt übertragen!', 'success');
@@ -4659,7 +4775,7 @@
                 transferredCount++;
                 
                 state.history.unshift({
-                    time: new Date().toLocaleTimeString(),
+                    time: formatHistoryDateTime(),
                     flag: flag,
                     searchValue: checkValue,
                     preview: rowData[state.mapping.duplicateCheckColumn] || '(Neue Zeile)'
@@ -4668,7 +4784,7 @@
             
             updateWorkbook();
             
-            if (state.history.length > 50) state.history.length = 50;
+            if (state.history.length > 100) state.history.length = 100;
             updateHistoryDisplay();
             saveConfig();
             
@@ -4852,13 +4968,13 @@
             if (result.success) {
                 state.transferQueue.forEach(item => {
                     state.history.unshift({
-                        time: new Date().toLocaleTimeString(),
+                        time: formatHistoryDateTime(),
                         flag: item.flag,
                         searchValue: item.checkValue,
                         preview: String(item.checkValue || item.data[0] || '').substring(0, 30)
                     });
                 });
-                if (state.history.length > 50) state.history = state.history.slice(0, 50);
+                if (state.history.length > 100) state.history = state.history.slice(0, 100);
                 updateHistoryDisplay();
                 
                 state.transferQueue = [];
@@ -5033,11 +5149,70 @@
             transferQueueToExcel();
         }
         
+        // ==================== Working Directory Functions ====================
+        async function selectWorkingDirectory() {
+            try {
+                const folderPath = await window.electronAPI.openFolderDialog({
+                    title: t('selectWorkingDir') || 'Arbeitsordner auswählen'
+                });
+                
+                if (!folderPath) return;
+                
+                state.workingDirectory = folderPath;
+                updateWorkingDirectoryUI();
+                
+                // Im localStorage speichern für Persistenz
+                localStorage.setItem('workingDirectory', folderPath);
+                
+                showStatus(elements.transferStatus, `✓ ${t('workingDirSet')}${folderPath}`, 'success');
+            } catch (err) {
+                console.error('Fehler beim Auswählen des Arbeitsordners:', err);
+                showStatus(elements.transferStatus, `Fehler: ${err.message}`, 'error');
+            }
+        }
+        
+        function clearWorkingDirectory() {
+            state.workingDirectory = null;
+            localStorage.removeItem('workingDirectory');
+            updateWorkingDirectoryUI();
+            showStatus(elements.transferStatus, `✓ ${t('workingDirCleared')}`, 'success');
+        }
+        
+        function updateWorkingDirectoryUI() {
+            if (state.workingDirectory) {
+                // Zeige den Ordnernamen (letzter Teil des Pfads)
+                const folderName = state.workingDirectory.split(/[/\\]/).pop();
+                elements.workingDirInfo.textContent = `✓ ${folderName}`;
+                elements.workingDirInfo.title = state.workingDirectory;
+                elements.workingDirInfo.classList.add('loaded');
+                elements.btnClearWorkingDir.style.display = 'block';
+            } else {
+                elements.workingDirInfo.textContent = t('noWorkingDirSet');
+                elements.workingDirInfo.title = '';
+                elements.workingDirInfo.classList.remove('loaded');
+                elements.btnClearWorkingDir.style.display = 'none';
+            }
+        }
+        
+        function getWorkingDirectoryPath() {
+            return state.workingDirectory || undefined;
+        }
+        
+        // Arbeitsordner beim Start laden
+        function loadWorkingDirectoryFromStorage() {
+            const savedPath = localStorage.getItem('workingDirectory');
+            if (savedPath) {
+                state.workingDirectory = savedPath;
+                updateWorkingDirectoryUI();
+            }
+        }
+        
         // ==================== Electron-Specific Functions ====================
         async function loadFile1Electron() {
             const filePath = await window.electronAPI.openFileDialog({
                 title: 'Quelldatei öffnen',
-                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
+                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
+                defaultPath: getWorkingDirectoryPath()
             });
             if (!filePath) return;
             
@@ -5063,7 +5238,8 @@
         async function loadFile2Electron() {
             const filePath = await window.electronAPI.openFileDialog({
                 title: 'Zieldatei öffnen',
-                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
+                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
+                defaultPath: getWorkingDirectoryPath()
             });
             if (!filePath) return;
             
@@ -5123,7 +5299,8 @@
         async function loadTemplateElectron() {
             const filePath = await window.electronAPI.openFileDialog({
                 title: 'Template-Datei öffnen',
-                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
+                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
+                defaultPath: getWorkingDirectoryPath()
             });
             if (!filePath) return;
             
@@ -5164,7 +5341,8 @@
             // 1. Quelldatei auswählen
             const sourcePath = await window.electronAPI.openFileDialog({
                 title: isDE ? 'Quelldatei auswählen (mit Formatierungen)' : 'Select source file (with formatting)',
-                filters: [{ name: 'Excel', extensions: ['xlsx'] }]
+                filters: [{ name: 'Excel', extensions: ['xlsx'] }],
+                defaultPath: getWorkingDirectoryPath()
             });
             if (!sourcePath) return;
             
@@ -5380,7 +5558,8 @@
                 // Zuerst Dialog öffnen
                 const filePath = await window.electronAPI.openFileDialog({
                     title: 'config.json laden',
-                    filters: [{ name: 'JSON', extensions: ['json'] }]
+                    filters: [{ name: 'JSON', extensions: ['json'] }],
+                    defaultPath: getWorkingDirectoryPath()
                 });
                 
                 if (filePath) {
@@ -5426,7 +5605,13 @@
             selectedRows: new Set(),  // Set von originalIndex Werten
             moveMode: false,  // Ob Verschiebe-Modus aktiv ist
             // Drag & Drop State
-            draggedColumn: null
+            draggedColumn: null,
+            // Zellen-Auswahl für Mehrfach-Bearbeitung
+            selectedCells: new Set(),  // Set von "rowIndex-colIndex" Strings
+            selectionAnchor: null,  // {row, col} - Startpunkt der Auswahl
+            isSelecting: false,  // Ob gerade eine Auswahl gezogen wird
+            // Cache für Sheet-Änderungen (bleibt bei Wechsel erhalten)
+            sheetDataCache: new Map()  // sheetName -> { data, editedCells, rowHighlights, originalData }
         };
         
         // Kontextmenü für Zeilen-Markierung
@@ -5540,6 +5725,293 @@
             });
         }
         
+        // ==================== Zellen-Auswahl Funktionen ====================
+        
+        // Zellen-Auswahl visuell aktualisieren
+        function updateCellSelectionUI() {
+            // Alle Auswahl-Markierungen entfernen
+            document.querySelectorAll('#explorerTableBody td.cell-selected').forEach(td => {
+                td.classList.remove('cell-selected', 'cell-selection-anchor');
+            });
+            
+            // Ausgewählte Zellen markieren
+            explorerState.selectedCells.forEach(cellKey => {
+                const [rowIndex, colIndex] = cellKey.split('-').map(Number);
+                const td = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+                if (td) {
+                    td.classList.add('cell-selected');
+                }
+            });
+            
+            // Anker-Zelle hervorheben
+            if (explorerState.selectionAnchor) {
+                const anchorTd = document.querySelector(
+                    `#explorerTableBody td[data-row="${explorerState.selectionAnchor.row}"][data-col="${explorerState.selectionAnchor.col}"]`
+                );
+                if (anchorTd) {
+                    anchorTd.classList.add('cell-selection-anchor');
+                }
+            }
+        }
+        
+        // Zellen-Auswahl leeren
+        function clearCellSelection() {
+            explorerState.selectedCells.clear();
+            explorerState.selectionAnchor = null;
+            explorerState.isSelecting = false;
+            updateCellSelectionUI();
+        }
+        
+        // Zelle zur Auswahl hinzufügen/entfernen
+        function toggleCellSelection(rowIndex, colIndex, addToSelection = false) {
+            const cellKey = `${rowIndex}-${colIndex}`;
+            
+            if (!addToSelection) {
+                // Ohne Modifier: Alte Auswahl leeren
+                explorerState.selectedCells.clear();
+            }
+            
+            if (explorerState.selectedCells.has(cellKey)) {
+                explorerState.selectedCells.delete(cellKey);
+            } else {
+                explorerState.selectedCells.add(cellKey);
+            }
+            
+            explorerState.selectionAnchor = { row: rowIndex, col: colIndex };
+            updateCellSelectionUI();
+        }
+        
+        // Bereich von Zellen auswählen (Shift-Klick)
+        function selectCellRange(toRow, toCol) {
+            if (!explorerState.selectionAnchor) {
+                explorerState.selectionAnchor = { row: toRow, col: toCol };
+            }
+            
+            const fromRow = explorerState.selectionAnchor.row;
+            const fromCol = explorerState.selectionAnchor.col;
+            
+            const minRow = Math.min(fromRow, toRow);
+            const maxRow = Math.max(fromRow, toRow);
+            const minCol = Math.min(fromCol, toCol);
+            const maxCol = Math.max(fromCol, toCol);
+            
+            // Alte Auswahl leeren und neuen Bereich auswählen
+            explorerState.selectedCells.clear();
+            
+            // Nur sichtbare Spalten berücksichtigen
+            const displayColumns = explorerState.columnOrder.length > 0 
+                ? explorerState.columnOrder.filter(col => explorerState.visibleColumns.includes(col))
+                : explorerState.visibleColumns;
+            
+            // Alle Zeilen im Bereich finden
+            for (let r = minRow; r <= maxRow; r++) {
+                for (let c = minCol; c <= maxCol; c++) {
+                    // Nur auswählen wenn die Spalte sichtbar ist
+                    if (displayColumns.includes(c)) {
+                        explorerState.selectedCells.add(`${r}-${c}`);
+                    }
+                }
+            }
+            
+            updateCellSelectionUI();
+        }
+        
+        // Kontextmenü für Zellen-Auswahl
+        function showCellContextMenu(e, rowIndex, colIndex) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Altes Menü entfernen
+            const oldMenu = document.querySelector('.context-menu');
+            if (oldMenu) oldMenu.remove();
+            
+            const cellKey = `${rowIndex}-${colIndex}`;
+            
+            // Wenn die angeklickte Zelle nicht in der Auswahl ist, diese zur Auswahl machen
+            if (!explorerState.selectedCells.has(cellKey)) {
+                explorerState.selectedCells.clear();
+                explorerState.selectedCells.add(cellKey);
+                explorerState.selectionAnchor = { row: rowIndex, col: colIndex };
+                updateCellSelectionUI();
+            }
+            
+            const selectedCount = explorerState.selectedCells.size;
+            const cellLabel = selectedCount === 1 ? 'Zelle' : `${selectedCount} Zellen`;
+            
+            let menuHtml = '<div class="context-menu">';
+            menuHtml += `<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">📋 ${cellLabel} ausgewählt</div>`;
+            menuHtml += '<div class="context-menu-divider"></div>';
+            menuHtml += `<div class="context-menu-item" data-action="delete-content">🗑️ Inhalt löschen</div>`;
+            menuHtml += `<div class="context-menu-item" data-action="copy-content">📋 Kopieren</div>`;
+            menuHtml += '<div class="context-menu-divider"></div>';
+            menuHtml += `<div class="context-menu-item" data-action="clear-selection">❌ Auswahl aufheben</div>`;
+            menuHtml += '</div>';
+            
+            const menu = document.createElement('div');
+            menu.innerHTML = menuHtml;
+            document.body.appendChild(menu.firstElementChild);
+            
+            const menuEl = document.querySelector('.context-menu');
+            
+            // Positionierung
+            let x = e.clientX;
+            let y = e.clientY;
+            
+            // Sicherstellen, dass das Menü im Viewport bleibt
+            const menuRect = menuEl.getBoundingClientRect();
+            if (x + menuRect.width > window.innerWidth) {
+                x = window.innerWidth - menuRect.width - 5;
+            }
+            if (y + menuRect.height > window.innerHeight) {
+                y = window.innerHeight - menuRect.height - 5;
+            }
+            
+            menuEl.style.left = x + 'px';
+            menuEl.style.top = y + 'px';
+            
+            // Event-Handler: Inhalt löschen
+            menuEl.querySelector('[data-action="delete-content"]').addEventListener('click', () => {
+                deleteSelectedCellsContent();
+                menuEl.remove();
+            });
+            
+            // Event-Handler: Kopieren
+            menuEl.querySelector('[data-action="copy-content"]').addEventListener('click', () => {
+                copySelectedCellsContent();
+                menuEl.remove();
+            });
+            
+            // Event-Handler: Auswahl aufheben
+            menuEl.querySelector('[data-action="clear-selection"]').addEventListener('click', () => {
+                clearCellSelection();
+                menuEl.remove();
+            });
+            
+            // Menü bei Klick außerhalb schließen
+            const closeHandler = (event) => {
+                if (!menuEl.contains(event.target)) {
+                    menuEl.remove();
+                    document.removeEventListener('click', closeHandler);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', closeHandler), 10);
+        }
+        
+        // Ausgewählte Zelleninhalte löschen
+        function deleteSelectedCellsContent() {
+            if (explorerState.selectedCells.size === 0) return;
+            
+            const undoActions = [];
+            
+            explorerState.selectedCells.forEach(cellKey => {
+                const [rowIndex, colIndex] = cellKey.split('-').map(Number);
+                const td = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+                
+                if (td) {
+                    const oldValue = explorerState.data[rowIndex][colIndex];
+                    const originalValue = td.dataset.original;
+                    
+                    // Undo-Aktion speichern
+                    undoActions.push({
+                        rowIndex,
+                        colIndex,
+                        oldValue: String(oldValue ?? ''),
+                        newValue: '',
+                        originalValue
+                    });
+                    
+                    // Daten aktualisieren
+                    explorerState.data[rowIndex][colIndex] = '';
+                    explorerState.editedCells.set(cellKey, '');
+                    
+                    // UI aktualisieren
+                    td.textContent = '';
+                    td.dataset.lastValue = '';
+                    td.classList.add('edited');
+                }
+            });
+            
+            // Alle Änderungen als eine Undo-Aktion speichern
+            if (undoActions.length > 0) {
+                pushExplorerUndo({
+                    type: 'multi',
+                    actions: undoActions
+                });
+            }
+            
+            // Status aktualisieren
+            updateExplorerEditStatus();
+            
+            // Auswahl leeren
+            clearCellSelection();
+            
+            // Info anzeigen
+            showFloatingStatus(`${undoActions.length} Zelle(n) gelöscht`);
+        }
+        
+        // Ausgewählte Zelleninhalte kopieren
+        function copySelectedCellsContent() {
+            if (explorerState.selectedCells.size === 0) return;
+            
+            // Zellen nach Position sortieren
+            const cells = Array.from(explorerState.selectedCells).map(key => {
+                const [row, col] = key.split('-').map(Number);
+                return { row, col, value: explorerState.data[row][col] ?? '' };
+            }).sort((a, b) => a.row - b.row || a.col - b.col);
+            
+            // Nach Zeilen gruppieren
+            const rows = new Map();
+            cells.forEach(cell => {
+                if (!rows.has(cell.row)) {
+                    rows.set(cell.row, []);
+                }
+                rows.get(cell.row).push(String(cell.value));
+            });
+            
+            // Als Tab-getrennten Text formatieren
+            const text = Array.from(rows.values())
+                .map(rowCells => rowCells.join('\t'))
+                .join('\n');
+            
+            navigator.clipboard.writeText(text).then(() => {
+                showFloatingStatus(`${explorerState.selectedCells.size} Zelle(n) kopiert`);
+            }).catch(err => {
+                console.error('Kopieren fehlgeschlagen:', err);
+                showFloatingStatus('Kopieren fehlgeschlagen', true);
+            });
+        }
+        
+        // Floating Status Nachricht anzeigen
+        function showFloatingStatus(message, isError = false) {
+            // Alte Nachricht entfernen
+            const oldStatus = document.querySelector('.floating-status');
+            if (oldStatus) oldStatus.remove();
+            
+            const status = document.createElement('div');
+            status.className = 'floating-status';
+            status.style.cssText = `
+                position: fixed;
+                bottom: 80px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: ${isError ? '#F44336' : 'var(--primary)'};
+                color: white;
+                padding: 10px 20px;
+                border-radius: 6px;
+                z-index: 10001;
+                font-size: 13px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                animation: fadeInUp 0.3s ease;
+            `;
+            status.textContent = message;
+            document.body.appendChild(status);
+            
+            setTimeout(() => {
+                status.style.animation = 'fadeOut 0.3s ease';
+                setTimeout(() => status.remove(), 300);
+            }, 2000);
+        }
+
         function openDataExplorer() {
             elements.dataExplorerModal.classList.remove('hidden');
             document.body.classList.add('modal-open');
@@ -5631,9 +6103,24 @@
         }
         
         async function loadExplorerFile() {
+            // Prüfe auf ungespeicherte Änderungen
+            if (hasUnsavedChanges()) {
+                const totalChanges = countAllChanges();
+                const confirmed = await showConfirmDialog(
+                    'Ungespeicherte Änderungen',
+                    `Sie haben ${totalChanges} ungespeicherte Änderung(en).\n\n` +
+                    `Möchten Sie trotzdem eine neue Datei öffnen?\n\n` +
+                    `⚠️ Alle Änderungen gehen verloren!`,
+                    'Neue Datei öffnen',
+                    'Abbrechen'
+                );
+                if (!confirmed) return;
+            }
+            
             const filePath = await window.electronAPI.openFileDialog({
                 title: 'Excel-Datei öffnen',
-                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }]
+                filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
+                defaultPath: getWorkingDirectoryPath()
             });
             if (!filePath) return;
             
@@ -5642,6 +6129,11 @@
                 elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 return;
             }
+            
+            // Cache leeren bei neuer Datei
+            explorerState.sheetDataCache.clear();
+            explorerState.editedCells.clear();
+            explorerState.rowHighlights.clear();
             
             explorerState.filePath = filePath;
             explorerState.fileName = result.fileName;
@@ -5658,9 +6150,50 @@
         async function loadExplorerSheet(sheetName) {
             if (!explorerState.filePath || !sheetName) return;
             
+            // VOR dem Wechsel: Aktuelles Sheet im Cache speichern wenn es Änderungen gibt
+            if (explorerState.selectedSheet && explorerState.data.length > 0) {
+                saveCurrentSheetToCache();
+            }
+            
             // Loading-Status anzeigen
             elements.explorerStatus.textContent = 'Lade Daten...';
             
+            // Prüfe ob dieses Sheet bereits im Cache ist
+            const cachedSheet = explorerState.sheetDataCache.get(sheetName);
+            
+            if (cachedSheet) {
+                // Aus Cache laden
+                explorerState.selectedSheet = sheetName;
+                explorerState.headers = cachedSheet.headers;
+                explorerState.data = cachedSheet.data.map(row => [...row]); // Deep copy
+                explorerState.originalData = cachedSheet.originalData.map(row => [...row]);
+                explorerState.editedCells = new Map(cachedSheet.editedCells);
+                explorerState.rowHighlights = new Map(cachedSheet.rowHighlights);
+                explorerState.visibleColumns = [...cachedSheet.visibleColumns];
+                explorerState.columnOrder = [...(cachedSheet.columnOrder || [])];
+                
+                // UI-State zurücksetzen
+                explorerState.filteredData = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
+                explorerState.currentPage = 1;
+                explorerState.searchTerm = '';
+                explorerState.sortColumn = null;
+                explorerState.sortDirection = null;
+                elements.explorerSearch.value = '';
+                
+                const editCount = explorerState.editedCells.size;
+                if (editCount > 0) {
+                    elements.explorerStatus.textContent = `Aus Cache geladen (${editCount} Änderungen)`;
+                } else {
+                    elements.explorerStatus.textContent = '';
+                }
+                
+                renderExplorerTable();
+                updateColumnToggles();
+                updateExplorerEditStatus();
+                return;
+            }
+            
+            // Von Datei laden
             const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName);
             if (!result.success) {
                 elements.explorerStatus.textContent = `Fehler: ${result.error}`;
@@ -5674,6 +6207,7 @@
             explorerState.originalData = explorerState.data.map(row => [...row]);
             // Alle Spalten standardmäßig sichtbar machen
             explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
+            explorerState.columnOrder = []; // Reset column order
             // filteredData mit originalIndex initialisieren
             explorerState.filteredData = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
             explorerState.currentPage = 1; // Pagination zurücksetzen
@@ -5681,6 +6215,7 @@
             explorerState.sortColumn = null; // Sortierung zurücksetzen
             explorerState.sortDirection = null;
             explorerState.editedCells.clear(); // Bearbeitungen zurücksetzen
+            explorerState.rowHighlights.clear(); // Highlights zurücksetzen
             elements.explorerSearch.value = '';
             
             // Prüfe ob es gespeicherte Bearbeitungen gibt (Auto-Save Recovery)
@@ -5719,6 +6254,47 @@
             
             renderExplorerTable();
             updateColumnToggles();
+        }
+        
+        // Speichert das aktuelle Sheet im Cache
+        function saveCurrentSheetToCache() {
+            if (!explorerState.selectedSheet) return;
+            
+            explorerState.sheetDataCache.set(explorerState.selectedSheet, {
+                headers: [...explorerState.headers],
+                data: explorerState.data.map(row => [...row]),
+                originalData: explorerState.originalData.map(row => [...row]),
+                editedCells: new Map(explorerState.editedCells),
+                rowHighlights: new Map(explorerState.rowHighlights),
+                visibleColumns: [...explorerState.visibleColumns],
+                columnOrder: [...explorerState.columnOrder]
+            });
+        }
+        
+        // Prüft ob es ungespeicherte Änderungen in irgendeinem Sheet gibt
+        function hasUnsavedChanges() {
+            // Aktuelles Sheet prüfen
+            if (explorerState.editedCells.size > 0) return true;
+            
+            // Cache prüfen
+            for (const [sheetName, cached] of explorerState.sheetDataCache) {
+                if (cached.editedCells.size > 0) return true;
+            }
+            
+            return false;
+        }
+        
+        // Zählt alle Änderungen über alle Sheets
+        function countAllChanges() {
+            let total = explorerState.editedCells.size;
+            
+            for (const [sheetName, cached] of explorerState.sheetDataCache) {
+                if (sheetName !== explorerState.selectedSheet) {
+                    total += cached.editedCells.size;
+                }
+            }
+            
+            return total;
         }
         
         function filterExplorerData() {
@@ -6224,9 +6800,10 @@
                 });
             });
             
-            // Rechtsklick-Kontextmenü für Zeilen
-            document.querySelectorAll('#explorerTableBody tr').forEach(tr => {
-                tr.addEventListener('contextmenu', (e) => {
+            // Rechtsklick-Kontextmenü für Zeilen (nur Checkbox-Spalte)
+            document.querySelectorAll('#explorerTableBody tr .row-checkbox-cell').forEach(cell => {
+                cell.addEventListener('contextmenu', (e) => {
+                    const tr = cell.closest('tr');
                     const rowIndex = parseInt(tr.dataset.originalIndex);
                     if (!isNaN(rowIndex)) {
                         showRowContextMenu(e, rowIndex);
@@ -6311,8 +6888,62 @@
                         this.dataset.lastValue = this.dataset.original;
                         this.blur();
                         updateExplorerEditStatus();
+                    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                        // Delete/Backspace bei Zellen-Auswahl: Alle löschen
+                        if (explorerState.selectedCells.size > 1 && !document.activeElement.isContentEditable) {
+                            e.preventDefault();
+                            deleteSelectedCellsContent();
+                        }
                     }
                 });
+                
+                // Mausklick für Zellen-Auswahl
+                td.addEventListener('mousedown', function(e) {
+                    // Nur linke Maustaste und nicht bei Content-Bearbeitung
+                    if (e.button !== 0) return;
+                    
+                    const rowIndex = parseInt(this.dataset.row);
+                    const colIndex = parseInt(this.dataset.col);
+                    
+                    if (e.shiftKey && explorerState.selectionAnchor) {
+                        // Shift+Klick: Bereich auswählen
+                        e.preventDefault();
+                        selectCellRange(rowIndex, colIndex);
+                    } else if (e.ctrlKey || e.metaKey) {
+                        // Ctrl/Cmd+Klick: Zur Auswahl hinzufügen/entfernen
+                        e.preventDefault();
+                        toggleCellSelection(rowIndex, colIndex, true);
+                    } else {
+                        // Normaler Klick: Auswahl-Anker setzen (für spätere Shift-Auswahl)
+                        // Nicht die Auswahl leeren wenn die Zelle bereits ausgewählt ist
+                        if (!explorerState.selectedCells.has(`${rowIndex}-${colIndex}`)) {
+                            explorerState.selectedCells.clear();
+                        }
+                        explorerState.selectionAnchor = { row: rowIndex, col: colIndex };
+                        explorerState.isSelecting = true;
+                    }
+                });
+                
+                // Maus-Drag für Bereichsauswahl
+                td.addEventListener('mouseenter', function(e) {
+                    if (explorerState.isSelecting && e.buttons === 1) {
+                        const rowIndex = parseInt(this.dataset.row);
+                        const colIndex = parseInt(this.dataset.col);
+                        selectCellRange(rowIndex, colIndex);
+                    }
+                });
+                
+                // Rechtsklick für Zellen-Kontextmenü
+                td.addEventListener('contextmenu', function(e) {
+                    const rowIndex = parseInt(this.dataset.row);
+                    const colIndex = parseInt(this.dataset.col);
+                    showCellContextMenu(e, rowIndex, colIndex);
+                });
+            });
+            
+            // Maus-Release: Auswahl beenden
+            document.addEventListener('mouseup', function() {
+                explorerState.isSelecting = false;
             });
             
             // Ergebnis-Info mit Pagination
@@ -6615,10 +7246,17 @@
         }
         
         async function exportExplorerData() {
-            if (!explorerState.filteredData.length) {
-                elements.explorerStatus.textContent = 'Keine Daten zum Exportieren';
+            if (!explorerState.filePath) {
+                elements.explorerStatus.textContent = 'Keine Datei geladen';
                 return;
             }
+            
+            // Aktuelles Sheet im Cache speichern
+            saveCurrentSheetToCache();
+            
+            // Sheet-Auswahl-Dialog anzeigen
+            const selectedSheets = await showSheetSelectionDialog('export');
+            if (!selectedSheets || selectedSheets.length === 0) return;
             
             // Dateiname ohne doppelte .xlsx Endung
             let baseName = explorerState.fileName || 'Daten';
@@ -6626,46 +7264,346 @@
             
             const savePath = await window.electronAPI.saveFileDialog({
                 title: 'Export speichern',
-                defaultPath: `Export_${baseName}.xlsx`,
+                defaultPath: getWorkingDirectoryPath() ? (getWorkingDirectoryPath() + `/Export_${baseName}.xlsx`) : `Export_${baseName}.xlsx`,
                 filters: [{ name: 'Excel', extensions: ['xlsx'] }]
             });
             
             if (savePath) {
-                let result;
+                elements.explorerStatus.textContent = 'Exportiere...';
                 
-                // Extrahiere die Zeilen aus den filteredData Objekten
-                const exportData = explorerState.filteredData.map(item => item.row);
+                // Sammle Daten für alle ausgewählten Sheets
+                const sheetsToExport = [];
                 
-                // Wenn Quelldatei vorhanden, exportiere mit allen Sheets
-                if (explorerState.filePath && explorerState.selectedSheet) {
-                    result = await window.electronAPI.exportWithAllSheets({
-                        sourcePath: explorerState.filePath,
-                        targetPath: savePath,
-                        sheetName: explorerState.selectedSheet,
-                        headers: explorerState.headers,
-                        data: exportData,
-                        visibleColumns: explorerState.visibleColumns
-                    });
-                } else {
-                    // Fallback: Nur sichtbare Spalten als neues Workbook
-                    const visibleHeaders = explorerState.visibleColumns.map(i => explorerState.headers[i]);
-                    const visibleData = exportData.map(row => 
-                        explorerState.visibleColumns.map(i => row[i])
-                    );
+                for (const sheetName of selectedSheets) {
+                    let sheetData;
                     
-                    result = await window.electronAPI.exportData({
-                        filePath: savePath,
-                        headers: visibleHeaders,
-                        data: visibleData
-                    });
+                    if (sheetName === explorerState.selectedSheet) {
+                        // Aktuelles Sheet: Daten aus explorerState
+                        sheetData = {
+                            sheetName: sheetName,
+                            headers: explorerState.headers,
+                            data: explorerState.filteredData.map(item => item.row),
+                            visibleColumns: explorerState.visibleColumns,
+                            hasChanges: explorerState.editedCells.size > 0
+                        };
+                    } else if (explorerState.sheetDataCache.has(sheetName)) {
+                        // Sheet aus Cache
+                        const cached = explorerState.sheetDataCache.get(sheetName);
+                        sheetData = {
+                            sheetName: sheetName,
+                            headers: cached.headers,
+                            data: cached.data,
+                            visibleColumns: cached.visibleColumns,
+                            hasChanges: cached.editedCells.size > 0
+                        };
+                    } else {
+                        // Sheet muss von Datei geladen werden (unverändert)
+                        sheetData = {
+                            sheetName: sheetName,
+                            fromFile: true
+                        };
+                    }
+                    
+                    sheetsToExport.push(sheetData);
                 }
                 
+                // Export über IPC
+                const result = await window.electronAPI.exportMultipleSheets({
+                    sourcePath: explorerState.filePath,
+                    targetPath: savePath,
+                    sheets: sheetsToExport
+                });
+                
                 if (result.success) {
-                    elements.explorerStatus.textContent = `✓ Exportiert mit allen Sheets: ${savePath}`;
+                    elements.explorerStatus.textContent = `✓ ${selectedSheets.length} Arbeitsblatt/blätter exportiert: ${savePath}`;
                 } else {
                     elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 }
             }
+        }
+        
+        // Dialog zur Auswahl der Arbeitsblätter
+        function showSheetSelectionDialog(mode = 'export') {
+            return new Promise((resolve) => {
+                // Prüfe ob bereits ein Dialog existiert
+                const existingDialog = document.querySelector('.sheet-selection-overlay');
+                if (existingDialog) existingDialog.remove();
+                
+                const title = mode === 'export' ? 'Arbeitsblätter exportieren' : 'Arbeitsblätter auswählen';
+                const confirmText = mode === 'export' ? 'Exportieren' : 'OK';
+                
+                const overlay = document.createElement('div');
+                overlay.className = 'sheet-selection-overlay';
+                overlay.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(0,0,0,0.6);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 10002;
+                `;
+                
+                const dialog = document.createElement('div');
+                dialog.className = 'sheet-selection-dialog';
+                dialog.style.cssText = `
+                    background: var(--bg-medium);
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                    padding: 20px;
+                    min-width: 350px;
+                    max-width: 500px;
+                    max-height: 80vh;
+                    overflow: hidden;
+                    display: flex;
+                    flex-direction: column;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+                `;
+                
+                // Sheet-Liste erstellen
+                let sheetListHtml = '';
+                explorerState.sheets.forEach((sheetName, index) => {
+                    const isCurrentSheet = sheetName === explorerState.selectedSheet;
+                    const isCached = explorerState.sheetDataCache.has(sheetName);
+                    const hasChanges = isCurrentSheet 
+                        ? explorerState.editedCells.size > 0 
+                        : (isCached && explorerState.sheetDataCache.get(sheetName).editedCells.size > 0);
+                    
+                    const changesBadge = hasChanges ? '<span style="color: var(--warning); margin-left: 8px; font-size: 11px;">● Änderungen</span>' : '';
+                    const currentBadge = isCurrentSheet ? '<span style="color: var(--primary); margin-left: 8px; font-size: 11px;">(aktuell)</span>' : '';
+                    
+                    sheetListHtml += `
+                        <label style="display: flex; align-items: center; padding: 10px 12px; background: var(--bg-light); border-radius: 4px; cursor: pointer; user-select: none;">
+                            <input type="checkbox" class="sheet-checkbox" value="${escapeHtml(sheetName)}" 
+                                ${isCurrentSheet ? 'checked' : ''} 
+                                style="width: 18px; height: 18px; margin-right: 12px; cursor: pointer;">
+                            <span style="flex: 1;">${escapeHtml(sheetName)}</span>
+                            ${currentBadge}${changesBadge}
+                        </label>
+                    `;
+                });
+                
+                dialog.innerHTML = `
+                    <h3 style="margin: 0 0 15px 0; color: var(--text);">📑 ${title}</h3>
+                    <p style="margin: 0 0 15px 0; color: var(--text-secondary); font-size: 13px;">
+                        Wählen Sie die Arbeitsblätter aus, die exportiert werden sollen:
+                    </p>
+                    <div style="display: flex; gap: 10px; margin-bottom: 12px;">
+                        <button class="btn btn-sm btn-secondary" id="selectAllSheets">Alle auswählen</button>
+                        <button class="btn btn-sm btn-secondary" id="selectNoneSheets">Keine auswählen</button>
+                    </div>
+                    <div style="overflow-y: auto; max-height: 300px; display: flex; flex-direction: column; gap: 6px; padding-right: 5px;">
+                        ${sheetListHtml}
+                    </div>
+                    <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border);">
+                        <button class="btn btn-secondary" id="sheetDialogCancel">Abbrechen</button>
+                        <button class="btn btn-primary" id="sheetDialogConfirm">${confirmText}</button>
+                    </div>
+                `;
+                
+                overlay.appendChild(dialog);
+                document.body.appendChild(overlay);
+                
+                // Event handlers
+                const confirmBtn = dialog.querySelector('#sheetDialogConfirm');
+                const cancelBtn = dialog.querySelector('#sheetDialogCancel');
+                const selectAllBtn = dialog.querySelector('#selectAllSheets');
+                const selectNoneBtn = dialog.querySelector('#selectNoneSheets');
+                const checkboxes = dialog.querySelectorAll('.sheet-checkbox');
+                
+                selectAllBtn.onclick = () => {
+                    checkboxes.forEach(cb => cb.checked = true);
+                };
+                
+                selectNoneBtn.onclick = () => {
+                    checkboxes.forEach(cb => cb.checked = false);
+                };
+                
+                confirmBtn.onclick = () => {
+                    const selected = Array.from(checkboxes)
+                        .filter(cb => cb.checked)
+                        .map(cb => cb.value);
+                    overlay.remove();
+                    resolve(selected);
+                };
+                
+                cancelBtn.onclick = () => {
+                    overlay.remove();
+                    resolve(null);
+                };
+                
+                // ESC zum Abbrechen
+                const escHandler = (e) => {
+                    if (e.key === 'Escape') {
+                        overlay.remove();
+                        document.removeEventListener('keydown', escHandler);
+                        resolve(null);
+                    }
+                };
+                document.addEventListener('keydown', escHandler);
+            });
+        }
+        
+        // Speichert Änderungen direkt in die Originaldatei
+        async function saveExplorerData() {
+            if (!explorerState.filePath) {
+                elements.explorerStatus.textContent = 'Keine Datei geladen';
+                return;
+            }
+            
+            // Aktuelles Sheet im Cache speichern
+            saveCurrentSheetToCache();
+            
+            // Prüfe ob es überhaupt Änderungen gibt
+            const totalChanges = countAllChanges();
+            if (totalChanges === 0) {
+                elements.explorerStatus.textContent = 'Keine Änderungen zum Speichern';
+                return;
+            }
+            
+            // Bestätigungsdialog
+            const confirmed = await showConfirmDialog(
+                'Änderungen speichern',
+                `Möchten Sie ${totalChanges} Änderung(en) in die Originaldatei speichern?\n\n` +
+                `Datei: ${explorerState.fileName}\n\n` +
+                `⚠️ Die Originaldatei wird überschrieben!`,
+                'Speichern',
+                'Abbrechen'
+            );
+            
+            if (!confirmed) return;
+            
+            elements.explorerStatus.textContent = 'Speichere Änderungen...';
+            
+            try {
+                // Alle Sheets mit Änderungen sammeln
+                const sheetsToSave = [];
+                
+                // Aktuelles Sheet
+                if (explorerState.editedCells.size > 0) {
+                    sheetsToSave.push({
+                        sheetName: explorerState.selectedSheet,
+                        headers: explorerState.headers,
+                        data: explorerState.data
+                    });
+                }
+                
+                // Sheets aus dem Cache
+                for (const [sheetName, cached] of explorerState.sheetDataCache) {
+                    if (sheetName !== explorerState.selectedSheet && cached.editedCells.size > 0) {
+                        sheetsToSave.push({
+                            sheetName: sheetName,
+                            headers: cached.headers,
+                            data: cached.data
+                        });
+                    }
+                }
+                
+                // Speichern über IPC
+                const result = await window.electronAPI.saveExcelFile({
+                    filePath: explorerState.filePath,
+                    sheets: sheetsToSave
+                });
+                
+                if (result.success) {
+                    // Nach erfolgreichem Speichern: editedCells leeren
+                    explorerState.editedCells.clear();
+                    explorerState.originalData = explorerState.data.map(row => [...row]);
+                    
+                    // Cache aktualisieren - editedCells leeren
+                    for (const [sheetName, cached] of explorerState.sheetDataCache) {
+                        cached.editedCells.clear();
+                        cached.originalData = cached.data.map(row => [...row]);
+                    }
+                    
+                    // UI aktualisieren
+                    renderExplorerTable();
+                    updateExplorerEditStatus();
+                    
+                    elements.explorerStatus.textContent = `✓ ${totalChanges} Änderung(en) in ${explorerState.fileName} gespeichert`;
+                    showNotification(`${totalChanges} Änderung(en) gespeichert`, 'success');
+                } else {
+                    elements.explorerStatus.textContent = `Fehler: ${result.error}`;
+                    showNotification(`Speichern fehlgeschlagen: ${result.error}`, 'error');
+                }
+            } catch (error) {
+                elements.explorerStatus.textContent = `Fehler: ${error.message}`;
+                showNotification(`Speichern fehlgeschlagen: ${error.message}`, 'error');
+            }
+        }
+        
+        // Bestätigungsdialog anzeigen
+        function showConfirmDialog(title, message, confirmText = 'OK', cancelText = 'Abbrechen') {
+            return new Promise((resolve) => {
+                // Prüfe ob bereits ein Dialog existiert
+                const existingDialog = document.querySelector('.confirm-dialog-overlay');
+                if (existingDialog) existingDialog.remove();
+                
+                const overlay = document.createElement('div');
+                overlay.className = 'confirm-dialog-overlay';
+                overlay.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(0,0,0,0.6);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 10002;
+                `;
+                
+                const dialog = document.createElement('div');
+                dialog.className = 'confirm-dialog';
+                dialog.style.cssText = `
+                    background: var(--bg-medium);
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                    padding: 20px;
+                    max-width: 400px;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+                `;
+                
+                dialog.innerHTML = `
+                    <h3 style="margin: 0 0 15px 0; color: var(--text);">${title}</h3>
+                    <p style="margin: 0 0 20px 0; color: var(--text-secondary); white-space: pre-line;">${message}</p>
+                    <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                        <button class="btn btn-secondary" id="confirmDialogCancel">${cancelText}</button>
+                        <button class="btn btn-success" id="confirmDialogConfirm">${confirmText}</button>
+                    </div>
+                `;
+                
+                overlay.appendChild(dialog);
+                document.body.appendChild(overlay);
+                
+                // Event handlers
+                const confirmBtn = dialog.querySelector('#confirmDialogConfirm');
+                const cancelBtn = dialog.querySelector('#confirmDialogCancel');
+                
+                confirmBtn.onclick = () => {
+                    overlay.remove();
+                    resolve(true);
+                };
+                
+                cancelBtn.onclick = () => {
+                    overlay.remove();
+                    resolve(false);
+                };
+                
+                // ESC zum Abbrechen
+                const escHandler = (e) => {
+                    if (e.key === 'Escape') {
+                        overlay.remove();
+                        document.removeEventListener('keydown', escHandler);
+                        resolve(false);
+                    }
+                };
+                document.addEventListener('keydown', escHandler);
+            });
         }
         
         // ==================== New Month Modal Functions ====================
@@ -6706,7 +7644,7 @@
             if (state.template.filePath) {
                 const savePath = await window.electronAPI.saveFileDialog({
                     title: 'Neue Monatsdatei speichern',
-                    defaultPath: finalFilename,
+                    defaultPath: getWorkingDirectoryPath() ? (getWorkingDirectoryPath() + '/' + finalFilename) : finalFilename,
                     filters: [{ name: 'Excel', extensions: ['xlsx'] }]
                 });
                 
@@ -7203,6 +8141,7 @@
             document.getElementById('btnAddExplorerFilter').onclick = addExplorerFilter;
             document.getElementById('btnClearExplorerFilters').onclick = clearExplorerFilters;
             elements.btnExplorerExport.onclick = exportExplorerData;
+            elements.btnExplorerSave.onclick = saveExplorerData;
             
             // Explorer-Vorschau Event Listeners
             document.getElementById('btnExplorerPreview').onclick = showExplorerPreview;
@@ -7287,15 +8226,23 @@
             elements.btnExportPS.onclick = showDiffPreview;  // Zeigt zuerst Vorschau, dann Export via Modal
             elements.btnPreviewTransfer.onclick = showDiffPreview;
             
+            // Arbeitsordner Event Handler
+            elements.btnSelectWorkingDir.onclick = selectWorkingDirectory;
+            elements.btnClearWorkingDir.onclick = clearWorkingDirectory;
+            
+            // Arbeitsordner aus localStorage laden
+            loadWorkingDirectoryFromStorage();
+            
             // Diff-Vorschau Modal Event Handler
             document.getElementById('btnCloseDiffModal').onclick = closeDiffPreview;
             document.getElementById('btnCancelDiff').onclick = closeDiffPreview;
             document.getElementById('btnConfirmTransfer').onclick = confirmTransferFromDiff;
             
-            // Automatisch config.json aus Programmordner laden beim Start
+            // Automatisch config.json aus Programmordner oder Arbeitsordner laden beim Start
             console.log('[Config] Suche automatisch nach config.json...');
+            console.log('[Config] Arbeitsordner:', state.workingDirectory || '(nicht gesetzt)');
             try {
-                const autoResult = await window.electronAPI.loadConfigFromAppDir();
+                const autoResult = await window.electronAPI.loadConfigFromAppDir(state.workingDirectory);
                 console.log('[Config] loadConfigFromAppDir Ergebnis:', autoResult);
                 
                 if (autoResult.success && autoResult.config) {

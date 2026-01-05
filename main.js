@@ -310,8 +310,45 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
     }
 });
 
+// Ordner oeffnen Dialog (fuer Arbeitsordner)
+ipcMain.handle('dialog:openFolder', async (event, options) => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+        console.error('mainWindow nicht verfuegbar fuer Dialog');
+        return null;
+    }
+    
+    // Fenster vorbereiten
+    if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+    }
+    mainWindow.focus();
+    
+    try {
+        const defaultPath = options.defaultPath || app.getPath('documents');
+        
+        const result = await dialog.showOpenDialog({
+            title: options.title || 'Ordner auswaehlen',
+            defaultPath: defaultPath,
+            properties: ['openDirectory']
+        });
+        
+        // Nach Dialog: Hauptfenster wieder fokussieren
+        if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.focus();
+        }
+        
+        if (result.canceled || !result.filePaths || result.filePaths.length === 0) {
+            return null;
+        }
+        return result.filePaths[0];
+    } catch (err) {
+        console.error('Dialog Fehler:', err);
+        return null;
+    }
+});
+
 // ============================================
-// EXCEL OPERATIONEN (xlsx-populate - erh�lt Formatierung!)
+// EXCEL OPERATIONEN (xlsx-populate - erhaelt Formatierung!)
 // ============================================
 
 // Excel-Datei lesen
@@ -1000,6 +1037,135 @@ ipcMain.handle('excel:exportWithAllSheets', async (event, { sourcePath, targetPa
     }
 });
 
+// Export mit Auswahl der Arbeitsblätter (für Datenexplorer) - behält Formatierung bei
+ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetPath, sheets }) => {
+    // Sicherheitsprüfung: Pfade validieren
+    if (!isValidFilePath(sourcePath) || !isValidFilePath(targetPath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    
+    try {
+        // Originaldatei laden (mit allen Sheets und Formatierung)
+        const workbook = await XlsxPopulate.fromFileAsync(sourcePath);
+        
+        // Liste der ausgewählten Sheet-Namen
+        const selectedSheetNames = sheets.map(s => s.sheetName);
+        
+        // Alle Sheets der Originaldatei durchgehen
+        const allSheetNames = workbook.sheets().map(s => s.name());
+        
+        // Sheets entfernen, die nicht ausgewählt wurden (von hinten nach vorne, um Indexprobleme zu vermeiden)
+        for (let i = allSheetNames.length - 1; i >= 0; i--) {
+            const sheetName = allSheetNames[i];
+            if (!selectedSheetNames.includes(sheetName)) {
+                // Sheet nicht ausgewählt - entfernen
+                const sheetToDelete = workbook.sheet(sheetName);
+                if (sheetToDelete) {
+                    workbook.deleteSheet(sheetToDelete);
+                }
+            }
+        }
+        
+        let sheetsProcessed = 0;
+        
+        // Nur Sheets mit Änderungen aktualisieren
+        for (const sheetData of sheets) {
+            const worksheet = workbook.sheet(sheetData.sheetName);
+            if (!worksheet) {
+                console.warn(`Sheet "${sheetData.sheetName}" nicht gefunden - übersprungen`);
+                continue;
+            }
+            
+            // Wenn Sheet aus Datei kommt (keine Änderungen), nichts tun - Formatierung bleibt erhalten
+            if (sheetData.fromFile) {
+                sheetsProcessed++;
+                continue;
+            }
+            
+            // Sheet mit bearbeiteten Daten - nur Werte aktualisieren, Formatierung bleibt
+            const headers = sheetData.headers;
+            const data = sheetData.data;
+            
+            // Header-Zeile schreiben (Zeile 1)
+            headers.forEach((header, colIndex) => {
+                worksheet.cell(1, colIndex + 1).value(header);
+            });
+            
+            // Daten-Zeilen schreiben (ab Zeile 2) - Formatierung bleibt erhalten
+            data.forEach((row, rowIndex) => {
+                row.forEach((value, colIndex) => {
+                    const cell = worksheet.cell(rowIndex + 2, colIndex + 1);
+                    // Nur Wert setzen, Formatierung beibehalten
+                    cell.value(value === null || value === undefined ? '' : value);
+                });
+            });
+            
+            sheetsProcessed++;
+        }
+        
+        // Als neue Datei speichern (nicht Originaldatei überschreiben)
+        await workbook.toFileAsync(targetPath);
+        
+        return { 
+            success: true, 
+            message: `${sheetsProcessed} Sheet(s) exportiert: ${targetPath}`,
+            sheetsExported: sheetsProcessed
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Änderungen direkt in die Originaldatei speichern (für Datenexplorer)
+ipcMain.handle('excel:saveFile', async (event, { filePath, sheets }) => {
+    // Sicherheitsprüfung: Pfad validieren
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    
+    try {
+        // Originaldatei laden (mit allen Sheets und Formatierung)
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        
+        let totalChanges = 0;
+        
+        // Jedes Sheet mit Änderungen aktualisieren
+        for (const sheetData of sheets) {
+            const worksheet = workbook.sheet(sheetData.sheetName);
+            if (!worksheet) {
+                console.warn(`Sheet "${sheetData.sheetName}" nicht gefunden - übersprungen`);
+                continue;
+            }
+            
+            // Header-Zeile schreiben (Zeile 1)
+            sheetData.headers.forEach((header, colIndex) => {
+                worksheet.cell(1, colIndex + 1).value(header);
+            });
+            
+            // Daten-Zeilen schreiben (ab Zeile 2)
+            sheetData.data.forEach((row, rowIndex) => {
+                row.forEach((value, colIndex) => {
+                    const cell = worksheet.cell(rowIndex + 2, colIndex + 1);
+                    // Nur Wert setzen, Formatierung beibehalten
+                    cell.value(value === null || value === undefined ? '' : value);
+                });
+                totalChanges++;
+            });
+        }
+        
+        // Speichern (überschreibt die Originaldatei)
+        await workbook.toFileAsync(filePath);
+        
+        return { 
+            success: true, 
+            message: `${sheets.length} Sheet(s) in ${filePath} gespeichert`,
+            totalChanges 
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 // ============================================
 // KONFIGURATION
 // ============================================
@@ -1063,7 +1229,7 @@ let configLoadingState = {
 };
 
 // Automatisch config.json im Programmordner oder Benutzerordnern suchen
-ipcMain.handle('config:loadFromAppDir', async (event) => {
+ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
     // Race Condition verhindern: Wenn bereits geladen wird, auf das Ergebnis warten
     if (configLoadingState.isLoading && configLoadingState.pendingPromise) {
         console.log('config:loadFromAppDir - Warte auf laufenden Ladevorgang...');
@@ -1075,6 +1241,7 @@ ipcMain.handle('config:loadFromAppDir', async (event) => {
     
     const loadConfigAsync = async () => {
         console.log('=== config:loadFromAppDir aufgerufen ===');
+        console.log('Arbeitsordner:', workingDir || '(nicht gesetzt)');
     
         try {
             const exePath = app.getPath('exe');
@@ -1095,22 +1262,27 @@ ipcMain.handle('config:loadFromAppDir', async (event) => {
             // Suchpfade in Prioritätsreihenfolge
             const possiblePaths = [];
             
-            // 1. Portable EXE: Neben der EXE (höchste Priorität für portable Version)
+            // 1. ARBEITSORDNER (höchste Priorität - vom Benutzer festgelegt)
+            if (workingDir && typeof workingDir === 'string') {
+                possiblePaths.push(path.join(workingDir, 'config.json'));
+            }
+            
+            // 2. Portable EXE: Neben der EXE (höchste Priorität für portable Version)
             if (portableDir) {
                 possiblePaths.push(path.join(portableDir, 'config.json'));
             }
             
-            // 2. Installationsordner (neben der EXE)
+            // 3. Installationsordner (neben der EXE)
             possiblePaths.push(path.join(exeDir, 'config.json'));
             
-            // 3. Dokumente-Ordner des Benutzers
+            // 4. Dokumente-Ordner des Benutzers
             possiblePaths.push(path.join(documentsDir, 'config.json'));
             possiblePaths.push(path.join(documentsDir, 'Excel-Data-Sync-Pro', 'config.json'));
             
-            // 4. Downloads-Ordner des Benutzers
+            // 5. Downloads-Ordner des Benutzers
             possiblePaths.push(path.join(downloadsDir, 'config.json'));
             
-            // 5. Im Entwicklungsmodus: Projektordner
+            // 6. Im Entwicklungsmodus: Projektordner
             if (process.argv.includes('--dev') || !app.isPackaged) {
                 possiblePaths.push(path.join(__dirname, 'config.json'));
                 possiblePaths.push(path.join(process.cwd(), 'config.json'));

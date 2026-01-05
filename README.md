@@ -4,7 +4,7 @@ Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen E
 
 ## Version
 
-**v1.0.8** - © Norbert Jander 2025
+**v1.0.10** - © Norbert Jander 2025
 
 ## Hauptfunktionen
 
@@ -44,7 +44,44 @@ Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen E
 
 ### Konfiguration
 - **Export/Import**: Konfiguration als JSON-Datei sichern und wiederherstellen
-- **Automatisches Laden**: config.json aus Downloads-Ordner wird automatisch geladen
+- **Automatisches Laden**: config.json wird automatisch gesucht in:
+  1. **Arbeitsordner** (höchste Priorität)
+  2. Portable EXE-Ordner
+  3. Installationsordner
+  4. Dokumente-Ordner
+  5. Downloads-Ordner
+
+### 📁 Arbeitsordner
+- **Arbeitsordner festlegen**: Definieren Sie einen Standard-Ordner für alle Datei-Dialoge
+- **Automatische Config-Suche**: config.json wird zuerst im Arbeitsordner gesucht
+- **Persistente Einstellung**: Der Arbeitsordner wird zwischen Sitzungen gespeichert
+
+## Datenexplorer
+
+### Übersicht
+Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Exportieren von Excel-Daten.
+
+### Funktionen
+- **📂 Datei öffnen**: Excel-Dateien laden und alle Arbeitsblätter anzeigen
+- **🔍 Suchen & Filtern**: Globale Suche und spaltenbasierte Filter
+- **✏️ Zellen bearbeiten**: Direktes Bearbeiten von Zellinhalten mit Doppelklick
+- **↩️ Undo/Redo**: Änderungen rückgängig machen oder wiederherstellen
+- **📊 Mehrfachauswahl**: Zellen mit Shift+Klick, Strg+Klick oder Mausziehen auswählen
+- **🗑️ Zellinhalte löschen**: Rechtsklick-Menü zum Löschen ausgewählter Zellinhalte
+- **📋 Kopieren**: Ausgewählte Zellinhalte in die Zwischenablage kopieren
+
+### Speichern & Exportieren
+- **💾 Speichern**: Änderungen direkt in die Originaldatei speichern (mit Bestätigung)
+- **📤 Exportieren**: 
+  - Auswahl welche Arbeitsblätter exportiert werden
+  - Formatierung der Originaldatei bleibt erhalten
+  - Änderungen werden in Export übernommen
+  - Sheets ohne Änderungen behalten volle Formatierung
+
+### Arbeitsblatt-Wechsel
+- Wechseln Sie zwischen Arbeitsblättern ohne Datenverlust
+- **Änderungen bleiben erhalten**: Bearbeitete Daten werden zwischen Sheet-Wechseln gecacht
+- **Warnung bei neuer Datei**: Bei ungespeicherten Änderungen erscheint eine Warnung
 
 ## Installation
 
@@ -159,6 +196,22 @@ Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen E
 - **Plattformen**: Windows (x64), macOS (Intel & Apple Silicon)
 
 ## Changelog
+
+### v1.0.10
+- **Neu**: Datenexplorer mit erweitertem Funktionsumfang
+- **Neu**: Multi-Zellen-Auswahl (Shift+Klick, Strg+Klick, Mausziehen)
+- **Neu**: Rechtsklick-Kontextmenü zum Löschen/Kopieren von Zellinhalten
+- **Neu**: Sheet-Daten-Cache - Änderungen bleiben beim Sheet-Wechsel erhalten
+- **Neu**: Speichern in Originaldatei mit Bestätigungsdialog
+- **Neu**: Multi-Sheet-Export mit Formatierungserhalt
+- **Neu**: Auswahl-Dialog für zu exportierende Arbeitsblätter
+- **Neu**: Arbeitsordner-Funktion für Standard-Verzeichnis
+- **Neu**: config.json Suche erweitert auf Arbeitsordner (höchste Priorität)
+
+### v1.0.9
+- **Neu**: Arbeitsordner (Working Directory) einstellbar
+- **Neu**: History-Verlauf für letzte 50 Übertragungen
+- **Neu**: Erweiterte Undo/Redo-Funktionalität
 
 ### v1.0.8
 - **Fix**: Template aus Quelldatei funktioniert wieder korrekt
