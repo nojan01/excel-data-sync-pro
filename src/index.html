@@ -1635,8 +1635,8 @@
                     <span>Findet Zeilen die sowohl A als auch B enthalten</span>
                     <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">A OR B</code>
                     <span>Findet Zeilen die A oder B (oder beides) enthalten</span>
-                    <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Eurofighter AND 2025</code>
-                    <span>Beispiel: Eurofighter-Einträge aus 2025</span>
+                    <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Projekt AND 2025</code>
+                    <span>Beispiel: Projekt-Einträge aus 2025</span>
                 </div>
                 
                 <h3 style="margin-bottom: 10px;">✏️ Suchergebnisse bearbeiten</h3>
@@ -4129,7 +4129,7 @@
         
         /**
          * Parst eine Suchanfrage mit AND/OR Operatoren
-         * Beispiele: "Eurofighter AND 2025", "Boeing OR Airbus", "Tiger AND (2024 OR 2025)"
+         * Beispiele: "Projekt AND 2025", "Alpha OR Beta", "Item AND (2024 OR 2025)"
          */
         function parseSearchQuery(query) {
             const trimmed = query.trim();
