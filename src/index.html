@@ -1213,6 +1213,9 @@
                 <div class="config-section">
                     <div class="config-section-title" data-i18n="monthTemplate">📄 Monats-Template</div>
                     <div class="config-group">
+                        <button class="btn btn-success" id="btnNewMonth" disabled style="width: 100%; margin-bottom: 10px;" title="Erstellt neue Monatsdatei aus Template" data-i18n="newMonthFile">
+                            📅 Neue Monatsdatei
+                        </button>
                         <button class="btn btn-primary" id="btnLoadTemplate" style="width: 100%; margin-bottom: 10px;" data-i18n="loadTemplate">
                             📂 Template laden
                         </button>
@@ -1410,9 +1413,6 @@
                         <button class="btn btn-primary" id="btnDataExplorer" disabled title="Datenexplorer - Zieldatei anzeigen und exportieren">
                             Datenexplorer
                         </button>
-                        <button class="btn btn-primary" id="btnNewMonth" disabled title="Erstellt neue Monatsdatei aus Template">
-                            📅 Neue Monatsdatei
-                        </button>
                     </div>
                 </div>
                 <div class="queue-list" id="queueList">
@@ -1563,17 +1563,17 @@
     
     <!-- New Month Modal -->
     <div class="modal-overlay hidden" id="newMonthModal">
-        <div class="modal" style="max-width: 500px; resize: none;">
+        <div class="modal" style="max-width: 450px; width: 90%; resize: none;">
             <div class="modal-header">
                 <div class="modal-title">📅 Neue Monatsdatei erstellen</div>
                 <button class="modal-close" id="btnCloseNewMonthModal">&times;</button>
             </div>
-            <div class="modal-body">
+            <div class="modal-body" style="overflow: hidden;">
                 <p style="margin-bottom: 15px; color: var(--text-muted);">
                     Erstellt eine Kopie der Template-Datei unter neuem Namen und setzt sie als Datei 2.
                 </p>
                 <label class="config-label">Neuer Dateiname:</label>
-                <input type="text" class="search-input" id="newMonthFilename" style="width: 100%; margin-bottom: 15px;" placeholder="z.B. Vertragsliste_2025-01.xlsx">
+                <input type="text" class="search-input" id="newMonthFilename" style="width: 100%; min-width: 0; box-sizing: border-box; margin-bottom: 15px;" placeholder="z.B. Vertragsliste_2025-01.xlsx">
                 <p style="font-size: 12px; color: var(--text-muted);">
                     💡 Template: <strong id="newMonthTemplateName">-</strong>
                 </p>
@@ -1714,6 +1714,20 @@
                     <strong>Strg+Z / Strg+Y:</strong> Änderungen rückgängig machen / wiederherstellen
                 </p>
                 
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">� Multi-Zellen-Auswahl</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Klick:</strong> Einzelne Zelle auswählen<br>
+                    <strong>Shift+Klick:</strong> Bereich von Zellen auswählen (von letzter Auswahl bis Klickposition)<br>
+                    <strong>Strg+Klick:</strong> Einzelne Zellen zur Auswahl hinzufügen/entfernen<br>
+                    <strong>Maus ziehen:</strong> Rechteckigen Bereich auswählen<br>
+                    <strong>Rechtsklick auf Auswahl:</strong> Kontextmenü mit Optionen:
+                </p>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 15px; margin: 0 0 10px 15px; font-size: 13px;">
+                    <code>🗑️ Inhalte löschen</code><span>Löscht alle ausgewählten Zellinhalte</span>
+                    <code>📋 Kopieren</code><span>Kopiert Zellinhalte in die Zwischenablage</span>
+                    <code>❌ Auswahl aufheben</code><span>Hebt die aktuelle Auswahl auf</span>
+                </div>
+                
                 <h4 style="margin: 15px 0 8px 0; color: var(--primary);">🎨 Zeilen markieren</h4>
                 <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
                     <strong>Rechtsklick auf Zeile:</strong> Öffnet Kontextmenü zur farbigen Markierung<br>
@@ -1727,12 +1741,50 @@
                     bevor Sie exportieren. Bearbeitete Zellen werden hervorgehoben.
                 </p>
                 
-                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📤 Export</h4>
-                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
-                    <strong>Exportieren:</strong> Speichert die gefilterten Daten als neue Excel-Datei<br>
-                    • Alle Bearbeitungen werden übernommen<br>
-                    • Alle anderen Arbeitsblätter der Quelldatei bleiben erhalten<br>
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📤 Speichern & Export</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>💾 Speichern:</strong> Speichert alle Änderungen direkt in die Originaldatei<br>
+                    • Zeigt Bestätigungsdialog mit Anzahl der Änderungen<br>
+                    • Alle Formatierungen der Originaldatei bleiben erhalten<br><br>
+                    <strong>📊 Als XLSX exportieren:</strong> Speichert als neue Datei<br>
+                    • Auswahl welche Arbeitsblätter mit exportiert werden sollen<br>
+                    • Alle Formatierungen werden beibehalten<br>
                     • Nur sichtbare Spalten werden exportiert
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📋 Arbeitsblätter wechseln</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Wählen Sie ein anderes Arbeitsblatt aus dem Dropdown. Alle Ihre Änderungen werden automatisch zwischengespeichert und bleiben beim Wechsel zwischen Sheets erhalten.
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📄 Template-Funktionen</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Templates dienen als Vorlagen für neue Monatsdateien. Alle Formatierungen werden übernommen.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📂 Template laden</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Lädt eine bestehende Excel-Datei als Template für neue Monatsdateien.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📅 Neue Monatsdatei erstellen</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Erstellt eine Kopie des Templates mit neuem Namen (z.B. für einen neuen Monat).<br>
+                    Die neue Datei wird automatisch als Zieldatei (Datei 2) geladen.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">🔧 Template aus Quelldatei erstellen</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Erstellt ein leeres Template aus einer bestehenden Datei:<br>
+                    • Wählen Sie welche Arbeitsblätter übernommen werden sollen<br>
+                    • Alle Formatierungen, bedingte Formatierungen und Formeln bleiben erhalten<br>
+                    • Die Datenzeilen werden entfernt, nur Überschriften bleiben
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📁 Arbeitsordner</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Legen Sie einen Arbeitsordner fest, der als Standard-Verzeichnis für alle Datei-Dialoge verwendet wird.<br>
+                    Die config.json wird zuerst im Arbeitsordner gesucht, dann im Programmordner.
                 </p>
                 
                 <h3 style="margin-bottom: 10px;">💾 Konfiguration</h3>
@@ -2004,7 +2056,7 @@
                         💾 Speichern
                     </button>
                     <button class="btn btn-primary" id="btnExplorerExport">
-                        📤 Als XLSX exportieren
+                        📊 Als XLSX exportieren
                     </button>
                 </div>
                 
@@ -2270,7 +2322,7 @@
                 fullTextSearch: 'Volltextsuche:',
                 searchPlaceholderExplorer: 'Suchbegriff eingeben...',
                 columns: '👁️ Spalten',
-                exportXlsx: '� Als XLSX exportieren',
+                exportXlsx: '📊 Als XLSX exportieren',
                 saveFile: '💾 Speichern',
                 filter: '🔍 Filter',
                 addFilter: '➕ Filter hinzufügen',
@@ -2429,7 +2481,7 @@
                 fullTextSearch: 'Full-text search:',
                 searchPlaceholderExplorer: 'Enter search term...',
                 columns: '👁️ Columns',
-                exportXlsx: '� Export as XLSX',
+                exportXlsx: '📊 Export as XLSX',
                 saveFile: '💾 Save',
                 filter: '🔍 Filter',
                 addFilter: '➕ Add Filter',
@@ -7613,7 +7665,11 @@
                 return;
             }
             
-            elements.newMonthTemplateName.textContent = state.template.name || '-';
+            // Element direkt aus DOM holen (kann durch Sprachumschaltung ersetzt worden sein)
+            const templateNameEl = document.getElementById('newMonthTemplateName');
+            if (templateNameEl) {
+                templateNameEl.textContent = state.template.name || '-';
+            }
             
             // Vorschlag für neuen Dateinamen: Template-Name als Basis verwenden
             let baseName = state.template.name || 'Vertragsliste.xlsx';
