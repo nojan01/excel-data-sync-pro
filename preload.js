@@ -7,6 +7,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveFileDialog: (options) => ipcRenderer.invoke('dialog:saveFile', options),
     openFolderDialog: (options) => ipcRenderer.invoke('dialog:openFolder', options),
     
+    // Dateisystem
+    checkFileExists: (filePath) => ipcRenderer.invoke('fs:checkFileExists', filePath),
+    
     // Excel-Operationen
     readExcelFile: (filePath) => ipcRenderer.invoke('excel:readFile', filePath),
     readExcelSheet: (filePath, sheetName) => ipcRenderer.invoke('excel:readSheet', filePath, sheetName),

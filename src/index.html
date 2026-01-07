@@ -1424,7 +1424,7 @@
     
     <!-- Footer -->
     <footer style="background: var(--bg-medium); border-top: 1px solid var(--border); padding: 8px 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
-        © Norbert Jander 2025 · v1.0.10
+        © Norbert Jander 2025 · v1.0.11
     </footer>
     
     <!-- Mapping Modal -->
@@ -1741,6 +1741,58 @@
                     bevor Sie exportieren. Bearbeitete Zellen werden hervorgehoben.
                 </p>
                 
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">➕ Zeilen & Spalten hinzufügen/löschen</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Zeilen-Operationen (Rechtsklick auf Zeile):</strong><br>
+                    • ⬆️ Zeile darüber einfügen<br>
+                    • ⬇️ Zeile darunter einfügen<br>
+                    • 🗑️ Zeile löschen (mit Bestätigungsdialog)<br><br>
+                    <strong>Spalten-Operationen (Rechtsklick auf Spaltenüberschrift):</strong><br>
+                    • ⬅️ Spalte links einfügen (mit Namenseingabe)<br>
+                    • ➡️ Spalte rechts einfügen (mit Namenseingabe)<br>
+                    • 🗑️ Spalte löschen (mit Warnung über Datenverlust)<br>
+                    • 👁️ Spalte ausblenden
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">🔄 Crash-Recovery</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Der Datenexplorer speichert automatisch alle 30 Sekunden Ihre Änderungen im Hintergrund.<br>
+                    Bei einem Absturz oder Stromausfall können Sie beim nächsten Öffnen wählen, ob die letzte Sitzung wiederhergestellt werden soll.<br>
+                    Recovery-Daten werden nach 24 Stunden automatisch gelöscht.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">⚠️ Warnung bei ungespeicherten Änderungen</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Beim Schließen des Datenexplorers mit ungespeicherten Änderungen erscheint eine Warnung.<br>
+                    Sie können wählen, ob Sie trotzdem schließen oder zurückkehren möchten.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">➕ Zeilen & Spalten hinzufügen/löschen</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Zeilen-Operationen (Rechtsklick auf Zeile):</strong><br>
+                    • ⬆️ Zeile darüber einfügen<br>
+                    • ⬇️ Zeile darunter einfügen<br>
+                    • 🗑️ Zeile löschen (mit Bestätigungsdialog)<br><br>
+                    <strong>Spalten-Operationen (Rechtsklick auf Spaltenüberschrift):</strong><br>
+                    • ⬅️ Spalte links einfügen (mit Namenseingabe)<br>
+                    • ➡️ Spalte rechts einfügen (mit Namenseingabe)<br>
+                    • 🗑️ Spalte löschen (mit Warnung über Datenverlust)<br>
+                    • 👁️ Spalte ausblenden
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">🔄 Crash-Recovery</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Der Datenexplorer speichert automatisch alle 30 Sekunden Ihre Änderungen im Hintergrund.<br>
+                    Bei einem Absturz oder Stromausfall können Sie beim nächsten Öffnen wählen, ob die letzte Sitzung wiederhergestellt werden soll.<br>
+                    Recovery-Daten werden nach 24 Stunden automatisch gelöscht.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">⚠️ Warnung bei ungespeicherten Änderungen</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Beim Schließen des Datenexplorers mit ungespeicherten Änderungen erscheint eine Warnung.<br>
+                    Sie können wählen, ob Sie trotzdem schließen oder zurückkehren möchten.
+                </p>
+                
                 <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📤 Speichern & Export</h4>
                 <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
                     <strong>💾 Speichern:</strong> Speichert alle Änderungen direkt in die Originaldatei<br>
@@ -2017,6 +2069,16 @@
         <div class="context-menu-divider" style="height: 1px; background: var(--border); margin: 4px 0;"></div>
         <div class="context-menu-item" data-action="hide-column" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
             <span>👁️‍🗨️</span> Spalte ausblenden
+        </div>
+        <div class="context-menu-item" data-action="delete-column" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; color: #F44336;">
+            <span>🗑️</span> Spalte löschen
+        </div>
+        <div class="context-menu-divider" style="height: 1px; background: var(--border); margin: 4px 0;"></div>
+        <div class="context-menu-item" data-action="insert-column-before" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <span>⬅️</span> Spalte links einfügen
+        </div>
+        <div class="context-menu-item" data-action="insert-column-after" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <span>➡️</span> Spalte rechts einfügen
         </div>
     </div>
 
@@ -2295,6 +2357,8 @@
                 queue: '📋 Warteschlange',
                 rows: 'Zeilen',
                 clear: '🗑️ Leeren',
+                preview: '👁️ Vorschau',
+                exportToTarget: '📤 Export zur Zieldatei',
                 directTransfer: '✅ Direkt übertragen',
                 dataExplorer: 'Datenexplorer',
                 newMonthFile: '📅 Neue Monatsdatei',
@@ -2338,6 +2402,26 @@
                 selectColumn: 'Spalte wählen',
                 filterValue: 'Filterwert',
                 
+                // Row/Column Actions
+                insertRowAbove: 'Zeile darüber einfügen',
+                insertRowBelow: 'Zeile darunter einfügen',
+                deleteRow: 'Zeile löschen',
+                insertColumnBefore: 'Spalte links einfügen',
+                insertColumnAfter: 'Spalte rechts einfügen',
+                deleteColumn: 'Spalte löschen',
+                hideColumn: 'Spalte ausblenden',
+                newColumn: 'Neue Spalte',
+                enterColumnName: 'Spaltenname eingeben:',
+                rowInserted: 'Zeile eingefügt',
+                rowDeleted: 'Zeile gelöscht',
+                columnInserted: 'Spalte eingefügt',
+                columnDeleted: 'Spalte gelöscht',
+                deleteRowTitle: 'Zeile löschen?',
+                deleteColumnTitle: 'Spalte löschen?',
+                deleteRowConfirm: 'Möchten Sie diese Zeile wirklich löschen?',
+                deleteColumnConfirm: 'Möchten Sie diese Spalte wirklich löschen?',
+                deleteColumnWarning: '⚠️ Alle Daten in dieser Spalte gehen verloren!',
+                
                 // New Month Modal
                 createNewMonthFile: '📅 Neue Monatsdatei erstellen',
                 newMonthDescription: 'Erschafft eine Kopie der Template-Datei unter neuem Namen und setzt sie als Datei 2.',
@@ -2348,7 +2432,7 @@
                 createAndLoad: '📅 Erstellen & Laden',
                 
                 // Footer
-                copyright: '© Norbert Jander 2025 · v1.0.10',
+                copyright: '© Norbert Jander 2025 · v1.0.11',
                 
                 // Extra Columns
                 extraColumns: 'Extra-Spalten',
@@ -2454,6 +2538,8 @@
                 queue: '📋 Queue',
                 rows: 'rows',
                 clear: '🗑️ Clear',
+                preview: '👁️ Preview',
+                exportToTarget: '📤 Export to Target',
                 directTransfer: '✅ Transfer Directly',
                 dataExplorer: 'Data Explorer',
                 newMonthFile: '📅 New Month File',
@@ -2497,6 +2583,26 @@
                 selectColumn: 'Select column',
                 filterValue: 'Filter value',
                 
+                // Row/Column Actions
+                insertRowAbove: 'Insert row above',
+                insertRowBelow: 'Insert row below',
+                deleteRow: 'Delete row',
+                insertColumnBefore: 'Insert column left',
+                insertColumnAfter: 'Insert column right',
+                deleteColumn: 'Delete column',
+                hideColumn: 'Hide column',
+                newColumn: 'New Column',
+                enterColumnName: 'Enter column name:',
+                rowInserted: 'Row inserted',
+                rowDeleted: 'Row deleted',
+                columnInserted: 'Column inserted',
+                columnDeleted: 'Column deleted',
+                deleteRowTitle: 'Delete Row?',
+                deleteColumnTitle: 'Delete Column?',
+                deleteRowConfirm: 'Do you really want to delete this row?',
+                deleteColumnConfirm: 'Do you really want to delete this column?',
+                deleteColumnWarning: '⚠️ All data in this column will be lost!',
+                
                 // New Month Modal
                 createNewMonthFile: '📅 Create New Month File',
                 newMonthDescription: 'Creates a copy of the template file with a new name and sets it as File 2.',
@@ -2507,7 +2613,7 @@
                 createAndLoad: '📅 Create & Load',
                 
                 // Footer
-                copyright: '© Norbert Jander 2025 · v1.0.10',
+                copyright: '© Norbert Jander 2025 · v1.0.11',
                 
                 // Extra Columns
                 extraColumns: 'Extra Columns',
@@ -2586,8 +2692,24 @@
             
             // Queue panel
             document.getElementById('btnClearQueue').innerHTML = t('clear');
+            document.getElementById('btnPreviewTransfer').innerHTML = t('preview');
+            document.getElementById('btnExportPS').innerHTML = t('exportToTarget');
             document.getElementById('btnDataExplorer').innerHTML = '📊 ' + t('dataExplorer');
             document.getElementById('btnNewMonth').innerHTML = t('newMonthFile');
+            
+            // Queue title - update the text before and after the count span
+            const queueTitleEl = document.querySelector('#queuePanel .transfer-title');
+            if (queueTitleEl) {
+                const countSpan = document.getElementById('queueCount');
+                const count = countSpan ? countSpan.textContent : '0';
+                queueTitleEl.innerHTML = `${t('queue')} (<span id="queueCount">${count}</span> ${t('rows')})`;
+            }
+            
+            // Queue empty message
+            const queueEmpty = document.querySelector('.queue-empty');
+            if (queueEmpty) {
+                queueEmpty.textContent = t('noRowsInQueue');
+            }
             
             // Transfer panel
             document.getElementById('btnAddToQueue').innerHTML = t('addToQueue');
@@ -2662,6 +2784,10 @@
                 explorerResultCount.textContent = t('noDataLoaded');
             }
             if (explorerSearch) explorerSearch.placeholder = t('searchPlaceholderExplorer');
+            
+            // Data Explorer Preview button
+            const btnExplorerPreview = document.getElementById('btnExplorerPreview');
+            if (btnExplorerPreview) btnExplorerPreview.innerHTML = t('preview');
             
             // Explorer filter section label
             const filterLabel = document.querySelector('#explorerFilterControls > div > span');
@@ -5629,6 +5755,9 @@
         }
         
         // ==================== Data Explorer Functions ====================
+        const EXPLORER_RECOVERY_KEY = 'excelSyncExplorerRecovery';
+        let explorerAutoSaveInterval = null;
+        
         const explorerState = {
             filePath: null,
             fileName: null,
@@ -5666,6 +5795,214 @@
             sheetDataCache: new Map()  // sheetName -> { data, editedCells, rowHighlights, originalData }
         };
         
+        // Explorer-State komplett zurücksetzen
+        function resetExplorerState() {
+            explorerState.filePath = null;
+            explorerState.fileName = null;
+            explorerState.sheets = [];
+            explorerState.selectedSheet = null;
+            explorerState.headers = [];
+            explorerState.data = [];
+            explorerState.originalData = [];
+            explorerState.filteredData = [];
+            explorerState.searchTerm = '';
+            explorerState.filters = [];
+            explorerState.visibleColumns = [];
+            explorerState.columnOrder = [];
+            explorerState.editedCells.clear();
+            explorerState.currentPage = 1;
+            explorerState.sortColumn = null;
+            explorerState.sortDirection = null;
+            explorerState.sortType = 'auto';
+            explorerState.rowHighlights.clear();
+            explorerState.selectedRows.clear();
+            explorerState.moveMode = false;
+            explorerState.draggedColumn = null;
+            explorerState.selectedCells.clear();
+            explorerState.selectionAnchor = null;
+            explorerState.isSelecting = false;
+            explorerState.sheetDataCache.clear();
+            
+            // UI zurücksetzen
+            if (elements.explorerSheetSelect) {
+                elements.explorerSheetSelect.innerHTML = '<option value="">-- Sheet wählen --</option>';
+            }
+            if (elements.explorerSearch) {
+                elements.explorerSearch.value = '';
+            }
+            const explorerFileName = document.getElementById('explorerFileName');
+            if (explorerFileName) {
+                explorerFileName.textContent = currentLanguage === 'en' ? 'No file loaded' : 'Keine Datei geladen';
+            }
+            const explorerTable = document.getElementById('explorerTable');
+            if (explorerTable) {
+                explorerTable.innerHTML = '';
+            }
+            const explorerResultCount = document.getElementById('explorerResultCount');
+            if (explorerResultCount) {
+                explorerResultCount.textContent = currentLanguage === 'en' ? 'No data loaded.' : 'Keine Daten geladen.';
+            }
+            
+            // Auto-Save Intervall stoppen
+            stopExplorerAutoSave();
+        }
+        
+        // Auto-Save für Crash-Recovery starten
+        function startExplorerAutoSave() {
+            // Alle 30 Sekunden speichern
+            if (explorerAutoSaveInterval) {
+                clearInterval(explorerAutoSaveInterval);
+            }
+            explorerAutoSaveInterval = setInterval(saveExplorerRecoveryData, 30000);
+            // Sofort einmal speichern
+            saveExplorerRecoveryData();
+        }
+        
+        // Auto-Save stoppen
+        function stopExplorerAutoSave() {
+            if (explorerAutoSaveInterval) {
+                clearInterval(explorerAutoSaveInterval);
+                explorerAutoSaveInterval = null;
+            }
+        }
+        
+        // Recovery-Daten speichern
+        function saveExplorerRecoveryData() {
+            if (!explorerState.filePath || explorerState.data.length === 0) {
+                return;
+            }
+            
+            try {
+                // Aktuelles Sheet im Cache speichern
+                saveCurrentSheetToCache();
+                
+                // Nur speichern wenn es Änderungen gibt
+                const totalChanges = countAllChanges();
+                if (totalChanges === 0) {
+                    // Keine Änderungen - Recovery-Daten löschen
+                    localStorage.removeItem(EXPLORER_RECOVERY_KEY);
+                    return;
+                }
+                
+                // Map/Set zu Arrays konvertieren für JSON
+                const editedCellsArray = Array.from(explorerState.editedCells.entries());
+                const rowHighlightsArray = Array.from(explorerState.rowHighlights.entries());
+                
+                // Sheet-Cache konvertieren
+                const sheetCacheArray = [];
+                for (const [sheetName, cached] of explorerState.sheetDataCache) {
+                    sheetCacheArray.push({
+                        sheetName,
+                        headers: cached.headers,
+                        data: cached.data,
+                        originalData: cached.originalData,
+                        visibleColumns: cached.visibleColumns,
+                        editedCells: Array.from(cached.editedCells.entries()),
+                        rowHighlights: Array.from(cached.rowHighlights.entries())
+                    });
+                }
+                
+                const recoveryData = {
+                    timestamp: Date.now(),
+                    filePath: explorerState.filePath,
+                    fileName: explorerState.fileName,
+                    sheets: explorerState.sheets,
+                    selectedSheet: explorerState.selectedSheet,
+                    headers: explorerState.headers,
+                    data: explorerState.data,
+                    originalData: explorerState.originalData,
+                    visibleColumns: explorerState.visibleColumns,
+                    columnOrder: explorerState.columnOrder,
+                    editedCells: editedCellsArray,
+                    rowHighlights: rowHighlightsArray,
+                    sheetDataCache: sheetCacheArray
+                };
+                
+                localStorage.setItem(EXPLORER_RECOVERY_KEY, JSON.stringify(recoveryData));
+            } catch (e) {
+                console.warn('Explorer Recovery-Speicherung fehlgeschlagen:', e);
+            }
+        }
+        
+        // Recovery-Daten laden
+        function loadExplorerRecoveryData() {
+            try {
+                const saved = localStorage.getItem(EXPLORER_RECOVERY_KEY);
+                if (!saved) return null;
+                
+                const data = JSON.parse(saved);
+                
+                // Prüfe ob Daten nicht älter als 24 Stunden sind
+                const maxAge = 24 * 60 * 60 * 1000; // 24 Stunden
+                if (Date.now() - data.timestamp > maxAge) {
+                    localStorage.removeItem(EXPLORER_RECOVERY_KEY);
+                    return null;
+                }
+                
+                return data;
+            } catch (e) {
+                console.warn('Explorer Recovery-Laden fehlgeschlagen:', e);
+                localStorage.removeItem(EXPLORER_RECOVERY_KEY);
+                return null;
+            }
+        }
+        
+        // Recovery-Daten anwenden
+        function applyExplorerRecoveryData(data) {
+            explorerState.filePath = data.filePath;
+            explorerState.fileName = data.fileName;
+            explorerState.sheets = data.sheets || [];
+            explorerState.selectedSheet = data.selectedSheet;
+            explorerState.headers = data.headers;
+            explorerState.data = data.data;
+            explorerState.originalData = data.originalData || data.data.map(row => [...row]);
+            explorerState.visibleColumns = data.visibleColumns;
+            explorerState.columnOrder = data.columnOrder || [];
+            
+            // Map/Set aus Arrays wiederherstellen
+            explorerState.editedCells = new Map(data.editedCells || []);
+            explorerState.rowHighlights = new Map(data.rowHighlights || []);
+            
+            // Sheet-Cache wiederherstellen
+            explorerState.sheetDataCache.clear();
+            if (data.sheetDataCache) {
+                for (const cached of data.sheetDataCache) {
+                    explorerState.sheetDataCache.set(cached.sheetName, {
+                        headers: cached.headers,
+                        data: cached.data,
+                        originalData: cached.originalData || cached.data.map(row => [...row]),
+                        visibleColumns: cached.visibleColumns,
+                        editedCells: new Map(cached.editedCells || []),
+                        rowHighlights: new Map(cached.rowHighlights || [])
+                    });
+                }
+            }
+            
+            // UI aktualisieren
+            const explorerFileName = document.getElementById('explorerFileName');
+            if (explorerFileName) {
+                explorerFileName.textContent = explorerState.fileName || '';
+            }
+            
+            // Sheet-Dropdown füllen
+            if (elements.explorerSheetSelect && explorerState.sheets.length > 0) {
+                elements.explorerSheetSelect.innerHTML = explorerState.sheets.map(s => 
+                    `<option value="${s}" ${s === explorerState.selectedSheet ? 'selected' : ''}>${s}</option>`
+                ).join('');
+            }
+            
+            // Daten filtern und anzeigen
+            filterExplorerData();
+            
+            // Auto-Save starten
+            startExplorerAutoSave();
+        }
+        
+        // Recovery-Daten löschen
+        function clearExplorerRecoveryData() {
+            localStorage.removeItem(EXPLORER_RECOVERY_KEY);
+        }
+        
         // Kontextmenü für Zeilen-Markierung
         const highlightColors = [
             { name: 'Grün', value: 'green', hex: '#4CAF50' },
@@ -5701,6 +6038,11 @@
             
             menuHtml += '<div class="context-menu-divider"></div>';
             menuHtml += `<div class="context-menu-item" data-action="clear" data-row="${rowIndex}">🚫 Markierung entfernen</div>`;
+            menuHtml += '<div class="context-menu-divider"></div>';
+            menuHtml += `<div class="context-menu-item" data-action="insert-row-above" data-row="${rowIndex}">⬆️ Zeile oberhalb einfügen</div>`;
+            menuHtml += `<div class="context-menu-item" data-action="insert-row-below" data-row="${rowIndex}">⬇️ Zeile unterhalb einfügen</div>`;
+            menuHtml += '<div class="context-menu-divider"></div>';
+            menuHtml += `<div class="context-menu-item" data-action="delete-row" data-row="${rowIndex}" style="color: #F44336;">🗑️ Zeile löschen</div>`;
             menuHtml += '</div>';
             
             const menu = document.createElement('div');
@@ -5741,6 +6083,25 @@
                 menuEl.remove();
             });
             
+            // Neue Zeilen-Aktionen
+            menuEl.querySelector('[data-action="insert-row-above"]')?.addEventListener('click', () => {
+                const row = parseInt(menuEl.querySelector('[data-action="insert-row-above"]').dataset.row);
+                insertExplorerRow(row, 'above');
+                menuEl.remove();
+            });
+            
+            menuEl.querySelector('[data-action="insert-row-below"]')?.addEventListener('click', () => {
+                const row = parseInt(menuEl.querySelector('[data-action="insert-row-below"]').dataset.row);
+                insertExplorerRow(row, 'below');
+                menuEl.remove();
+            });
+            
+            menuEl.querySelector('[data-action="delete-row"]')?.addEventListener('click', () => {
+                const row = parseInt(menuEl.querySelector('[data-action="delete-row"]').dataset.row);
+                deleteExplorerRow(row);
+                menuEl.remove();
+            });
+            
             // Menü bei Klick außerhalb schließen
             const closeHandler = (event) => {
                 if (!menuEl.contains(event.target)) {
@@ -5774,6 +6135,298 @@
                 if (tr) {
                     tr.classList.add(`row-highlight-${color}`);
                 }
+            });
+        }
+        
+        // ==================== Zeilen/Spalten Einfügen/Löschen ====================
+        
+        // Neue Zeile einfügen
+        function insertExplorerRow(rowIndex, position = 'below') {
+            const insertIndex = position === 'above' ? rowIndex : rowIndex + 1;
+            
+            // Leere Zeile erstellen mit gleicher Anzahl Spalten
+            const emptyRow = new Array(explorerState.headers.length).fill('');
+            
+            // Zeile in data einfügen
+            explorerState.data.splice(insertIndex, 0, emptyRow);
+            explorerState.originalData.splice(insertIndex, 0, [...emptyRow]);
+            
+            // Highlights anpassen (Indizes verschieben)
+            const newHighlights = new Map();
+            explorerState.rowHighlights.forEach((color, idx) => {
+                if (idx >= insertIndex) {
+                    newHighlights.set(idx + 1, color);
+                } else {
+                    newHighlights.set(idx, color);
+                }
+            });
+            explorerState.rowHighlights = newHighlights;
+            
+            // EditedCells anpassen
+            const newEditedCells = new Map();
+            explorerState.editedCells.forEach((value, key) => {
+                if (key.startsWith('_')) {
+                    newEditedCells.set(key, value);
+                    return;
+                }
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (row >= insertIndex) {
+                    newEditedCells.set(`${row + 1}-${col}`, value);
+                } else {
+                    newEditedCells.set(key, value);
+                }
+            });
+            explorerState.editedCells = newEditedCells;
+            
+            // Alle Zellen der neuen Zeile als bearbeitet markieren
+            for (let col = 0; col < explorerState.headers.length; col++) {
+                explorerState.editedCells.set(`${insertIndex}-${col}`, '');
+            }
+            
+            // UI aktualisieren
+            filterExplorerData();
+            showFloatingStatus(t('rowInserted'));
+        }
+        
+        // Zeile löschen
+        async function deleteExplorerRow(rowIndex) {
+            // Bestätigung bei einzelner Zeile
+            const rowPreview = explorerState.data[rowIndex]?.slice(0, 3).join(', ') || '';
+            const rowLabel = currentLanguage === 'en' ? 'Row' : 'Zeile';
+            const confirmed = await showConfirmDialog(
+                t('deleteRowTitle'),
+                `${t('deleteRowConfirm')}\n\n${rowLabel} ${rowIndex + 1}: ${rowPreview}...`,
+                currentLanguage === 'en' ? 'Delete' : 'Löschen',
+                t('cancel')
+            );
+            
+            if (!confirmed) return;
+            
+            // Zeile aus data entfernen
+            explorerState.data.splice(rowIndex, 1);
+            explorerState.originalData.splice(rowIndex, 1);
+            
+            // Highlights anpassen
+            const newHighlights = new Map();
+            explorerState.rowHighlights.forEach((color, idx) => {
+                if (idx > rowIndex) {
+                    newHighlights.set(idx - 1, color);
+                } else if (idx < rowIndex) {
+                    newHighlights.set(idx, color);
+                }
+                // idx === rowIndex wird nicht übernommen (gelöscht)
+            });
+            explorerState.rowHighlights = newHighlights;
+            
+            // EditedCells anpassen
+            const newEditedCells = new Map();
+            explorerState.editedCells.forEach((value, key) => {
+                if (key.startsWith('_')) {
+                    newEditedCells.set(key, value);
+                    return;
+                }
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (row > rowIndex) {
+                    newEditedCells.set(`${row - 1}-${col}`, value);
+                } else if (row < rowIndex) {
+                    newEditedCells.set(key, value);
+                }
+                // row === rowIndex wird nicht übernommen
+            });
+            explorerState.editedCells = newEditedCells;
+            
+            // Markierung, dass etwas gelöscht wurde (für Änderungszählung)
+            explorerState.editedCells.set('_rowDeleted', true);
+            
+            // UI aktualisieren
+            filterExplorerData();
+            showFloatingStatus(t('rowDeleted'));
+        }
+        
+        // Neue Spalte einfügen
+        async function insertExplorerColumn(colIndex, position = 'after') {
+            const insertIndex = position === 'before' ? colIndex : colIndex + 1;
+            
+            // Header-Namen abfragen
+            const headerName = await showPromptDialog(
+                t('newColumn'),
+                t('enterColumnName'),
+                t('newColumn')
+            );
+            
+            if (headerName === null) return; // Abgebrochen
+            
+            // Header einfügen
+            explorerState.headers.splice(insertIndex, 0, headerName || t('newColumn'));
+            
+            // Alle Zeilen erweitern
+            explorerState.data.forEach(row => {
+                row.splice(insertIndex, 0, '');
+            });
+            explorerState.originalData.forEach(row => {
+                row.splice(insertIndex, 0, '');
+            });
+            
+            // VisibleColumns anpassen
+            const newVisibleColumns = [];
+            explorerState.visibleColumns.forEach(idx => {
+                if (idx >= insertIndex) {
+                    newVisibleColumns.push(idx + 1);
+                } else {
+                    newVisibleColumns.push(idx);
+                }
+            });
+            newVisibleColumns.push(insertIndex); // Neue Spalte ist sichtbar
+            newVisibleColumns.sort((a, b) => a - b);
+            explorerState.visibleColumns = newVisibleColumns;
+            
+            // EditedCells anpassen
+            const newEditedCells = new Map();
+            explorerState.editedCells.forEach((value, key) => {
+                if (key.startsWith('_')) {
+                    newEditedCells.set(key, value);
+                    return;
+                }
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (col >= insertIndex) {
+                    newEditedCells.set(`${row}-${col + 1}`, value);
+                } else {
+                    newEditedCells.set(key, value);
+                }
+            });
+            explorerState.editedCells = newEditedCells;
+            
+            // Markierung dass Spalte hinzugefügt wurde
+            explorerState.editedCells.set('_columnAdded', true);
+            
+            // UI aktualisieren
+            filterExplorerData();
+            updateColumnToggles();
+            showFloatingStatus(t('columnInserted'));
+        }
+        
+        // Spalte löschen
+        async function deleteExplorerColumn(colIndex) {
+            const columnName = explorerState.headers[colIndex] || `${currentLanguage === 'en' ? 'Column' : 'Spalte'} ${colIndex + 1}`;
+            const columnLabel = currentLanguage === 'en' ? 'Column' : 'Spalte';
+            
+            const confirmed = await showConfirmDialog(
+                t('deleteColumnTitle'),
+                `${t('deleteColumnConfirm')}\n\n${columnLabel}: "${columnName}"\n\n${t('deleteColumnWarning')}`,
+                currentLanguage === 'en' ? 'Delete' : 'Löschen',
+                t('cancel')
+            );
+            
+            if (!confirmed) return;
+            
+            // Header entfernen
+            explorerState.headers.splice(colIndex, 1);
+            
+            // Alle Zeilen anpassen
+            explorerState.data.forEach(row => {
+                row.splice(colIndex, 1);
+            });
+            explorerState.originalData.forEach(row => {
+                row.splice(colIndex, 1);
+            });
+            
+            // VisibleColumns anpassen
+            explorerState.visibleColumns = explorerState.visibleColumns
+                .filter(idx => idx !== colIndex)
+                .map(idx => idx > colIndex ? idx - 1 : idx);
+            
+            // EditedCells anpassen
+            const newEditedCells = new Map();
+            explorerState.editedCells.forEach((value, key) => {
+                if (key.startsWith('_')) {
+                    newEditedCells.set(key, value);
+                    return;
+                }
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (col > colIndex) {
+                    newEditedCells.set(`${row}-${col - 1}`, value);
+                } else if (col < colIndex) {
+                    newEditedCells.set(key, value);
+                }
+                // col === colIndex wird nicht übernommen
+            });
+            explorerState.editedCells = newEditedCells;
+            
+            // Markierung dass Spalte gelöscht wurde
+            explorerState.editedCells.set('_columnDeleted', true);
+            
+            // UI aktualisieren
+            filterExplorerData();
+            updateColumnToggles();
+            showFloatingStatus(t('columnDeleted'));
+        }
+        
+        // Prompt-Dialog für Texteingabe
+        function showPromptDialog(title, message, defaultValue = '') {
+            return new Promise((resolve) => {
+                const existingDialog = document.querySelector('.confirm-dialog-overlay');
+                if (existingDialog) existingDialog.remove();
+                
+                const overlay = document.createElement('div');
+                overlay.className = 'confirm-dialog-overlay';
+                overlay.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(0,0,0,0.5);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 10002;
+                `;
+                
+                overlay.innerHTML = `
+                    <div style="background: var(--bg-medium); border-radius: 8px; padding: 20px; max-width: 400px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
+                        <h3 style="margin: 0 0 15px 0; color: var(--text-primary);">${title}</h3>
+                        <p style="margin: 0 0 15px 0; color: var(--text-muted); white-space: pre-wrap;">${message}</p>
+                        <input type="text" id="promptInput" class="search-input" value="${defaultValue}" style="width: 100%; margin-bottom: 15px; padding: 10px;">
+                        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                            <button class="btn btn-secondary" id="promptCancel">${currentLanguage === 'en' ? 'Cancel' : 'Abbrechen'}</button>
+                            <button class="btn btn-primary" id="promptConfirm">${currentLanguage === 'en' ? 'OK' : 'OK'}</button>
+                        </div>
+                    </div>
+                `;
+                
+                document.body.appendChild(overlay);
+                
+                const input = document.getElementById('promptInput');
+                input.focus();
+                input.select();
+                
+                input.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') {
+                        overlay.remove();
+                        resolve(input.value);
+                    } else if (e.key === 'Escape') {
+                        overlay.remove();
+                        resolve(null);
+                    }
+                });
+                
+                document.getElementById('promptCancel').onclick = () => {
+                    overlay.remove();
+                    resolve(null);
+                };
+                
+                document.getElementById('promptConfirm').onclick = () => {
+                    overlay.remove();
+                    resolve(input.value);
+                };
             });
         }
         
@@ -6064,12 +6717,74 @@
             }, 2000);
         }
 
-        function openDataExplorer() {
+        async function openDataExplorer() {
             elements.dataExplorerModal.classList.remove('hidden');
             document.body.classList.add('modal-open');
+            
+            // Prüfe auf Recovery-Daten (von vorherigem Crash)
+            const recoveryData = loadExplorerRecoveryData();
+            if (recoveryData && !explorerState.filePath) {
+                const totalRecoveryChanges = (recoveryData.editedCells?.length || 0);
+                
+                // Prüfe ob die Datei noch existiert
+                let fileExists = false;
+                try {
+                    const checkResult = await window.electronAPI.checkFileExists(recoveryData.filePath);
+                    fileExists = checkResult.exists;
+                } catch (e) {
+                    fileExists = false;
+                }
+                
+                if (fileExists && totalRecoveryChanges > 0) {
+                    const restore = await showConfirmDialog(
+                        currentLanguage === 'en' ? 'Restore Data?' : 'Daten wiederherstellen?',
+                        currentLanguage === 'en' 
+                            ? `Recovery data found from a previous session:\n\nFile: ${recoveryData.fileName}\nChanges: ${totalRecoveryChanges}\nTime: ${new Date(recoveryData.timestamp).toLocaleString()}\n\nDo you want to restore these changes?`
+                            : `Es wurden Wiederherstellungsdaten aus einer vorherigen Sitzung gefunden:\n\nDatei: ${recoveryData.fileName}\nÄnderungen: ${totalRecoveryChanges}\nZeitpunkt: ${new Date(recoveryData.timestamp).toLocaleString()}\n\nMöchten Sie diese Änderungen wiederherstellen?`,
+                        currentLanguage === 'en' ? 'Restore' : 'Wiederherstellen',
+                        currentLanguage === 'en' ? 'Discard' : 'Verwerfen'
+                    );
+                    
+                    if (restore) {
+                        applyExplorerRecoveryData(recoveryData);
+                        showNotification(
+                            currentLanguage === 'en' ? 'Data restored successfully' : 'Daten erfolgreich wiederhergestellt', 
+                            'success'
+                        );
+                    } else {
+                        clearExplorerRecoveryData();
+                    }
+                } else {
+                    // Datei existiert nicht mehr oder keine Änderungen - Recovery-Daten löschen
+                    clearExplorerRecoveryData();
+                }
+            }
         }
         
-        function closeDataExplorer() {
+        async function closeDataExplorer() {
+            // Prüfe auf ungespeicherte Änderungen
+            const totalChanges = countAllChanges();
+            if (totalChanges > 0) {
+                const confirmed = await showConfirmDialog(
+                    currentLanguage === 'en' ? 'Unsaved Changes' : 'Ungespeicherte Änderungen',
+                    currentLanguage === 'en' 
+                        ? `You have ${totalChanges} unsaved change(s).\n\nDo you really want to close the Data Explorer without saving?`
+                        : `Sie haben ${totalChanges} ungespeicherte Änderung(en).\n\nMöchten Sie den Datenexplorer wirklich ohne Speichern schließen?`,
+                    currentLanguage === 'en' ? 'Close without saving' : 'Ohne Speichern schließen',
+                    currentLanguage === 'en' ? 'Cancel' : 'Abbrechen'
+                );
+                
+                if (!confirmed) {
+                    return; // Abbruch - Datenexplorer bleibt offen
+                }
+            }
+            
+            // State komplett zurücksetzen
+            resetExplorerState();
+            
+            // Recovery-Daten löschen (normales Schließen)
+            clearExplorerRecoveryData();
+            
             elements.dataExplorerModal.classList.add('hidden');
             document.body.classList.remove('modal-open');
         }
@@ -6197,6 +6912,9 @@
             elements.explorerSheetSelect.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
             
             await loadExplorerSheet(result.sheets[0]);
+            
+            // Auto-Save für Crash-Recovery starten
+            startExplorerAutoSave();
         }
         
         async function loadExplorerSheet(sheetName) {
@@ -6598,6 +7316,15 @@
                     break;
                 case 'hide-column':
                     toggleExplorerColumn(contextMenuColumn, false);
+                    break;
+                case 'delete-column':
+                    deleteExplorerColumn(contextMenuColumn);
+                    break;
+                case 'insert-column-before':
+                    insertExplorerColumn(contextMenuColumn, 'before');
+                    break;
+                case 'insert-column-after':
+                    insertExplorerColumn(contextMenuColumn, 'after');
                     break;
             }
             
@@ -7539,7 +8266,8 @@
                     sheetsToSave.push({
                         sheetName: explorerState.selectedSheet,
                         headers: explorerState.headers,
-                        data: explorerState.data
+                        data: explorerState.data,
+                        visibleColumns: explorerState.visibleColumns
                     });
                 }
                 
@@ -7549,7 +8277,8 @@
                         sheetsToSave.push({
                             sheetName: sheetName,
                             headers: cached.headers,
-                            data: cached.data
+                            data: cached.data,
+                            visibleColumns: cached.visibleColumns
                         });
                     }
                 }
@@ -7570,6 +8299,9 @@
                         cached.editedCells.clear();
                         cached.originalData = cached.data.map(row => [...row]);
                     }
+                    
+                    // Recovery-Daten löschen (keine ungespeicherten Änderungen mehr)
+                    clearExplorerRecoveryData();
                     
                     // UI aktualisieren
                     renderExplorerTable();

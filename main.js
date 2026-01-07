@@ -348,6 +348,27 @@ ipcMain.handle('dialog:openFolder', async (event, options) => {
 });
 
 // ============================================
+// DATEISYSTEM OPERATIONEN
+// ============================================
+
+// Prüfen ob Datei existiert
+ipcMain.handle('fs:checkFileExists', async (event, filePath) => {
+    // Sicherheitsprüfung: Pfad validieren
+    if (!isValidFilePath(filePath)) {
+        return { exists: false, error: 'Ungültiger Dateipfad' };
+    }
+    
+    try {
+        const fs = require('fs');
+        const exists = fs.existsSync(filePath);
+        return { exists };
+    } catch (err) {
+        console.error('Dateiprüfung Fehler:', err);
+        return { exists: false, error: err.message };
+    }
+});
+
+// ============================================
 // EXCEL OPERATIONEN (xlsx-populate - erhaelt Formatierung!)
 // ============================================
 
@@ -1085,20 +1106,43 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
             // Sheet mit bearbeiteten Daten - nur Werte aktualisieren, Formatierung bleibt
             const headers = sheetData.headers;
             const data = sheetData.data;
+            const visibleColumns = sheetData.visibleColumns;
             
-            // Header-Zeile schreiben (Zeile 1)
-            headers.forEach((header, colIndex) => {
-                worksheet.cell(1, colIndex + 1).value(header);
-            });
+            // Alle vorhandenen Daten im Sheet löschen
+            const usedRange = worksheet.usedRange();
+            if (usedRange) {
+                usedRange.clear();
+            }
             
-            // Daten-Zeilen schreiben (ab Zeile 2) - Formatierung bleibt erhalten
-            data.forEach((row, rowIndex) => {
-                row.forEach((value, colIndex) => {
-                    const cell = worksheet.cell(rowIndex + 2, colIndex + 1);
-                    // Nur Wert setzen, Formatierung beibehalten
-                    cell.value(value === null || value === undefined ? '' : value);
+            // Wenn nur bestimmte Spalten sichtbar sind, diese exportieren
+            if (visibleColumns && visibleColumns.length > 0 && visibleColumns.length < headers.length) {
+                // Header-Zeile mit sichtbaren Spalten
+                visibleColumns.forEach((colIdx, newColIdx) => {
+                    worksheet.cell(1, newColIdx + 1).value(headers[colIdx] || '');
                 });
-            });
+                
+                // Daten-Zeilen mit sichtbaren Spalten
+                data.forEach((row, rowIndex) => {
+                    visibleColumns.forEach((colIdx, newColIdx) => {
+                        worksheet.cell(rowIndex + 2, newColIdx + 1).value(row[colIdx] === null || row[colIdx] === undefined ? '' : row[colIdx]);
+                    });
+                });
+            } else {
+                // Alle Spalten exportieren
+                // Header-Zeile schreiben (Zeile 1)
+                headers.forEach((header, colIndex) => {
+                    worksheet.cell(1, colIndex + 1).value(header);
+                });
+                
+                // Daten-Zeilen schreiben (ab Zeile 2) - Formatierung bleibt erhalten
+                data.forEach((row, rowIndex) => {
+                    row.forEach((value, colIndex) => {
+                        const cell = worksheet.cell(rowIndex + 2, colIndex + 1);
+                        // Nur Wert setzen, Formatierung beibehalten
+                        cell.value(value === null || value === undefined ? '' : value);
+                    });
+                });
+            }
             
             sheetsProcessed++;
         }
@@ -1137,20 +1181,47 @@ ipcMain.handle('excel:saveFile', async (event, { filePath, sheets }) => {
                 continue;
             }
             
-            // Header-Zeile schreiben (Zeile 1)
-            sheetData.headers.forEach((header, colIndex) => {
-                worksheet.cell(1, colIndex + 1).value(header);
-            });
+            const headers = sheetData.headers;
+            const data = sheetData.data;
+            const visibleColumns = sheetData.visibleColumns;
             
-            // Daten-Zeilen schreiben (ab Zeile 2)
-            sheetData.data.forEach((row, rowIndex) => {
-                row.forEach((value, colIndex) => {
-                    const cell = worksheet.cell(rowIndex + 2, colIndex + 1);
-                    // Nur Wert setzen, Formatierung beibehalten
-                    cell.value(value === null || value === undefined ? '' : value);
+            // Alle vorhandenen Daten im Sheet löschen
+            const usedRange = worksheet.usedRange();
+            if (usedRange) {
+                usedRange.clear();
+            }
+            
+            // Wenn nur bestimmte Spalten sichtbar sind, diese speichern
+            if (visibleColumns && visibleColumns.length > 0 && visibleColumns.length < headers.length) {
+                // Header-Zeile mit sichtbaren Spalten
+                visibleColumns.forEach((colIdx, newColIdx) => {
+                    worksheet.cell(1, newColIdx + 1).value(headers[colIdx] || '');
                 });
-                totalChanges++;
-            });
+                
+                // Daten-Zeilen mit sichtbaren Spalten
+                data.forEach((row, rowIndex) => {
+                    visibleColumns.forEach((colIdx, newColIdx) => {
+                        worksheet.cell(rowIndex + 2, newColIdx + 1).value(row[colIdx] === null || row[colIdx] === undefined ? '' : row[colIdx]);
+                    });
+                    totalChanges++;
+                });
+            } else {
+                // Alle Spalten speichern
+                // Header-Zeile schreiben (Zeile 1)
+                headers.forEach((header, colIndex) => {
+                    worksheet.cell(1, colIndex + 1).value(header);
+                });
+                
+                // Daten-Zeilen schreiben (ab Zeile 2)
+                data.forEach((row, rowIndex) => {
+                    row.forEach((value, colIndex) => {
+                        const cell = worksheet.cell(rowIndex + 2, colIndex + 1);
+                        // Nur Wert setzen, Formatierung beibehalten
+                        cell.value(value === null || value === undefined ? '' : value);
+                    });
+                    totalChanges++;
+                });
+            }
         }
         
         // Speichern (überschreibt die Originaldatei)

@@ -4,7 +4,7 @@ Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen E
 
 ## Version
 
-**v1.0.10** - © Norbert Jander 2025
+**v1.0.11** - © Norbert Jander 2025
 
 ## Hauptfunktionen
 
@@ -196,6 +196,17 @@ Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Ex
 - **Plattformen**: Windows (x64), macOS (Intel & Apple Silicon)
 
 ## Changelog
+
+### v1.0.11
+- **Neu**: Zeilen einfügen (oberhalb/unterhalb) per Rechtsklick im Datenexplorer
+- **Neu**: Zeilen löschen mit Bestätigungsdialog
+- **Neu**: Spalten einfügen (links/rechts) mit Namenseingabe
+- **Neu**: Spalten löschen mit Warnung über Datenverlust
+- **Neu**: Crash-Recovery - automatische Sicherung alle 30 Sekunden
+- **Neu**: Wiederherstellungsoption beim Öffnen nach Absturz/Stromausfall
+- **Neu**: Warnung bei ungespeicherten Änderungen beim Schließen des Datenexplorers
+- **Neu**: Ausgeblendete Spalten werden beim Speichern/Exportieren nicht übernommen
+- **Fix**: Korrekte englische Übersetzung für Warteschlange, Vorschau, Export-Button
 
 ### v1.0.10
 - **Neu**: Datenexplorer mit erweitertem Funktionsumfang
