@@ -58,7 +58,8 @@
       "installerHeaderIcon": "assets/icon.ico",
       "artifactName": "Excel-Data-Sync-Pro-${version}-Setup.exe",
       "shortcutName": "Excel Data Sync Pro",
-      "perMachine": false
+      "perMachine": false,
+      "runAfterFinish": false
     },
     "portable": {
       "artifactName": "Excel-Data-Sync-Pro-${arch}.exe"

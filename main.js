@@ -219,7 +219,8 @@ app.on('window-all-closed', () => {
 });
 
 app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
+    // Nur wenn App bereit ist und kein Fenster offen ist
+    if (app.isReady() && BrowserWindow.getAllWindows().length === 0) {
         createWindow();
     }
 });
