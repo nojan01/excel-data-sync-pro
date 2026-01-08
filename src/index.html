@@ -1767,32 +1767,6 @@
                     Sie können wählen, ob Sie trotzdem schließen oder zurückkehren möchten.
                 </p>
                 
-                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">➕ Zeilen & Spalten hinzufügen/löschen</h4>
-                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
-                    <strong>Zeilen-Operationen (Rechtsklick auf Zeile):</strong><br>
-                    • ⬆️ Zeile darüber einfügen<br>
-                    • ⬇️ Zeile darunter einfügen<br>
-                    • 🗑️ Zeile löschen (mit Bestätigungsdialog)<br><br>
-                    <strong>Spalten-Operationen (Rechtsklick auf Spaltenüberschrift):</strong><br>
-                    • ⬅️ Spalte links einfügen (mit Namenseingabe)<br>
-                    • ➡️ Spalte rechts einfügen (mit Namenseingabe)<br>
-                    • 🗑️ Spalte löschen (mit Warnung über Datenverlust)<br>
-                    • 👁️ Spalte ausblenden
-                </p>
-                
-                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">🔄 Crash-Recovery</h4>
-                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
-                    Der Datenexplorer speichert automatisch alle 30 Sekunden Ihre Änderungen im Hintergrund.<br>
-                    Bei einem Absturz oder Stromausfall können Sie beim nächsten Öffnen wählen, ob die letzte Sitzung wiederhergestellt werden soll.<br>
-                    Recovery-Daten werden nach 24 Stunden automatisch gelöscht.
-                </p>
-                
-                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">⚠️ Warnung bei ungespeicherten Änderungen</h4>
-                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
-                    Beim Schließen des Datenexplorers mit ungespeicherten Änderungen erscheint eine Warnung.<br>
-                    Sie können wählen, ob Sie trotzdem schließen oder zurückkehren möchten.
-                </p>
-                
                 <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📤 Speichern & Export</h4>
                 <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
                     <strong>💾 Speichern:</strong> Speichert alle Änderungen direkt in die Originaldatei<br>
@@ -2153,6 +2127,7 @@
                         <span style="color: white;">Zeile</span>
                         <input type="number" id="moveTargetRow" class="config-input" style="width: 80px; padding: 4px 8px;" min="1" placeholder="Nr.">
                         <button class="btn btn-sm" id="btnExecuteMove" style="background: white; color: #217346; font-weight: 600;">✓ Verschieben</button>
+                        <button class="btn btn-sm" id="btnDeleteSelectedRows" style="background: #F44336; color: white; font-weight: 600; margin-left: 15px;">🗑️ Löschen</button>
                     </div>
                     <button class="btn btn-sm" id="btnClearRowSelection" style="background: rgba(255,255,255,0.2); color: white; margin-left: auto;">✕ Auswahl aufheben</button>
                 </div>
@@ -6016,13 +5991,13 @@
         function showRowContextMenu(e, rowIndex) {
             e.preventDefault();
             
-            // Altes Menü entfernen
-            const oldMenu = document.querySelector('.context-menu');
+            // Altes Zeilen-Menü entfernen (nur row-context-menu, nicht das column-context-menu)
+            const oldMenu = document.querySelector('.row-context-menu');
             if (oldMenu) oldMenu.remove();
             
             const currentColor = explorerState.rowHighlights.get(rowIndex);
             
-            let menuHtml = '<div class="context-menu">';
+            let menuHtml = '<div class="context-menu row-context-menu">';
             menuHtml += '<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">🎨 Zeile markieren</div>';
             menuHtml += '<div class="context-menu-divider"></div>';
             
@@ -6049,7 +6024,7 @@
             menu.innerHTML = menuHtml;
             document.body.appendChild(menu.firstElementChild);
             
-            const menuEl = document.querySelector('.context-menu');
+            const menuEl = document.querySelector('.row-context-menu');
             
             // Positionierung
             let x = e.clientX;
@@ -6372,30 +6347,28 @@
         // Prompt-Dialog für Texteingabe
         function showPromptDialog(title, message, defaultValue = '') {
             return new Promise((resolve) => {
-                const existingDialog = document.querySelector('.confirm-dialog-overlay');
+                const existingDialog = document.querySelector('.prompt-dialog-overlay');
                 if (existingDialog) existingDialog.remove();
                 
                 const overlay = document.createElement('div');
-                overlay.className = 'confirm-dialog-overlay';
-                overlay.style.cssText = `
-                    position: fixed;
-                    top: 0;
-                    left: 0;
-                    right: 0;
-                    bottom: 0;
-                    background: rgba(0,0,0,0.5);
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    z-index: 10002;
-                `;
+                overlay.className = 'prompt-dialog-overlay modal-overlay';
+                overlay.style.zIndex = '99999';
+                
+                const closeDialog = (result) => {
+                    overlay.remove();
+                    resolve(result);
+                };
                 
                 overlay.innerHTML = `
-                    <div style="background: var(--bg-medium); border-radius: 8px; padding: 20px; max-width: 400px; width: 90%; box-shadow: 0 8px 32px rgba(0,0,0,0.3);">
-                        <h3 style="margin: 0 0 15px 0; color: var(--text-primary);">${title}</h3>
-                        <p style="margin: 0 0 15px 0; color: var(--text-muted); white-space: pre-wrap;">${message}</p>
-                        <input type="text" id="promptInput" class="search-input" value="${defaultValue}" style="width: 100%; margin-bottom: 15px; padding: 10px;">
-                        <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <div class="modal" style="max-width: 400px; width: 90%; min-width: 300px; min-height: auto;">
+                        <div class="modal-header">
+                            <div class="modal-title">${title}</div>
+                        </div>
+                        <div class="modal-body" style="padding: 20px;">
+                            <p style="margin: 0 0 15px 0; color: var(--text-muted);">${message}</p>
+                            <input type="text" id="promptInput" value="${defaultValue}" style="width: 100%; padding: 12px; box-sizing: border-box; font-size: 14px; background: var(--bg-dark); border: 2px solid var(--border); border-radius: 6px; color: var(--text);">
+                        </div>
+                        <div class="modal-footer">
                             <button class="btn btn-secondary" id="promptCancel">${currentLanguage === 'en' ? 'Cancel' : 'Abbrechen'}</button>
                             <button class="btn btn-primary" id="promptConfirm">${currentLanguage === 'en' ? 'OK' : 'OK'}</button>
                         </div>
@@ -6410,23 +6383,14 @@
                 
                 input.addEventListener('keydown', (e) => {
                     if (e.key === 'Enter') {
-                        overlay.remove();
-                        resolve(input.value);
+                        closeDialog(input.value);
                     } else if (e.key === 'Escape') {
-                        overlay.remove();
-                        resolve(null);
+                        closeDialog(null);
                     }
                 });
                 
-                document.getElementById('promptCancel').onclick = () => {
-                    overlay.remove();
-                    resolve(null);
-                };
-                
-                document.getElementById('promptConfirm').onclick = () => {
-                    overlay.remove();
-                    resolve(input.value);
-                };
+                document.getElementById('promptCancel').onclick = () => closeDialog(null);
+                document.getElementById('promptConfirm').onclick = () => closeDialog(input.value);
             });
         }
         
@@ -6526,8 +6490,8 @@
             e.preventDefault();
             e.stopPropagation();
             
-            // Altes Menü entfernen
-            const oldMenu = document.querySelector('.context-menu');
+            // Altes Menü entfernen (nur cell-context-menu, nicht das column-context-menu)
+            const oldMenu = document.querySelector('.cell-context-menu');
             if (oldMenu) oldMenu.remove();
             
             const cellKey = `${rowIndex}-${colIndex}`;
@@ -6543,7 +6507,7 @@
             const selectedCount = explorerState.selectedCells.size;
             const cellLabel = selectedCount === 1 ? 'Zelle' : `${selectedCount} Zellen`;
             
-            let menuHtml = '<div class="context-menu">';
+            let menuHtml = '<div class="context-menu cell-context-menu">';
             menuHtml += `<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">📋 ${cellLabel} ausgewählt</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
             menuHtml += `<div class="context-menu-item" data-action="delete-content">🗑️ Inhalt löschen</div>`;
@@ -6556,7 +6520,7 @@
             menu.innerHTML = menuHtml;
             document.body.appendChild(menu.firstElementChild);
             
-            const menuEl = document.querySelector('.context-menu');
+            const menuEl = document.querySelector('.cell-context-menu');
             
             // Positionierung
             let x = e.clientX;
@@ -6975,8 +6939,17 @@
             explorerState.data = result.data.slice(1);
             // Kopie der Originaldaten speichern (deep copy)
             explorerState.originalData = explorerState.data.map(row => [...row]);
-            // Alle Spalten standardmäßig sichtbar machen
-            explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
+            // Spalten-Sichtbarkeit: Berücksichtige hiddenColumns aus Excel
+            if (result.hiddenColumns && result.hiddenColumns.length > 0) {
+                // Nur Spalten anzeigen, die nicht in hiddenColumns sind
+                const hiddenSet = new Set(result.hiddenColumns);
+                explorerState.visibleColumns = explorerState.headers
+                    .map((_, i) => i)
+                    .filter(i => !hiddenSet.has(i));
+            } else {
+                // Alle Spalten standardmäßig sichtbar machen
+                explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
+            }
             explorerState.columnOrder = []; // Reset column order
             // filteredData mit originalIndex initialisieren
             explorerState.filteredData = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
@@ -7474,6 +7447,8 @@
                 
                 // Rechtsklick für Kontextmenü
                 th.addEventListener('contextmenu', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
                     const colIndex = parseInt(th.dataset.col);
                     showColumnContextMenu(e, colIndex);
                 });
@@ -7878,6 +7853,124 @@
             
             // Eingabefeld leeren
             targetRowInput.value = '';
+        }
+        
+        // Löscht mehrere ausgewählte Zeilen
+        async function deleteSelectedRows() {
+            const selectedCount = explorerState.selectedRows.size;
+            if (selectedCount === 0) {
+                showNotification('Keine Zeilen ausgewählt', 'warning');
+                return;
+            }
+            
+            // Bestätigung anfordern
+            const deleteLabel = currentLanguage === 'en' ? 'Delete' : 'Löschen';
+            const cancelLabel = currentLanguage === 'en' ? 'Cancel' : 'Abbrechen';
+            const titleText = currentLanguage === 'en' 
+                ? `Delete ${selectedCount} Row(s)?` 
+                : `${selectedCount} Zeile(n) löschen?`;
+            const confirmText = currentLanguage === 'en'
+                ? `Do you really want to delete the ${selectedCount} selected row(s)?\n\nThis action cannot be undone.`
+                : `Möchten Sie die ${selectedCount} ausgewählten Zeile(n) wirklich löschen?\n\nDiese Aktion kann nicht rückgängig gemacht werden.`;
+            
+            const confirmed = await showConfirmDialog(
+                titleText,
+                confirmText,
+                deleteLabel,
+                cancelLabel
+            );
+            
+            if (!confirmed) return;
+            
+            // Speichere den aktuellen Zustand für Undo
+            const previousData = JSON.parse(JSON.stringify(explorerState.data));
+            const previousOriginalData = JSON.parse(JSON.stringify(explorerState.originalData));
+            const previousHighlights = new Map(explorerState.rowHighlights);
+            const previousEditedCells = new Map(explorerState.editedCells);
+            
+            // Sortiere die ausgewählten Indizes absteigend (wichtig für korrektes Löschen)
+            const selectedIndices = Array.from(explorerState.selectedRows).sort((a, b) => b - a);
+            
+            // Lösche die Zeilen von hinten nach vorne
+            selectedIndices.forEach(idx => {
+                explorerState.data.splice(idx, 1);
+                explorerState.originalData.splice(idx, 1);
+            });
+            
+            // Highlights anpassen
+            const deletedSet = new Set(selectedIndices);
+            const newHighlights = new Map();
+            explorerState.rowHighlights.forEach((color, idx) => {
+                if (deletedSet.has(idx)) return; // Gelöschte Zeile überspringen
+                // Berechne wie viele gelöschte Zeilen vor dieser lagen
+                let offset = 0;
+                selectedIndices.forEach(delIdx => {
+                    if (delIdx < idx) offset++;
+                });
+                newHighlights.set(idx - offset, color);
+            });
+            explorerState.rowHighlights = newHighlights;
+            
+            // EditedCells anpassen
+            const newEditedCells = new Map();
+            explorerState.editedCells.forEach((value, key) => {
+                if (key.startsWith('_')) {
+                    newEditedCells.set(key, value);
+                    return;
+                }
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (deletedSet.has(row)) return; // Gelöschte Zeile überspringen
+                // Berechne wie viele gelöschte Zeilen vor dieser lagen
+                let offset = 0;
+                selectedIndices.forEach(delIdx => {
+                    if (delIdx < row) offset++;
+                });
+                newEditedCells.set(`${row - offset}-${col}`, value);
+            });
+            explorerState.editedCells = newEditedCells;
+            
+            // Markierung, dass etwas gelöscht wurde
+            explorerState.editedCells.set('_rowDeleted', true);
+            
+            // Speichere Undo-Aktion
+            pushExplorerUndo({
+                type: 'deleteRows',
+                previousData: previousData,
+                previousOriginalData: previousOriginalData,
+                previousHighlights: previousHighlights,
+                previousEditedCells: previousEditedCells,
+                deletedIndices: selectedIndices
+            });
+            
+            // Auswahl zurücksetzen
+            explorerState.selectedRows.clear();
+            
+            // FilteredData neu erstellen
+            explorerState.filteredData = explorerState.data.map((row, idx) => ({
+                row: row,
+                originalIndex: idx
+            }));
+            
+            // Suchfilter erneut anwenden wenn aktiv
+            const searchTerm = elements.explorerSearch?.value?.trim().toLowerCase();
+            if (searchTerm) {
+                explorerState.filteredData = explorerState.filteredData.filter(item => 
+                    item.row.some(cell => String(cell ?? '').toLowerCase().includes(searchTerm))
+                );
+            }
+            
+            // Markiere als geändert
+            explorerState.hasUnsavedChanges = true;
+            
+            // Tabelle neu rendern
+            renderExplorerTable();
+            
+            const successMsg = currentLanguage === 'en'
+                ? `${selectedCount} row(s) deleted`
+                : `${selectedCount} Zeile(n) gelöscht`;
+            showNotification(successMsg, 'success');
         }
         
         // Löscht die Zeilenauswahl
@@ -8938,6 +9031,7 @@
             
             // Row Move Toolbar Event Listeners
             document.getElementById('btnExecuteMove').onclick = executeRowMove;
+            document.getElementById('btnDeleteSelectedRows').onclick = deleteSelectedRows;
             document.getElementById('btnClearRowSelection').onclick = clearRowSelection;
             
             // Pagination Event Listeners (Data Explorer)

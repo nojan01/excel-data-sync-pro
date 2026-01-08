@@ -423,6 +423,7 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
         
         const data = [];
         const headers = [];
+        const hiddenColumns = []; // Indices der versteckten Spalten
         
         // Hilfsfunktion: Excel-Datum zu lesbarem String konvertieren
         function excelDateToString(excelDate) {
@@ -569,6 +570,15 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
                 // Header-Zeile (erste Zeile)
                 if (row === startRow) {
                     headers[col - 1] = textValue || `Spalte ${col}`;
+                    // Prüfe ob die Spalte in Excel versteckt ist
+                    try {
+                        const column = worksheet.column(col);
+                        if (column && column.hidden()) {
+                            hiddenColumns.push(col - 1); // 0-basierter Index
+                        }
+                    } catch (e) {
+                        // Spalte existiert möglicherweise nicht explizit
+                    }
                 }
                 rowData[col - 1] = textValue;
             }
@@ -584,7 +594,8 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
         return {
             success: true,
             headers: headers,
-            data: data
+            data: data,
+            hiddenColumns: hiddenColumns
         };
     } catch (error) {
         return { success: false, error: error.message };
@@ -1192,35 +1203,52 @@ ipcMain.handle('excel:saveFile', async (event, { filePath, sheets }) => {
                 usedRange.clear();
             }
             
-            // Wenn nur bestimmte Spalten sichtbar sind, diese speichern
-            if (visibleColumns && visibleColumns.length > 0 && visibleColumns.length < headers.length) {
-                // Header-Zeile mit sichtbaren Spalten
-                visibleColumns.forEach((colIdx, newColIdx) => {
-                    worksheet.cell(1, newColIdx + 1).value(headers[colIdx] || '');
+            // ALLE Spalten speichern (nicht nur sichtbare)
+            // Header-Zeile schreiben (Zeile 1)
+            headers.forEach((header, colIndex) => {
+                worksheet.cell(1, colIndex + 1).value(header);
+            });
+            
+            // Daten-Zeilen schreiben (ab Zeile 2)
+            data.forEach((row, rowIndex) => {
+                row.forEach((value, colIndex) => {
+                    const cell = worksheet.cell(rowIndex + 2, colIndex + 1);
+                    // Nur Wert setzen, Formatierung beibehalten
+                    cell.value(value === null || value === undefined ? '' : value);
                 });
+                totalChanges++;
+            });
+            
+            // Ausgeblendete Spalten in Excel als hidden markieren
+            // visibleColumns enthält die Indices der sichtbaren Spalten
+            if (visibleColumns && visibleColumns.length > 0 && visibleColumns.length < headers.length) {
+                // Erstelle Set der sichtbaren Spalten für schnellen Lookup
+                const visibleSet = new Set(visibleColumns);
                 
-                // Daten-Zeilen mit sichtbaren Spalten
-                data.forEach((row, rowIndex) => {
-                    visibleColumns.forEach((colIdx, newColIdx) => {
-                        worksheet.cell(rowIndex + 2, newColIdx + 1).value(row[colIdx] === null || row[colIdx] === undefined ? '' : row[colIdx]);
-                    });
-                    totalChanges++;
+                // Alle Spalten durchgehen und hidden-Status setzen
+                headers.forEach((_, colIndex) => {
+                    try {
+                        const column = worksheet.column(colIndex + 1); // 1-basiert
+                        if (visibleSet.has(colIndex)) {
+                            // Spalte ist sichtbar -> unhide
+                            column.hidden(false);
+                        } else {
+                            // Spalte ist ausgeblendet -> hide
+                            column.hidden(true);
+                        }
+                    } catch (e) {
+                        console.warn(`Konnte hidden-Status für Spalte ${colIndex + 1} nicht setzen:`, e.message);
+                    }
                 });
             } else {
-                // Alle Spalten speichern
-                // Header-Zeile schreiben (Zeile 1)
-                headers.forEach((header, colIndex) => {
-                    worksheet.cell(1, colIndex + 1).value(header);
-                });
-                
-                // Daten-Zeilen schreiben (ab Zeile 2)
-                data.forEach((row, rowIndex) => {
-                    row.forEach((value, colIndex) => {
-                        const cell = worksheet.cell(rowIndex + 2, colIndex + 1);
-                        // Nur Wert setzen, Formatierung beibehalten
-                        cell.value(value === null || value === undefined ? '' : value);
-                    });
-                    totalChanges++;
+                // Alle Spalten sichtbar -> alle unhide
+                headers.forEach((_, colIndex) => {
+                    try {
+                        const column = worksheet.column(colIndex + 1);
+                        column.hidden(false);
+                    } catch (e) {
+                        // Ignorieren
+                    }
                 });
             }
         }
