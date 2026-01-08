@@ -2042,15 +2042,15 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
 });
 
 // Änderungen direkt in die Originaldatei speichern (für Datenexplorer)
-ipcMain.handle('excel:saveFile', async (event, { filePath, sheets, password = null }) => {
+ipcMain.handle('excel:saveFile', async (event, { filePath, sheets, password = null, sourcePassword = null }) => {
     // Sicherheitsprüfung: Pfad validieren
     if (!isValidFilePath(filePath)) {
         return { success: false, error: 'Ungültiger Dateipfad' };
     }
     
     try {
-        // Originaldatei laden (mit allen Sheets und Formatierung)
-        const loadOptions = password ? { password } : {};
+        // Originaldatei laden (mit sourcePassword falls vorhanden)
+        const loadOptions = sourcePassword ? { password: sourcePassword } : {};
         const workbook = await XlsxPopulate.fromFileAsync(filePath, loadOptions);
         
         let totalChanges = 0;

@@ -2496,11 +2496,19 @@
                 </div>
                 
                 <!-- Table Container -->
-                <div id="explorerTableContainer" style="flex: 1; min-height: 200px; overflow: auto; background: var(--bg-dark); border-radius: 6px; border: 1px solid var(--border);">
+                <div id="explorerTableContainer" style="flex: 1; min-height: 200px; overflow: auto; background: var(--bg-dark); border-radius: 6px; border: 1px solid var(--border); position: relative;">
+                    <!-- Large Drop Zone (visible when no file loaded) -->
+                    <div id="explorerDropZone" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; cursor: pointer; transition: all 0.2s ease; z-index: 10;">
+                        <div style="font-size: 48px; opacity: 0.5;">📥</div>
+                        <div style="font-size: 16px; color: var(--text-muted); font-weight: 500;">Excel-Datei hier ablegen</div>
+                        <div style="font-size: 12px; color: var(--text-muted); opacity: 0.7;">oder klicken zum Öffnen</div>
+                        <div style="margin-top: 5px; padding: 5px 14px; border: 1px dashed var(--border); border-radius: 6px; color: var(--text-muted); font-size: 11px;">
+                            .xlsx, .xls
+                        </div>
+                    </div>
                     <table class="results-table" id="explorerTable">
                         <thead id="explorerTableHead"></thead>
                         <tbody id="explorerTableBody">
-                            <tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -4114,6 +4122,7 @@
             btnExplorerExport: document.getElementById('btnExplorerExport'),
             btnExplorerSave: document.getElementById('btnExplorerSave'),
             btnExplorerOpenFile: document.getElementById('btnExplorerOpenFile'),
+            explorerDropZone: document.getElementById('explorerDropZone'),
             
             // Help
             btnHelp: document.getElementById('btnHelp'),
@@ -6480,8 +6489,11 @@
                 elements.explorerTableHead.innerHTML = '';
             }
             if (elements.explorerTableBody) {
-                elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>';
+                elements.explorerTableBody.innerHTML = '';
             }
+            // Drop-Zone wieder anzeigen
+            showExplorerDropZone(true);
+            
             const explorerResultCount = document.getElementById('explorerResultCount');
             if (explorerResultCount) {
                 explorerResultCount.textContent = currentLanguage === 'en' ? 'No data loaded.' : 'Keine Daten geladen.';
@@ -8134,6 +8146,161 @@
             }
         }
         
+        // Drop-Zone anzeigen/verstecken
+        function showExplorerDropZone(show) {
+            const dropZone = elements.explorerDropZone;
+            if (dropZone) {
+                dropZone.style.display = show ? 'flex' : 'none';
+            }
+        }
+        
+        // Setup Drag & Drop Zone for Explorer
+        function setupExplorerDropZone() {
+            const dropZone = elements.explorerDropZone;
+            if (!dropZone) return;
+            
+            // Klick öffnet Datei-Dialog
+            dropZone.onclick = loadExplorerFile;
+            
+            // Drag-Events für die Drop-Zone
+            dropZone.ondragover = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.style.background = 'rgba(0, 122, 204, 0.15)';
+                dropZone.style.borderColor = 'var(--primary)';
+            };
+            
+            dropZone.ondragleave = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropZone.style.background = 'transparent';
+                dropZone.style.borderColor = 'transparent';
+            };
+            
+            dropZone.ondrop = async (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                // Styling zurücksetzen
+                dropZone.style.background = 'transparent';
+                dropZone.style.borderColor = 'transparent';
+                
+                const files = e.dataTransfer.files;
+                if (files.length === 0) return;
+                
+                const file = files[0];
+                const fileName = file.name.toLowerCase();
+                
+                // Nur Excel-Dateien erlauben
+                if (!fileName.endsWith('.xlsx') && !fileName.endsWith('.xls')) {
+                    showFloatingStatus('❌ Nur Excel-Dateien (.xlsx, .xls) werden unterstützt', 'error');
+                    return;
+                }
+                
+                // Dateipfad über Electron API abrufen (contextIsolation-sicher)
+                const filePath = window.electronAPI.getPathForFile(file);
+                if (!filePath) {
+                    showFloatingStatus('❌ Dateipfad konnte nicht ermittelt werden', 'error');
+                    return;
+                }
+                
+                // Datei laden
+                await loadExplorerFileByPath(filePath);
+            };
+        }
+        
+        // Datei über Pfad laden (für Drag & Drop)
+        async function loadExplorerFileByPath(filePath) {
+            if (!filePath) return;
+            
+            // Prüfe auf ungespeicherte Änderungen
+            if (hasUnsavedChanges()) {
+                const totalChanges = countAllChanges();
+                const confirmed = await showConfirmDialog(
+                    'Ungespeicherte Änderungen',
+                    `Sie haben ${totalChanges} ungespeicherte Änderung(en).\n\n` +
+                    `Möchten Sie trotzdem eine neue Datei öffnen?\n\n` +
+                    `⚠️ Alle Änderungen gehen verloren!`,
+                    'Neue Datei öffnen',
+                    'Abbrechen'
+                );
+                if (!confirmed) return;
+            }
+            
+            elements.explorerStatus.textContent = 'Lade Datei...';
+            
+            // Versuche Datei zu öffnen
+            let result = await window.electronAPI.readExcelFile(filePath);
+            
+            // Passwortgeschützte Datei?
+            if (!result.success && result.needsPassword) {
+                const password = await showPromptDialog(
+                    '🔐 Passwort erforderlich',
+                    'Diese Excel-Datei ist passwortgeschützt.\nBitte geben Sie das Passwort ein:',
+                    '',
+                    'password'
+                );
+                
+                if (password === null) return;
+                
+                result = await window.electronAPI.readExcelFile(filePath, password);
+                
+                if (!result.success) {
+                    if (result.needsPassword) {
+                        showFloatingStatus('❌ Falsches Passwort', 'error');
+                    } else {
+                        elements.explorerStatus.textContent = `Fehler: ${result.error}`;
+                    }
+                    return;
+                }
+                
+                explorerState.filePassword = password;
+                showFloatingStatus('🔓 Datei entsperrt');
+            } else if (!result.success) {
+                elements.explorerStatus.textContent = `Fehler: ${result.error}`;
+                return;
+            } else {
+                explorerState.filePassword = null;
+            }
+            
+            // Cache leeren bei neuer Datei
+            explorerState.sheetDataCache.clear();
+            explorerState.editedCells.clear();
+            explorerState.rowHighlights.clear();
+            
+            explorerState.filePath = filePath;
+            explorerState.fileName = result.fileName;
+            explorerState.sheets = result.sheets;
+            explorerState.hasPivotTables = result.hasPivotTables || false;
+            
+            // Warnung bei Pivot-Tabellen
+            if (result.hasPivotTables) {
+                await showConfirmDialog(
+                    '⚠️ Pivot-Tabellen erkannt',
+                    'Diese Datei enthält Pivot-Tabellen!\n\n' +
+                    'Pivot-Tabellen können beim Speichern verloren gehen oder beschädigt werden.\n\n' +
+                    'Empfehlung: Erstellen Sie eine Sicherheitskopie der Datei.',
+                    'Verstanden',
+                    null
+                );
+            }
+            
+            // UI aktualisieren
+            document.getElementById('explorerFileName').textContent = explorerState.fileName;
+            
+            // Sheet-Dropdown füllen
+            elements.explorerSheetSelect.innerHTML = explorerState.sheets
+                .map(s => `<option value="${s}">${s}</option>`)
+                .join('');
+            
+            // Erstes Sheet laden
+            if (explorerState.sheets.length > 0) {
+                await loadExplorerSheet(explorerState.sheets[0]);
+            }
+            
+            showFloatingStatus(`📂 ${result.fileName} geladen`);
+        }
+        
         async function loadExplorerFile() {
             // Prüfe auf ungespeicherte Änderungen
             if (hasUnsavedChanges()) {
@@ -9013,12 +9180,18 @@
             const btnPreview = document.getElementById('btnExplorerPreview');
             
             if (!explorerState.headers.length) {
-                elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>';
+                elements.explorerTableHead.innerHTML = '';
+                elements.explorerTableBody.innerHTML = '';
                 elements.explorerResultCount.textContent = t('noDataLoaded');
                 document.getElementById('explorerPagination').style.display = 'none';
                 if (btnPreview) btnPreview.disabled = true;
+                // Drop-Zone anzeigen wenn keine Daten
+                showExplorerDropZone(true);
                 return;
             }
+            
+            // Drop-Zone ausblenden wenn Daten vorhanden
+            showExplorerDropZone(false);
             
             // Preview-Button aktivieren, wenn Daten vorhanden sind
             if (btnPreview) btnPreview.disabled = false;
@@ -10346,9 +10519,14 @@
                 }
                 
                 // Speichern über IPC (mit Passwort falls gewählt)
+                // sourcePassword = altes Passwort zum Laden der Datei
+                // password = neues Passwort zum Speichern (null = kein Schutz)
+                const oldPassword = pwResult.action === 'keep' ? explorerState.filePassword : 
+                                   (pwResult.action === 'none' ? explorerState.filePassword : explorerState.filePassword);
                 const result = await window.electronAPI.saveExcelFile({
                     filePath: explorerState.filePath,
                     sheets: sheetsToSave,
+                    sourcePassword: oldPassword,
                     password: savePassword
                 });
                 
@@ -11139,6 +11317,9 @@
             document.getElementById('btnCloseExplorerFooter').onclick = closeDataExplorer;
             document.getElementById('btnExplorerFullscreen').onclick = toggleExplorerFullscreen;
             elements.btnExplorerOpenFile.onclick = loadExplorerFile;
+            
+            // Drag & Drop Event Listeners for Explorer
+            setupExplorerDropZone();
             elements.explorerSheetSelect.onchange = (e) => loadExplorerSheet(e.target.value);
             elements.explorerSearch.onkeydown = (e) => { 
                 if (e.key === 'Enter') {

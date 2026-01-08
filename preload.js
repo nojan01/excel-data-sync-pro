@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // Sichere API fuer das Frontend bereitstellen
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -9,6 +9,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     // Dateisystem
     checkFileExists: (filePath) => ipcRenderer.invoke('fs:checkFileExists', filePath),
+    
+    // Drag & Drop - Dateipfad aus File-Objekt extrahieren
+    getPathForFile: (file) => {
+        try {
+            // Electron 32+ verwendet webUtils.getPathForFile
+            if (webUtils && webUtils.getPathForFile) {
+                return webUtils.getPathForFile(file);
+            }
+            // Fallback für ältere Versionen
+            return file.path || null;
+        } catch (e) {
+            console.error('getPathForFile error:', e);
+            return null;
+        }
+    },
     
     // Excel-Operationen
     readExcelFile: (filePath, password) => ipcRenderer.invoke('excel:readFile', filePath, password),
