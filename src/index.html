@@ -2322,6 +2322,13 @@
             <span>📅</span> Datum Neu → Alt
         </div>
         <div class="context-menu-divider" style="height: 1px; background: var(--border); margin: 4px 0;"></div>
+        <div class="context-menu-item" data-action="filter-date-soon" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <span>⏰</span> Fällig in X Tagen...
+        </div>
+        <div class="context-menu-item" data-action="filter-date-overdue" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
+            <span>⚠️</span> Überfällig seit X Tagen...
+        </div>
+        <div class="context-menu-divider" style="height: 1px; background: var(--border); margin: 4px 0;"></div>
         <div class="context-menu-item" data-action="hide-column" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
             <span>👁️‍🗨️</span> Spalte ausblenden
         </div>
@@ -2600,15 +2607,30 @@
     
     <!-- Filter Template für Explorer -->
     <template id="explorerFilterTemplate">
-        <div class="explorer-filter-row" style="display: flex; gap: 10px; align-items: center; padding: 8px; background: var(--bg-dark); border-radius: 4px;">
+        <div class="explorer-filter-row" style="display: flex; gap: 10px; align-items: center; padding: 8px; background: var(--bg-dark); border-radius: 4px; flex-wrap: wrap;">
             <select class="filter-column config-select" style="min-width: 180px;"></select>
-            <select class="filter-operator config-select" style="min-width: 120px;">
-                <option value="contains">enthält</option>
-                <option value="equals">gleich</option>
-                <option value="startsWith">beginnt mit</option>
-                <option value="endsWith">endet mit</option>
+            <select class="filter-operator config-select" style="min-width: 180px;">
+                <optgroup label="Text-Filter">
+                    <option value="contains">enthält</option>
+                    <option value="equals">gleich</option>
+                    <option value="startsWith">beginnt mit</option>
+                    <option value="endsWith">endet mit</option>
+                    <option value="notContains">enthält nicht</option>
+                    <option value="isEmpty">ist leer</option>
+                    <option value="isNotEmpty">ist nicht leer</option>
+                </optgroup>
+                <optgroup label="Datum-Filter">
+                    <option value="dateInDays">📅 Datum in X Tagen</option>
+                    <option value="dateOverdueDays">📅 Datum X Tage überschritten</option>
+                    <option value="dateToday">📅 Datum ist heute</option>
+                    <option value="datePast">📅 Datum liegt in der Vergangenheit</option>
+                    <option value="dateFuture">📅 Datum liegt in der Zukunft</option>
+                    <option value="dateThisWeek">📅 Datum diese Woche</option>
+                    <option value="dateThisMonth">📅 Datum diesen Monat</option>
+                </optgroup>
             </select>
             <input type="text" class="filter-value config-input" placeholder="Filterwert" style="flex: 1; min-width: 150px;">
+            <input type="number" class="filter-days config-input" placeholder="Tage" style="width: 80px; display: none;" min="0">
             <button type="button" class="btn btn-secondary btn-sm remove-filter">✕</button>
         </div>
     </template>
@@ -8424,6 +8446,108 @@
             return total;
         }
         
+        /**
+         * Parst einen Datumswert aus verschiedenen Formaten
+         * Unterstützt: Excel-Seriennummern, ISO-Daten, deutsche Datumsformate
+         */
+        function parseDateValue(value) {
+            if (!value) return null;
+            
+            // Bereits ein Date-Objekt
+            if (value instanceof Date && !isNaN(value)) return value;
+            
+            // Excel-Seriennummer (Zahl zwischen 1 und 100000)
+            if (typeof value === 'number' && value > 0 && value < 100000) {
+                // Excel-Datum: Tage seit 1899-12-30 (mit dem berühmten Leap-Year-Bug)
+                const excelEpoch = new Date(1899, 11, 30);
+                const date = new Date(excelEpoch.getTime() + value * 24 * 60 * 60 * 1000);
+                if (!isNaN(date)) return date;
+            }
+            
+            const str = String(value).trim();
+            if (!str) return null;
+            
+            // ISO-Format: 2026-01-08
+            const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
+            if (isoMatch) {
+                const date = new Date(parseInt(isoMatch[1]), parseInt(isoMatch[2]) - 1, parseInt(isoMatch[3]));
+                if (!isNaN(date)) return date;
+            }
+            
+            // Deutsches Format: 08.01.2026 oder 8.1.2026
+            const deMatch = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})/);
+            if (deMatch) {
+                const date = new Date(parseInt(deMatch[3]), parseInt(deMatch[2]) - 1, parseInt(deMatch[1]));
+                if (!isNaN(date)) return date;
+            }
+            
+            // US-Format: 01/08/2026 oder 1/8/2026
+            const usMatch = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+            if (usMatch) {
+                const date = new Date(parseInt(usMatch[3]), parseInt(usMatch[1]) - 1, parseInt(usMatch[2]));
+                if (!isNaN(date)) return date;
+            }
+            
+            // Fallback: JavaScript Date-Parser
+            const fallback = new Date(str);
+            if (!isNaN(fallback)) return fallback;
+            
+            return null;
+        }
+        
+        /**
+         * Prüft ob ein Datum den Filter-Bedingungen entspricht
+         */
+        function matchDateFilter(cellValue, operator, days = 0) {
+            const cellDate = parseDateValue(cellValue);
+            if (!cellDate) return false;
+            
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            cellDate.setHours(0, 0, 0, 0);
+            
+            const diffMs = cellDate.getTime() - today.getTime();
+            const diffDays = Math.round(diffMs / (24 * 60 * 60 * 1000));
+            
+            switch (operator) {
+                case 'dateInDays':
+                    // Datum liegt in der Zeitspanne von heute bis +X Tage
+                    // Beispiel: days=7 zeigt alles was heute bis in 7 Tagen fällig wird
+                    return diffDays >= 0 && diffDays <= days;
+                    
+                case 'dateOverdueDays':
+                    // Datum liegt in der Zeitspanne von heute bis -X Tage
+                    // Beispiel: days=7 zeigt alles was in den letzten 7 Tagen überfällig wurde
+                    return diffDays < 0 && Math.abs(diffDays) <= days;
+                    
+                case 'dateToday':
+                    return diffDays === 0;
+                    
+                case 'datePast':
+                    return diffDays < 0;
+                    
+                case 'dateFuture':
+                    return diffDays > 0;
+                    
+                case 'dateThisWeek':
+                    // Diese Woche = 0 bis 6 Tage in der Zukunft oder Vergangenheit ab Montag
+                    const dayOfWeek = today.getDay(); // 0=So, 1=Mo, ..., 6=Sa
+                    const mondayOffset = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+                    const monday = new Date(today);
+                    monday.setDate(today.getDate() + mondayOffset);
+                    const sunday = new Date(monday);
+                    sunday.setDate(monday.getDate() + 6);
+                    return cellDate >= monday && cellDate <= sunday;
+                    
+                case 'dateThisMonth':
+                    return cellDate.getMonth() === today.getMonth() && 
+                           cellDate.getFullYear() === today.getFullYear();
+                    
+                default:
+                    return false;
+            }
+        }
+        
         function filterExplorerData() {
             // Erstelle Array mit originalem Index für jede Zeile
             let filtered = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
@@ -8455,17 +8579,34 @@
             
             // Spaltenfilter
             explorerState.filters.forEach(filter => {
-                if (!filter.column || !filter.value) return;
+                if (!filter.column) return;
                 const colIndex = parseInt(filter.column);
-                const value = filter.value.toLowerCase();
+                const value = (filter.value || '').toLowerCase();
                 
                 filtered = filtered.filter(item => {
                     const cellValue = String(item.row[colIndex] || '').toLowerCase();
+                    const rawCellValue = item.row[colIndex];
+                    
                     switch (filter.operator) {
+                        // Text-Filter
                         case 'contains': return cellValue.includes(value);
                         case 'equals': return cellValue === value;
                         case 'startsWith': return cellValue.startsWith(value);
                         case 'endsWith': return cellValue.endsWith(value);
+                        case 'notContains': return !cellValue.includes(value);
+                        case 'isEmpty': return !rawCellValue || String(rawCellValue).trim() === '';
+                        case 'isNotEmpty': return rawCellValue && String(rawCellValue).trim() !== '';
+                        
+                        // Datum-Filter
+                        case 'dateInDays':
+                        case 'dateOverdueDays':
+                        case 'dateToday':
+                        case 'datePast':
+                        case 'dateFuture':
+                        case 'dateThisWeek':
+                        case 'dateThisMonth':
+                            return matchDateFilter(rawCellValue, filter.operator, parseInt(filter.value) || 0);
+                        
                         default: return true;
                     }
                 });
@@ -8676,6 +8817,12 @@
                 case 'sort-date-desc':
                     sortExplorerByColumn(contextMenuColumn, 'date-desc');
                     break;
+                case 'filter-date-soon':
+                    showDateFilterDialog(contextMenuColumn, 'dateInDays');
+                    break;
+                case 'filter-date-overdue':
+                    showDateFilterDialog(contextMenuColumn, 'dateOverdueDays');
+                    break;
                 case 'hide-column':
                     toggleExplorerColumn(contextMenuColumn, false);
                     break;
@@ -8691,6 +8838,91 @@
             }
             
             hideColumnContextMenu();
+        }
+        
+        /**
+         * Zeigt Dialog für Datum-Filter mit Tage-Eingabe
+         */
+        function showDateFilterDialog(colIndex, filterType) {
+            const columnName = explorerState.headers[colIndex] || `Spalte ${colIndex + 1}`;
+            const title = filterType === 'dateInDays' 
+                ? `⏰ Fällig in X Tagen - ${columnName}`
+                : `⚠️ Überfällig seit X Tagen - ${columnName}`;
+            const placeholder = filterType === 'dateInDays'
+                ? 'Zeige Einträge die in den nächsten X Tagen fällig werden'
+                : 'Zeige Einträge die seit X Tagen überfällig sind';
+            
+            const days = prompt(title + '\n\n' + placeholder + '\n\nAnzahl Tage eingeben:', '7');
+            
+            if (days !== null && !isNaN(parseInt(days))) {
+                // Filter hinzufügen
+                addDateFilterForColumn(colIndex, filterType, parseInt(days));
+            }
+        }
+        
+        /**
+         * Fügt einen Datum-Filter für eine Spalte hinzu
+         */
+        function addDateFilterForColumn(colIndex, operator, days) {
+            // Filter-Panel öffnen falls nicht sichtbar
+            const filterPanel = document.getElementById('explorerFilterPanel');
+            if (filterPanel && filterPanel.style.display === 'none') {
+                filterPanel.style.display = 'block';
+            }
+            
+            // Neuen Filter erstellen
+            const template = document.getElementById('explorerFilterTemplate');
+            const clone = template.content.cloneNode(true);
+            const row = clone.querySelector('.explorer-filter-row');
+            
+            // Spalten-Dropdown befüllen und auswählen
+            const colSelect = row.querySelector('.filter-column');
+            colSelect.innerHTML = `<option value="">${t('selectColumn')}</option>` + 
+                explorerState.headers.map((h, i) => `<option value="${i}">${escapeHtml(h || `Spalte ${i + 1}`)}</option>`).join('');
+            colSelect.value = colIndex;
+            
+            // Operator setzen
+            const operatorSelect = row.querySelector('.filter-operator');
+            operatorSelect.value = operator;
+            
+            // Tage-Feld konfigurieren
+            const valueInput = row.querySelector('.filter-value');
+            const daysInput = row.querySelector('.filter-days');
+            valueInput.style.display = 'none';
+            daysInput.style.display = 'block';
+            daysInput.value = days;
+            
+            // Event-Listener
+            operatorSelect.onchange = () => {
+                const op = operatorSelect.value;
+                const needsDays = op === 'dateInDays' || op === 'dateOverdueDays';
+                const needsNoValue = ['dateToday', 'datePast', 'dateFuture', 'dateThisWeek', 'dateThisMonth', 'isEmpty', 'isNotEmpty'].includes(op);
+                
+                daysInput.style.display = needsDays ? 'block' : 'none';
+                valueInput.style.display = needsNoValue ? 'none' : (needsDays ? 'none' : 'block');
+                
+                if (needsNoValue) {
+                    valueInput.value = '_no_value_required_';
+                } else if (needsDays) {
+                    valueInput.value = '';
+                }
+                
+                updateFiltersFromDOM();
+            };
+            
+            row.querySelector('.remove-filter').onclick = () => {
+                row.remove();
+                updateFiltersFromDOM();
+            };
+            row.querySelector('.filter-column').onchange = updateFiltersFromDOM;
+            daysInput.oninput = updateFiltersFromDOM;
+            valueInput.oninput = updateFiltersFromDOM;
+            
+            document.getElementById('explorerFilters').appendChild(row);
+            document.getElementById('btnClearExplorerFilters').disabled = false;
+            
+            // Filter anwenden
+            updateFiltersFromDOM();
         }
         
         // Event-Listener für Kontextmenü
@@ -9736,13 +9968,35 @@
             colSelect.innerHTML = `<option value="">${t('selectColumn')}</option>` + 
                 explorerState.headers.map((h, i) => `<option value="${i}">${escapeHtml(h || `Spalte ${i + 1}`)}</option>`).join('');
             
+            const operatorSelect = row.querySelector('.filter-operator');
+            const valueInput = row.querySelector('.filter-value');
+            const daysInput = row.querySelector('.filter-days');
+            
+            // Operator-Änderung: Tage-Feld anzeigen/ausblenden
+            operatorSelect.onchange = () => {
+                const op = operatorSelect.value;
+                const needsDays = op === 'dateInDays' || op === 'dateOverdueDays';
+                const needsNoValue = ['dateToday', 'datePast', 'dateFuture', 'dateThisWeek', 'dateThisMonth', 'isEmpty', 'isNotEmpty'].includes(op);
+                
+                daysInput.style.display = needsDays ? 'block' : 'none';
+                valueInput.style.display = needsNoValue ? 'none' : (needsDays ? 'none' : 'block');
+                
+                if (needsNoValue) {
+                    valueInput.value = '_no_value_required_';
+                } else if (needsDays) {
+                    valueInput.value = '';
+                }
+                
+                updateFiltersFromDOM();
+            };
+            
             // Event-Listener
             row.querySelector('.remove-filter').onclick = () => {
                 row.remove();
                 updateFiltersFromDOM();
             };
             row.querySelector('.filter-column').onchange = updateFiltersFromDOM;
-            row.querySelector('.filter-operator').onchange = updateFiltersFromDOM;
+            daysInput.oninput = updateFiltersFromDOM;
             row.querySelector('.filter-value').oninput = updateFiltersFromDOM;
             
             document.getElementById('explorerFilters').appendChild(row);
@@ -9751,11 +10005,28 @@
         
         function updateFiltersFromDOM() {
             const rows = document.querySelectorAll('.explorer-filter-row');
-            explorerState.filters = Array.from(rows).map(row => ({
-                column: row.querySelector('.filter-column').value,
-                operator: row.querySelector('.filter-operator').value,
-                value: row.querySelector('.filter-value').value
-            })).filter(f => f.column && f.value);
+            explorerState.filters = Array.from(rows).map(row => {
+                const operator = row.querySelector('.filter-operator').value;
+                const needsDays = operator === 'dateInDays' || operator === 'dateOverdueDays';
+                const needsNoValue = ['dateToday', 'datePast', 'dateFuture', 'dateThisWeek', 'dateThisMonth', 'isEmpty', 'isNotEmpty'].includes(operator);
+                
+                let value = row.querySelector('.filter-value').value;
+                const days = row.querySelector('.filter-days').value;
+                
+                // Für Datums-Filter mit Tagen: days als value verwenden
+                if (needsDays) {
+                    value = days || '0';
+                } else if (needsNoValue) {
+                    value = '_no_value_required_';
+                }
+                
+                return {
+                    column: row.querySelector('.filter-column').value,
+                    operator: operator,
+                    value: value,
+                    days: days
+                };
+            }).filter(f => f.column && (f.value || f.days));
             filterExplorerData();
         }
         
