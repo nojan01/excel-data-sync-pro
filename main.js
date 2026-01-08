@@ -395,6 +395,257 @@ async function checkForPivotTables(filePath) {
     }
 }
 
+// Hilfsfunktion: Entfernt nicht verwendete Spalten aus dem Worksheet (Formatierung, Breite etc.)
+function removeUnusedColumns(worksheet, usedColumnCount, originalColumnCount) {
+    // 1. Zuerst alle Row-Objekte und deren XML-Nodes bereinigen
+    if (worksheet._rows) {
+        for (const row of Object.values(worksheet._rows)) {
+            // Zell-Objekte entfernen
+            if (row && row._cells) {
+                for (const cellCol of Object.keys(row._cells)) {
+                    if (parseInt(cellCol) > usedColumnCount) {
+                        delete row._cells[cellCol];
+                    }
+                }
+            }
+            
+            // XML Cell-Nodes entfernen
+            if (row && row._node && row._node.children) {
+                for (let i = row._node.children.length - 1; i >= 0; i--) {
+                    const cellNode = row._node.children[i];
+                    if (cellNode && cellNode.attributes && cellNode.attributes.r) {
+                        const cellRef = cellNode.attributes.r;
+                        const colLetters = cellRef.replace(/\d+/g, '');
+                        const colNum = columnLetterToNumber(colLetters);
+                        if (colNum > usedColumnCount) {
+                            row._node.children.splice(i, 1);
+                        }
+                    }
+                }
+            }
+            
+            // Spans-Attribut korrigieren
+            if (row && row._node && row._node.attributes && row._node.attributes.spans) {
+                row._node.attributes.spans = `1:${usedColumnCount}`;
+            }
+        }
+    }
+    
+    // 2. Auch die sheetData direkt durchgehen (für Rows die nicht in _rows sind)
+    if (worksheet._node && worksheet._node.children) {
+        const sheetDataNode = worksheet._node.children.find(c => c && c.name === 'sheetData');
+        if (sheetDataNode && sheetDataNode.children) {
+            for (const rowNode of sheetDataNode.children) {
+                if (rowNode && rowNode.name === 'row') {
+                    // Spans korrigieren
+                    if (rowNode.attributes && rowNode.attributes.spans) {
+                        rowNode.attributes.spans = `1:${usedColumnCount}`;
+                    }
+                    
+                    // Zellen außerhalb des Bereichs entfernen
+                    if (rowNode.children) {
+                        for (let i = rowNode.children.length - 1; i >= 0; i--) {
+                            const cellNode = rowNode.children[i];
+                            if (cellNode && cellNode.name === 'c' && cellNode.attributes && cellNode.attributes.r) {
+                                const cellRef = cellNode.attributes.r;
+                                const colLetters = cellRef.replace(/\d+/g, '');
+                                const colNum = columnLetterToNumber(colLetters);
+                                if (colNum > usedColumnCount) {
+                                    rowNode.children.splice(i, 1);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // 3. Column-Objekte entfernen
+    if (worksheet._columns) {
+        for (const colNum of Object.keys(worksheet._columns)) {
+            if (parseInt(colNum) > usedColumnCount) {
+                delete worksheet._columns[colNum];
+            }
+        }
+    }
+    
+    // Alle <col> XML-Nodes bearbeiten, die über usedColumnCount hinausgehen
+    if (worksheet._colsNode && worksheet._colsNode.children) {
+        const colsToRemove = [];
+        const colsToModify = [];
+        
+        for (let i = 0; i < worksheet._colsNode.children.length; i++) {
+            const colNode = worksheet._colsNode.children[i];
+            if (colNode && colNode.attributes) {
+                const min = parseInt(colNode.attributes.min);
+                const max = parseInt(colNode.attributes.max);
+                
+                if (min > usedColumnCount) {
+                    // Gesamter col-Bereich liegt außerhalb - komplett entfernen
+                    colsToRemove.push(i);
+                } else if (max > usedColumnCount) {
+                    // Col-Bereich geht über usedColumnCount hinaus - auf usedColumnCount kürzen
+                    colsToModify.push({ node: colNode, newMax: usedColumnCount });
+                }
+            }
+        }
+        
+        // Von hinten entfernen
+        for (let i = colsToRemove.length - 1; i >= 0; i--) {
+            worksheet._colsNode.children.splice(colsToRemove[i], 1);
+        }
+        
+        // Modifizieren
+        for (const mod of colsToModify) {
+            mod.node.attributes.max = mod.newMax;
+        }
+    }
+    
+    // ColNodes-Referenzen aufräumen
+    if (worksheet._colNodes) {
+        for (const colNum of Object.keys(worksheet._colNodes)) {
+            if (parseInt(colNum) > usedColumnCount) {
+                delete worksheet._colNodes[colNum];
+            }
+        }
+    }
+    
+    // Merged Cells entfernen, die in gelöschten Spalten liegen
+    if (worksheet._mergeCells) {
+        const keysToRemove = [];
+        for (const key of Object.keys(worksheet._mergeCells)) {
+            // Key ist im Format "A1:B2"
+            const match = key.match(/([A-Z]+)\d+:([A-Z]+)\d+/);
+            if (match) {
+                // Spalten-Buchstaben zu Nummern konvertieren
+                const startColNum = columnLetterToNumber(match[1]);
+                const endColNum = columnLetterToNumber(match[2]);
+                
+                // Wenn der Merge-Bereich in einer gelöschten Spalte liegt
+                if (startColNum > usedColumnCount || endColNum > usedColumnCount) {
+                    keysToRemove.push(key);
+                }
+            }
+        }
+        for (const key of keysToRemove) {
+            delete worksheet._mergeCells[key];
+        }
+    }
+    
+    // Data Validations entfernen, die in gelöschten Spalten liegen
+    if (worksheet._dataValidations) {
+        const keysToRemove = [];
+        for (const key of Object.keys(worksheet._dataValidations)) {
+            const match = key.match(/([A-Z]+)\d+/);
+            if (match) {
+                const colNum = columnLetterToNumber(match[1]);
+                if (colNum > usedColumnCount) {
+                    keysToRemove.push(key);
+                }
+            }
+        }
+        for (const key of keysToRemove) {
+            delete worksheet._dataValidations[key];
+        }
+    }
+}
+
+// Hilfsfunktion: Spalten-Buchstabe zu Nummer (A=1, B=2, AA=27, etc.)
+function columnLetterToNumber(letters) {
+    let result = 0;
+    for (let i = 0; i < letters.length; i++) {
+        result = result * 26 + (letters.charCodeAt(i) - 64);
+    }
+    return result;
+}
+
+// Hilfsfunktion: Entfernt nicht verwendete Zeilen aus dem Worksheet (Formatierung, Höhe etc.)
+function removeUnusedRows(worksheet, usedRowCount, originalRowCount) {
+    // Zeilen von hinten nach vorne entfernen (ab usedRowCount+2 bis originalRowCount+1, +1 wegen Header)
+    // usedRowCount = Anzahl der Datenzeilen, also usedRowCount+1 = letzte Datenzeile (1-basiert)
+    // originalRowCount = ursprüngliche Anzahl der Datenzeilen
+    const lastUsedRow = usedRowCount + 1; // +1 für Header
+    const lastOriginalRow = originalRowCount + 1; // +1 für Header
+    
+    for (let row = lastOriginalRow; row > lastUsedRow; row--) {
+        // Row-Objekt entfernen
+        if (worksheet._rows && worksheet._rows[row]) {
+            delete worksheet._rows[row];
+        }
+    }
+    
+    // Merged Cells entfernen, die in gelöschten Zeilen liegen
+    if (worksheet._mergeCells) {
+        const keysToRemove = [];
+        for (const key of Object.keys(worksheet._mergeCells)) {
+            // Key ist im Format "A1:B2"
+            const match = key.match(/[A-Z]+(\d+):[A-Z]+(\d+)/);
+            if (match) {
+                const startRowNum = parseInt(match[1]);
+                const endRowNum = parseInt(match[2]);
+                
+                // Wenn der Merge-Bereich in einer gelöschten Zeile liegt
+                if (startRowNum > lastUsedRow || endRowNum > lastUsedRow) {
+                    keysToRemove.push(key);
+                }
+            }
+        }
+        for (const key of keysToRemove) {
+            delete worksheet._mergeCells[key];
+        }
+    }
+    
+    // Data Validations entfernen, die in gelöschten Zeilen liegen
+    if (worksheet._dataValidations) {
+        const keysToRemove = [];
+        for (const key of Object.keys(worksheet._dataValidations)) {
+            const match = key.match(/[A-Z]+(\d+)/);
+            if (match) {
+                const rowNum = parseInt(match[1]);
+                if (rowNum > lastUsedRow) {
+                    keysToRemove.push(key);
+                }
+            }
+        }
+        for (const key of keysToRemove) {
+            delete worksheet._dataValidations[key];
+        }
+    }
+}
+
+// Hilfsfunktion: Entfernt AutoFilter, bedingte Formatierung und andere Filter-Elemente beim Export
+function removeFiltersAndConditionalFormatting(worksheet) {
+    // Elemente, die beim Export entfernt werden sollen
+    const nodesToRemove = [
+        'autoFilter',              // AutoFilter (Dropdown-Pfeile in Kopfzeile)
+        'conditionalFormatting',   // Bedingte Formatierung
+        'tableParts',              // Tabellenteile (verweisen auf Filter)
+        'filterColumn',            // Filter-Spalten-Definitionen
+        'colorScale',              // Farbskala (Teil der bedingten Formatierung)
+        'dataBar',                 // Datenbalken (Teil der bedingten Formatierung)
+        'iconSet'                  // Icon-Set (Teil der bedingten Formatierung)
+    ];
+    
+    // 1. Haupt-Worksheet-Node bereinigen
+    if (worksheet._node && worksheet._node.children) {
+        for (let i = worksheet._node.children.length - 1; i >= 0; i--) {
+            const child = worksheet._node.children[i];
+            if (child && child.name && nodesToRemove.includes(child.name)) {
+                worksheet._node.children.splice(i, 1);
+            }
+        }
+    }
+    
+    // 2. Interne Referenzen löschen
+    if (worksheet._autoFilter) {
+        worksheet._autoFilter = null;
+    }
+    
+    // 3. Alle Zell-Styles auf Hintergrund "none" setzen für nicht-Header Zellen
+    // (Optional - macht die Datei "sauber")
+}
+
 // Excel-Datei lesen
 ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
     // Sicherheitsprüfung: Pfad validieren
@@ -468,6 +719,7 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
         const cellFormulas = {}; // Formeln für jede Zelle: "row-col" -> "=FORMULA"
         const cellHyperlinks = {}; // Hyperlinks für jede Zelle: "row-col" -> "https://..."
         const richTextCells = {}; // Rich Text für Zellen: "row-col" -> [{ text, styles: { bold, italic, ... } }, ...]
+        let autoFilterRange = null; // AutoFilter-Bereich falls vorhanden
         
         // Hilfsfunktion: Farbe zu CSS konvertieren
         function colorToCSS(color) {
@@ -961,7 +1213,11 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
                 }
             }
         } catch (e) {
-        // Data Validations konnten nicht gelesen werden
+            // Data Validations konnten nicht gelesen werden
+        }
+        
+        // AutoFilter auslesen
+        try {
             const sheetNode = worksheet._node;
             if (sheetNode && sheetNode.children) {
                 for (const child of sheetNode.children) {
@@ -1607,38 +1863,51 @@ ipcMain.handle('excel:exportWithAllSheets', async (event, { sourcePath, targetPa
             return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
         }
         
-        // Alle vorhandenen Daten im Sheet löschen
+        // Ursprüngliche Zeilenanzahl ermitteln
         const usedRange = worksheet.usedRange();
+        let originalRowCount = 0;
         if (usedRange) {
+            originalRowCount = usedRange.endCell().rowNumber() - 1; // -1 für Header
             usedRange.clear();
         }
         
-        // Wenn nur bestimmte Spalten sichtbar sind, diese exportieren
+        // ALLE Spalten exportieren (auch ausgeblendete) und Hidden-Attribute setzen
+        // Header-Zeile
+        headers.forEach((header, colIndex) => {
+            worksheet.cell(1, colIndex + 1).value(header);
+        });
+        
+        // Daten-Zeilen
+        data.forEach((row, rowIndex) => {
+            row.forEach((value, colIndex) => {
+                worksheet.cell(rowIndex + 2, colIndex + 1).value(value || '');
+            });
+        });
+        
+        // Hidden-Attribute für ausgeblendete Spalten setzen
         if (visibleColumns && visibleColumns.length > 0 && visibleColumns.length < headers.length) {
-            // Header-Zeile mit sichtbaren Spalten
-            visibleColumns.forEach((colIdx, newColIdx) => {
-                worksheet.cell(1, newColIdx + 1).value(headers[colIdx] || '');
-            });
+            // Set mit sichtbaren Spalten-Indizes erstellen
+            const visibleSet = new Set(visibleColumns);
             
-            // Daten-Zeilen mit sichtbaren Spalten
-            data.forEach((row, rowIndex) => {
-                visibleColumns.forEach((colIdx, newColIdx) => {
-                    worksheet.cell(rowIndex + 2, newColIdx + 1).value(row[colIdx] || '');
-                });
-            });
-        } else {
-            // Alle Spalten exportieren
-            // Header-Zeile
-            headers.forEach((header, colIndex) => {
-                worksheet.cell(1, colIndex + 1).value(header);
-            });
-            
-            // Daten-Zeilen
-            data.forEach((row, rowIndex) => {
-                row.forEach((value, colIndex) => {
-                    worksheet.cell(rowIndex + 2, colIndex + 1).value(value || '');
-                });
-            });
+            // Alle Spalten durchgehen und hidden setzen wo nötig
+            for (let colIdx = 0; colIdx < headers.length; colIdx++) {
+                const column = worksheet.column(colIdx + 1);
+                if (!visibleSet.has(colIdx)) {
+                    column.hidden(true);
+                } else {
+                    column.hidden(false);
+                }
+            }
+        }
+        
+        // Hidden-Attribute für ausgeblendete Zeilen setzen (aus hiddenRows)
+        // Die hiddenRows werden vom Frontend mitgeschickt
+        
+        // Nicht verwendete Zeilen als hidden markieren (wenn weniger Zeilen als ursprünglich)
+        if (data.length < originalRowCount) {
+            for (let rowIdx = data.length + 2; rowIdx <= originalRowCount + 1; rowIdx++) {
+                worksheet.row(rowIdx).hidden(true);
+            }
         }
         
         // Speichern (alle anderen Sheets bleiben unverändert)
@@ -1699,41 +1968,58 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
             const headers = sheetData.headers;
             const data = sheetData.data;
             const visibleColumns = sheetData.visibleColumns;
+            const hiddenRows = sheetData.hiddenRows || []; // Array von 0-basierten Zeilen-Indices
             
-            // Alle vorhandenen Daten im Sheet löschen
+            // Ursprüngliche Zeilenanzahl ermitteln
             const usedRange = worksheet.usedRange();
+            let originalRowCount = 0;
             if (usedRange) {
+                originalRowCount = usedRange.endCell().rowNumber() - 1; // -1 für Header
                 usedRange.clear();
             }
             
-            // Wenn nur bestimmte Spalten sichtbar sind, diese exportieren
+            // ALLE Spalten exportieren (auch ausgeblendete) und Hidden-Attribute setzen
+            // Header-Zeile
+            headers.forEach((header, colIndex) => {
+                worksheet.cell(1, colIndex + 1).value(header);
+            });
+            
+            // Daten-Zeilen
+            data.forEach((row, rowIndex) => {
+                row.forEach((value, colIndex) => {
+                    worksheet.cell(rowIndex + 2, colIndex + 1).value(value === null || value === undefined ? '' : value);
+                });
+            });
+            
+            // Hidden-Attribute für ausgeblendete Spalten setzen
             if (visibleColumns && visibleColumns.length > 0 && visibleColumns.length < headers.length) {
-                // Header-Zeile mit sichtbaren Spalten
-                visibleColumns.forEach((colIdx, newColIdx) => {
-                    worksheet.cell(1, newColIdx + 1).value(headers[colIdx] || '');
-                });
-                
-                // Daten-Zeilen mit sichtbaren Spalten
-                data.forEach((row, rowIndex) => {
-                    visibleColumns.forEach((colIdx, newColIdx) => {
-                        worksheet.cell(rowIndex + 2, newColIdx + 1).value(row[colIdx] === null || row[colIdx] === undefined ? '' : row[colIdx]);
-                    });
-                });
-            } else {
-                // Alle Spalten exportieren
-                // Header-Zeile schreiben (Zeile 1)
-                headers.forEach((header, colIndex) => {
-                    worksheet.cell(1, colIndex + 1).value(header);
-                });
-                
-                // Daten-Zeilen schreiben (ab Zeile 2) - Formatierung bleibt erhalten
-                data.forEach((row, rowIndex) => {
-                    row.forEach((value, colIndex) => {
-                        const cell = worksheet.cell(rowIndex + 2, colIndex + 1);
-                        // Nur Wert setzen, Formatierung beibehalten
-                        cell.value(value === null || value === undefined ? '' : value);
-                    });
-                });
+                const visibleSet = new Set(visibleColumns);
+                for (let colIdx = 0; colIdx < headers.length; colIdx++) {
+                    const column = worksheet.column(colIdx + 1);
+                    if (!visibleSet.has(colIdx)) {
+                        column.hidden(true);
+                    } else {
+                        column.hidden(false);
+                    }
+                }
+            }
+            
+            // Hidden-Attribute für ausgeblendete Zeilen setzen
+            const hiddenRowSet = new Set(hiddenRows);
+            for (let rowIdx = 0; rowIdx < data.length; rowIdx++) {
+                const row = worksheet.row(rowIdx + 2); // +2 wegen Header
+                if (hiddenRowSet.has(rowIdx)) {
+                    row.hidden(true);
+                } else {
+                    row.hidden(false);
+                }
+            }
+            
+            // Nicht verwendete Zeilen als hidden markieren (wenn weniger Zeilen als ursprünglich)
+            if (data.length < originalRowCount) {
+                for (let rowIdx = data.length + 2; rowIdx <= originalRowCount + 1; rowIdx++) {
+                    worksheet.row(rowIdx).hidden(true);
+                }
             }
             
             sheetsProcessed++;
@@ -1779,10 +2065,25 @@ ipcMain.handle('excel:saveFile', async (event, { filePath, sheets, password = nu
             const visibleColumns = sheetData.visibleColumns;
             const hiddenRows = sheetData.hiddenRows || []; // Array von 0-basierten Zeilen-Indices
             
-            // Alle vorhandenen Daten im Sheet löschen
+            // Ursprüngliche Spaltenanzahl ermitteln
             const usedRange = worksheet.usedRange();
+            let originalColumnCount = 0;
+            let originalRowCount = 0;
             if (usedRange) {
+                originalColumnCount = usedRange.endCell().columnNumber();
+                originalRowCount = usedRange.endCell().rowNumber();
                 usedRange.clear();
+            }
+            
+            // Wenn Spalten gelöscht wurden (headers.length < originalColumnCount),
+            // müssen die überzähligen Spalten komplett entfernt werden
+            if (headers.length < originalColumnCount) {
+                removeUnusedColumns(worksheet, headers.length, originalColumnCount);
+            }
+            
+            // Wenn Zeilen gelöscht wurden, müssen diese auch entfernt werden
+            if (data.length + 1 < originalRowCount) { // +1 für Header
+                removeUnusedRows(worksheet, data.length, originalRowCount - 1);
             }
             
             // ALLE Spalten speichern (nicht nur sichtbare)

@@ -9800,21 +9800,34 @@
                     
                     if (sheetName === explorerState.selectedSheet) {
                         // Aktuelles Sheet: Daten aus explorerState
+                        // ALLE Daten senden (auch versteckte Zeilen), hidden-Attribute werden im Backend gesetzt
+                        const allData = explorerState.filteredData.map(item => item.row);
+                        
+                        // HiddenRows aus dem aktuellen State ermitteln
+                        const currentHiddenRows = [];
+                        explorerState.filteredData.forEach((item, idx) => {
+                            if (explorerState.hiddenRows && explorerState.hiddenRows.has(item.originalIndex)) {
+                                currentHiddenRows.push(idx);
+                            }
+                        });
+                        
                         sheetData = {
                             sheetName: sheetName,
                             headers: explorerState.headers,
-                            data: explorerState.filteredData.map(item => item.row),
+                            data: allData,
                             visibleColumns: explorerState.visibleColumns,
+                            hiddenRows: currentHiddenRows,
                             hasChanges: explorerState.editedCells.size > 0
                         };
                     } else if (explorerState.sheetDataCache.has(sheetName)) {
-                        // Sheet aus Cache
+                        // Sheet aus Cache - ALLE Daten senden, hiddenRows mitschicken
                         const cached = explorerState.sheetDataCache.get(sheetName);
                         sheetData = {
                             sheetName: sheetName,
                             headers: cached.headers,
-                            data: cached.data,
+                            data: cached.data, // Alle Daten, nicht gefiltert
                             visibleColumns: cached.visibleColumns,
+                            hiddenRows: cached.hiddenRows || [],
                             hasChanges: cached.editedCells.size > 0
                         };
                     } else {
