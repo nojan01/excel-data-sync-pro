@@ -644,6 +644,233 @@
             border-left: 3px solid var(--warning);
         }
         
+        /* Data Validation Dropdown Styles */
+        .results-table td.has-dropdown {
+            padding: 0;
+            position: relative;
+        }
+        
+        .results-table td.has-dropdown::after {
+            content: '▼';
+            position: absolute;
+            right: 4px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 8px;
+            color: var(--text-muted);
+            pointer-events: none;
+            opacity: 0.6;
+        }
+        
+        .cell-dropdown {
+            width: 100%;
+            height: 100%;
+            min-height: 32px;
+            padding: 6px 20px 6px 8px;
+            border: none;
+            background: transparent;
+            color: var(--text);
+            font-size: inherit;
+            font-family: inherit;
+            cursor: pointer;
+            appearance: none;
+            -webkit-appearance: none;
+            -moz-appearance: none;
+        }
+        
+        .cell-dropdown:focus {
+            outline: 2px solid var(--primary);
+            outline-offset: -2px;
+            background: var(--bg-light);
+        }
+        
+        .cell-dropdown option {
+            background: var(--bg-medium);
+            color: var(--text);
+            padding: 8px;
+        }
+        
+        .results-table td.has-dropdown.edited {
+            background: rgba(255, 193, 7, 0.2);
+            border-left: 3px solid var(--warning);
+        }
+        
+        .results-table td.has-dropdown.edited::after {
+            color: var(--warning);
+        }
+
+        /* Formula Icon Styles */
+        .results-table td.has-formula {
+            position: relative;
+        }
+        
+        .formula-icon {
+            position: absolute;
+            top: 2px;
+            right: 3px;
+            font-size: 10px;
+            font-style: italic;
+            font-weight: bold;
+            color: var(--primary);
+            opacity: 0.7;
+            pointer-events: none;
+            background: rgba(var(--bg-rgb), 0.8);
+            padding: 0 2px;
+            border-radius: 2px;
+            line-height: 1;
+            z-index: 1;
+        }
+        
+        .results-table td.has-formula.has-dropdown .formula-icon {
+            right: 18px; /* Platz für Dropdown-Pfeil lassen */
+        }
+        
+        .results-table td.has-formula:hover .formula-icon {
+            opacity: 1;
+            background: var(--primary);
+            color: white;
+        }
+
+        /* Hyperlink Styles */
+        .results-table td.has-hyperlink {
+            position: relative;
+        }
+        
+        .results-table td.has-hyperlink .cell-content {
+            color: #2196f3;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+        
+        body.light-theme .results-table td.has-hyperlink .cell-content {
+            color: #1565c0;
+        }
+        
+        .results-table td.has-hyperlink .cell-content:hover {
+            color: #64b5f6;
+        }
+        
+        .hyperlink-icon {
+            position: absolute;
+            top: 2px;
+            left: 3px;
+            font-size: 10px;
+            color: #2196f3;
+            opacity: 0.7;
+            pointer-events: none;
+            z-index: 1;
+        }
+        
+        .results-table td.has-hyperlink:hover .hyperlink-icon {
+            opacity: 1;
+        }
+        
+        .results-table td.has-formula.has-hyperlink .hyperlink-icon {
+            left: auto;
+            right: 18px; /* Neben dem Formula-Icon */
+        }
+
+        /* Rich Text Styles */
+        .results-table td.has-rich-text {
+            position: relative;
+        }
+        
+        .results-table td.has-rich-text .cell-content {
+            display: inline; /* Inline damit Spans nebeneinander bleiben */
+        }
+
+        /* Sheet Management Styles */
+        .sheet-list-item {
+            display: flex;
+            align-items: center;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            cursor: pointer;
+            transition: background-color 0.15s;
+        }
+        
+        .sheet-list-item:last-child {
+            border-bottom: none;
+        }
+        
+        .sheet-list-item:hover {
+            background-color: var(--bg-hover);
+        }
+        
+        .sheet-list-item.selected {
+            background-color: var(--primary);
+            color: white;
+        }
+        
+        .sheet-list-item .sheet-index {
+            width: 30px;
+            font-size: 12px;
+            color: var(--text-muted);
+        }
+        
+        .sheet-list-item.selected .sheet-index {
+            color: rgba(255,255,255,0.7);
+        }
+        
+        .sheet-list-item .sheet-name {
+            flex: 1;
+            font-weight: 500;
+        }
+        
+        .sheet-list-item .sheet-active-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            background: var(--success);
+            color: white;
+            border-radius: 10px;
+            margin-left: 8px;
+        }
+
+        /* Merged Cells Styles */
+        .results-table td.merged-cell {
+            position: relative;
+        }
+        
+        .results-table td.merged-cell-master {
+            border: 2px solid var(--primary);
+            z-index: 1;
+        }
+        
+        .results-table td.merged-cell-hidden {
+            display: none;
+        }
+        
+        .merged-icon {
+            position: absolute;
+            bottom: 2px;
+            right: 3px;
+            font-size: 9px;
+            color: var(--primary);
+            opacity: 0.6;
+            pointer-events: none;
+        }
+        
+        .results-table td.merged-cell-master:hover .merged-icon {
+            opacity: 1;
+        }
+
+        /* Find & Replace Highlights */
+        .results-table td.find-match {
+            background: rgba(255, 235, 59, 0.4) !important;
+            box-shadow: inset 0 0 0 2px rgba(255, 193, 7, 0.6);
+        }
+        
+        .results-table td.find-current {
+            background: rgba(255, 152, 0, 0.5) !important;
+            box-shadow: inset 0 0 0 2px var(--warning);
+            animation: findPulse 1s ease infinite;
+        }
+        
+        @keyframes findPulse {
+            0%, 100% { box-shadow: inset 0 0 0 2px var(--warning); }
+            50% { box-shadow: inset 0 0 0 3px var(--warning), 0 0 8px rgba(255, 152, 0, 0.4); }
+        }
+        
         .results-table td[contenteditable]:focus {
             outline: 2px solid var(--primary);
             outline-offset: -2px;
@@ -919,11 +1146,65 @@
             overflow: hidden;
             min-width: 400px;
             min-height: 300px;
+            position: relative;
         }
         
         .modal.modal-large {
             resize: both;
             overflow: hidden;
+        }
+        
+        /* Sichtbares Resize-Handle für Modals */
+        .modal.modal-large::after {
+            content: '';
+            position: absolute;
+            right: 0;
+            bottom: 0;
+            width: 20px;
+            height: 20px;
+            cursor: nwse-resize;
+            background: linear-gradient(135deg, transparent 50%, var(--border) 50%, var(--border) 60%, transparent 60%, transparent 70%, var(--border) 70%, var(--border) 80%, transparent 80%);
+            border-radius: 0 0 8px 0;
+            opacity: 0.6;
+            transition: opacity 0.2s;
+        }
+        
+        .modal.modal-large:hover::after {
+            opacity: 1;
+            background: linear-gradient(135deg, transparent 50%, var(--primary) 50%, var(--primary) 60%, transparent 60%, transparent 70%, var(--primary) 70%, var(--primary) 80%, transparent 80%);
+        }
+        
+        .modal.modal-fullscreen::after {
+            display: none;
+        }
+        
+        /* Vollbild-Modus für Modals */
+        .modal.modal-fullscreen {
+            width: 100vw !important;
+            max-width: 100vw !important;
+            height: 100vh !important;
+            max-height: 100vh !important;
+            min-width: 100vw !important;
+            min-height: 100vh !important;
+            border-radius: 0;
+            resize: none;
+        }
+        
+        .modal-fullscreen-btn {
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            font-size: 18px;
+            cursor: pointer;
+            padding: 4px 8px;
+            margin-right: 8px;
+            border-radius: 4px;
+            transition: all 0.2s;
+        }
+        
+        .modal-fullscreen-btn:hover {
+            color: var(--text);
+            background: var(--bg-dark);
         }
         
         /* Verhindert Scroll-Durchgang bei offenen Modals */
@@ -1424,7 +1705,7 @@
     
     <!-- Footer -->
     <footer style="background: var(--bg-medium); border-top: 1px solid var(--border); padding: 8px 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
-        © Norbert Jander 2025 · v1.0.11
+        © Norbert Jander 2025 · v1.0.12
     </footer>
     
     <!-- Mapping Modal -->
@@ -2061,7 +2342,10 @@
         <div class="modal modal-large" style="max-width: 95vw; width: 1400px; max-height: 90vh; min-width: 600px; min-height: 400px;">
             <div class="modal-header">
                 <div class="modal-title">📊 Datenexplorer - <span id="explorerFileName">Keine Datei geladen</span></div>
-                <button class="modal-close" id="btnCloseExplorerX">&times;</button>
+                <div style="display: flex; align-items: center;">
+                    <button class="modal-fullscreen-btn" id="btnExplorerFullscreen" title="Vollbild umschalten (F11)">⛶</button>
+                    <button class="modal-close" id="btnCloseExplorerX">&times;</button>
+                </div>
             </div>
             <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px; padding: 15px; overflow-y: auto; flex: 1; min-height: 0;">
                 <!-- Explorer Controls -->
@@ -2071,9 +2355,14 @@
                     </button>
                     <div class="transfer-field">
                         <label>Arbeitsblatt:</label>
-                        <select id="explorerSheetSelect" class="config-select" style="min-width: 200px;">
-                            <option value="">-- Datei laden --</option>
-                        </select>
+                        <div style="display: flex; gap: 4px; align-items: center;">
+                            <select id="explorerSheetSelect" class="config-select" style="min-width: 180px;">
+                                <option value="">-- Datei laden --</option>
+                            </select>
+                            <button class="btn btn-sm" id="btnSheetManage" title="Arbeitsblätter verwalten" style="padding: 4px 8px; font-size: 14px;">
+                                📋
+                            </button>
+                        </div>
                     </div>
                     <div class="transfer-field" style="flex: 1;">
                         <label>Volltextsuche:</label>
@@ -2082,6 +2371,9 @@
                             <button class="btn btn-primary btn-sm" id="btnExplorerSearch" title="Suche starten (Enter)">🔍</button>
                         </div>
                     </div>
+                    <button class="btn btn-info btn-sm" id="btnToggleFindReplace" title="Suchen & Ersetzen (Strg+H)">
+                        🔄 Ersetzen
+                    </button>
                     <button class="btn btn-primary" id="btnToggleColumns" title="Spalten ein-/ausblenden">
                         👁️ Spalten
                     </button>
@@ -2106,6 +2398,46 @@
                     <div id="explorerFilters" style="display: flex; flex-direction: column; gap: 8px;"></div>
                 </div>
                 
+                <!-- Find & Replace Panel (initially hidden) -->
+                <div id="findReplacePanel" style="display: none; flex-direction: column; gap: 12px; padding: 15px; background: linear-gradient(135deg, #2d2d30 0%, #252526 100%); border-radius: 6px; border: 1px solid var(--border); border-left: 4px solid #9c27b0; flex-shrink: 0;">
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <span style="font-weight: 600; color: #9c27b0;">🔄 Suchen & Ersetzen</span>
+                        <span id="findMatchCounter" style="color: var(--text-muted); font-size: 12px; font-weight: 500;"></span>
+                        <span id="findReplaceInfo" style="color: var(--text-muted); font-size: 12px;"></span>
+                        <button class="btn btn-secondary btn-sm" id="btnCloseFindReplace" style="margin-left: auto;">✕</button>
+                    </div>
+                    <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end;">
+                        <div class="transfer-field" style="flex: 1; min-width: 200px;">
+                            <label style="font-size: 12px;">Suchen nach:</label>
+                            <input type="text" id="findText" class="config-input" placeholder="Text zum Suchen...">
+                        </div>
+                        <div class="transfer-field" style="flex: 1; min-width: 200px;">
+                            <label style="font-size: 12px;">Ersetzen durch:</label>
+                            <input type="text" id="replaceText" class="config-input" placeholder="Ersatztext...">
+                        </div>
+                        <div style="display: flex; gap: 8px; align-items: center;">
+                            <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;">
+                                <input type="checkbox" id="findCaseSensitive" class="green-checkbox">
+                                <span>Groß/Klein</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;">
+                                <input type="checkbox" id="findWholeWord" class="green-checkbox">
+                                <span>Ganzes Wort</span>
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;">
+                                <input type="checkbox" id="findRegex" class="green-checkbox">
+                                <span>Regex</span>
+                            </label>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-primary btn-sm" id="btnFindNext" title="Nächsten Treffer finden (F3)">🔍 Weiter</button>
+                            <button class="btn btn-warning btn-sm" id="btnReplaceOne" title="Aktuelle Auswahl ersetzen">Ersetzen</button>
+                            <button class="btn btn-info btn-sm" id="btnReplaceAll" title="Alle Vorkommen ersetzen">Alle ersetzen</button>
+                            <button class="btn btn-secondary btn-sm" id="btnFindReplaceUndo" title="Letzte Ersetzung rückgängig machen (Strg+Z)">↩️ Rückgängig</button>
+                        </div>
+                    </div>
+                </div>
+                
                 <!-- Column Visibility Panel (initially hidden) -->
                 <div id="columnTogglePanel" style="display: none; flex-direction: column; gap: 10px; padding: 15px; background: var(--bg-light); border-radius: 6px; margin-bottom: 10px; border: 1px solid var(--border); flex-shrink: 0;">
                     <div style="display: flex; gap: 10px; margin-bottom: 5px;">
@@ -2127,7 +2459,8 @@
                         <span style="color: white;">Zeile</span>
                         <input type="number" id="moveTargetRow" class="config-input" style="width: 80px; padding: 4px 8px;" min="1" placeholder="Nr.">
                         <button class="btn btn-sm" id="btnExecuteMove" style="background: white; color: #217346; font-weight: 600;">✓ Verschieben</button>
-                        <button class="btn btn-sm" id="btnDeleteSelectedRows" style="background: #F44336; color: white; font-weight: 600; margin-left: 15px;">🗑️ Löschen</button>
+                        <button class="btn btn-sm" id="btnHideSelectedRows" style="background: #FF9800; color: white; font-weight: 600; margin-left: 15px;">👁️‍🗨️ Ausblenden</button>
+                        <button class="btn btn-sm" id="btnDeleteSelectedRows" style="background: #F44336; color: white; font-weight: 600;">🗑️ Löschen</button>
                     </div>
                     <button class="btn btn-sm" id="btnClearRowSelection" style="background: rgba(255,255,255,0.2); color: white; margin-left: auto;">✕ Auswahl aufheben</button>
                 </div>
@@ -2167,6 +2500,55 @@
             </div>
             <div class="modal-footer">
                 <button class="btn btn-secondary" id="btnCloseExplorerFooter">Schließen</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Sheet Management Modal -->
+    <div class="modal-overlay hidden" id="sheetManageModal">
+        <div class="modal" style="max-width: 600px; width: 90vw;">
+            <div class="modal-header">
+                <div class="modal-title">📋 Arbeitsblätter verwalten</div>
+                <button class="modal-close" id="btnCloseSheetManage">&times;</button>
+            </div>
+            <div class="modal-body" style="padding: 15px; display: flex; flex-direction: column; gap: 15px;">
+                <!-- Sheet-Liste -->
+                <div>
+                    <label style="font-weight: bold; margin-bottom: 8px; display: block;">Arbeitsblätter:</label>
+                    <div id="sheetManageList" style="border: 1px solid var(--border); border-radius: 6px; max-height: 300px; overflow-y: auto;">
+                        <!-- Dynamisch gefüllt -->
+                    </div>
+                </div>
+                
+                <!-- Aktionen -->
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button class="btn btn-success btn-sm" id="btnSheetAdd" title="Neues Arbeitsblatt hinzufügen">
+                        ➕ Hinzufügen
+                    </button>
+                    <button class="btn btn-info btn-sm" id="btnSheetRename" title="Ausgewähltes Arbeitsblatt umbenennen" disabled>
+                        ✏️ Umbenennen
+                    </button>
+                    <button class="btn btn-primary btn-sm" id="btnSheetClone" title="Ausgewähltes Arbeitsblatt kopieren" disabled>
+                        📑 Kopieren
+                    </button>
+                    <button class="btn btn-warning btn-sm" id="btnSheetMoveUp" title="Nach oben verschieben" disabled>
+                        ⬆️ Hoch
+                    </button>
+                    <button class="btn btn-warning btn-sm" id="btnSheetMoveDown" title="Nach unten verschieben" disabled>
+                        ⬇️ Runter
+                    </button>
+                    <button class="btn btn-danger btn-sm" id="btnSheetDelete" title="Ausgewähltes Arbeitsblatt löschen" disabled>
+                        🗑️ Löschen
+                    </button>
+                </div>
+                
+                <!-- Hinweis -->
+                <div style="font-size: 12px; color: var(--text-muted); background: var(--bg-light); padding: 10px; border-radius: 6px;">
+                    <strong>Hinweis:</strong> Änderungen werden sofort in der Datei gespeichert.
+                </div>
+            </div>
+            <div class="modal-footer" style="padding: 15px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end;">
+                <button class="btn btn-secondary" id="btnSheetManageClose">Schließen</button>
             </div>
         </div>
     </div>
@@ -2381,6 +2763,13 @@
                 insertRowAbove: 'Zeile darüber einfügen',
                 insertRowBelow: 'Zeile darunter einfügen',
                 deleteRow: 'Zeile löschen',
+                hideRow: 'Zeile ausblenden',
+                showRow: 'Zeile einblenden',
+                showAllRows: 'Alle Zeilen einblenden',
+                hiddenRows: 'versteckte Zeilen',
+                rowHidden: 'Zeile ausgeblendet',
+                rowShown: 'Zeile eingeblendet',
+                allRowsShown: 'Alle Zeilen eingeblendet',
                 insertColumnBefore: 'Spalte links einfügen',
                 insertColumnAfter: 'Spalte rechts einfügen',
                 deleteColumn: 'Spalte löschen',
@@ -2407,7 +2796,7 @@
                 createAndLoad: '📅 Erstellen & Laden',
                 
                 // Footer
-                copyright: '© Norbert Jander 2025 · v1.0.11',
+                copyright: '© Norbert Jander 2025 · v1.0.12',
                 
                 // Extra Columns
                 extraColumns: 'Extra-Spalten',
@@ -2562,6 +2951,13 @@
                 insertRowAbove: 'Insert row above',
                 insertRowBelow: 'Insert row below',
                 deleteRow: 'Delete row',
+                hideRow: 'Hide row',
+                showRow: 'Show row',
+                showAllRows: 'Show all rows',
+                hiddenRows: 'hidden rows',
+                rowHidden: 'Row hidden',
+                rowShown: 'Row shown',
+                allRowsShown: 'All rows shown',
                 insertColumnBefore: 'Insert column left',
                 insertColumnAfter: 'Insert column right',
                 deleteColumn: 'Delete column',
@@ -2588,7 +2984,7 @@
                 createAndLoad: '📅 Create & Load',
                 
                 // Footer
-                copyright: '© Norbert Jander 2025 · v1.0.11',
+                copyright: '© Norbert Jander 2025 · v1.0.12',
                 
                 // Extra Columns
                 extraColumns: 'Extra Columns',
@@ -5767,8 +6163,247 @@
             selectionAnchor: null,  // {row, col} - Startpunkt der Auswahl
             isSelecting: false,  // Ob gerade eine Auswahl gezogen wird
             // Cache für Sheet-Änderungen (bleibt bei Wechsel erhalten)
-            sheetDataCache: new Map()  // sheetName -> { data, editedCells, rowHighlights, originalData }
+            sheetDataCache: new Map(),  // sheetName -> { data, editedCells, rowHighlights, originalData }
+            // Data Validations (Dropdown-Listen)
+            dataValidations: {},  // colIndex -> { type: 'column'|'rows', values: [], rows: {} }
+            // Cell Styles (Formatierungen aus Excel)
+            cellStyles: {},  // "rowIndex-colIndex" -> { bold, italic, fontColor, fill, fontSize, textAlign, ... }
+            // Cell Formulas (Formeln aus Excel)
+            cellFormulas: {},  // "rowIndex-colIndex" -> "=FORMULA"
+            // Cell Hyperlinks (Links aus Excel)
+            cellHyperlinks: {},  // "rowIndex-colIndex" -> "https://..."
+            // Rich Text Cells (formatierter Text mit mehreren Styles)
+            richTextCells: {},  // "rowIndex-colIndex" -> [{ text, styles: { bold, italic, ... } }, ...]
+            // Hidden Rows (ausgeblendete Zeilen)
+            hiddenRows: new Set(),  // Set von 0-basierten Zeilen-Indices
+            // AutoFilter Range (falls vorhanden)
+            autoFilterRange: null,  // z.B. "A1:D10"
+            // Merged Cells (verbundene Zellen)
+            mergedCells: [],  // Array von { startRow, startCol, endRow, endCol, rowSpan, colSpan }
+            // Passwort für passwortgeschützte Dateien
+            filePassword: null,
+            // Pivot-Tabellen Warnung
+            hasPivotTables: false
         };
+        
+        // ==================== Sheet Management Functions ====================
+        let selectedSheetForManagement = null;
+        
+        function openSheetManageModal() {
+            if (!explorerState.filePath || explorerState.sheets.length === 0) {
+                showNotification('Bitte zuerst eine Datei laden', 'warning');
+                return;
+            }
+            
+            selectedSheetForManagement = null;
+            updateSheetManageList();
+            updateSheetManageButtons();
+            document.getElementById('sheetManageModal').classList.remove('hidden');
+        }
+        
+        function closeSheetManageModal() {
+            document.getElementById('sheetManageModal').classList.add('hidden');
+        }
+        
+        function updateSheetManageList() {
+            const listContainer = document.getElementById('sheetManageList');
+            if (!listContainer) return;
+            
+            if (explorerState.sheets.length === 0) {
+                listContainer.innerHTML = '<div style="padding: 20px; text-align: center; color: var(--text-muted);">Keine Arbeitsblätter vorhanden</div>';
+                return;
+            }
+            
+            listContainer.innerHTML = explorerState.sheets.map((sheetName, index) => {
+                const isSelected = sheetName === selectedSheetForManagement;
+                const isActive = sheetName === explorerState.selectedSheet;
+                return `<div class="sheet-list-item${isSelected ? ' selected' : ''}" data-sheet="${escapeHtml(sheetName)}" data-index="${index}">
+                    <span class="sheet-index">${index + 1}.</span>
+                    <span class="sheet-name">${escapeHtml(sheetName)}</span>
+                    ${isActive ? '<span class="sheet-active-badge">Aktiv</span>' : ''}
+                </div>`;
+            }).join('');
+            
+            // Event-Listener für Klick auf Sheet-Items
+            listContainer.querySelectorAll('.sheet-list-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    selectedSheetForManagement = item.dataset.sheet;
+                    updateSheetManageList();
+                    updateSheetManageButtons();
+                });
+            });
+        }
+        
+        function updateSheetManageButtons() {
+            const hasSelection = selectedSheetForManagement !== null;
+            const selectedIndex = explorerState.sheets.indexOf(selectedSheetForManagement);
+            const isFirst = selectedIndex === 0;
+            const isLast = selectedIndex === explorerState.sheets.length - 1;
+            const canDelete = explorerState.sheets.length > 1;
+            
+            document.getElementById('btnSheetRename').disabled = !hasSelection;
+            document.getElementById('btnSheetClone').disabled = !hasSelection;
+            document.getElementById('btnSheetDelete').disabled = !hasSelection || !canDelete;
+            document.getElementById('btnSheetMoveUp').disabled = !hasSelection || isFirst;
+            document.getElementById('btnSheetMoveDown').disabled = !hasSelection || isLast;
+        }
+        
+        async function addNewSheet() {
+            const name = await showPromptDialog('Neues Arbeitsblatt', 'Name für das neue Arbeitsblatt:', 'Neues Blatt');
+            if (!name) return;
+            
+            try {
+                const result = await window.electronAPI.addSheet({
+                    filePath: explorerState.filePath,
+                    sheetName: name
+                });
+                
+                if (result.success) {
+                    explorerState.sheets = result.sheets;
+                    updateSheetDropdown();
+                    updateSheetManageList();
+                    showNotification(`Arbeitsblatt "${name}" hinzugefügt`, 'success');
+                } else {
+                    showNotification(result.error, 'error');
+                }
+            } catch (error) {
+                showNotification('Fehler beim Hinzufügen: ' + error.message, 'error');
+            }
+        }
+        
+        async function renameSelectedSheet() {
+            if (!selectedSheetForManagement) return;
+            
+            const newName = await showPromptDialog('Arbeitsblatt umbenennen', `Neuer Name für "${selectedSheetForManagement}":`, selectedSheetForManagement);
+            if (!newName || newName === selectedSheetForManagement) return;
+            
+            try {
+                const result = await window.electronAPI.renameSheet({
+                    filePath: explorerState.filePath,
+                    oldName: selectedSheetForManagement,
+                    newName: newName
+                });
+                
+                if (result.success) {
+                    const wasActive = explorerState.selectedSheet === selectedSheetForManagement;
+                    explorerState.sheets = result.sheets;
+                    if (wasActive) {
+                        explorerState.selectedSheet = newName;
+                    }
+                    selectedSheetForManagement = newName;
+                    updateSheetDropdown();
+                    updateSheetManageList();
+                    showNotification(`Arbeitsblatt umbenannt zu "${newName}"`, 'success');
+                } else {
+                    showNotification(result.error, 'error');
+                }
+            } catch (error) {
+                showNotification('Fehler beim Umbenennen: ' + error.message, 'error');
+            }
+        }
+        
+        async function cloneSelectedSheet() {
+            if (!selectedSheetForManagement) return;
+            
+            const newName = await showPromptDialog('Arbeitsblatt kopieren', `Name für die Kopie von "${selectedSheetForManagement}":`, selectedSheetForManagement + ' (Kopie)');
+            if (!newName) return;
+            
+            try {
+                const result = await window.electronAPI.cloneSheet({
+                    filePath: explorerState.filePath,
+                    sheetName: selectedSheetForManagement,
+                    newName: newName
+                });
+                
+                if (result.success) {
+                    explorerState.sheets = result.sheets;
+                    updateSheetDropdown();
+                    updateSheetManageList();
+                    showNotification(`Arbeitsblatt kopiert als "${newName}"`, 'success');
+                } else {
+                    showNotification(result.error, 'error');
+                }
+            } catch (error) {
+                showNotification('Fehler beim Kopieren: ' + error.message, 'error');
+            }
+        }
+        
+        async function moveSelectedSheet(direction) {
+            if (!selectedSheetForManagement) return;
+            
+            const currentIndex = explorerState.sheets.indexOf(selectedSheetForManagement);
+            const newIndex = direction === 'up' ? currentIndex - 1 : currentIndex + 1;
+            
+            if (newIndex < 0 || newIndex >= explorerState.sheets.length) return;
+            
+            try {
+                const result = await window.electronAPI.moveSheet({
+                    filePath: explorerState.filePath,
+                    sheetName: selectedSheetForManagement,
+                    newIndex: newIndex
+                });
+                
+                if (result.success) {
+                    explorerState.sheets = result.sheets;
+                    updateSheetDropdown();
+                    updateSheetManageList();
+                    updateSheetManageButtons();
+                    showNotification(`Arbeitsblatt verschoben`, 'success');
+                } else {
+                    showNotification(result.error, 'error');
+                }
+            } catch (error) {
+                showNotification('Fehler beim Verschieben: ' + error.message, 'error');
+            }
+        }
+        
+        async function deleteSelectedSheet() {
+            if (!selectedSheetForManagement) return;
+            if (explorerState.sheets.length <= 1) {
+                showNotification('Das letzte Arbeitsblatt kann nicht gelöscht werden', 'warning');
+                return;
+            }
+            
+            const confirmed = await showConfirmDialog('Arbeitsblatt löschen', `Möchten Sie das Arbeitsblatt "${selectedSheetForManagement}" wirklich löschen?\n\nDiese Aktion kann nicht rückgängig gemacht werden!`);
+            if (!confirmed) return;
+            
+            try {
+                const wasActive = explorerState.selectedSheet === selectedSheetForManagement;
+                
+                const result = await window.electronAPI.deleteSheet({
+                    filePath: explorerState.filePath,
+                    sheetName: selectedSheetForManagement
+                });
+                
+                if (result.success) {
+                    explorerState.sheets = result.sheets;
+                    selectedSheetForManagement = null;
+                    
+                    // Wenn das aktive Sheet gelöscht wurde, das erste laden
+                    if (wasActive && explorerState.sheets.length > 0) {
+                        explorerState.selectedSheet = explorerState.sheets[0];
+                        await loadExplorerSheet(explorerState.sheets[0]);
+                    }
+                    
+                    updateSheetDropdown();
+                    updateSheetManageList();
+                    updateSheetManageButtons();
+                    showNotification(`Arbeitsblatt gelöscht`, 'success');
+                } else {
+                    showNotification(result.error, 'error');
+                }
+            } catch (error) {
+                showNotification('Fehler beim Löschen: ' + error.message, 'error');
+            }
+        }
+        
+        function updateSheetDropdown() {
+            if (elements.explorerSheetSelect) {
+                elements.explorerSheetSelect.innerHTML = explorerState.sheets.map(s => 
+                    `<option value="${escapeHtml(s)}"${s === explorerState.selectedSheet ? ' selected' : ''}>${escapeHtml(s)}</option>`
+                ).join('');
+            }
+        }
         
         // Explorer-State komplett zurücksetzen
         function resetExplorerState() {
@@ -5797,6 +6432,15 @@
             explorerState.selectionAnchor = null;
             explorerState.isSelecting = false;
             explorerState.sheetDataCache.clear();
+            explorerState.dataValidations = {};
+            explorerState.cellStyles = {};
+            explorerState.cellFormulas = {};
+            explorerState.cellHyperlinks = {};
+            explorerState.richTextCells = {};
+            explorerState.hiddenRows.clear();
+            explorerState.autoFilterRange = null;
+            explorerState.mergedCells = [];
+            explorerState.filePassword = null;
             
             // UI zurücksetzen
             if (elements.explorerSheetSelect) {
@@ -5809,14 +6453,25 @@
             if (explorerFileName) {
                 explorerFileName.textContent = currentLanguage === 'en' ? 'No file loaded' : 'Keine Datei geladen';
             }
-            const explorerTable = document.getElementById('explorerTable');
-            if (explorerTable) {
-                explorerTable.innerHTML = '';
+            // Nur thead und tbody leeren, nicht die gesamte Tabelle (sonst werden die Element-Referenzen ungültig)
+            if (elements.explorerTableHead) {
+                elements.explorerTableHead.innerHTML = '';
+            }
+            if (elements.explorerTableBody) {
+                elements.explorerTableBody.innerHTML = '<tr><td style="text-align: center; padding: 40px; color: var(--text-muted);">📂 Bitte eine Excel-Datei laden</td></tr>';
             }
             const explorerResultCount = document.getElementById('explorerResultCount');
             if (explorerResultCount) {
                 explorerResultCount.textContent = currentLanguage === 'en' ? 'No data loaded.' : 'Keine Daten geladen.';
             }
+            
+            // Indikatoren entfernen
+            const hiddenRowsIndicator = document.getElementById('hiddenRowsIndicator');
+            if (hiddenRowsIndicator) hiddenRowsIndicator.remove();
+            const autoFilterIndicator = document.getElementById('autoFilterIndicator');
+            if (autoFilterIndicator) autoFilterIndicator.remove();
+            const passwordIndicator = document.getElementById('passwordIndicator');
+            if (passwordIndicator) passwordIndicator.remove();
             
             // Auto-Save Intervall stoppen
             stopExplorerAutoSave();
@@ -5948,7 +6603,8 @@
                         originalData: cached.originalData || cached.data.map(row => [...row]),
                         visibleColumns: cached.visibleColumns,
                         editedCells: new Map(cached.editedCells || []),
-                        rowHighlights: new Map(cached.rowHighlights || [])
+                        rowHighlights: new Map(cached.rowHighlights || []),
+                        hiddenRows: new Set(cached.hiddenRows || [])
                     });
                 }
             }
@@ -6017,6 +6673,7 @@
             menuHtml += `<div class="context-menu-item" data-action="insert-row-above" data-row="${rowIndex}">⬆️ Zeile oberhalb einfügen</div>`;
             menuHtml += `<div class="context-menu-item" data-action="insert-row-below" data-row="${rowIndex}">⬇️ Zeile unterhalb einfügen</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
+            menuHtml += `<div class="context-menu-item" data-action="hide-row" data-row="${rowIndex}">👁️‍🗨️ Zeile ausblenden</div>`;
             menuHtml += `<div class="context-menu-item" data-action="delete-row" data-row="${rowIndex}" style="color: #F44336;">🗑️ Zeile löschen</div>`;
             menuHtml += '</div>';
             
@@ -6074,6 +6731,12 @@
             menuEl.querySelector('[data-action="delete-row"]')?.addEventListener('click', () => {
                 const row = parseInt(menuEl.querySelector('[data-action="delete-row"]').dataset.row);
                 deleteExplorerRow(row);
+                menuEl.remove();
+            });
+            
+            menuEl.querySelector('[data-action="hide-row"]')?.addEventListener('click', () => {
+                const row = parseInt(menuEl.querySelector('[data-action="hide-row"]').dataset.row);
+                hideExplorerRow(row);
                 menuEl.remove();
             });
             
@@ -6222,6 +6885,219 @@
             showFloatingStatus(t('rowDeleted'));
         }
         
+        // Zeile ausblenden
+        function hideExplorerRow(rowIndex) {
+            explorerState.hiddenRows.add(rowIndex);
+            // Markierung, dass Zeilen-Sichtbarkeit geändert wurde
+            explorerState.editedCells.set('_rowVisibilityChanged', true);
+            filterExplorerData();
+            updateExplorerEditStatus();
+            updateHiddenRowsIndicator();
+            showFloatingStatus(currentLanguage === 'en' ? 'Row hidden' : 'Zeile ausgeblendet');
+        }
+        
+        // Zeile wieder einblenden
+        function showExplorerRow(rowIndex) {
+            explorerState.hiddenRows.delete(rowIndex);
+            // Markierung, dass Zeilen-Sichtbarkeit geändert wurde
+            explorerState.editedCells.set('_rowVisibilityChanged', true);
+            filterExplorerData();
+            updateExplorerEditStatus();
+            updateHiddenRowsIndicator();
+            showFloatingStatus(currentLanguage === 'en' ? 'Row shown' : 'Zeile eingeblendet');
+        }
+        
+        // Alle versteckten Zeilen einblenden
+        function showAllHiddenRows() {
+            explorerState.hiddenRows.clear();
+            explorerState.editedCells.set('_rowVisibilityChanged', true);
+            filterExplorerData();
+            updateExplorerEditStatus();
+            updateHiddenRowsIndicator();
+            showFloatingStatus(currentLanguage === 'en' ? 'All rows shown' : 'Alle Zeilen eingeblendet');
+        }
+        
+        // Indikator für versteckte Zeilen aktualisieren
+        function updateHiddenRowsIndicator() {
+            let indicator = document.getElementById('hiddenRowsIndicator');
+            const count = explorerState.hiddenRows.size;
+            
+            if (count === 0) {
+                if (indicator) indicator.remove();
+                return;
+            }
+            
+            if (!indicator) {
+                // Erstelle Indikator-Button
+                indicator = document.createElement('button');
+                indicator.id = 'hiddenRowsIndicator';
+                indicator.className = 'btn btn-warning btn-sm';
+                indicator.style.marginLeft = '8px';
+                indicator.title = currentLanguage === 'en' ? 'Click to show hidden rows' : 'Klicken um versteckte Zeilen anzuzeigen';
+                
+                // Füge nach der Suche ein
+                const searchContainer = elements.explorerSearch?.parentElement;
+                if (searchContainer) {
+                    searchContainer.appendChild(indicator);
+                }
+            }
+            
+            indicator.innerHTML = `👁️ ${count} ${currentLanguage === 'en' ? 'hidden' : 'ausgeblendet'}`;
+            indicator.onclick = showHiddenRowsMenu;
+        }
+        
+        // Menü für versteckte Zeilen anzeigen
+        function showHiddenRowsMenu(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Altes Menü entfernen
+            const oldMenu = document.querySelector('.hidden-rows-menu');
+            if (oldMenu) oldMenu.remove();
+            
+            let menuHtml = '<div class="context-menu hidden-rows-menu">';
+            menuHtml += '<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">👁️ Versteckte Zeilen</div>';
+            menuHtml += '<div class="context-menu-divider"></div>';
+            
+            // Liste der versteckten Zeilen (max 20 anzeigen)
+            const hiddenArray = Array.from(explorerState.hiddenRows).sort((a, b) => a - b);
+            const displayLimit = 20;
+            
+            hiddenArray.slice(0, displayLimit).forEach(rowIndex => {
+                const rowPreview = explorerState.data[rowIndex]?.slice(0, 2).join(', ').substring(0, 30) || '...';
+                menuHtml += `<div class="context-menu-item" data-action="show-row" data-row="${rowIndex}">
+                    👁️ Zeile ${rowIndex + 1}: ${escapeHtml(rowPreview)}...
+                </div>`;
+            });
+            
+            if (hiddenArray.length > displayLimit) {
+                menuHtml += `<div class="context-menu-item" style="color: var(--text-muted); cursor: default;">... und ${hiddenArray.length - displayLimit} weitere</div>`;
+            }
+            
+            menuHtml += '<div class="context-menu-divider"></div>';
+            menuHtml += '<div class="context-menu-item" data-action="show-all" style="color: var(--primary);">✅ Alle einblenden</div>';
+            menuHtml += '</div>';
+            
+            const menu = document.createElement('div');
+            menu.innerHTML = menuHtml;
+            document.body.appendChild(menu.firstElementChild);
+            
+            const menuEl = document.querySelector('.hidden-rows-menu');
+            
+            // Positionierung
+            const rect = e.target.getBoundingClientRect();
+            menuEl.style.left = rect.left + 'px';
+            menuEl.style.top = (rect.bottom + 5) + 'px';
+            
+            // Event-Handler
+            menuEl.querySelectorAll('[data-action="show-row"]').forEach(item => {
+                item.addEventListener('click', () => {
+                    const row = parseInt(item.dataset.row);
+                    showExplorerRow(row);
+                    menuEl.remove();
+                });
+            });
+            
+            menuEl.querySelector('[data-action="show-all"]')?.addEventListener('click', () => {
+                showAllHiddenRows();
+                menuEl.remove();
+            });
+            
+            // Menü bei Klick außerhalb schließen
+            const closeHandler = (event) => {
+                if (!menuEl.contains(event.target)) {
+                    menuEl.remove();
+                    document.removeEventListener('click', closeHandler);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', closeHandler), 10);
+        }
+        
+        // Indikator für AutoFilter aktualisieren
+        function updateAutoFilterIndicator() {
+            let indicator = document.getElementById('autoFilterIndicator');
+            
+            if (!explorerState.autoFilterRange) {
+                if (indicator) indicator.remove();
+                return;
+            }
+            
+            // Spaltenbereich aus der Range extrahieren (z.B. "A1:H26" -> A bis H)
+            let displayText = 'AutoFilter';
+            let tooltipText = `AutoFilter aktiv: ${explorerState.autoFilterRange}\n(wird beim Speichern erhalten)`;
+            
+            try {
+                const rangeMatch = explorerState.autoFilterRange.match(/^([A-Z]+)\d+:([A-Z]+)\d+$/i);
+                if (rangeMatch && explorerState.headers.length > 0) {
+                    const startColLetter = rangeMatch[1].toUpperCase();
+                    const endColLetter = rangeMatch[2].toUpperCase();
+                    
+                    // Spaltenbuchstaben zu Index konvertieren (A=0, B=1, etc.)
+                    const letterToIndex = (letter) => {
+                        let index = 0;
+                        for (let i = 0; i < letter.length; i++) {
+                            index = index * 26 + (letter.charCodeAt(i) - 64);
+                        }
+                        return index - 1;
+                    };
+                    
+                    const startColIndex = letterToIndex(startColLetter);
+                    const endColIndex = letterToIndex(endColLetter);
+                    
+                    // Header-Namen holen
+                    const startHeader = explorerState.headers[startColIndex] || startColLetter;
+                    const endHeader = explorerState.headers[endColIndex] || endColLetter;
+                    
+                    displayText = `AutoFilter: ${startHeader} → ${endHeader}`;
+                    tooltipText = `AutoFilter aktiv auf Spalten:\n${startHeader} bis ${endHeader}\n(${explorerState.autoFilterRange})\n\nWird beim Speichern erhalten.`;
+                }
+            } catch (e) {
+                console.log('Error parsing autoFilter range:', e);
+            }
+            
+            if (!indicator) {
+                // Erstelle Indikator-Badge
+                indicator = document.createElement('span');
+                indicator.id = 'autoFilterIndicator';
+                indicator.style.cssText = 'margin-left: 8px; background: #2196F3; color: white; font-size: 11px; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;';
+                
+                // Füge nach dem Dateinamen ein
+                const fileNameElement = document.getElementById('explorerFileName');
+                if (fileNameElement && fileNameElement.parentElement) {
+                    fileNameElement.parentElement.appendChild(indicator);
+                }
+            }
+            
+            indicator.innerHTML = `<span style="font-size: 13px;">▼</span> ${displayText}`;
+            indicator.title = tooltipText;
+        }
+        
+        // Indikator für Passwortschutz aktualisieren
+        function updatePasswordIndicator() {
+            let indicator = document.getElementById('passwordIndicator');
+            
+            if (!explorerState.filePassword) {
+                if (indicator) indicator.remove();
+                return;
+            }
+            
+            if (!indicator) {
+                // Erstelle Indikator-Badge
+                indicator = document.createElement('span');
+                indicator.id = 'passwordIndicator';
+                indicator.style.cssText = 'margin-left: 8px; background: #FF9800; color: white; font-size: 11px; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;';
+                
+                // Füge nach dem Dateinamen ein
+                const fileNameElement = document.getElementById('explorerFileName');
+                if (fileNameElement && fileNameElement.parentElement) {
+                    fileNameElement.parentElement.appendChild(indicator);
+                }
+            }
+            
+            indicator.innerHTML = `🔐 Passwortgeschützt`;
+            indicator.title = 'Diese Datei ist passwortgeschützt.\nDas Passwort wird beim Speichern beibehalten.';
+        }
+        
         // Neue Spalte einfügen
         async function insertExplorerColumn(colIndex, position = 'after') {
             const insertIndex = position === 'before' ? colIndex : colIndex + 1;
@@ -6345,7 +7221,7 @@
         }
         
         // Prompt-Dialog für Texteingabe
-        function showPromptDialog(title, message, defaultValue = '') {
+        function showPromptDialog(title, message, defaultValue = '', inputType = 'text') {
             return new Promise((resolve) => {
                 const existingDialog = document.querySelector('.prompt-dialog-overlay');
                 if (existingDialog) existingDialog.remove();
@@ -6365,8 +7241,8 @@
                             <div class="modal-title">${title}</div>
                         </div>
                         <div class="modal-body" style="padding: 20px;">
-                            <p style="margin: 0 0 15px 0; color: var(--text-muted);">${message}</p>
-                            <input type="text" id="promptInput" value="${defaultValue}" style="width: 100%; padding: 12px; box-sizing: border-box; font-size: 14px; background: var(--bg-dark); border: 2px solid var(--border); border-radius: 6px; color: var(--text);">
+                            <p style="margin: 0 0 15px 0; color: var(--text-muted); white-space: pre-line;">${message}</p>
+                            <input type="${inputType}" id="promptInput" value="${defaultValue}" style="width: 100%; padding: 12px; box-sizing: border-box; font-size: 14px; background: var(--bg-dark); border: 2px solid var(--border); border-radius: 6px; color: var(--text);">
                         </div>
                         <div class="modal-footer">
                             <button class="btn btn-secondary" id="promptCancel">${currentLanguage === 'en' ? 'Cancel' : 'Abbrechen'}</button>
@@ -6650,6 +7526,393 @@
             });
         }
         
+        // ============ SUCHEN & ERSETZEN (Find & Replace) ============
+        
+        // Find & Replace State
+        const findReplaceState = {
+            matches: [],
+            currentMatchIndex: -1,
+            lastSearchTerm: '',
+            isOpen: false
+        };
+        
+        // Toggle Find & Replace Panel
+        function toggleFindReplacePanel() {
+            const panel = document.getElementById('findReplacePanel');
+            findReplaceState.isOpen = !findReplaceState.isOpen;
+            panel.style.display = findReplaceState.isOpen ? 'flex' : 'none';
+            
+            if (findReplaceState.isOpen) {
+                document.getElementById('findText').focus();
+            } else {
+                clearFindHighlights();
+            }
+        }
+        
+        // Find-Highlights entfernen
+        function clearFindHighlights() {
+            document.querySelectorAll('#explorerTableBody td.find-match').forEach(td => {
+                td.classList.remove('find-match', 'find-current');
+            });
+            findReplaceState.matches = [];
+            findReplaceState.currentMatchIndex = -1;
+            updateFindMatchCounter();
+        }
+        
+        // Match-Counter aktualisieren
+        function updateFindMatchCounter() {
+            const counter = document.getElementById('findMatchCounter');
+            if (!counter) return;
+            if (findReplaceState.matches.length === 0) {
+                counter.textContent = '';
+            } else {
+                counter.textContent = `${findReplaceState.currentMatchIndex + 1}/${findReplaceState.matches.length}`;
+            }
+        }
+        
+        // Suche durchführen
+        function performFind() {
+            const searchTerm = document.getElementById('findText').value;
+            if (!searchTerm) {
+                clearFindHighlights();
+                return;
+            }
+            
+            const caseSensitive = document.getElementById('findCaseSensitive').checked;
+            const wholeWord = document.getElementById('findWholeWord').checked;
+            const useRegex = document.getElementById('findRegex').checked;
+            
+            // Alte Highlights entfernen
+            clearFindHighlights();
+            
+            // Pattern erstellen
+            let pattern;
+            try {
+                if (useRegex) {
+                    pattern = new RegExp(searchTerm, caseSensitive ? 'g' : 'gi');
+                } else {
+                    const escaped = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const term = wholeWord ? `\\b${escaped}\\b` : escaped;
+                    pattern = new RegExp(term, caseSensitive ? 'g' : 'gi');
+                }
+            } catch (e) {
+                showFloatingStatus('Ungültiger regulärer Ausdruck', true);
+                return;
+            }
+            
+            // Alle sichtbaren Zellen durchsuchen
+            const matches = [];
+            const tbody = document.getElementById('explorerTableBody');
+            const rows = tbody.querySelectorAll('tr');
+            
+            rows.forEach(row => {
+                const tds = row.querySelectorAll('td[data-row]');
+                tds.forEach(td => {
+                    const cellValue = td.textContent || '';
+                    if (pattern.test(cellValue)) {
+                        const rowIndex = parseInt(td.dataset.row);
+                        const colIndex = parseInt(td.dataset.col);
+                        matches.push({ rowIndex, colIndex, td });
+                        td.classList.add('find-match');
+                    }
+                    // Reset pattern lastIndex für globales Matching
+                    pattern.lastIndex = 0;
+                });
+            });
+            
+            findReplaceState.matches = matches;
+            findReplaceState.lastSearchTerm = searchTerm;
+            
+            if (matches.length > 0) {
+                findReplaceState.currentMatchIndex = 0;
+                highlightCurrentMatch();
+                showFloatingStatus(`${matches.length} Treffer gefunden`);
+            } else {
+                showFloatingStatus('Keine Treffer gefunden', true);
+            }
+            
+            updateFindMatchCounter();
+        }
+        
+        // Aktuellen Treffer hervorheben und scrollen
+        function highlightCurrentMatch() {
+            // Vorherigen aktuellen Treffer zurücksetzen
+            document.querySelectorAll('#explorerTableBody td.find-current').forEach(td => {
+                td.classList.remove('find-current');
+            });
+            
+            if (findReplaceState.matches.length === 0 || findReplaceState.currentMatchIndex < 0) return;
+            
+            const match = findReplaceState.matches[findReplaceState.currentMatchIndex];
+            match.td.classList.add('find-current');
+            match.td.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+            
+            updateFindMatchCounter();
+        }
+        
+        // Nächsten Treffer finden
+        function findNext() {
+            const searchTerm = document.getElementById('findText').value;
+            
+            // Wenn Suchbegriff geändert wurde, neu suchen
+            if (searchTerm !== findReplaceState.lastSearchTerm) {
+                performFind();
+                return;
+            }
+            
+            if (findReplaceState.matches.length === 0) {
+                performFind();
+                return;
+            }
+            
+            // Zum nächsten Treffer
+            findReplaceState.currentMatchIndex = 
+                (findReplaceState.currentMatchIndex + 1) % findReplaceState.matches.length;
+            highlightCurrentMatch();
+        }
+        
+        // Vorherigen Treffer finden
+        function findPrevious() {
+            if (findReplaceState.matches.length === 0) return;
+            
+            findReplaceState.currentMatchIndex = 
+                (findReplaceState.currentMatchIndex - 1 + findReplaceState.matches.length) % findReplaceState.matches.length;
+            highlightCurrentMatch();
+        }
+        
+        // Einzelne Ersetzung
+        function replaceOne() {
+            if (findReplaceState.matches.length === 0 || findReplaceState.currentMatchIndex < 0) {
+                findNext();
+                return;
+            }
+            
+            const replaceText = document.getElementById('replaceText').value;
+            const match = findReplaceState.matches[findReplaceState.currentMatchIndex];
+            
+            // Zelle ersetzen
+            replaceCellContent(match.rowIndex, match.colIndex, replaceText);
+            
+            // Treffer aus Liste entfernen
+            findReplaceState.matches.splice(findReplaceState.currentMatchIndex, 1);
+            
+            // Index anpassen
+            if (findReplaceState.matches.length === 0) {
+                findReplaceState.currentMatchIndex = -1;
+                updateFindMatchCounter();
+                showFloatingStatus('Alle Treffer ersetzt');
+            } else {
+                if (findReplaceState.currentMatchIndex >= findReplaceState.matches.length) {
+                    findReplaceState.currentMatchIndex = 0;
+                }
+                highlightCurrentMatch();
+            }
+        }
+        
+        // Alle ersetzen
+        function replaceAll() {
+            const searchTerm = document.getElementById('findText').value;
+            if (!searchTerm) return;
+            
+            // Erst suchen falls nötig
+            if (findReplaceState.matches.length === 0 || searchTerm !== findReplaceState.lastSearchTerm) {
+                performFind();
+            }
+            
+            if (findReplaceState.matches.length === 0) return;
+            
+            const replaceText = document.getElementById('replaceText').value;
+            const caseSensitive = document.getElementById('findCaseSensitive').checked;
+            const wholeWord = document.getElementById('findWholeWord').checked;
+            const useRegex = document.getElementById('findRegex').checked;
+            
+            // Pattern erstellen
+            let pattern;
+            try {
+                if (useRegex) {
+                    pattern = new RegExp(searchTerm, caseSensitive ? 'g' : 'gi');
+                } else {
+                    const escaped = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    const term = wholeWord ? `\\b${escaped}\\b` : escaped;
+                    pattern = new RegExp(term, caseSensitive ? 'g' : 'gi');
+                }
+            } catch (e) {
+                showFloatingStatus('Ungültiger regulärer Ausdruck', true);
+                return;
+            }
+            
+            const undoActions = [];
+            let replacedCount = 0;
+            
+            // Alle Treffer ersetzen
+            findReplaceState.matches.forEach(match => {
+                const oldValue = String(explorerState.data[match.rowIndex][match.colIndex] ?? '');
+                const newValue = oldValue.replace(pattern, replaceText);
+                
+                if (oldValue !== newValue) {
+                    undoActions.push({
+                        rowIndex: match.rowIndex,
+                        colIndex: match.colIndex,
+                        oldValue,
+                        newValue,
+                        originalValue: match.td.dataset.original
+                    });
+                    
+                    explorerState.data[match.rowIndex][match.colIndex] = newValue;
+                    explorerState.editedCells.set(`${match.rowIndex}-${match.colIndex}`, newValue);
+                    
+                    match.td.textContent = newValue;
+                    match.td.dataset.lastValue = newValue;
+                    match.td.classList.add('edited');
+                    match.td.classList.remove('find-match', 'find-current');
+                    
+                    replacedCount++;
+                }
+            });
+            
+            // Undo-Aktion speichern
+            if (undoActions.length > 0) {
+                pushExplorerUndo({
+                    type: 'multi',
+                    actions: undoActions
+                });
+            }
+            
+            // Status aktualisieren
+            clearFindHighlights();
+            updateExplorerEditStatus();
+            
+            showFloatingStatus(`${replacedCount} Ersetzung(en) durchgeführt`);
+        }
+        
+        // Zelleninhalt mit Regex ersetzen
+        function replaceCellContent(rowIndex, colIndex, replaceText) {
+            const searchTerm = document.getElementById('findText').value;
+            const caseSensitive = document.getElementById('findCaseSensitive').checked;
+            const wholeWord = document.getElementById('findWholeWord').checked;
+            const useRegex = document.getElementById('findRegex').checked;
+            
+            let pattern;
+            if (useRegex) {
+                pattern = new RegExp(searchTerm, caseSensitive ? '' : 'i');
+            } else {
+                const escaped = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const term = wholeWord ? `\\b${escaped}\\b` : escaped;
+                pattern = new RegExp(term, caseSensitive ? '' : 'i');
+            }
+            
+            const cellKey = `${rowIndex}-${colIndex}`;
+            const td = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+            
+            if (!td) return;
+            
+            const oldValue = String(explorerState.data[rowIndex][colIndex] ?? '');
+            const newValue = oldValue.replace(pattern, replaceText);
+            
+            // Undo-Aktion speichern
+            pushExplorerUndo({
+                type: 'single',
+                rowIndex,
+                colIndex,
+                oldValue,
+                newValue,
+                originalValue: td.dataset.original
+            });
+            
+            // Daten aktualisieren
+            explorerState.data[rowIndex][colIndex] = newValue;
+            explorerState.editedCells.set(cellKey, newValue);
+            
+            // UI aktualisieren
+            td.textContent = newValue;
+            td.dataset.lastValue = newValue;
+            td.classList.add('edited');
+            td.classList.remove('find-match', 'find-current');
+            
+            updateExplorerEditStatus();
+        }
+        
+        // Event Listeners für Find & Replace
+        document.addEventListener('DOMContentLoaded', () => {
+            // Toggle Button
+            document.getElementById('btnToggleFindReplace')?.addEventListener('click', toggleFindReplacePanel);
+            
+            // Close Button
+            document.getElementById('btnCloseFindReplace')?.addEventListener('click', toggleFindReplacePanel);
+            
+            // Find Next Button
+            document.getElementById('btnFindNext')?.addEventListener('click', findNext);
+            
+            // Replace One Button
+            document.getElementById('btnReplaceOne')?.addEventListener('click', replaceOne);
+            
+            // Replace All Button
+            document.getElementById('btnReplaceAll')?.addEventListener('click', replaceAll);
+            
+            // Undo Button
+            document.getElementById('btnFindReplaceUndo')?.addEventListener('click', () => {
+                if (undoExplorer()) {
+                    showFloatingStatus('Rückgängig gemacht');
+                } else {
+                    showFloatingStatus('Nichts zum Rückgängigmachen', true);
+                }
+            });
+            
+            // Enter-Taste im Suchfeld
+            document.getElementById('findText')?.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (e.shiftKey) {
+                        findPrevious();
+                    } else {
+                        findNext();
+                    }
+                }
+            });
+            
+            // Escape zum Schließen
+            document.getElementById('findReplacePanel')?.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    toggleFindReplacePanel();
+                }
+            });
+        });
+        
+        // Keyboard Shortcut: Ctrl+H für Find & Replace
+        document.addEventListener('keydown', (e) => {
+            // F11 für Vollbild im Datenexplorer
+            if (e.key === 'F11' && !elements.dataExplorerModal.classList.contains('hidden')) {
+                e.preventDefault();
+                toggleExplorerFullscreen();
+            }
+            // Escape beendet Vollbild
+            if (e.key === 'Escape' && !elements.dataExplorerModal.classList.contains('hidden')) {
+                const modal = document.querySelector('#dataExplorerModal .modal');
+                if (modal.classList.contains('modal-fullscreen')) {
+                    e.preventDefault();
+                    toggleExplorerFullscreen();
+                    return;
+                }
+            }
+            if (e.ctrlKey && e.key === 'h' && !elements.dataExplorerModal.classList.contains('hidden')) {
+                e.preventDefault();
+                if (!findReplaceState.isOpen) {
+                    toggleFindReplacePanel();
+                }
+            }
+            // F3 für nächsten Treffer
+            if (e.key === 'F3' && findReplaceState.isOpen) {
+                e.preventDefault();
+                if (e.shiftKey) {
+                    findPrevious();
+                } else {
+                    findNext();
+                }
+            }
+        });
+        
+        // ============ ENDE SUCHEN & ERSETZEN ============
+        
         // Floating Status Nachricht anzeigen
         function showFloatingStatus(message, isError = false) {
             // Alte Nachricht entfernen
@@ -6833,6 +8096,22 @@
             document.getElementById('explorerPreviewModal').classList.add('hidden');
         }
         
+        // Vollbild-Modus für Datenexplorer umschalten
+        function toggleExplorerFullscreen() {
+            const modal = document.querySelector('#dataExplorerModal .modal');
+            const btn = document.getElementById('btnExplorerFullscreen');
+            
+            if (modal.classList.contains('modal-fullscreen')) {
+                modal.classList.remove('modal-fullscreen');
+                btn.innerHTML = '⛶';
+                btn.title = 'Vollbild (F11)';
+            } else {
+                modal.classList.add('modal-fullscreen');
+                btn.innerHTML = '⛶';
+                btn.title = 'Vollbild beenden (F11 oder Esc)';
+            }
+        }
+        
         async function loadExplorerFile() {
             // Prüfe auf ungespeicherte Änderungen
             if (hasUnsavedChanges()) {
@@ -6855,10 +8134,44 @@
             });
             if (!filePath) return;
             
-            const result = await window.electronAPI.readExcelFile(filePath);
-            if (!result.success) {
+            // Versuche Datei zu öffnen (mit Passwort-Retry bei geschützten Dateien)
+            let result = await window.electronAPI.readExcelFile(filePath);
+            
+            // Passwortgeschützte Datei?
+            if (!result.success && result.needsPassword) {
+                const password = await showPromptDialog(
+                    '🔐 Passwort erforderlich',
+                    'Diese Excel-Datei ist passwortgeschützt.\nBitte geben Sie das Passwort ein:',
+                    '',
+                    'password'
+                );
+                
+                if (password === null) {
+                    // Abgebrochen
+                    return;
+                }
+                
+                // Erneut mit Passwort versuchen
+                result = await window.electronAPI.readExcelFile(filePath, password);
+                
+                if (!result.success) {
+                    if (result.needsPassword) {
+                        showFloatingStatus('❌ Falsches Passwort', 'error');
+                    } else {
+                        elements.explorerStatus.textContent = `Fehler: ${result.error}`;
+                    }
+                    return;
+                }
+                
+                // Passwort für späteres Speichern merken
+                explorerState.filePassword = password;
+                showFloatingStatus('🔓 Datei entsperrt');
+            } else if (!result.success) {
                 elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 return;
+            } else {
+                // Kein Passwort nötig
+                explorerState.filePassword = null;
             }
             
             // Cache leeren bei neuer Datei
@@ -6869,11 +8182,27 @@
             explorerState.filePath = filePath;
             explorerState.fileName = result.fileName;
             explorerState.sheets = result.sheets;
+            explorerState.hasPivotTables = result.hasPivotTables || false;
+            
+            // Warnung bei Pivot-Tabellen
+            if (result.hasPivotTables) {
+                await showConfirmDialog(
+                    '⚠️ Pivot-Tabellen erkannt',
+                    'Diese Datei enthält Pivot-Tabellen!\n\n' +
+                    'Pivot-Tabellen können beim Speichern verloren gehen oder beschädigt werden.\n\n' +
+                    'Empfehlung: Erstellen Sie eine Sicherheitskopie der Datei.',
+                    'Verstanden',
+                    null  // Kein Abbrechen-Button
+                );
+            }
             
             // Element frisch abfragen (kann durch setLanguage ersetzt worden sein)
             const explorerFileNameEl = document.getElementById('explorerFileName');
             if (explorerFileNameEl) explorerFileNameEl.textContent = result.fileName;
             elements.explorerSheetSelect.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+            
+            // Passwort-Indikator aktualisieren
+            updatePasswordIndicator();
             
             await loadExplorerSheet(result.sheets[0]);
             
@@ -6905,6 +8234,14 @@
                 explorerState.rowHighlights = new Map(cachedSheet.rowHighlights);
                 explorerState.visibleColumns = [...cachedSheet.visibleColumns];
                 explorerState.columnOrder = [...(cachedSheet.columnOrder || [])];
+                explorerState.dataValidations = { ...(cachedSheet.dataValidations || {}) };
+                explorerState.cellStyles = { ...(cachedSheet.cellStyles || {}) };
+                explorerState.cellFormulas = { ...(cachedSheet.cellFormulas || {}) };
+                explorerState.cellHyperlinks = { ...(cachedSheet.cellHyperlinks || {}) };
+                explorerState.richTextCells = { ...(cachedSheet.richTextCells || {}) };
+                explorerState.hiddenRows = new Set(cachedSheet.hiddenRows || []);
+                explorerState.autoFilterRange = cachedSheet.autoFilterRange || null;
+                explorerState.mergedCells = [...(cachedSheet.mergedCells || [])];
                 
                 // UI-State zurücksetzen
                 explorerState.filteredData = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
@@ -6924,11 +8261,13 @@
                 renderExplorerTable();
                 updateColumnToggles();
                 updateExplorerEditStatus();
+                updateHiddenRowsIndicator();
+                updateAutoFilterIndicator();
                 return;
             }
             
-            // Von Datei laden
-            const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName);
+            // Von Datei laden (mit Passwort falls vorhanden)
+            const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName, explorerState.filePassword);
             if (!result.success) {
                 elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 return;
@@ -6959,6 +8298,41 @@
             explorerState.sortDirection = null;
             explorerState.editedCells.clear(); // Bearbeitungen zurücksetzen
             explorerState.rowHighlights.clear(); // Highlights zurücksetzen
+            // Data Validations (Dropdown-Listen) laden
+            explorerState.dataValidations = result.dataValidations || {};
+            // Cell Styles (Formatierungen) laden
+            explorerState.cellStyles = result.cellStyles || {};
+            // Cell Formulas (Formeln) laden
+            explorerState.cellFormulas = result.cellFormulas || {};
+            console.log('Cell Formulas loaded:', Object.keys(explorerState.cellFormulas).length, 'entries');
+            // Cell Hyperlinks (Links) laden
+            explorerState.cellHyperlinks = result.cellHyperlinks || {};
+            console.log('Cell Hyperlinks loaded:', Object.keys(explorerState.cellHyperlinks).length, 'entries');
+            // Rich Text Cells (formatierter Text) laden
+            explorerState.richTextCells = result.richTextCells || {};
+            if (Object.keys(explorerState.richTextCells).length > 0) {
+                console.log('Rich Text Cells loaded:', Object.keys(explorerState.richTextCells).length, 'entries');
+            }
+            // Hidden Rows (ausgeblendete Zeilen) laden
+            explorerState.hiddenRows = new Set(result.hiddenRows || []);
+            console.log('Hidden Rows loaded:', explorerState.hiddenRows.size, 'entries');
+            // AutoFilter Range laden
+            explorerState.autoFilterRange = result.autoFilterRange || null;
+            if (explorerState.autoFilterRange) {
+                console.log('AutoFilter Range loaded:', explorerState.autoFilterRange);
+            }
+            // Merged Cells laden
+            explorerState.mergedCells = result.mergedCells || [];
+            if (explorerState.mergedCells.length > 0) {
+                console.log('Merged Cells loaded:', explorerState.mergedCells.length, 'regions');
+            }
+            console.log('Cell Styles loaded:', Object.keys(explorerState.cellStyles).length, 'entries');
+            // Debug: Zeige alle Styles mit fill
+            const stylesWithFill = Object.entries(explorerState.cellStyles).filter(([k, v]) => v.fill);
+            console.log('Styles with fill:', stylesWithFill.length);
+            if (stylesWithFill.length > 0) {
+                console.log('Sample fills:', stylesWithFill.slice(0, 5));
+            }
             elements.explorerSearch.value = '';
             
             // Prüfe ob es gespeicherte Bearbeitungen gibt (Auto-Save Recovery)
@@ -6997,6 +8371,8 @@
             
             renderExplorerTable();
             updateColumnToggles();
+            updateHiddenRowsIndicator();
+            updateAutoFilterIndicator();
         }
         
         // Speichert das aktuelle Sheet im Cache
@@ -7010,7 +8386,15 @@
                 editedCells: new Map(explorerState.editedCells),
                 rowHighlights: new Map(explorerState.rowHighlights),
                 visibleColumns: [...explorerState.visibleColumns],
-                columnOrder: [...explorerState.columnOrder]
+                columnOrder: [...explorerState.columnOrder],
+                dataValidations: { ...explorerState.dataValidations },
+                cellStyles: { ...explorerState.cellStyles },
+                cellFormulas: { ...explorerState.cellFormulas },
+                cellHyperlinks: { ...explorerState.cellHyperlinks },
+                richTextCells: { ...explorerState.richTextCells },
+                hiddenRows: new Set(explorerState.hiddenRows),
+                autoFilterRange: explorerState.autoFilterRange,
+                mergedCells: [...explorerState.mergedCells]
             });
         }
         
@@ -7043,6 +8427,11 @@
         function filterExplorerData() {
             // Erstelle Array mit originalem Index für jede Zeile
             let filtered = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
+            
+            // Versteckte Zeilen ausfiltern
+            if (explorerState.hiddenRows.size > 0) {
+                filtered = filtered.filter(item => !explorerState.hiddenRows.has(item.originalIndex));
+            }
             
             // Volltextsuche mit Platzhalter-Unterstützung (* und ?)
             if (explorerState.searchTerm) {
@@ -7361,6 +8750,33 @@
             renderExplorerTable();
         }
         
+        // Hilfsfunktion: Prüft ob eine Zelle Teil eines Merged-Bereichs ist
+        // Gibt zurück: null (nicht merged), 'master' (Hauptzelle), 'hidden' (Teil eines Merges, ausblenden)
+        function getMergedCellInfo(rowIndex, colIndex) {
+            for (const merge of explorerState.mergedCells) {
+                // rowIndex ist 0-basiert für Datenzeilen, merge.startRow ist relativ zur Header-Zeile
+                // Datenzeilen sind ab Index 1 (Header ist 0), also müssen wir +1 rechnen
+                const dataRowIndex = rowIndex + 1; // Konvertiere zu Header-relativen Index
+                
+                if (dataRowIndex >= merge.startRow && dataRowIndex <= merge.endRow &&
+                    colIndex >= merge.startCol && colIndex <= merge.endCol) {
+                    // Diese Zelle ist Teil eines Merges
+                    if (dataRowIndex === merge.startRow && colIndex === merge.startCol) {
+                        // Master-Zelle (oben links)
+                        return {
+                            type: 'master',
+                            rowSpan: merge.rowSpan,
+                            colSpan: merge.colSpan
+                        };
+                    } else {
+                        // Versteckte Zelle
+                        return { type: 'hidden' };
+                    }
+                }
+            }
+            return null; // Nicht Teil eines Merges
+        }
+        
         function renderExplorerTable() {
             const btnPreview = document.getElementById('btnExplorerPreview');
             
@@ -7515,14 +8931,143 @@
                         ${isSelected ? 'checked' : ''}>
                 </td>`;
                 displayColumns.forEach(colIndex => {
+                    // Prüfe ob diese Zelle Teil eines Merged-Bereichs ist
+                    const mergeInfo = getMergedCellInfo(originalIndex, colIndex);
+                    if (mergeInfo && mergeInfo.type === 'hidden') {
+                        // Diese Zelle gehört zu einem Merge, wird nicht gerendert (colspan/rowspan übernimmt)
+                        return;
+                    }
+                    
                     const cellValue = String(row[colIndex] ?? '');
                     const cellKey = `${originalIndex}-${colIndex}`;
                     const isEdited = explorerState.editedCells.has(cellKey);
-                    const editedClass = isEdited ? ' class="edited"' : '';
+                    const editedClass = isEdited ? ' edited' : '';
                     // Hole den echten Original-Wert aus originalData
                     const originalRow = explorerState.originalData[originalIndex];
                     const originalValue = originalRow ? String(originalRow[colIndex] ?? '') : cellValue;
-                    bodyHtml += `<td contenteditable="true" data-row="${originalIndex}" data-col="${colIndex}" data-original="${escapeHtml(originalValue)}"${editedClass}>${escapeHtml(cellValue)}</td>`;
+                    
+                    // Merged Cell Attribute
+                    let mergedClass = '';
+                    let mergedAttrs = '';
+                    let mergedIcon = '';
+                    if (mergeInfo && mergeInfo.type === 'master') {
+                        mergedClass = ' merged-cell merged-cell-master';
+                        // colspan nur wenn Spalte sichtbar
+                        const visibleColSpan = Math.min(mergeInfo.colSpan, displayColumns.length - displayColumns.indexOf(colIndex));
+                        if (visibleColSpan > 1) {
+                            mergedAttrs += ` colspan="${visibleColSpan}"`;
+                        }
+                        // rowspan (nur innerhalb der aktuellen Seite sinnvoll)
+                        // Da rowspan über Pagination hinweg nicht funktioniert, zeigen wir nur an, dass es merged ist
+                        if (mergeInfo.rowSpan > 1 || mergeInfo.colSpan > 1) {
+                            mergedIcon = `<span class="merged-icon" title="Verbundene Zellen: ${mergeInfo.rowSpan}×${mergeInfo.colSpan}">⊞</span>`;
+                        }
+                    }
+                    
+                    // Cell Styles aus Excel
+                    const cellStyleKey = `${originalIndex + 1}-${colIndex}`; // +1 weil Styles inkl. Header-Zeile gespeichert sind
+                    const cellStyle = explorerState.cellStyles[cellStyleKey];
+                    let inlineStyle = '';
+                    
+                    // Formel prüfen (gleicher Key wie cellStyles)
+                    const cellFormula = explorerState.cellFormulas[cellStyleKey];
+                    const hasFormula = !!cellFormula;
+                    const formulaTooltip = hasFormula ? ` title="Formel: =${escapeHtml(cellFormula)}"` : '';
+                    const formulaClass = hasFormula ? ' has-formula' : '';
+                    const formulaIcon = hasFormula ? '<span class="formula-icon" title="Diese Zelle enthält eine Formel">ƒ</span>' : '';
+                    
+                    // Hyperlink prüfen (gleicher Key wie cellStyles)
+                    const cellHyperlink = explorerState.cellHyperlinks[cellStyleKey];
+                    const hasHyperlink = !!cellHyperlink;
+                    const hyperlinkClass = hasHyperlink ? ' has-hyperlink' : '';
+                    const hyperlinkIcon = hasHyperlink ? '<span class="hyperlink-icon" title="Link öffnen: ' + escapeHtml(cellHyperlink) + '">🔗</span>' : '';
+                    
+                    // Rich Text prüfen (gleicher Key wie cellStyles)
+                    const richTextFragments = explorerState.richTextCells[cellStyleKey];
+                    const hasRichText = richTextFragments && richTextFragments.length > 0;
+                    let richTextHtml = '';
+                    if (hasRichText) {
+                        // Generiere HTML für Rich Text Fragmente
+                        richTextHtml = richTextFragments.map(fragment => {
+                            const styles = [];
+                            if (fragment.styles) {
+                                if (fragment.styles.bold) styles.push('font-weight: bold');
+                                if (fragment.styles.italic) styles.push('font-style: italic');
+                                if (fragment.styles.underline) styles.push('text-decoration: underline');
+                                if (fragment.styles.strikethrough) styles.push('text-decoration: line-through');
+                                if (fragment.styles.subscript) styles.push('vertical-align: sub; font-size: smaller');
+                                if (fragment.styles.superscript) styles.push('vertical-align: super; font-size: smaller');
+                                if (fragment.styles.fontColor) styles.push(`color: ${fragment.styles.fontColor}`);
+                                if (fragment.styles.fontSize) styles.push(`font-size: ${fragment.styles.fontSize}px`);
+                            }
+                            const styleAttr = styles.length > 0 ? ` style="${styles.join('; ')}"` : '';
+                            return `<span${styleAttr}>${escapeHtml(fragment.text)}</span>`;
+                        }).join('');
+                    }
+                    const richTextClass = hasRichText ? ' has-rich-text' : '';
+                    
+                    if (cellStyle) {
+                        const styles = [];
+                        if (cellStyle.bold) styles.push('font-weight: bold');
+                        if (cellStyle.italic) styles.push('font-style: italic');
+                        if (cellStyle.underline) styles.push('text-decoration: underline');
+                        if (cellStyle.strikethrough) styles.push('text-decoration: line-through');
+                        if (cellStyle.fontColor) styles.push(`color: ${cellStyle.fontColor}`);
+                        if (cellStyle.fill) {
+                            console.log(`Cell ${cellStyleKey} has fill: ${cellStyle.fill}`);
+                            styles.push(`background-color: ${cellStyle.fill}`);
+                        }
+                        if (cellStyle.fontSize && cellStyle.fontSize !== 11) styles.push(`font-size: ${cellStyle.fontSize}px`);
+                        if (cellStyle.textAlign) styles.push(`text-align: ${cellStyle.textAlign}`);
+                        if (styles.length > 0) {
+                            inlineStyle = ` style="${styles.join('; ')}"`;
+                            console.log(`Cell ${cellStyleKey} inline style:`, inlineStyle);
+                        }
+                    }
+                    
+                    // Prüfe auf Data Validation (Dropdown-Liste)
+                    const validation = explorerState.dataValidations[colIndex];
+                    let validationValues = null;
+                    
+                    if (validation) {
+                        if (validation.type === 'column') {
+                            // Spaltenweite Validation
+                            validationValues = validation.values;
+                        } else if (validation.type === 'rows' && validation.rows[originalIndex + 1]) {
+                            // Zeilenspezifische Validation (+1 weil Header-Zeile abgezogen wurde)
+                            validationValues = validation.rows[originalIndex + 1].values;
+                        }
+                    }
+                    
+                    if (validationValues && validationValues.length > 0) {
+                        // Zelle mit Dropdown rendern
+                        const options = validationValues.map(v => {
+                            const escaped = escapeHtml(v);
+                            const selected = v === cellValue ? ' selected' : '';
+                            return `<option value="${escaped}"${selected}>${escaped}</option>`;
+                        }).join('');
+                        // Füge leere Option hinzu wenn allowBlank
+                        const emptyOption = validation.allowBlank !== false ? '<option value=""></option>' : '';
+                        bodyHtml += `<td class="has-dropdown${editedClass}${formulaClass}${hyperlinkClass}${mergedClass}" data-row="${originalIndex}" data-col="${colIndex}" data-original="${escapeHtml(originalValue)}"${inlineStyle}${formulaTooltip}${hasHyperlink ? ` data-hyperlink="${escapeHtml(cellHyperlink)}"` : ''}${mergedAttrs}>
+                            ${mergedIcon}${hyperlinkIcon}${formulaIcon}<select class="cell-dropdown" data-row="${originalIndex}" data-col="${colIndex}"${inlineStyle}>
+                                ${emptyOption}${options}
+                            </select>
+                        </td>`;
+                    } else {
+                        // Normale editierbare Zelle
+                        // Bestimme den anzuzeigenden Inhalt (Rich Text oder normaler Text)
+                        const cellContent = hasRichText ? richTextHtml : escapeHtml(cellValue);
+                        
+                        if (hasHyperlink) {
+                            // Zelle mit klickbarem Hyperlink
+                            bodyHtml += `<td contenteditable="true" data-row="${originalIndex}" data-col="${colIndex}" data-original="${escapeHtml(originalValue)}" data-hyperlink="${escapeHtml(cellHyperlink)}" class="${editedClass}${formulaClass}${hyperlinkClass}${richTextClass}${mergedClass}"${inlineStyle}${formulaTooltip}${mergedAttrs}>${mergedIcon}${hyperlinkIcon}${formulaIcon}<span class="cell-content">${cellContent}</span></td>`;
+                        } else if (hasRichText) {
+                            // Zelle mit Rich Text (gemischte Formatierung)
+                            bodyHtml += `<td contenteditable="true" data-row="${originalIndex}" data-col="${colIndex}" data-original="${escapeHtml(originalValue)}" class="${editedClass}${formulaClass}${richTextClass}${mergedClass}"${inlineStyle}${formulaTooltip}${mergedAttrs}>${mergedIcon}${formulaIcon}<span class="cell-content">${cellContent}</span></td>`;
+                        } else {
+                            bodyHtml += `<td contenteditable="true" data-row="${originalIndex}" data-col="${colIndex}" data-original="${escapeHtml(originalValue)}" class="${editedClass}${formulaClass}${mergedClass}"${inlineStyle}${formulaTooltip}${mergedAttrs}>${mergedIcon}${formulaIcon}${cellContent}</td>`;
+                        }
+                    }
                 });
                 bodyHtml += '</tr>';
             });
@@ -7561,6 +9106,32 @@
                     const rowIndex = parseInt(tr.dataset.originalIndex);
                     if (!isNaN(rowIndex)) {
                         showRowContextMenu(e, rowIndex);
+                    }
+                });
+            });
+            
+            // Event-Listener für Hyperlinks (Ctrl+Click oder Doppelklick öffnet den Link)
+            document.querySelectorAll('#explorerTableBody td.has-hyperlink .cell-content').forEach(span => {
+                span.addEventListener('click', function(e) {
+                    // Ctrl+Click oder Cmd+Click öffnet den Link
+                    if (e.ctrlKey || e.metaKey) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const td = this.closest('td');
+                        const hyperlink = td.dataset.hyperlink;
+                        if (hyperlink) {
+                            window.electronAPI.openExternal(hyperlink);
+                        }
+                    }
+                });
+                
+                span.addEventListener('dblclick', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const td = this.closest('td');
+                    const hyperlink = td.dataset.hyperlink;
+                    if (hyperlink) {
+                        window.electronAPI.openExternal(hyperlink);
                     }
                 });
             });
@@ -7692,6 +9263,48 @@
                     const rowIndex = parseInt(this.dataset.row);
                     const colIndex = parseInt(this.dataset.col);
                     showCellContextMenu(e, rowIndex, colIndex);
+                });
+            });
+            
+            // Event-Listener für Dropdown-Zellen (Data Validation)
+            document.querySelectorAll('#explorerTableBody .cell-dropdown').forEach(select => {
+                // Speichere den initialen Wert für Undo
+                select.dataset.lastValue = select.value;
+                
+                select.addEventListener('change', function() {
+                    const rowIndex = parseInt(this.dataset.row);
+                    const colIndex = parseInt(this.dataset.col);
+                    const td = this.closest('td');
+                    const original = td.dataset.original;
+                    const lastValue = this.dataset.lastValue;
+                    const current = this.value;
+                    const cellKey = `${rowIndex}-${colIndex}`;
+                    
+                    if (original !== current) {
+                        // Änderung speichern
+                        explorerState.editedCells.set(cellKey, current);
+                        explorerState.data[rowIndex][colIndex] = current;
+                        td.classList.add('edited');
+                    } else {
+                        // Zurück zum Original
+                        explorerState.editedCells.delete(cellKey);
+                        td.classList.remove('edited');
+                    }
+                    
+                    // Undo-Aktion speichern
+                    if (lastValue !== current) {
+                        pushExplorerUndo({
+                            rowIndex,
+                            colIndex,
+                            oldValue: lastValue,
+                            newValue: current,
+                            originalValue: original
+                        });
+                        this.dataset.lastValue = current;
+                    }
+                    
+                    // Status aktualisieren
+                    updateExplorerEditStatus();
                 });
             });
             
@@ -7970,6 +9583,42 @@
             const successMsg = currentLanguage === 'en'
                 ? `${selectedCount} row(s) deleted`
                 : `${selectedCount} Zeile(n) gelöscht`;
+            showNotification(successMsg, 'success');
+        }
+        
+        // Blendet mehrere ausgewählte Zeilen aus
+        function hideSelectedRows() {
+            const selectedCount = explorerState.selectedRows.size;
+            if (selectedCount === 0) {
+                showNotification(currentLanguage === 'en' ? 'No rows selected' : 'Keine Zeilen ausgewählt', 'warning');
+                return;
+            }
+            
+            // Füge alle ausgewählten Zeilen zu den ausgeblendeten Zeilen hinzu
+            // selectedRows enthält originalIndex-Werte (0-basiert)
+            // hiddenRows enthält ebenfalls originalIndex-Werte (0-basiert)
+            explorerState.selectedRows.forEach(originalIndex => {
+                explorerState.hiddenRows.add(originalIndex);
+            });
+            
+            // Markierung, dass Zeilen-Sichtbarkeit geändert wurde
+            explorerState.editedCells.set('_rowVisibilityChanged', true);
+            
+            // Auswahl zurücksetzen
+            explorerState.selectedRows.clear();
+            
+            // Markiere als geändert
+            explorerState.hasUnsavedChanges = true;
+            
+            // Gefilterte Daten und UI aktualisieren
+            filterExplorerData();
+            updateHiddenRowsIndicator();
+            updateExplorerEditStatus();
+            updateRowMoveToolbar();
+            
+            const successMsg = currentLanguage === 'en'
+                ? `${selectedCount} row(s) hidden`
+                : `${selectedCount} Zeile(n) ausgeblendet`;
             showNotification(successMsg, 'success');
         }
         
@@ -8336,6 +9985,19 @@
                 return;
             }
             
+            // Warnung bei Pivot-Tabellen
+            if (explorerState.hasPivotTables) {
+                const pivotConfirmed = await showConfirmDialog(
+                    '⚠️ Pivot-Tabellen gefährdet',
+                    'Diese Datei enthält Pivot-Tabellen!\n\n' +
+                    'Das Speichern kann Pivot-Tabellen beschädigen oder entfernen.\n\n' +
+                    'Möchten Sie trotzdem fortfahren?',
+                    'Trotzdem speichern',
+                    'Abbrechen'
+                );
+                if (!pivotConfirmed) return;
+            }
+            
             // Bestätigungsdialog
             const confirmed = await showConfirmDialog(
                 'Änderungen speichern',
@@ -8360,7 +10022,8 @@
                         sheetName: explorerState.selectedSheet,
                         headers: explorerState.headers,
                         data: explorerState.data,
-                        visibleColumns: explorerState.visibleColumns
+                        visibleColumns: explorerState.visibleColumns,
+                        hiddenRows: Array.from(explorerState.hiddenRows)
                     });
                 }
                 
@@ -8371,15 +10034,17 @@
                             sheetName: sheetName,
                             headers: cached.headers,
                             data: cached.data,
-                            visibleColumns: cached.visibleColumns
+                            visibleColumns: cached.visibleColumns,
+                            hiddenRows: Array.from(cached.hiddenRows || [])
                         });
                     }
                 }
                 
-                // Speichern über IPC
+                // Speichern über IPC (mit Passwort falls vorhanden)
                 const result = await window.electronAPI.saveExcelFile({
                     filePath: explorerState.filePath,
-                    sheets: sheetsToSave
+                    sheets: sheetsToSave,
+                    password: explorerState.filePassword
                 });
                 
                 if (result.success) {
@@ -8445,12 +10110,16 @@
                     box-shadow: 0 8px 32px rgba(0,0,0,0.3);
                 `;
                 
+                const buttonsHtml = cancelText 
+                    ? `<button class="btn btn-secondary" id="confirmDialogCancel">${cancelText}</button>
+                       <button class="btn btn-success" id="confirmDialogConfirm">${confirmText}</button>`
+                    : `<button class="btn btn-success" id="confirmDialogConfirm">${confirmText}</button>`;
+                
                 dialog.innerHTML = `
                     <h3 style="margin: 0 0 15px 0; color: var(--text);">${title}</h3>
                     <p style="margin: 0 0 20px 0; color: var(--text-secondary); white-space: pre-line;">${message}</p>
                     <div style="display: flex; gap: 10px; justify-content: flex-end;">
-                        <button class="btn btn-secondary" id="confirmDialogCancel">${cancelText}</button>
-                        <button class="btn btn-success" id="confirmDialogConfirm">${confirmText}</button>
+                        ${buttonsHtml}
                     </div>
                 `;
                 
@@ -8466,10 +10135,12 @@
                     resolve(true);
                 };
                 
-                cancelBtn.onclick = () => {
-                    overlay.remove();
-                    resolve(false);
-                };
+                if (cancelBtn) {
+                    cancelBtn.onclick = () => {
+                        overlay.remove();
+                        resolve(false);
+                    };
+                }
                 
                 // ESC zum Abbrechen
                 const escHandler = (e) => {
@@ -8923,6 +10594,9 @@
             
             // Prüfung beim Schließen der App
             window.electronAPI.onBeforeClose(() => {
+                // Bei normalem Schließen: Recovery-Daten löschen (nur bei Crash sollen sie bleiben)
+                clearExplorerRecoveryData();
+                
                 if (state.transferQueue.length > 0) {
                     const msg = `Es befinden sich noch ${state.transferQueue.length} Einträge in der Warteschlange.\n\nWirklich schließen? Ungespeicherte Daten gehen verloren!`;
                     if (confirm(msg)) {
@@ -9004,6 +10678,7 @@
             elements.btnDataExplorer.onclick = openDataExplorer;
             document.getElementById('btnCloseExplorerX').onclick = closeDataExplorer;
             document.getElementById('btnCloseExplorerFooter').onclick = closeDataExplorer;
+            document.getElementById('btnExplorerFullscreen').onclick = toggleExplorerFullscreen;
             elements.btnExplorerOpenFile.onclick = loadExplorerFile;
             elements.explorerSheetSelect.onchange = (e) => loadExplorerSheet(e.target.value);
             elements.explorerSearch.onkeydown = (e) => { 
@@ -9024,6 +10699,17 @@
             elements.btnExplorerExport.onclick = exportExplorerData;
             elements.btnExplorerSave.onclick = saveExplorerData;
             
+            // Sheet Management Event Listeners
+            document.getElementById('btnSheetManage').onclick = openSheetManageModal;
+            document.getElementById('btnCloseSheetManage').onclick = closeSheetManageModal;
+            document.getElementById('btnSheetManageClose').onclick = closeSheetManageModal;
+            document.getElementById('btnSheetAdd').onclick = addNewSheet;
+            document.getElementById('btnSheetRename').onclick = renameSelectedSheet;
+            document.getElementById('btnSheetClone').onclick = cloneSelectedSheet;
+            document.getElementById('btnSheetMoveUp').onclick = () => moveSelectedSheet('up');
+            document.getElementById('btnSheetMoveDown').onclick = () => moveSelectedSheet('down');
+            document.getElementById('btnSheetDelete').onclick = deleteSelectedSheet;
+            
             // Explorer-Vorschau Event Listeners
             document.getElementById('btnExplorerPreview').onclick = showExplorerPreview;
             document.getElementById('btnClosePreviewX').onclick = closeExplorerPreview;
@@ -9031,6 +10717,7 @@
             
             // Row Move Toolbar Event Listeners
             document.getElementById('btnExecuteMove').onclick = executeRowMove;
+            document.getElementById('btnHideSelectedRows').onclick = hideSelectedRows;
             document.getElementById('btnDeleteSelectedRows').onclick = deleteSelectedRows;
             document.getElementById('btnClearRowSelection').onclick = clearRowSelection;
             

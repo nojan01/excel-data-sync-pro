@@ -4,7 +4,7 @@ Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen E
 
 ## Version
 
-**v1.0.11** - © Norbert Jander 2025
+**v1.0.12** - © Norbert Jander 2025
 
 ## Hauptfunktionen
 
@@ -63,12 +63,19 @@ Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Ex
 
 ### Funktionen
 - **📂 Datei öffnen**: Excel-Dateien laden und alle Arbeitsblätter anzeigen
-- **🔍 Suchen & Filtern**: Globale Suche und spaltenbasierte Filter
+- **🔍 Suchen & Filtern**: Globale Suche und spaltenbasierte Filter mit Suchen & Ersetzen
 - **✏️ Zellen bearbeiten**: Direktes Bearbeiten von Zellinhalten mit Doppelklick
 - **↩️ Undo/Redo**: Änderungen rückgängig machen oder wiederherstellen
 - **📊 Mehrfachauswahl**: Zellen mit Shift+Klick, Strg+Klick oder Mausziehen auswählen
 - **🗑️ Zellinhalte löschen**: Rechtsklick-Menü zum Löschen ausgewählter Zellinhalte
 - **📋 Kopieren**: Ausgewählte Zellinhalte in die Zwischenablage kopieren
+- **🎨 Formatierung**: Fett, Kursiv, Unterstrichen, Farben und Rich Text werden angezeigt
+- **🔗 Hyperlinks**: Klickbare Links in Zellen (Strg+Klick)
+- **📝 Formeln**: Formel-Indikator (ƒ) mit Tooltip
+- **⊞ Verbundene Zellen**: Merged Cells werden korrekt dargestellt
+- **📋 Arbeitsblatt-Verwaltung**: Sheets hinzufügen, löschen, umbenennen, kopieren
+- **⛶ Vollbild-Modus**: F11 für Vollbildansicht
+- **⚠️ Pivot-Warnung**: Warnung bei Dateien mit Pivot-Tabellen
 
 ### Speichern & Exportieren
 - **💾 Speichern**: Änderungen direkt in die Originaldatei speichern (mit Bestätigung)

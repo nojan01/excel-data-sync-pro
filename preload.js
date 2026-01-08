@@ -11,8 +11,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     checkFileExists: (filePath) => ipcRenderer.invoke('fs:checkFileExists', filePath),
     
     // Excel-Operationen
-    readExcelFile: (filePath) => ipcRenderer.invoke('excel:readFile', filePath),
-    readExcelSheet: (filePath, sheetName) => ipcRenderer.invoke('excel:readSheet', filePath, sheetName),
+    readExcelFile: (filePath, password) => ipcRenderer.invoke('excel:readFile', filePath, password),
+    readExcelSheet: (filePath, sheetName, password) => ipcRenderer.invoke('excel:readSheet', filePath, sheetName, password),
     insertExcelRows: (params) => ipcRenderer.invoke('excel:insertRows', params),
     copyExcelFile: (params) => ipcRenderer.invoke('excel:copyFile', params),
     exportData: (params) => ipcRenderer.invoke('excel:exportData', params),
@@ -21,6 +21,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveExcelFile: (params) => ipcRenderer.invoke('excel:saveFile', params),
     createTemplateFromSource: (params) => ipcRenderer.invoke('excel:createTemplateFromSource', params),
     
+    // Sheet-Verwaltung
+    addSheet: (params) => ipcRenderer.invoke('excel:addSheet', params),
+    deleteSheet: (params) => ipcRenderer.invoke('excel:deleteSheet', params),
+    renameSheet: (params) => ipcRenderer.invoke('excel:renameSheet', params),
+    cloneSheet: (params) => ipcRenderer.invoke('excel:cloneSheet', params),
+    moveSheet: (params) => ipcRenderer.invoke('excel:moveSheet', params),
+    
     // Konfiguration
     saveConfig: (filePath, config) => ipcRenderer.invoke('config:save', { filePath, config }),
     loadConfig: (filePath) => ipcRenderer.invoke('config:load', filePath),
@@ -28,6 +35,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     // App-Infos
     getAppPath: () => ipcRenderer.invoke('app:getPath'),
+    
+    // Externe URLs öffnen
+    openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
     
     // Event-Listener für App-Schließen
     onBeforeClose: (callback) => ipcRenderer.on('app:beforeClose', callback),

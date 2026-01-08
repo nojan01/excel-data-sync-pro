@@ -373,37 +373,76 @@ ipcMain.handle('fs:checkFileExists', async (event, filePath) => {
 // EXCEL OPERATIONEN (xlsx-populate - erhaelt Formatierung!)
 // ============================================
 
+// Hilfsfunktion: Prüft ob eine Excel-Datei Pivot-Tabellen enthält
+async function checkForPivotTables(filePath) {
+    const JSZip = require('jszip');
+    try {
+        const fileData = fs.readFileSync(filePath);
+        const zip = await JSZip.loadAsync(fileData);
+        
+        // Suche nach Pivot-Tabellen-Dateien im ZIP
+        const pivotFiles = Object.keys(zip.files).filter(name => 
+            name.includes('pivotTable') || 
+            name.includes('pivotCache') ||
+            name.includes('PivotTable') ||
+            name.includes('PivotCache')
+        );
+        
+        return pivotFiles.length > 0;
+    } catch (error) {
+        console.error('Fehler beim Prüfen auf Pivot-Tabellen:', error);
+        return false;
+    }
+}
+
 // Excel-Datei lesen
-ipcMain.handle('excel:readFile', async (event, filePath) => {
+ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
     // Sicherheitsprüfung: Pfad validieren
     if (!isValidFilePath(filePath)) {
         return { success: false, error: 'Ungültiger Dateipfad' };
     }
     
     try {
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        // Prüfe auf Pivot-Tabellen
+        const hasPivotTables = await checkForPivotTables(filePath);
+        
+        const options = password ? { password } : {};
+        const workbook = await XlsxPopulate.fromFileAsync(filePath, options);
         const sheets = workbook.sheets().map(ws => ws.name());
         
         return {
             success: true,
             fileName: path.basename(filePath),
             filePath: filePath,
-            sheets: sheets
+            sheets: sheets,
+            isPasswordProtected: !!password,
+            hasPivotTables: hasPivotTables
         };
     } catch (error) {
+        // Prüfe ob es sich um eine passwortgeschützte Datei handelt
+        if (error.message.includes("Can't find end of central directory") || 
+            error.message.includes("Encrypted file")) {
+            return { 
+                success: false, 
+                error: 'Passwort erforderlich',
+                isPasswordProtected: true,
+                needsPassword: true
+            };
+        }
         return { success: false, error: error.message };
     }
 });
 
 // Sheet-Daten lesen
-ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
+ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = null) => {
     // Sicherheitsprüfung: Pfad validieren
     if (!isValidFilePath(filePath)) {
         return { success: false, error: 'Ungültiger Dateipfad' };
     }
     
     try {
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const options = password ? { password } : {};
+        const workbook = await XlsxPopulate.fromFileAsync(filePath, options);
         const worksheet = workbook.sheet(sheetName);
         
         if (!worksheet) {
@@ -424,7 +463,60 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
         const data = [];
         const headers = [];
         const hiddenColumns = []; // Indices der versteckten Spalten
+        const hiddenRows = []; // Indices der versteckten Zeilen (0-basiert, ohne Header)
+        const cellStyles = {}; // Styles für jede Zelle: "row-col" -> { bold, italic, fill, fontColor, ... }
+        const cellFormulas = {}; // Formeln für jede Zelle: "row-col" -> "=FORMULA"
+        const cellHyperlinks = {}; // Hyperlinks für jede Zelle: "row-col" -> "https://..."
+        const richTextCells = {}; // Rich Text für Zellen: "row-col" -> [{ text, styles: { bold, italic, ... } }, ...]
         
+        // Hilfsfunktion: Farbe zu CSS konvertieren
+        function colorToCSS(color) {
+            if (!color) return null;
+            
+            // xlsx-populate gibt Farben in verschiedenen Formaten zurück
+            if (typeof color === 'string') {
+                // Bereits ein Hex-String
+                if (color.match(/^[0-9A-Fa-f]{6,8}$/)) {
+                    // ARGB oder RGB Format
+                    if (color.length === 8) {
+                        // ARGB - ignoriere Alpha
+                        return '#' + color.substring(2);
+                    }
+                    return '#' + color;
+                }
+                return color;
+            }
+            
+            if (typeof color === 'object') {
+                // Objekt mit rgb oder theme
+                if (color.rgb) {
+                    const rgb = color.rgb;
+                    if (rgb.length === 8) {
+                        return '#' + rgb.substring(2);
+                    }
+                    return '#' + rgb;
+                }
+                if (color.theme !== undefined) {
+                    // Theme-Farben - verwende Standard-Farben
+                    const themeColors = [
+                        '#000000', // 0 - dark1
+                        '#FFFFFF', // 1 - light1
+                        '#44546A', // 2 - dark2
+                        '#E7E6E6', // 3 - light2
+                        '#4472C4', // 4 - accent1
+                        '#ED7D31', // 5 - accent2
+                        '#A5A5A5', // 6 - accent3
+                        '#FFC000', // 7 - accent4
+                        '#5B9BD5', // 8 - accent5
+                        '#70AD47'  // 9 - accent6
+                    ];
+                    return themeColors[color.theme] || null;
+                }
+            }
+            
+            return null;
+        }
+
         // Hilfsfunktion: Excel-Datum zu lesbarem String konvertieren
         function excelDateToString(excelDate) {
             // Excel-Datum: Tage seit 1.1.1900 (mit falschem Schaltjahr 1900)
@@ -547,15 +639,78 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
         
         for (let row = startRow; row <= endRow; row++) {
             const rowData = [];
+            
+            // Prüfe ob die Zeile in Excel versteckt ist (nur für Datenzeilen, nicht Header)
+            if (row > startRow) {
+                try {
+                    const rowObj = worksheet.row(row);
+                    if (rowObj && rowObj.hidden()) {
+                        // Zeilen-Index 0-basiert, ohne Header
+                        hiddenRows.push(row - startRow - 1);
+                    }
+                } catch (e) {
+                    // Zeile existiert möglicherweise nicht explizit
+                }
+            }
+            
             for (let col = startCol; col <= endCol; col++) {
                 const cell = worksheet.cell(row, col);
                 const value = cell.value();
                 
                 let textValue = '';
                 if (value !== undefined && value !== null) {
-                    // Pr�fe ob es ein Datum ist
-                    if (value instanceof Date) {
-                        // Falls xlsx-populate bereits ein Date-Objekt zur�ckgibt
+                    // Prüfe ob es ein RichText-Objekt ist
+                    if (value && typeof value === 'object' && value.constructor && value.constructor.name === 'RichText') {
+                        // RichText: Extrahiere Fragmente mit Styles
+                        textValue = value.text(); // Gesamttext für die Anzeige
+                        
+                        // Speichere Fragmente für Datenzeilen (row > startRow)
+                        if (row > startRow) {
+                            const fragments = [];
+                            for (let i = 0; i < value.length; i++) {
+                                const fragment = value.get(i);
+                                const fragmentStyles = {};
+                                
+                                // Styles aus dem Fragment extrahieren
+                                try {
+                                    if (fragment.style('bold')) fragmentStyles.bold = true;
+                                    if (fragment.style('italic')) fragmentStyles.italic = true;
+                                    if (fragment.style('underline')) fragmentStyles.underline = true;
+                                    if (fragment.style('strikethrough')) fragmentStyles.strikethrough = true;
+                                    if (fragment.style('subscript')) fragmentStyles.subscript = true;
+                                    if (fragment.style('superscript')) fragmentStyles.superscript = true;
+                                    
+                                    const fontColor = fragment.style('fontColor');
+                                    if (fontColor) {
+                                        const cssColor = colorToCSS(fontColor);
+                                        if (cssColor && cssColor !== '#000000') {
+                                            fragmentStyles.fontColor = cssColor;
+                                        }
+                                    }
+                                    
+                                    const fontSize = fragment.style('fontSize');
+                                    if (fontSize && fontSize !== 11) {
+                                        fragmentStyles.fontSize = fontSize;
+                                    }
+                                } catch (e) {
+                                    // Style nicht verfügbar
+                                }
+                                
+                                fragments.push({
+                                    text: fragment.value(),
+                                    styles: Object.keys(fragmentStyles).length > 0 ? fragmentStyles : null
+                                });
+                            }
+                            
+                            // Nur speichern wenn es tatsächlich unterschiedliche Formatierungen gibt
+                            const hasVariedStyles = fragments.some(f => f.styles !== null);
+                            if (hasVariedStyles) {
+                                const richTextKey = `${row - startRow}-${col - 1}`;
+                                richTextCells[richTextKey] = fragments;
+                            }
+                        }
+                    } else if (value instanceof Date) {
+                        // Falls xlsx-populate bereits ein Date-Objekt zurückgibt
                         const day = String(value.getDate()).padStart(2, '0');
                         const month = String(value.getMonth() + 1).padStart(2, '0');
                         const year = value.getFullYear();
@@ -564,6 +719,118 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
                         textValue = excelDateToString(value);
                     } else {
                         textValue = String(value);
+                    }
+                }
+                
+                // Styles auslesen (nur für Datenzeilen, nicht für Header)
+                if (row > startRow) {
+                    try {
+                        const style = {};
+                        let hasStyle = false;
+                        
+                        // Bold
+                        const bold = cell.style('bold');
+                        if (bold) {
+                            style.bold = true;
+                            hasStyle = true;
+                        }
+                        
+                        // Italic
+                        const italic = cell.style('italic');
+                        if (italic) {
+                            style.italic = true;
+                            hasStyle = true;
+                        }
+                        
+                        // Underline
+                        const underline = cell.style('underline');
+                        if (underline) {
+                            style.underline = true;
+                            hasStyle = true;
+                        }
+                        
+                        // Strikethrough
+                        const strikethrough = cell.style('strikethrough');
+                        if (strikethrough) {
+                            style.strikethrough = true;
+                            hasStyle = true;
+                        }
+                        
+                        // Font Color
+                        const fontColor = cell.style('fontColor');
+                        if (fontColor) {
+                            const cssColor = colorToCSS(fontColor);
+                            if (cssColor && cssColor !== '#000000') {
+                                style.fontColor = cssColor;
+                                hasStyle = true;
+                            }
+                        }
+                        
+                        // Fill/Background Color
+                        const fill = cell.style('fill');
+                        if (fill) {
+                            if (typeof fill === 'object') {
+                                // xlsx-populate fill Struktur: { type: "solid", color: { rgb: "AARRGGBB" } }
+                                let fillColor = null;
+                                
+                                if (fill.color) {
+                                    // color ist ein Objekt mit rgb Property
+                                    fillColor = colorToCSS(fill.color);
+                                } else if (fill.foreground) {
+                                    // Foreground bei manchen Patterns
+                                    fillColor = colorToCSS(fill.foreground);
+                                }
+                                
+                                if (fillColor && fillColor !== '#FFFFFF') {
+                                    style.fill = fillColor;
+                                    hasStyle = true;
+                                }
+                            }
+                        }
+                        
+                        // Font Size
+                        const fontSize = cell.style('fontSize');
+                        if (fontSize && fontSize !== 11) { // 11 ist Standard
+                            style.fontSize = fontSize;
+                            hasStyle = true;
+                        }
+                        
+                        // Horizontal Alignment
+                        const hAlign = cell.style('horizontalAlignment');
+                        if (hAlign && hAlign !== 'general') {
+                            style.textAlign = hAlign;
+                            hasStyle = true;
+                        }
+                        
+                        // Speichere nur wenn Style vorhanden
+                        if (hasStyle) {
+                            const rowIndex = row - startRow; // 0-basiert, inkl. Header
+                            cellStyles[`${rowIndex}-${col - 1}`] = style;
+                        }
+                    } catch (e) {
+                        // Style konnte nicht gelesen werden
+                    }
+                    
+                    // Formel auslesen (nur für Datenzeilen)
+                    try {
+                        const formula = cell.formula();
+                        if (formula) {
+                            const rowIndex = row - startRow; // 0-basiert, inkl. Header
+                            cellFormulas[`${rowIndex}-${col - 1}`] = formula;
+                        }
+                    } catch (e) {
+                        // Formel konnte nicht gelesen werden
+                    }
+                    
+                    // Hyperlink auslesen (nur für Datenzeilen)
+                    try {
+                        const hyperlink = cell.hyperlink();
+                        if (hyperlink) {
+                            const rowIndex = row - startRow; // 0-basiert, inkl. Header
+                            cellHyperlinks[`${rowIndex}-${col - 1}`] = hyperlink;
+                        }
+                    } catch (e) {
+                        // Hyperlink konnte nicht gelesen werden
                     }
                 }
                 
@@ -591,11 +858,326 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName) => {
             data.push(rowData);
         }
         
+        // Data Validations (Dropdown-Listen) auslesen
+        const dataValidations = {};
+        try {
+            // xlsx-populate speichert Data Validations im Sheet-Objekt
+            // Wir iterieren über alle Zellen und prüfen auf dataValidation
+            for (let col = startCol; col <= endCol; col++) {
+                const colValidations = [];
+                let hasValidation = false;
+                
+                for (let row = startRow; row <= endRow; row++) {
+                    const cell = worksheet.cell(row, col);
+                    try {
+                        const validation = cell.dataValidation();
+                        if (validation && validation.type === 'list') {
+                            hasValidation = true;
+                            let allowedValues = [];
+                            
+                            // Explizite Werte-Liste
+                            if (validation.formula1) {
+                                const formula = validation.formula1;
+                                // Prüfe ob es eine Referenz oder eine Liste ist
+                                if (formula.startsWith('"') && formula.endsWith('"')) {
+                                    // Explizite Liste: "Wert1,Wert2,Wert3"
+                                    allowedValues = formula.slice(1, -1).split(',').map(v => v.trim());
+                                } else if (formula.includes(':')) {
+                                    // Bereichsreferenz: Sheet1!$A$1:$A$10 oder $A$1:$A$10
+                                    try {
+                                        // Versuche den Bereich aufzulösen
+                                        const rangeValues = [];
+                                        let targetSheet = worksheet;
+                                        let rangeRef = formula;
+                                        
+                                        // Prüfe auf Sheet-Referenz
+                                        if (formula.includes('!')) {
+                                            const parts = formula.split('!');
+                                            const refSheetName = parts[0].replace(/'/g, ''); // Entferne Anführungszeichen
+                                            rangeRef = parts[1];
+                                            targetSheet = workbook.sheet(refSheetName);
+                                        }
+                                        
+                                        if (targetSheet) {
+                                            // Entferne $ Zeichen und parse den Bereich
+                                            const cleanRef = rangeRef.replace(/\$/g, '');
+                                            const range = targetSheet.range(cleanRef);
+                                            if (range) {
+                                                range.forEach(c => {
+                                                    const val = c.value();
+                                                    if (val !== undefined && val !== null && val !== '') {
+                                                        rangeValues.push(String(val));
+                                                    }
+                                                });
+                                            }
+                                        }
+                                        allowedValues = rangeValues;
+                                    } catch (e) {
+                                        // Bereich konnte nicht aufgelöst werden
+                                    }
+                                } else {
+                                    // Einfache Formel oder Liste ohne Anführungszeichen
+                                    allowedValues = formula.split(',').map(v => v.trim());
+                                }
+                            }
+                            
+                            if (allowedValues.length > 0) {
+                                // Speichere für diese Zeile (0-basiert, -1 weil startRow = Header)
+                                const rowIndex = row - startRow;
+                                colValidations.push({
+                                    row: rowIndex,
+                                    values: allowedValues,
+                                    allowBlank: validation.allowBlank !== false
+                                });
+                            }
+                        }
+                    } catch (e) {
+                        // Zelle hat keine Validation oder Fehler beim Lesen
+                    }
+                }
+                
+                if (hasValidation && colValidations.length > 0) {
+                    // Prüfe ob alle Zeilen die gleichen Werte haben (spaltenweite Validation)
+                    const firstValues = JSON.stringify(colValidations[0].values);
+                    const allSame = colValidations.every(v => JSON.stringify(v.values) === firstValues);
+                    
+                    if (allSame && colValidations.length > 1) {
+                        // Spaltenweite Validation - alle Zeilen haben gleiche Optionen
+                        dataValidations[col - 1] = {
+                            type: 'column',
+                            values: colValidations[0].values,
+                            allowBlank: colValidations[0].allowBlank
+                        };
+                    } else {
+                        // Zeilenspezifische Validations
+                        dataValidations[col - 1] = {
+                            type: 'rows',
+                            rows: colValidations.reduce((acc, v) => {
+                                acc[v.row] = { values: v.values, allowBlank: v.allowBlank };
+                                return acc;
+                            }, {})
+                        };
+                    }
+                }
+            }
+        } catch (e) {
+        // Data Validations konnten nicht gelesen werden
+            const sheetNode = worksheet._node;
+            if (sheetNode && sheetNode.children) {
+                for (const child of sheetNode.children) {
+                    if (child && child.name === 'autoFilter' && child.attributes && child.attributes.ref) {
+                        autoFilterRange = child.attributes.ref;
+                        break;
+                    }
+                }
+            }
+        } catch (e) {
+            // AutoFilter konnte nicht gelesen werden
+        }
+        
+        // Merged Cells auslesen
+        const mergedCells = [];
+        try {
+            // xlsx-populate speichert mergeCells in sheet._mergeCells
+            const mergeCellsMap = worksheet._mergeCells;
+            if (mergeCellsMap && typeof mergeCellsMap === 'object') {
+                // Konvertiere Excel-Referenzen zu 0-basierten Indizes
+                const parseRef = (cellRef) => {
+                    const match = cellRef.match(/^([A-Z]+)(\d+)$/);
+                    if (match) {
+                        let col = 0;
+                        for (let i = 0; i < match[1].length; i++) {
+                            col = col * 26 + (match[1].charCodeAt(i) - 64);
+                        }
+                        return { row: parseInt(match[2]), col: col };
+                    }
+                    return null;
+                };
+                
+                for (const ref of Object.keys(mergeCellsMap)) {
+                    // ref ist z.B. "A1:C3"
+                    const parts = ref.split(':');
+                    if (parts.length === 2) {
+                        const start = parseRef(parts[0]);
+                        const end = parseRef(parts[1]);
+                        
+                        if (start && end) {
+                            // Konvertiere zu 0-basierten Indizes relativ zum Datenbereich
+                            // startRow ist die Header-Zeile, also müssen wir das berücksichtigen
+                            mergedCells.push({
+                                startRow: start.row - startRow, // relativ zur Header-Zeile
+                                startCol: start.col - 1, // 0-basiert
+                                endRow: end.row - startRow,
+                                endCol: end.col - 1,
+                                rowSpan: end.row - start.row + 1,
+                                colSpan: end.col - start.col + 1
+                            });
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            // Merged Cells konnten nicht gelesen werden
+        }
+        
         return {
             success: true,
             headers: headers,
             data: data,
-            hiddenColumns: hiddenColumns
+            hiddenColumns: hiddenColumns,
+            hiddenRows: hiddenRows,
+            dataValidations: dataValidations,
+            cellStyles: cellStyles,
+            cellFormulas: cellFormulas,
+            cellHyperlinks: cellHyperlinks,
+            richTextCells: richTextCells,
+            autoFilterRange: autoFilterRange,
+            mergedCells: mergedCells
+        };
+    } catch (error) {
+        // Prüfe ob es sich um eine passwortgeschützte Datei handelt
+        if (error.message.includes("Can't find end of central directory") || 
+            error.message.includes("Encrypted file")) {
+            return { 
+                success: false, 
+                error: 'Passwort erforderlich',
+                isPasswordProtected: true,
+                needsPassword: true
+            };
+        }
+        return { success: false, error: error.message };
+    }
+});
+
+// ==================== SHEET-VERWALTUNG ====================
+
+// Neues Arbeitsblatt hinzufügen
+ipcMain.handle('excel:addSheet', async (event, { filePath, sheetName }) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    try {
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        
+        // Prüfe ob Name bereits existiert
+        const existingSheet = workbook.sheet(sheetName);
+        if (existingSheet) {
+            return { success: false, error: 'Ein Arbeitsblatt mit diesem Namen existiert bereits' };
+        }
+        
+        workbook.addSheet(sheetName);
+        await workbook.toFileAsync(filePath);
+        
+        return { 
+            success: true, 
+            sheets: workbook.sheets().map(s => s.name())
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Arbeitsblatt löschen
+ipcMain.handle('excel:deleteSheet', async (event, { filePath, sheetName }) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    try {
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        
+        // Mindestens ein Blatt muss bleiben
+        if (workbook.sheets().length <= 1) {
+            return { success: false, error: 'Das letzte Arbeitsblatt kann nicht gelöscht werden' };
+        }
+        
+        workbook.deleteSheet(sheetName);
+        await workbook.toFileAsync(filePath);
+        
+        return { 
+            success: true, 
+            sheets: workbook.sheets().map(s => s.name())
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Arbeitsblatt umbenennen
+ipcMain.handle('excel:renameSheet', async (event, { filePath, oldName, newName }) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    try {
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        
+        // Prüfe ob neuer Name bereits existiert
+        const existingSheet = workbook.sheet(newName);
+        if (existingSheet) {
+            return { success: false, error: 'Ein Arbeitsblatt mit diesem Namen existiert bereits' };
+        }
+        
+        const sheet = workbook.sheet(oldName);
+        if (!sheet) {
+            return { success: false, error: 'Arbeitsblatt nicht gefunden' };
+        }
+        
+        sheet.name(newName);
+        await workbook.toFileAsync(filePath);
+        
+        return { 
+            success: true, 
+            sheets: workbook.sheets().map(s => s.name())
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Arbeitsblatt kopieren/klonen
+ipcMain.handle('excel:cloneSheet', async (event, { filePath, sheetName, newName }) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    try {
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        
+        // Prüfe ob neuer Name bereits existiert
+        const existingSheet = workbook.sheet(newName);
+        if (existingSheet) {
+            return { success: false, error: 'Ein Arbeitsblatt mit diesem Namen existiert bereits' };
+        }
+        
+        const sheetToClone = workbook.sheet(sheetName);
+        if (!sheetToClone) {
+            return { success: false, error: 'Arbeitsblatt nicht gefunden' };
+        }
+        
+        workbook.cloneSheet(sheetToClone, newName);
+        await workbook.toFileAsync(filePath);
+        
+        return { 
+            success: true, 
+            sheets: workbook.sheets().map(s => s.name())
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Arbeitsblatt verschieben (Reihenfolge ändern)
+ipcMain.handle('excel:moveSheet', async (event, { filePath, sheetName, newIndex }) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    try {
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        
+        workbook.moveSheet(sheetName, newIndex);
+        await workbook.toFileAsync(filePath);
+        
+        return { 
+            success: true, 
+            sheets: workbook.sheets().map(s => s.name())
         };
     } catch (error) {
         return { success: false, error: error.message };
@@ -744,12 +1326,10 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                     insertRow = row;
                     break;
                 }
-                // Wenn wir hier sind, ist die Zeile nicht leer - gehe zur n�chsten
+                // Wenn wir hier sind, ist die Zeile nicht leer - gehe zur nächsten
                 insertRow = row + 1;
             }
         }
-        
-        console.log(`Einf�gen ab Zeile: ${insertRow}`);
         
         // Spaltenformate vorab ermitteln
         const columnFormats = {};
@@ -1173,7 +1753,7 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
 });
 
 // Änderungen direkt in die Originaldatei speichern (für Datenexplorer)
-ipcMain.handle('excel:saveFile', async (event, { filePath, sheets }) => {
+ipcMain.handle('excel:saveFile', async (event, { filePath, sheets, password = null }) => {
     // Sicherheitsprüfung: Pfad validieren
     if (!isValidFilePath(filePath)) {
         return { success: false, error: 'Ungültiger Dateipfad' };
@@ -1181,7 +1761,8 @@ ipcMain.handle('excel:saveFile', async (event, { filePath, sheets }) => {
     
     try {
         // Originaldatei laden (mit allen Sheets und Formatierung)
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const loadOptions = password ? { password } : {};
+        const workbook = await XlsxPopulate.fromFileAsync(filePath, loadOptions);
         
         let totalChanges = 0;
         
@@ -1196,6 +1777,7 @@ ipcMain.handle('excel:saveFile', async (event, { filePath, sheets }) => {
             const headers = sheetData.headers;
             const data = sheetData.data;
             const visibleColumns = sheetData.visibleColumns;
+            const hiddenRows = sheetData.hiddenRows || []; // Array von 0-basierten Zeilen-Indices
             
             // Alle vorhandenen Daten im Sheet löschen
             const usedRange = worksheet.usedRange();
@@ -1251,10 +1833,27 @@ ipcMain.handle('excel:saveFile', async (event, { filePath, sheets }) => {
                     }
                 });
             }
+            
+            // Ausgeblendete Zeilen in Excel als hidden markieren
+            // hiddenRows enthält die 0-basierten Indices der versteckten Zeilen
+            const hiddenRowsSet = new Set(hiddenRows);
+            data.forEach((_, rowIndex) => {
+                try {
+                    const excelRow = worksheet.row(rowIndex + 2); // +2 wegen Header in Zeile 1
+                    if (hiddenRowsSet.has(rowIndex)) {
+                        excelRow.hidden(true);
+                    } else {
+                        excelRow.hidden(false);
+                    }
+                } catch (e) {
+                    // Zeile konnte nicht gesetzt werden
+                }
+            });
         }
         
         // Speichern (überschreibt die Originaldatei)
-        await workbook.toFileAsync(filePath);
+        const saveOptions = password ? { password } : {};
+        await workbook.toFileAsync(filePath, saveOptions);
         
         return { 
             success: true, 
@@ -1322,6 +1921,22 @@ ipcMain.handle('app:getPath', async (event) => {
     };
 });
 
+// Externe URL im Standard-Browser öffnen
+ipcMain.handle('shell:openExternal', async (event, url) => {
+    const { shell } = require('electron');
+    try {
+        // Sicherheitsprüfung: Nur http, https und mailto erlauben
+        if (url && (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('mailto:'))) {
+            await shell.openExternal(url);
+            return { success: true };
+        } else {
+            return { success: false, error: 'Nur http, https und mailto URLs sind erlaubt' };
+        }
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 // Loading-State für config:loadFromAppDir um Race Conditions zu verhindern
 let configLoadingState = {
     isLoading: false,
@@ -1332,7 +1947,6 @@ let configLoadingState = {
 ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
     // Race Condition verhindern: Wenn bereits geladen wird, auf das Ergebnis warten
     if (configLoadingState.isLoading && configLoadingState.pendingPromise) {
-        console.log('config:loadFromAppDir - Warte auf laufenden Ladevorgang...');
         return configLoadingState.pendingPromise;
     }
     
@@ -1340,9 +1954,6 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
     configLoadingState.isLoading = true;
     
     const loadConfigAsync = async () => {
-        console.log('=== config:loadFromAppDir aufgerufen ===');
-        console.log('Arbeitsordner:', workingDir || '(nicht gesetzt)');
-    
         try {
             const exePath = app.getPath('exe');
             const exeDir = path.dirname(exePath);
@@ -1351,13 +1962,6 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
             
             // PORTABLE EXE: Der Ordner wo die portable EXE gestartet wurde
             const portableDir = process.env.PORTABLE_EXECUTABLE_DIR || '';
-            
-            console.log('EXE Pfad:', exePath);
-            console.log('EXE Ordner:', exeDir);
-            console.log('Dokumente Ordner:', documentsDir);
-            console.log('Downloads Ordner:', downloadsDir);
-            console.log('Portable Ordner:', portableDir || '(nicht gesetzt)');
-            console.log('App gepackt:', app.isPackaged);
             
             // Suchpfade in Prioritätsreihenfolge
             const possiblePaths = [];
@@ -1388,25 +1992,16 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
                 possiblePaths.push(path.join(process.cwd(), 'config.json'));
             }
             
-            console.log('Suche in folgenden Pfaden:');
-            possiblePaths.forEach((p, i) => {
-                const exists = fs.existsSync(p);
-                console.log(`  ${i + 1}. ${p} - ${exists ? 'GEFUNDEN' : 'nicht vorhanden'}`);
-            });
-            
             // Schnelle Suche - bei erstem Treffer abbrechen
             for (const configPath of possiblePaths) {
                 if (fs.existsSync(configPath)) {
-                    console.log('>>> config.json gefunden:', configPath);
                     const content = fs.readFileSync(configPath, 'utf8');
                     let config;
                     try {
                         config = JSON.parse(content);
                     } catch (parseError) {
-                        console.error('Ungültige JSON-Syntax in:', configPath, parseError);
                         continue; // Nächsten Pfad probieren
                     }
-                    console.log('>>> Konfig geladen, Mapping:', config.mapping?.sourceColumns?.length || 0, 'Spalten');
                     return { 
                         success: true, 
                         config: config,
@@ -1415,15 +2010,13 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
                 }
             }
             
-            // Keine config.json gefunden - kein Fehler, nur Info
-            console.log('>>> Keine config.json in den Suchpfaden gefunden');
+            // Keine config.json gefunden
             return { 
                 success: false, 
                 error: 'Keine config.json gefunden',
                 searchedPaths: possiblePaths
             };
         } catch (error) {
-            console.error('Fehler beim Laden der config.json:', error);
             return { success: false, error: error.message };
         } finally {
             // Loading-State zurücksetzen
@@ -1521,7 +2114,6 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
     
     // Berechne wie viele Spalten eingefügt werden
     const extraColumnsCount = (addFlagColumn ? 1 : 0) + (addCommentColumn ? 1 : 0);
-    console.log(`Extra-Spalten: Flag=${addFlagColumn}, Kommentar=${addCommentColumn}, Gesamt=${extraColumnsCount}`);
     
     try {
         const JSZip = require('jszip');
@@ -1567,13 +2159,9 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
             }
         }
         
-        console.log('Sheet-Zuordnung (dekodiert):', sheetToFile);
-        console.log('Ausgewählte Sheets:', selectedSheets);
-        
         // 5. Sheets identifizieren, die NICHT ausgewählt wurden (vergleiche mit dekodierten Namen)
         const allDecodedSheetNames = Object.keys(sheetToFile);
         const sheetsToRemove = allDecodedSheetNames.filter(name => !selectedSheets.includes(name));
-        console.log('Zu entfernende Sheets:', sheetsToRemove);
         
         // 6. Nicht ausgewählte Sheets aus workbook.xml entfernen (verwende encoded Namen für XML)
         let modifiedWorkbookXml = workbookXml;
@@ -1590,7 +2178,6 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
             const sheetFile = sheetToFile[decodedName];
             if (sheetFile && zip.files[sheetFile]) {
                 zip.remove(sheetFile);
-                console.log(`Sheet entfernt: ${sheetFile}`);
             }
         }
         
@@ -1710,11 +2297,6 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
         });
         
         fs.writeFileSync(outputPath, outputBuffer);
-        
-        console.log(`Template erstellt: ${outputPath}`);
-        console.log(`Sheets verarbeitet: ${processedSheets}`);
-        console.log(`CF-Regeln erhalten: ${totalCfRules}`);
-        console.log(`Extra-Spalten hinzugefügt: ${extraColumnsCount}`);
         
         return { 
             success: true, 
