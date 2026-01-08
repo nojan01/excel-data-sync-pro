@@ -10061,7 +10061,13 @@
             });
             
             if (savePath) {
-                elements.explorerStatus.textContent = 'Exportiere...';
+                // Passwort-Dialog anzeigen
+                const pwResult = await showPasswordProtectionDialog(null, 'export');
+                if (pwResult === null) return; // Abgebrochen
+                
+                const exportPassword = pwResult.password;
+                
+                elements.explorerStatus.textContent = exportPassword ? 'Exportiere mit Passwortschutz...' : 'Exportiere...';
                 
                 // Sammle Daten für alle ausgewählten Sheets
                 const sheetsToExport = [];
@@ -10112,15 +10118,18 @@
                     sheetsToExport.push(sheetData);
                 }
                 
-                // Export über IPC
+                // Export über IPC (mit Passwort falls gewählt)
                 const result = await window.electronAPI.exportMultipleSheets({
                     sourcePath: explorerState.filePath,
                     targetPath: savePath,
-                    sheets: sheetsToExport
+                    sheets: sheetsToExport,
+                    password: exportPassword,
+                    sourcePassword: explorerState.filePassword
                 });
                 
                 if (result.success) {
-                    elements.explorerStatus.textContent = `✓ ${selectedSheets.length} Arbeitsblatt/blätter exportiert: ${savePath}`;
+                    const pwInfo = exportPassword ? ' (passwortgeschützt)' : '';
+                    elements.explorerStatus.textContent = `✓ ${selectedSheets.length} Arbeitsblatt/blätter exportiert${pwInfo}: ${savePath}`;
                 } else {
                     elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 }
@@ -10294,6 +10303,18 @@
             
             if (!confirmed) return;
             
+            // Passwort-Dialog anzeigen
+            const pwResult = await showPasswordProtectionDialog(explorerState.filePassword, 'save');
+            if (pwResult === null) return; // Abgebrochen
+            
+            // Passwort aktualisieren
+            const savePassword = pwResult.password;
+            if (pwResult.action === 'new') {
+                explorerState.filePassword = savePassword;
+            } else if (pwResult.action === 'none') {
+                explorerState.filePassword = null;
+            }
+            
             elements.explorerStatus.textContent = 'Speichere Änderungen...';
             
             try {
@@ -10324,11 +10345,11 @@
                     }
                 }
                 
-                // Speichern über IPC (mit Passwort falls vorhanden)
+                // Speichern über IPC (mit Passwort falls gewählt)
                 const result = await window.electronAPI.saveExcelFile({
                     filePath: explorerState.filePath,
                     sheets: sheetsToSave,
-                    password: explorerState.filePassword
+                    password: savePassword
                 });
                 
                 if (result.success) {
@@ -10361,6 +10382,160 @@
             }
         }
         
+        // Dialog für Passwortschutz beim Speichern/Exportieren
+        function showPasswordProtectionDialog(currentPassword = null, mode = 'save') {
+            return new Promise((resolve) => {
+                const existingDialog = document.querySelector('.password-dialog-overlay');
+                if (existingDialog) existingDialog.remove();
+                
+                const overlay = document.createElement('div');
+                overlay.className = 'password-dialog-overlay';
+                overlay.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    right: 0;
+                    bottom: 0;
+                    background: rgba(0,0,0,0.6);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    z-index: 10002;
+                `;
+                
+                const dialog = document.createElement('div');
+                dialog.className = 'password-dialog';
+                dialog.style.cssText = `
+                    background: var(--bg-medium);
+                    border: 1px solid var(--border);
+                    border-radius: 8px;
+                    padding: 20px;
+                    max-width: 450px;
+                    width: 90%;
+                    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+                `;
+                
+                const title = mode === 'export' ? '🔐 Export-Passwortschutz' : '🔐 Datei-Passwortschutz';
+                const hasCurrentPassword = !!currentPassword;
+                
+                dialog.innerHTML = `
+                    <h3 style="margin: 0 0 15px 0; color: var(--text);">${title}</h3>
+                    <p style="margin: 0 0 15px 0; color: var(--text-secondary); font-size: 13px;">
+                        ${mode === 'export' 
+                            ? 'Die exportierte Datei kann mit einem Passwort geschützt werden.'
+                            : 'Die Datei kann mit einem Passwort geschützt werden.'}
+                        <br>Excel-kompatible Verschlüsselung - keine zusätzlichen Tools nötig.
+                    </p>
+                    
+                    <div style="margin-bottom: 15px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 10px;">
+                            <input type="radio" name="passwordOption" value="none" ${!hasCurrentPassword ? 'checked' : ''}>
+                            <span style="color: var(--text);">Kein Passwortschutz</span>
+                        </label>
+                        ${hasCurrentPassword ? `
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 10px;">
+                            <input type="radio" name="passwordOption" value="keep" checked>
+                            <span style="color: var(--text);">Bestehendes Passwort beibehalten</span>
+                        </label>` : ''}
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="radio" name="passwordOption" value="new">
+                            <span style="color: var(--text);">${hasCurrentPassword ? 'Neues Passwort setzen' : 'Mit Passwort schützen'}</span>
+                        </label>
+                    </div>
+                    
+                    <div id="newPasswordSection" style="display: none; margin-bottom: 15px; padding: 12px; background: var(--bg-dark); border-radius: 6px;">
+                        <label style="display: block; margin-bottom: 6px; color: var(--text-muted); font-size: 12px;">Neues Passwort:</label>
+                        <input type="password" id="newPasswordInput" placeholder="Passwort eingeben..." 
+                               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 4px; 
+                                      background: var(--bg-light); color: var(--text); box-sizing: border-box; margin-bottom: 10px;">
+                        <label style="display: block; margin-bottom: 6px; color: var(--text-muted); font-size: 12px;">Passwort bestätigen:</label>
+                        <input type="password" id="confirmPasswordInput" placeholder="Passwort wiederholen..." 
+                               style="width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 4px; 
+                                      background: var(--bg-light); color: var(--text); box-sizing: border-box;">
+                        <div id="passwordError" style="color: #F44336; font-size: 12px; margin-top: 8px; display: none;"></div>
+                    </div>
+                    
+                    <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                        <button class="btn btn-secondary" id="pwDialogCancel">Abbrechen</button>
+                        <button class="btn btn-success" id="pwDialogConfirm">Fortfahren</button>
+                    </div>
+                `;
+                
+                overlay.appendChild(dialog);
+                document.body.appendChild(overlay);
+                
+                // Radio-Button Handler
+                const radios = dialog.querySelectorAll('input[name="passwordOption"]');
+                const newPwSection = dialog.querySelector('#newPasswordSection');
+                const newPwInput = dialog.querySelector('#newPasswordInput');
+                const confirmPwInput = dialog.querySelector('#confirmPasswordInput');
+                const pwError = dialog.querySelector('#passwordError');
+                
+                radios.forEach(radio => {
+                    radio.onchange = () => {
+                        newPwSection.style.display = radio.value === 'new' && radio.checked ? 'block' : 'none';
+                        if (radio.value === 'new' && radio.checked) {
+                            setTimeout(() => newPwInput.focus(), 100);
+                        }
+                    };
+                });
+                
+                // Confirm Button
+                dialog.querySelector('#pwDialogConfirm').onclick = () => {
+                    const selectedOption = dialog.querySelector('input[name="passwordOption"]:checked').value;
+                    
+                    if (selectedOption === 'none') {
+                        overlay.remove();
+                        resolve({ action: 'none', password: null });
+                    } else if (selectedOption === 'keep') {
+                        overlay.remove();
+                        resolve({ action: 'keep', password: currentPassword });
+                    } else if (selectedOption === 'new') {
+                        const newPw = newPwInput.value;
+                        const confirmPw = confirmPwInput.value;
+                        
+                        if (!newPw) {
+                            pwError.textContent = 'Bitte Passwort eingeben';
+                            pwError.style.display = 'block';
+                            newPwInput.focus();
+                            return;
+                        }
+                        if (newPw.length < 4) {
+                            pwError.textContent = 'Passwort muss mindestens 4 Zeichen haben';
+                            pwError.style.display = 'block';
+                            newPwInput.focus();
+                            return;
+                        }
+                        if (newPw !== confirmPw) {
+                            pwError.textContent = 'Passwörter stimmen nicht überein';
+                            pwError.style.display = 'block';
+                            confirmPwInput.focus();
+                            return;
+                        }
+                        
+                        overlay.remove();
+                        resolve({ action: 'new', password: newPw });
+                    }
+                };
+                
+                // Cancel Button
+                dialog.querySelector('#pwDialogCancel').onclick = () => {
+                    overlay.remove();
+                    resolve(null);
+                };
+                
+                // ESC zum Abbrechen
+                const escHandler = (e) => {
+                    if (e.key === 'Escape') {
+                        overlay.remove();
+                        document.removeEventListener('keydown', escHandler);
+                        resolve(null);
+                    }
+                };
+                document.addEventListener('keydown', escHandler);
+            });
+        }
+
         // Bestätigungsdialog anzeigen
         function showConfirmDialog(title, message, confirmText = 'OK', cancelText = 'Abbrechen') {
             return new Promise((resolve) => {

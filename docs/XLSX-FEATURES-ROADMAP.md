@@ -62,10 +62,10 @@ Dieses Dokument dokumentiert alle xlsx-populate Funktionen, die in die App integ
 ## 🟢 Priorität NIEDRIG
 
 ### 7. Passwortschutz
-- **Status:** ⬜ Geplant
+- **Status:** ✅ Implementiert
 - **API:** `fromFileAsync(path, { password })`, `toFileAsync(path, { password })`
-- **Nutzen:** Passwortgeschützte Dateien öffnen/speichern
-- **UI:** Passwort-Dialog bei Bedarf
+- **Nutzen:** Passwortgeschützte Dateien öffnen/speichern/exportieren
+- **UI:** Passwort-Dialog beim Speichern und Exportieren mit Optionen (kein Schutz / beibehalten / neues Passwort)
 
 ### 8. Hyperlinks
 - **Status:** ✅ Implementiert
@@ -103,6 +103,8 @@ Dieses Dokument dokumentiert alle xlsx-populate Funktionen, die in die App integ
 
 | Datum | Version | Änderung |
 |-------|---------|----------|
+| 2026-01-08 | 1.0.12 | Passwortschutz implementiert (Prio NIEDRIG #7) - Speichern und Exportieren mit Excel-kompatibler Verschlüsselung |
+| 2026-01-08 | 1.0.12 | Datum-Filter für DatenExplorer - Fällig in X Tagen / Überfällig seit X Tagen |
 | 2026-01-08 | 1.0.12 | Pivot-Tabellen Warnung implementiert - Erkennung beim Laden, Warnung vor Datenverlust |
 | 2026-01-08 | 1.0.12 | DatenExplorer Vollbild-Modus (F11, ⛶ Button) und sichtbarer Resize-Handle |
 | 2026-01-08 | 1.0.12 | Version auf 1.0.12 angehoben - alle 12 geplanten Features implementiert |

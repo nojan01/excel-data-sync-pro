@@ -1920,7 +1920,7 @@ ipcMain.handle('excel:exportWithAllSheets', async (event, { sourcePath, targetPa
 });
 
 // Export mit Auswahl der Arbeitsblätter (für Datenexplorer) - behält Formatierung bei
-ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetPath, sheets }) => {
+ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetPath, sheets, password = null, sourcePassword = null }) => {
     // Sicherheitsprüfung: Pfade validieren
     if (!isValidFilePath(sourcePath) || !isValidFilePath(targetPath)) {
         return { success: false, error: 'Ungültiger Dateipfad' };
@@ -1928,7 +1928,8 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
     
     try {
         // Originaldatei laden (mit allen Sheets und Formatierung)
-        const workbook = await XlsxPopulate.fromFileAsync(sourcePath);
+        const loadOptions = sourcePassword ? { password: sourcePassword } : {};
+        const workbook = await XlsxPopulate.fromFileAsync(sourcePath, loadOptions);
         
         // Liste der ausgewählten Sheet-Namen
         const selectedSheetNames = sheets.map(s => s.sheetName);
@@ -2025,13 +2026,15 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
             sheetsProcessed++;
         }
         
-        // Als neue Datei speichern (nicht Originaldatei überschreiben)
-        await workbook.toFileAsync(targetPath);
+        // Als neue Datei speichern (mit optionalem Passwortschutz)
+        const saveOptions = password ? { password } : {};
+        await workbook.toFileAsync(targetPath, saveOptions);
         
         return { 
             success: true, 
             message: `${sheetsProcessed} Sheet(s) exportiert: ${targetPath}`,
-            sheetsExported: sheetsProcessed
+            sheetsExported: sheetsProcessed,
+            passwordProtected: !!password
         };
     } catch (error) {
         return { success: false, error: error.message };
