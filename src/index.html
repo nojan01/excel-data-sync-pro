@@ -10083,6 +10083,9 @@
                 );
             }
             
+            // Markierung, dass Zeilen neu angeordnet wurden (strukturelle Änderung)
+            explorerState.editedCells.set('_rowsReordered', true);
+            
             // Markiere als geändert
             explorerState.hasUnsavedChanges = true;
             
