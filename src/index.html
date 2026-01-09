@@ -4590,12 +4590,18 @@
                     filters: [{ name: 'JSON Dateien', extensions: ['json'] }]
                 });
                 if (savePath) {
-                    await window.electronAPI.saveConfig(savePath, config);
-                    showStatus(elements.transferStatus, `✓ config.json gespeichert: ${savePath}`, 'success');
+                    const result = await window.electronAPI.saveConfig(savePath, config);
+                    if (result && result.success === false) {
+                        showStatus(elements.transferStatus, `⚠️ ${result.error}`, 'error');
+                        alert(`❌ Speichern fehlgeschlagen:\n\n${result.error}`);
+                    } else {
+                        showStatus(elements.transferStatus, `✓ config.json gespeichert: ${savePath}`, 'success');
+                    }
                 }
             } catch (e) {
                 console.error('Fehler beim Speichern:', e);
                 showStatus(elements.transferStatus, `Fehler: ${e.message}`, 'error');
+                alert(`❌ Speichern fehlgeschlagen:\n\n${e.message}`);
             }
         }
         
