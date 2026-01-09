@@ -1028,7 +1028,7 @@
         
         .transfer-form {
             display: flex;
-            gap: 20px;
+            gap: 10px;
             align-items: flex-end;
             flex-wrap: wrap;
         }
@@ -1677,11 +1677,11 @@
                     <button class="btn btn-primary" id="btnTransferDirect">
                         ➡️ Markierte direkt übertragen
                     </button>
-                    <button class="btn btn-primary" id="btnSelectAll" style="margin-left: auto;">
-                        ☑️ Alle auswählen
+                    <button class="btn btn-primary" id="btnSelectAll" style="margin-left: auto; min-width: 160px;">
+                        ✓ Alle auswählen
                     </button>
-                    <button class="btn btn-primary" id="btnDeselectAll">
-                        ☐Alles abwählen
+                    <button class="btn btn-primary" id="btnDeselectAll" style="min-width: 160px;">
+                        ✗ Alles abwählen
                     </button>
                 </div>
                 <div id="transferStatus"></div>
@@ -2887,8 +2887,8 @@
                 commentPlaceholder: 'Freier Text...',
                 addToQueue: '➕ Markierte zur Warteschlange',
                 transferDirect: '➡️ Markierte direkt übertragen',
-                selectAll: '☑️ Alle auswählen',
-                deselectAll: '☐Alles abwählen',
+                selectAll: '✓ Alle auswählen',
+                deselectAll: '✗ Alles abwählen',
                 
                 // Queue
                 queue: '📋 Warteschlange',
@@ -3101,8 +3101,8 @@
                 commentPlaceholder: 'Free text...',
                 addToQueue: '➕ Add to Queue',
                 transferDirect: '➡️ Transfer Directly',
-                selectAll: '☑️ Select All',
-                deselectAll: '☐ Deselect All',
+                selectAll: '✓ Select All',
+                deselectAll: '✗ Deselect All',
                 
                 // Queue
                 queue: '📋 Queue',
