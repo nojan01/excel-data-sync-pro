@@ -2532,7 +2532,7 @@
                         🔄 Ersetzen
                     </button>
                     <button class="btn btn-primary" id="btnToggleColumns" title="Spalten ein-/ausblenden">
-                        👁️ Spalten
+                        ❙❙ Spalten
                     </button>
                     <button class="btn btn-primary" id="btnExplorerPreview" title="Vorschau des gesamten Datenblattes mit Änderungen" disabled>
                         👁️ Vorschau
@@ -2922,7 +2922,7 @@
                 openFile: '📂 Datei öffnen',
                 fullTextSearch: 'Volltextsuche:',
                 searchPlaceholderExplorer: 'Suchbegriff eingeben...',
-                columns: '👁️ Spalten',
+                columns: '❙❙ Spalten',
                 exportXlsx: '📊 Als XLSX exportieren',
                 saveFile: '💾 Speichern',
                 filter: '🔍 Filter',
@@ -3136,7 +3136,7 @@
                 openFile: '📂 Open File',
                 fullTextSearch: 'Full-text search:',
                 searchPlaceholderExplorer: 'Enter search term...',
-                columns: '👁️ Columns',
+                columns: '❙❙ Columns',
                 exportXlsx: '📊 Export as XLSX',
                 saveFile: '💾 Save',
                 filter: '🔍 Filter',
@@ -9439,9 +9439,9 @@
             
             let headerHtml = '<tr>';
             // Zeilennummer-Spalte (fest, nicht verschiebbar)
-            headerHtml += `<th style="width: 50px; text-align: center; padding: 8px; background: var(--bg-lighter); color: var(--text-muted); font-size: 11px; position: sticky; left: 0; z-index: 2;" title="Zeilennummer (Excel-Zeile)">#</th>`;
+            headerHtml += `<th style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 4px; background: var(--bg-lighter); color: var(--text-muted); font-size: 11px; position: sticky; left: 0; z-index: 2;" title="Zeilennummer">#</th>`;
             // Checkbox-Spalte für Zeilenauswahl
-            headerHtml += `<th style="width: 40px; text-align: center; padding: 8px; position: sticky; left: 50px; z-index: 2; background: var(--bg-lighter);">
+            headerHtml += `<th style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 4px; position: sticky; left: 40px; z-index: 2; background: var(--bg-lighter);">
                 <input type="checkbox" id="selectAllRows" ${allVisibleSelected ? 'checked' : ''} 
                     title="Alle sichtbaren Zeilen auswählen" style="cursor: pointer; width: 16px; height: 16px;">
             </th>`;
@@ -9547,13 +9547,13 @@
                 const row = item.row;
                 const isSelected = explorerState.selectedRows.has(originalIndex);
                 const selectedClass = isSelected ? ' class="row-selected"' : '';
-                // Excel-Zeilennummer = originalIndex + 2 (weil Header in Zeile 1 ist und Index bei 0 beginnt)
-                const excelRowNumber = originalIndex + 2;
+                // Datenzeilen-Nummer = originalIndex + 1 (1-basiert, passend zur Verschiebe-Funktion)
+                const dataRowNumber = originalIndex + 1;
                 bodyHtml += `<tr data-original-index="${originalIndex}"${selectedClass}>`;
                 // Zeilennummer-Zelle (fest, sticky)
-                bodyHtml += `<td class="row-number-cell" style="width: 50px; text-align: center; padding: 8px; background: var(--bg-lighter); color: var(--text-muted); font-size: 11px; font-family: monospace; position: sticky; left: 0; z-index: 1; user-select: none;" title="Zeile ${excelRowNumber} in Excel">${excelRowNumber}</td>`;
+                bodyHtml += `<td class="row-number-cell" style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 4px; background: var(--bg-lighter); color: var(--text-muted); font-size: 11px; font-family: monospace; position: sticky; left: 0; z-index: 1; user-select: none;" title="Datenzeile ${dataRowNumber}">${dataRowNumber}</td>`;
                 // Checkbox-Zelle für Zeilenauswahl
-                bodyHtml += `<td class="row-checkbox-cell ${isSelected ? 'selected' : ''}">
+                bodyHtml += `<td class="row-checkbox-cell ${isSelected ? 'selected' : ''}" style="width: 40px; min-width: 40px; max-width: 40px; position: sticky; left: 40px; z-index: 1; background: var(--bg-secondary);">
                     <input type="checkbox" class="row-select-checkbox" data-row-index="${originalIndex}" 
                         ${isSelected ? 'checked' : ''}>
                 </td>`;
