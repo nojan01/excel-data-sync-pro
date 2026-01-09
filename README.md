@@ -198,11 +198,48 @@ Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Ex
 
 - **Technologie**: Electron, Node.js
 - **Excel-Bibliothek**: xlsx-populate (für CF-Erhalt), JSZip (für Template-Erstellung)
+- **Sicherheit**: HMAC-SHA256 Signaturen, SHA256 Hash-Chain
 - **Conditional Formatting**: Vollständig erhalten bei Template-Erstellung
 - **Unterstützte Dateiformate**: .xlsx
 - **Plattformen**: Windows (x64), macOS (Intel & Apple Silicon)
 
+## Sicherheits-Protokoll
+
+Excel Data Sync Pro verfügt über ein manipulationssicheres Sicherheits-Protokoll zur Nachverfolgung aller wichtigen Aktionen.
+
+### Funktionen
+
+- **Manipulationssichere Speicherung**: Jeder Log-Eintrag wird mit einer HMAC-SHA256-Signatur versehen
+- **Hash-Chain**: Ähnlich einer Blockchain werden alle Einträge kryptografisch verkettet
+- **Integritätsprüfung**: Nachträgliche Änderungen an der Log-Datei werden erkannt
+- **Log-Levels**: INFO, WARNING, ERROR für verschiedene Ereignistypen
+
+### Protokollierte Aktionen
+
+- App-Start/Stop
+- Datei-Operationen (Öffnen, Speichern, Export)
+- Konfigurationsänderungen
+- Template-Erstellung
+- Sheet-Operationen (Hinzufügen, Löschen)
+- Sicherheitsrelevante Ereignisse
+
+### Verwendung
+
+1. Öffnen Sie die **Einstellungen** (⚙️ Button in der Seitenleiste)
+2. Klicken Sie auf **"🔒 Sicherheits-Protokoll"**
+3. Im Modal werden alle Aktionen angezeigt
+4. Nutzen Sie **"Überprüfen"** zur Integritätsprüfung
+5. Filtern Sie nach Level oder durchsuchen Sie die Logs
+
 ## Changelog
+
+### v1.0.12
+- **Neu**: Sicherheits-Protokoll (Security-Logs) mit manipulationssicherer Speicherung
+- **Neu**: HMAC-SHA256-Signaturen für jeden Log-Eintrag
+- **Neu**: Hash-Chain (Blockchain-ähnlich) zur Integritätsprüfung
+- **Neu**: Security-Logs Modal zur Anzeige und Überprüfung aller Aktionen
+- **Neu**: Konfigurationsschema-Validierung für sichere Einstellungen
+- **Neu**: Integritätsprüfung erkennt nachträgliche Manipulationen
 
 ### v1.0.11
 - **Neu**: Zeilen einfügen (oberhalb/unterhalb) per Rechtsklick im Datenexplorer

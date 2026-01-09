@@ -54,6 +54,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Externe URLs öffnen
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
     
+    // Security-Logs
+    getSecurityLogs: (options) => ipcRenderer.invoke('security:getLogs', options),
+    verifySecurityLogs: () => ipcRenderer.invoke('security:verifyLogs'),
+    clearSecurityLogs: () => ipcRenderer.invoke('security:clearLogs'),
+    
     // Event-Listener für App-Schließen
     onBeforeClose: (callback) => ipcRenderer.on('app:beforeClose', callback),
     confirmClose: (canClose) => ipcRenderer.send('app:confirmClose', canClose)

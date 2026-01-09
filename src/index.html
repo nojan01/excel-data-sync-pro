@@ -25,6 +25,11 @@
             --info: #2196f3;
         }
         
+        /* Generische hidden-Klasse */
+        .hidden {
+            display: none !important;
+        }
+        
         /* Grüne Checkboxen */
         .green-checkbox {
             width: 16px;
@@ -1544,6 +1549,11 @@
                             📜 <span data-i18n="license">Lizenz</span>
                         </button>
                     </div>
+                    <div style="margin-top: 10px;">
+                        <button class="btn btn-secondary" id="btnSecurityLogs" style="width: 100%;">
+                            🔒 <span data-i18n="securityLogs">Security-Logs</span>
+                        </button>
+                    </div>
                 </div>
             </div>
         </aside>
@@ -2255,6 +2265,81 @@
             </div>
         </div>
     </div>
+    
+    <!-- Security Logs Modal -->
+    <div class="modal-overlay hidden" id="securityLogsModal">
+        <div class="modal" style="max-width: 1100px; width: 95vw;">
+            <div class="modal-header">
+                <div class="modal-title">🔒 <span data-i18n="securityLogsTitle">Security-Logs (Manipulationssicher)</span></div>
+                <button class="modal-close" id="btnCloseSecurityLogsModal">&times;</button>
+            </div>
+            <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                <!-- Integritätsstatus -->
+                <div id="securityLogsIntegrity" style="margin-bottom: 15px; padding: 12px; border-radius: 6px; border-left: 4px solid var(--success); background: var(--bg-light);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                        <div>
+                            <strong>🛡️ <span data-i18n="integrityStatus">Integritätsstatus:</span></strong>
+                            <span id="securityLogsStatus" style="margin-left: 10px;">Wird geprüft...</span>
+                        </div>
+                        <div style="display: flex; gap: 8px;">
+                            <button class="btn btn-secondary" id="btnRefreshLogs" style="padding: 5px 10px; font-size: 12px;">
+                                🔄 <span data-i18n="refresh">Aktualisieren</span>
+                            </button>
+                            <button class="btn btn-secondary" id="btnVerifyLogs" style="padding: 5px 10px; font-size: 12px;">
+                                ✓ <span data-i18n="verify">Verifizieren</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div id="securityLogsInfo" style="margin-top: 8px; font-size: 12px; color: var(--text-muted);">
+                        Einträge: <span id="logsCount">0</span> | Pfad: <span id="logsPath">-</span>
+                    </div>
+                </div>
+                
+                <!-- Filter -->
+                <div style="margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                    <label style="font-size: 13px;">Filter:</label>
+                    <select id="logsLevelFilter" class="config-select" style="width: auto; padding: 5px 10px;">
+                        <option value="">Alle Levels</option>
+                        <option value="INFO">ℹ️ INFO</option>
+                        <option value="WARN">⚠️ WARN</option>
+                        <option value="ERROR">❌ ERROR</option>
+                        <option value="SECURITY">🛡️ SECURITY</option>
+                    </select>
+                    <input type="text" id="logsSearchFilter" class="config-input" placeholder="Aktion suchen..." style="width: 200px; padding: 5px 10px;">
+                </div>
+                
+                <!-- Log-Tabelle -->
+                <div style="overflow-x: auto;">
+                    <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                        <thead>
+                            <tr style="background: var(--bg-lighter);">
+                                <th style="padding: 10px; text-align: left; border-bottom: 2px solid var(--border); white-space: nowrap;">Zeitstempel</th>
+                                <th style="padding: 10px; text-align: center; border-bottom: 2px solid var(--border); width: 80px;">Level</th>
+                                <th style="padding: 10px; text-align: left; border-bottom: 2px solid var(--border);">Aktion</th>
+                                <th style="padding: 10px; text-align: left; border-bottom: 2px solid var(--border);">Details</th>
+                                <th style="padding: 10px; text-align: center; border-bottom: 2px solid var(--border); width: 60px;">✓</th>
+                            </tr>
+                        </thead>
+                        <tbody id="securityLogsTableBody">
+                            <tr><td colspan="5" style="padding: 20px; text-align: center; color: var(--text-muted);">Lade Logs...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                
+                <!-- Verifikationsfehler (falls vorhanden) -->
+                <div id="securityLogsErrors" class="hidden" style="margin-top: 15px; padding: 12px; background: rgba(244, 67, 54, 0.1); border: 1px solid var(--error); border-radius: 6px;">
+                    <strong style="color: var(--error);">⚠️ Integritätsfehler gefunden:</strong>
+                    <ul id="securityLogsErrorList" style="margin: 10px 0 0 20px; color: var(--error); font-size: 12px;"></ul>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: space-between;">
+                <button class="btn btn-secondary" id="btnClearLogs" style="background: var(--error);">
+                    🗑️ <span data-i18n="clearLogs">Logs löschen</span>
+                </button>
+                <button class="btn btn-primary" id="btnCloseSecurityLogs" data-i18n="close">Schließen</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Transfer Preview / Diff Modal -->
     <div class="modal-overlay hidden" id="diffPreviewModal">
@@ -2839,7 +2924,15 @@
                 thirdPartyLicenses: 'Drittanbieter-Lizenzen',
                 thirdPartyDesc: 'Excel Data Sync Pro verwendet folgende Open-Source-Bibliotheken:',
                 allLicensesMIT: 'Alle verwendeten Bibliotheken sind unter der MIT-Lizenz oder kompatiblen Open-Source-Lizenzen lizenziert.',
-                packagesTotal: 'Pakete gesamt'
+                packagesTotal: 'Pakete gesamt',
+                
+                // Security Logs
+                securityLogs: 'Security-Logs',
+                securityLogsTitle: 'Security-Logs (Manipulationssicher)',
+                integrityStatus: 'Integritätsstatus:',
+                refresh: 'Aktualisieren',
+                verify: 'Verifizieren',
+                clearLogs: 'Logs löschen'
             },
             en: {
                 // Header
@@ -3027,7 +3120,15 @@
                 thirdPartyLicenses: 'Third-Party Licenses',
                 thirdPartyDesc: 'Excel Data Sync Pro uses the following open-source libraries:',
                 allLicensesMIT: 'All libraries used are licensed under the MIT License or compatible open-source licenses.',
-                packagesTotal: 'packages total'
+                packagesTotal: 'packages total',
+                
+                // Security Logs
+                securityLogs: 'Security Logs',
+                securityLogsTitle: 'Security Logs (Tamper-Proof)',
+                integrityStatus: 'Integrity Status:',
+                refresh: 'Refresh',
+                verify: 'Verify',
+                clearLogs: 'Clear Logs'
             }
         };
         
@@ -11402,6 +11503,16 @@
             document.getElementById('btnCloseLicenseModal').onclick = () => document.getElementById('licenseModal').classList.add('hidden');
             document.getElementById('btnCloseLicense').onclick = () => document.getElementById('licenseModal').classList.add('hidden');
             
+            // Security Logs Modal Event Listeners
+            document.getElementById('btnSecurityLogs').onclick = openSecurityLogsModal;
+            document.getElementById('btnCloseSecurityLogsModal').onclick = () => document.getElementById('securityLogsModal').classList.add('hidden');
+            document.getElementById('btnCloseSecurityLogs').onclick = () => document.getElementById('securityLogsModal').classList.add('hidden');
+            document.getElementById('btnRefreshLogs').onclick = loadSecurityLogs;
+            document.getElementById('btnVerifyLogs').onclick = verifySecurityLogs;
+            document.getElementById('btnClearLogs').onclick = clearSecurityLogs;
+            document.getElementById('logsLevelFilter').onchange = filterSecurityLogs;
+            document.getElementById('logsSearchFilter').oninput = filterSecurityLogs;
+            
             // Sidebar Toggle
             document.getElementById('sidebarToggle').onclick = () => {
                 document.getElementById('sidebar').classList.toggle('collapsed');
@@ -11419,6 +11530,7 @@
                     elements.newMonthModal.classList.add('hidden');
                     elements.createTemplateModal.classList.add('hidden');
                     document.getElementById('licenseModal').classList.add('hidden');
+                    document.getElementById('securityLogsModal').classList.add('hidden');
                     closeDataExplorer();
                 }
             };
@@ -11466,6 +11578,147 @@
                 }
             } catch (e) {
                 console.error('[Config] Fehler beim automatischen Laden:', e);
+            }
+        }
+        
+        // ==================== SECURITY LOGS FUNCTIONS ====================
+        
+        let securityLogsCache = [];
+        
+        async function openSecurityLogsModal() {
+            document.getElementById('securityLogsModal').classList.remove('hidden');
+            await loadSecurityLogs();
+            await verifySecurityLogs();
+        }
+        
+        async function loadSecurityLogs() {
+            try {
+                const result = await window.electronAPI.getSecurityLogs({ fromFile: true, limit: 500 });
+                
+                if (result.success) {
+                    securityLogsCache = result.entries;
+                    document.getElementById('logsCount').textContent = result.totalCount;
+                    document.getElementById('logsPath').textContent = result.logFilePath || '-';
+                    renderSecurityLogs(result.entries);
+                } else {
+                    document.getElementById('securityLogsTableBody').innerHTML = 
+                        `<tr><td colspan="5" style="padding: 20px; text-align: center; color: var(--error);">Fehler: ${result.error}</td></tr>`;
+                }
+            } catch (e) {
+                console.error('Fehler beim Laden der Security-Logs:', e);
+            }
+        }
+        
+        function renderSecurityLogs(entries) {
+            const tbody = document.getElementById('securityLogsTableBody');
+            
+            if (!entries || entries.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: var(--text-muted);">Keine Log-Einträge vorhanden</td></tr>`;
+                return;
+            }
+            
+            const levelColors = {
+                'INFO': { bg: 'rgba(33, 150, 243, 0.2)', text: '#2196F3', icon: 'ℹ️' },
+                'WARN': { bg: 'rgba(255, 152, 0, 0.2)', text: '#FF9800', icon: '⚠️' },
+                'ERROR': { bg: 'rgba(244, 67, 54, 0.2)', text: '#F44336', icon: '❌' },
+                'SECURITY': { bg: 'rgba(156, 39, 176, 0.2)', text: '#9C27B0', icon: '🛡️' }
+            };
+            
+            tbody.innerHTML = entries.map(entry => {
+                const level = levelColors[entry.level] || levelColors['INFO'];
+                const timestamp = new Date(entry.timestamp).toLocaleString('de-DE');
+                const details = entry.details ? Object.entries(entry.details)
+                    .filter(([k, v]) => k !== 'pid')
+                    .map(([k, v]) => `<span style="color: var(--text-muted);">${k}:</span> ${typeof v === 'object' ? JSON.stringify(v) : v}`)
+                    .join(', ') : '-';
+                
+                // Signature-Check Icon
+                const sigValid = entry.signature ? '✓' : '?';
+                const sigColor = entry.signature ? 'var(--success)' : 'var(--text-muted)';
+                
+                return `
+                    <tr style="border-bottom: 1px solid var(--border);">
+                        <td style="padding: 8px; white-space: nowrap; font-family: monospace; font-size: 11px;">${timestamp}</td>
+                        <td style="padding: 8px; text-align: center;">
+                            <span style="background: ${level.bg}; color: ${level.text}; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold;">
+                                ${level.icon} ${entry.level}
+                            </span>
+                        </td>
+                        <td style="padding: 8px; font-weight: 500;">${entry.action}</td>
+                        <td style="padding: 8px; font-size: 11px; max-width: 350px; overflow: hidden; text-overflow: ellipsis;" title="${details}">${details}</td>
+                        <td style="padding: 8px; text-align: center; color: ${sigColor}; font-weight: bold;">${sigValid}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        function filterSecurityLogs() {
+            const levelFilter = document.getElementById('logsLevelFilter').value;
+            const searchFilter = document.getElementById('logsSearchFilter').value.toLowerCase();
+            
+            let filtered = securityLogsCache;
+            
+            if (levelFilter) {
+                filtered = filtered.filter(e => e.level === levelFilter);
+            }
+            
+            if (searchFilter) {
+                filtered = filtered.filter(e => 
+                    e.action.toLowerCase().includes(searchFilter) ||
+                    JSON.stringify(e.details).toLowerCase().includes(searchFilter)
+                );
+            }
+            
+            renderSecurityLogs(filtered);
+        }
+        
+        async function verifySecurityLogs() {
+            const statusEl = document.getElementById('securityLogsStatus');
+            const integrityBox = document.getElementById('securityLogsIntegrity');
+            const errorsBox = document.getElementById('securityLogsErrors');
+            const errorsList = document.getElementById('securityLogsErrorList');
+            
+            statusEl.textContent = 'Wird geprüft...';
+            
+            try {
+                const result = await window.electronAPI.verifySecurityLogs();
+                
+                if (result.success) {
+                    if (result.valid) {
+                        statusEl.innerHTML = `<span style="color: var(--success); font-weight: bold;">✓ Alle ${result.verifiedEntries} Einträge verifiziert</span>`;
+                        integrityBox.style.borderLeftColor = 'var(--success)';
+                        errorsBox.classList.add('hidden');
+                    } else {
+                        statusEl.innerHTML = `<span style="color: var(--error); font-weight: bold;">⚠️ ${result.errors.length} Integritätsfehler</span>`;
+                        integrityBox.style.borderLeftColor = 'var(--error)';
+                        errorsBox.classList.remove('hidden');
+                        errorsList.innerHTML = result.errors.map(err => `<li>${err}</li>`).join('');
+                    }
+                } else {
+                    statusEl.innerHTML = `<span style="color: var(--error);">Fehler: ${result.error}</span>`;
+                }
+            } catch (e) {
+                statusEl.innerHTML = `<span style="color: var(--error);">Fehler bei Verifikation</span>`;
+                console.error('Verifikationsfehler:', e);
+            }
+        }
+        
+        async function clearSecurityLogs() {
+            if (!confirm('Alle Security-Logs wirklich löschen?\n\nDies kann nicht rückgängig gemacht werden.')) {
+                return;
+            }
+            
+            try {
+                const result = await window.electronAPI.clearSecurityLogs();
+                
+                if (result.success) {
+                    await loadSecurityLogs();
+                    await verifySecurityLogs();
+                } else {
+                    alert('Fehler beim Löschen: ' + result.error);
+                }
+            } catch (e) {
+                console.error('Fehler beim Löschen der Logs:', e);
             }
         }
 

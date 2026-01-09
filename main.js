@@ -72,13 +72,404 @@ let mainWindow = null;
 // ============================================
 
 /**
+ * Security-Logger für sicherheitsrelevante Ereignisse
+ * Protokolliert kritische Operationen mit Zeitstempel
+ * Speichert manipulationssicher in Log-Datei mit HMAC-Signaturen
+ */
+const crypto = require('crypto');
+
+const securityLog = {
+    entries: [],
+    maxEntries: 1000,
+    logFilePath: null,
+    secretKey: null,
+    lastHash: 'GENESIS',
+    
+    /**
+     * Initialisiert den Logger mit Dateipfad und generiert/lädt den Secret Key
+     */
+    init() {
+        const userDataPath = app.getPath('userData');
+        this.logFilePath = path.join(userDataPath, 'security.log');
+        const keyPath = path.join(userDataPath, '.security-key');
+        
+        // Secret Key laden oder generieren (einmalig pro Installation)
+        try {
+            if (fs.existsSync(keyPath)) {
+                this.secretKey = fs.readFileSync(keyPath, 'utf8');
+            } else {
+                this.secretKey = crypto.randomBytes(32).toString('hex');
+                fs.writeFileSync(keyPath, this.secretKey, { mode: 0o600 });
+            }
+        } catch (e) {
+            // Fallback: Session-basierter Key (weniger sicher, aber funktional)
+            this.secretKey = crypto.randomBytes(32).toString('hex');
+        }
+        
+        // Letzten Hash aus existierender Log-Datei laden
+        this.loadLastHash();
+    },
+    
+    /**
+     * Lädt den letzten Hash aus der existierenden Log-Datei
+     */
+    loadLastHash() {
+        try {
+            if (fs.existsSync(this.logFilePath)) {
+                const content = fs.readFileSync(this.logFilePath, 'utf8').trim();
+                if (content) {
+                    const lines = content.split('\n');
+                    const lastLine = lines[lines.length - 1];
+                    if (lastLine) {
+                        const entry = JSON.parse(lastLine);
+                        if (entry.hash) {
+                            this.lastHash = entry.hash;
+                        }
+                    }
+                }
+            }
+        } catch (e) {
+            // Bei Fehler mit GENESIS starten
+            this.lastHash = 'GENESIS';
+        }
+    },
+    
+    /**
+     * Berechnet HMAC-Signatur für einen Eintrag
+     */
+    calculateHMAC(data) {
+        return crypto.createHmac('sha256', this.secretKey)
+            .update(JSON.stringify(data))
+            .digest('hex');
+    },
+    
+    /**
+     * Berechnet verketteten Hash (enthält vorherigen Hash)
+     */
+    calculateChainHash(entry, prevHash) {
+        const dataToHash = JSON.stringify(entry) + prevHash;
+        return crypto.createHash('sha256').update(dataToHash).digest('hex');
+    },
+    
+    /**
+     * Protokolliert ein sicherheitsrelevantes Ereignis
+     * @param {'INFO'|'WARN'|'ERROR'|'SECURITY'} level - Log-Level
+     * @param {string} action - Durchgeführte Aktion
+     * @param {Object} details - Zusätzliche Details
+     */
+    log(level, action, details = {}) {
+        const entry = {
+            timestamp: new Date().toISOString(),
+            level,
+            action,
+            details: { ...details, pid: process.pid }
+        };
+        
+        this.entries.push(entry);
+        
+        // Älteste Einträge entfernen wenn Limit erreicht
+        if (this.entries.length > this.maxEntries) {
+            this.entries.shift();
+        }
+        
+        // Auf Konsole ausgeben (im Entwicklungsmodus)
+        const logMessage = `[${entry.timestamp}] [${level}] ${action}`;
+        if (level === 'ERROR' || level === 'SECURITY') {
+            console.error(logMessage, details);
+        } else if (level === 'WARN') {
+            console.warn(logMessage, details);
+        } else if (process.argv.includes('--dev')) {
+            console.log(logMessage, details);
+        }
+        
+        // In Datei schreiben (manipulationssicher)
+        this.writeToFile(entry);
+    },
+    
+    /**
+     * Schreibt Eintrag manipulationssicher in Log-Datei
+     */
+    writeToFile(entry) {
+        if (!this.logFilePath || !this.secretKey) return;
+        
+        try {
+            // Verketteten Hash berechnen (enthält vorherigen Hash)
+            const chainHash = this.calculateChainHash(entry, this.lastHash);
+            
+            // HMAC-Signatur für Integrität
+            const signedEntry = {
+                ...entry,
+                prevHash: this.lastHash,
+                hash: chainHash,
+                signature: this.calculateHMAC({ ...entry, prevHash: this.lastHash, hash: chainHash })
+            };
+            
+            this.lastHash = chainHash;
+            
+            // An Datei anhängen
+            fs.appendFileSync(this.logFilePath, JSON.stringify(signedEntry) + '\n');
+        } catch (e) {
+            // Fehler beim Schreiben ignorieren (Logging sollte App nicht crashen)
+        }
+    },
+    
+    /**
+     * Liest alle Logs aus der Datei
+     * @returns {Array} Log-Einträge
+     */
+    readFromFile() {
+        if (!this.logFilePath) return [];
+        
+        try {
+            if (!fs.existsSync(this.logFilePath)) return [];
+            
+            const content = fs.readFileSync(this.logFilePath, 'utf8').trim();
+            if (!content) return [];
+            
+            return content.split('\n').map(line => {
+                try {
+                    return JSON.parse(line);
+                } catch {
+                    return null;
+                }
+            }).filter(Boolean);
+        } catch (e) {
+            return [];
+        }
+    },
+    
+    /**
+     * Verifiziert die Integrität der Log-Datei
+     * Prüft HMAC-Signaturen und Hash-Kette
+     * @returns {{valid: boolean, errors: string[], totalEntries: number, verifiedEntries: number}}
+     */
+    verifyIntegrity() {
+        const entries = this.readFromFile();
+        const errors = [];
+        let prevHash = 'GENESIS';
+        let verifiedCount = 0;
+        
+        for (let i = 0; i < entries.length; i++) {
+            const entry = entries[i];
+            
+            // 1. Prüfe ob prevHash zum vorherigen Eintrag passt
+            if (entry.prevHash !== prevHash) {
+                errors.push(`Zeile ${i + 1}: Hash-Kette unterbrochen (erwartet: ${prevHash.substring(0, 8)}..., gefunden: ${entry.prevHash?.substring(0, 8)}...)`);
+            }
+            
+            // 2. Prüfe ob der Hash korrekt berechnet wurde
+            const entryWithoutMeta = {
+                timestamp: entry.timestamp,
+                level: entry.level,
+                action: entry.action,
+                details: entry.details
+            };
+            const expectedHash = this.calculateChainHash(entryWithoutMeta, entry.prevHash);
+            if (entry.hash !== expectedHash) {
+                errors.push(`Zeile ${i + 1}: Hash-Manipulation erkannt bei "${entry.action}"`);
+            }
+            
+            // 3. Prüfe HMAC-Signatur
+            const dataToSign = { ...entryWithoutMeta, prevHash: entry.prevHash, hash: entry.hash };
+            const expectedSig = this.calculateHMAC(dataToSign);
+            if (entry.signature !== expectedSig) {
+                errors.push(`Zeile ${i + 1}: Signatur ungültig bei "${entry.action}"`);
+            } else {
+                verifiedCount++;
+            }
+            
+            prevHash = entry.hash;
+        }
+        
+        return {
+            valid: errors.length === 0,
+            errors,
+            totalEntries: entries.length,
+            verifiedEntries: verifiedCount
+        };
+    },
+    
+    /**
+     * Gibt alle Log-Einträge zurück (aus Speicher)
+     * @returns {Array} Log-Einträge
+     */
+    getEntries() {
+        return [...this.entries];
+    },
+    
+    /**
+     * Gibt Log-Einträge eines bestimmten Levels zurück
+     * @param {'INFO'|'WARN'|'ERROR'|'SECURITY'} level
+     * @returns {Array} Gefilterte Log-Einträge
+     */
+    getByLevel(level) {
+        return this.entries.filter(e => e.level === level);
+    },
+    
+    /**
+     * Löscht die Log-Datei (mit neuem GENESIS-Eintrag)
+     */
+    clearLogs() {
+        try {
+            if (this.logFilePath && fs.existsSync(this.logFilePath)) {
+                fs.unlinkSync(this.logFilePath);
+            }
+            this.lastHash = 'GENESIS';
+            this.entries = [];
+            
+            // Neuen GENESIS-Eintrag erstellen
+            this.log('SECURITY', 'LOGS_CLEARED', { reason: 'User initiated clear' });
+            return { success: true };
+        } catch (e) {
+            return { success: false, error: e.message };
+        }
+    }
+};
+
+/**
+ * Config-Schema-Validierung
+ * Prüft ob die geladene Konfiguration gültige Typen und Werte hat
+ */
+const configSchema = {
+    /**
+     * Validiert ein Config-Objekt gegen das erwartete Schema
+     * @param {Object} config - Das zu validierende Config-Objekt
+     * @returns {{valid: boolean, errors: string[]}} Validierungsergebnis
+     */
+    validate(config) {
+        const errors = [];
+        
+        if (!config || typeof config !== 'object' || Array.isArray(config)) {
+            return { valid: false, errors: ['Config muss ein Objekt sein'] };
+        }
+        
+        // Definiere erwartete Typen für jedes Feld
+        const fieldTypes = {
+            file1Path: 'string',
+            file2Path: 'string',
+            templatePath: 'string',
+            sheet1Name: 'string',
+            sheet2Name: 'string',
+            startColumn: 'number',
+            checkColumn: 'number',
+            flagColumn: 'number',
+            commentColumn: 'number',
+            sourceColumns: 'array',
+            enableFlag: 'boolean',
+            enableComment: 'boolean',
+            workingDir: 'string',
+            theme: 'string',
+            language: 'string',
+            // Zusätzliche Felder aus config.json
+            file1SheetName: 'string',
+            file2SheetName: 'string',
+            mapping: 'object',
+            exportDate: 'string',
+            extraColumns: 'object',
+            file1Name: 'string',
+            file2Name: 'string',
+            templateName: 'string'
+        };
+        
+        // Erlaubte Werte für bestimmte Felder
+        const allowedValues = {
+            theme: ['dark', 'light'],
+            language: ['de', 'en']
+        };
+        
+        // Prüfe jeden bekannten Schlüssel
+        for (const [key, value] of Object.entries(config)) {
+            // Überspringe null/undefined Werte (optional)
+            if (value === null || value === undefined) {
+                continue;
+            }
+            
+            const expectedType = fieldTypes[key];
+            
+            // Unbekannter Schlüssel (Warnung, aber kein Fehler)
+            if (!expectedType) {
+                securityLog.log('WARN', 'CONFIG_UNKNOWN_KEY', { key });
+                continue;
+            }
+            
+            // Typ-Prüfung
+            if (expectedType === 'array') {
+                if (!Array.isArray(value)) {
+                    errors.push(`Feld '${key}' muss ein Array sein, ist aber ${typeof value}`);
+                } else if (key === 'sourceColumns') {
+                    // Array-Elemente müssen Zahlen sein
+                    const invalidElements = value.filter(v => typeof v !== 'number' || !Number.isInteger(v));
+                    if (invalidElements.length > 0) {
+                        errors.push(`Feld '${key}' enthält ungültige Elemente (müssen Ganzzahlen sein)`);
+                    }
+                }
+            } else if (typeof value !== expectedType) {
+                errors.push(`Feld '${key}' muss vom Typ '${expectedType}' sein, ist aber '${typeof value}'`);
+            }
+            
+            // Werte-Prüfung für enum-artige Felder
+            if (allowedValues[key] && !allowedValues[key].includes(value)) {
+                errors.push(`Feld '${key}' hat ungültigen Wert '${value}'. Erlaubt: ${allowedValues[key].join(', ')}`);
+            }
+            
+            // Zahlen müssen positiv sein (für Spalten-Indizes)
+            if (expectedType === 'number' && typeof value === 'number') {
+                if (value < 0 || !Number.isFinite(value)) {
+                    errors.push(`Feld '${key}' muss eine positive Zahl sein`);
+                }
+            }
+            
+            // Pfad-Validierung für Dateipfade
+            if (key.endsWith('Path') && typeof value === 'string' && value.length > 0) {
+                if (value.includes('\0')) {
+                    errors.push(`Feld '${key}' enthält ungültige Zeichen (Null-Byte)`);
+                    securityLog.log('SECURITY', 'CONFIG_NULL_BYTE_IN_PATH', { key, value: '[REDACTED]' });
+                }
+            }
+        }
+        
+        return { valid: errors.length === 0, errors };
+    },
+    
+    /**
+     * Bereinigt ein Config-Objekt von ungültigen oder gefährlichen Werten
+     * @param {Object} config - Das zu bereinigende Config-Objekt
+     * @returns {Object} Bereinigtes Config-Objekt
+     */
+    sanitize(config) {
+        if (!config || typeof config !== 'object') {
+            return {};
+        }
+        
+        const sanitized = {};
+        const safeKeys = [
+            'file1Path', 'file2Path', 'templatePath', 'sheet1Name', 'sheet2Name',
+            'startColumn', 'checkColumn', 'flagColumn', 'commentColumn',
+            'sourceColumns', 'enableFlag', 'enableComment', 'workingDir',
+            'theme', 'language',
+            // Zusätzliche Keys aus config.json
+            'file1SheetName', 'file2SheetName', 'mapping', 'exportDate',
+            'extraColumns', 'file1Name', 'file2Name', 'templateName'
+        ];
+        
+        for (const key of safeKeys) {
+            if (config.hasOwnProperty(key) && config[key] !== undefined) {
+                sanitized[key] = config[key];
+            }
+        }
+        
+        return sanitized;
+    }
+};
+
+/**
  * Prüft ob ein Dateipfad sicher ist (keine Path Traversal-Angriffe)
  * @param {string} filePath - Der zu prüfende Pfad
  * @returns {boolean} true wenn der Pfad sicher ist
  */
 function isValidFilePath(filePath) {
     if (!filePath || typeof filePath !== 'string') {
-        console.warn('Ungültiger Dateipfad (nicht String):', typeof filePath);
+        securityLog.log('WARN', 'INVALID_PATH_TYPE', { type: typeof filePath });
         return false;
     }
     
@@ -87,13 +478,17 @@ function isValidFilePath(filePath) {
     
     // Prüfe auf Path Traversal-Muster
     if (normalized.includes('..')) {
-        console.warn('Path Traversal-Versuch erkannt:', filePath);
+        securityLog.log('SECURITY', 'PATH_TRAVERSAL_ATTEMPT', { 
+            path: filePath.substring(0, 100) + (filePath.length > 100 ? '...' : '')
+        });
         return false;
     }
     
     // Prüfe auf null-bytes (kann Sicherheitsprüfungen umgehen)
     if (filePath.includes('\0')) {
-        console.warn('Null-Byte im Pfad erkannt:', filePath);
+        securityLog.log('SECURITY', 'NULL_BYTE_IN_PATH', { 
+            pathLength: filePath.length 
+        });
         return false;
     }
     
@@ -210,7 +605,13 @@ function createWindow() {
     });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+    // Security-Logger initialisieren (für Datei-basiertes Logging)
+    securityLog.init();
+    securityLog.log('INFO', 'APP_STARTED', { version: app.getVersion() });
+    
+    createWindow();
+});
 
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
@@ -1324,11 +1725,17 @@ ipcMain.handle('excel:addSheet', async (event, { filePath, sheetName }) => {
         workbook.addSheet(sheetName);
         await workbook.toFileAsync(filePath);
         
+        securityLog.log('INFO', 'SHEET_ADDED', { 
+            file: path.basename(filePath), 
+            sheet: sheetName 
+        });
+        
         return { 
             success: true, 
             sheets: workbook.sheets().map(s => s.name())
         };
     } catch (error) {
+        securityLog.log('ERROR', 'SHEET_ADD_FAILED', { error: error.message });
         return { success: false, error: error.message };
     }
 });
@@ -1349,11 +1756,17 @@ ipcMain.handle('excel:deleteSheet', async (event, { filePath, sheetName }) => {
         workbook.deleteSheet(sheetName);
         await workbook.toFileAsync(filePath);
         
+        securityLog.log('INFO', 'SHEET_DELETED', { 
+            file: path.basename(filePath), 
+            sheet: sheetName 
+        });
+        
         return { 
             success: true, 
             sheets: workbook.sheets().map(s => s.name())
         };
     } catch (error) {
+        securityLog.log('ERROR', 'SHEET_DELETE_FAILED', { error: error.message });
         return { success: false, error: error.message };
     }
 });
@@ -2030,6 +2443,13 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
         const saveOptions = password ? { password } : {};
         await workbook.toFileAsync(targetPath, saveOptions);
         
+        securityLog.log('INFO', 'EXCEL_EXPORT_COMPLETED', { 
+            sourceFile: path.basename(sourcePath),
+            targetFile: path.basename(targetPath),
+            sheetsExported: sheetsProcessed,
+            passwordProtected: !!password
+        });
+        
         return { 
             success: true, 
             message: `${sheetsProcessed} Sheet(s) exportiert: ${targetPath}`,
@@ -2037,6 +2457,11 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
             passwordProtected: !!password
         };
     } catch (error) {
+        securityLog.log('ERROR', 'EXCEL_EXPORT_FAILED', { 
+            sourceFile: path.basename(sourcePath),
+            targetFile: path.basename(targetPath),
+            error: error.message 
+        });
         return { success: false, error: error.message };
     }
 });
@@ -2159,12 +2584,23 @@ ipcMain.handle('excel:saveFile', async (event, { filePath, sheets, password = nu
         const saveOptions = password ? { password } : {};
         await workbook.toFileAsync(filePath, saveOptions);
         
+        securityLog.log('INFO', 'EXCEL_FILE_SAVED', { 
+            file: path.basename(filePath), 
+            sheetsCount: sheets.length,
+            totalChanges,
+            passwordProtected: !!password
+        });
+        
         return { 
             success: true, 
             message: `${sheets.length} Sheet(s) in ${filePath} gespeichert`,
             totalChanges 
         };
     } catch (error) {
+        securityLog.log('ERROR', 'EXCEL_SAVE_FAILED', { 
+            file: path.basename(filePath),
+            error: error.message 
+        });
         return { success: false, error: error.message };
     }
 });
@@ -2181,9 +2617,24 @@ ipcMain.handle('config:save', async (event, { filePath, config }) => {
     }
     
     try {
-        fs.writeFileSync(filePath, JSON.stringify(config, null, 2), 'utf8');
+        // Schema-Validierung vor dem Speichern
+        const validation = configSchema.validate(config);
+        if (!validation.valid) {
+            securityLog.log('WARN', 'CONFIG_VALIDATION_FAILED_ON_SAVE', { 
+                errors: validation.errors,
+                path: path.basename(filePath)
+            });
+            // Trotzdem speichern, aber warnen (Rückwärtskompatibilität)
+        }
+        
+        // Config bereinigen (nur bekannte Felder speichern)
+        const sanitizedConfig = configSchema.sanitize(config);
+        
+        fs.writeFileSync(filePath, JSON.stringify(sanitizedConfig, null, 2), 'utf8');
+        securityLog.log('INFO', 'CONFIG_SAVED', { path: path.basename(filePath) });
         return { success: true };
     } catch (error) {
+        securityLog.log('ERROR', 'CONFIG_SAVE_FAILED', { error: error.message });
         return { success: false, error: error.message };
     }
 });
@@ -2204,10 +2655,32 @@ ipcMain.handle('config:load', async (event, filePath) => {
         try {
             config = JSON.parse(content);
         } catch (parseError) {
+            securityLog.log('ERROR', 'CONFIG_INVALID_JSON', { 
+                path: path.basename(filePath),
+                error: parseError.message 
+            });
             return { success: false, error: 'Ungültige JSON-Syntax' };
         }
-        return { success: true, config: config };
+        
+        // Schema-Validierung
+        const validation = configSchema.validate(config);
+        if (!validation.valid) {
+            securityLog.log('WARN', 'CONFIG_VALIDATION_FAILED', { 
+                path: path.basename(filePath),
+                errors: validation.errors 
+            });
+            // Config trotzdem laden, aber Warnungen zurückgeben
+            return { 
+                success: true, 
+                config: configSchema.sanitize(config),
+                warnings: validation.errors
+            };
+        }
+        
+        securityLog.log('INFO', 'CONFIG_LOADED', { path: path.basename(filePath) });
+        return { success: true, config: configSchema.sanitize(config) };
     } catch (error) {
+        securityLog.log('ERROR', 'CONFIG_LOAD_FAILED', { error: error.message });
         return { success: false, error: error.message };
     }
 });
@@ -2225,12 +2698,60 @@ ipcMain.handle('app:getPath', async (event) => {
     };
 });
 
+// Security-Logs abrufen
+ipcMain.handle('security:getLogs', async (event, { fromFile = true, limit = 500 } = {}) => {
+    try {
+        let entries;
+        if (fromFile) {
+            entries = securityLog.readFromFile();
+        } else {
+            entries = securityLog.getEntries();
+        }
+        
+        // Neueste zuerst, mit Limit
+        const limited = entries.slice(-limit).reverse();
+        
+        return { 
+            success: true, 
+            entries: limited,
+            totalCount: entries.length,
+            logFilePath: securityLog.logFilePath
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Security-Log Integrität prüfen
+ipcMain.handle('security:verifyLogs', async (event) => {
+    try {
+        const result = securityLog.verifyIntegrity();
+        return { success: true, ...result };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Security-Logs löschen (nur mit Bestätigung)
+ipcMain.handle('security:clearLogs', async (event) => {
+    try {
+        const result = securityLog.clearLogs();
+        return result;
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 // Externe URL im Standard-Browser öffnen
 ipcMain.handle('shell:openExternal', async (event, url) => {
     const { shell } = require('electron');
     try {
         // Sicherheitsprüfung: Nur http, https und mailto erlauben
         if (url && (url.startsWith('http://') || url.startsWith('https://') || url.startsWith('mailto:'))) {
+            securityLog.log('INFO', 'EXTERNAL_URL_OPENED', { 
+                protocol: url.split(':')[0],
+                domain: url.includes('://') ? url.split('://')[1].split('/')[0] : 'mailto'
+            });
             await shell.openExternal(url);
             return { success: true };
         } else {
@@ -2304,12 +2825,34 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
                     try {
                         config = JSON.parse(content);
                     } catch (parseError) {
+                        securityLog.log('WARN', 'CONFIG_PARSE_ERROR', { 
+                            path: path.basename(configPath),
+                            error: parseError.message 
+                        });
                         continue; // Nächsten Pfad probieren
                     }
+                    
+                    // Schema-Validierung
+                    const validation = configSchema.validate(config);
+                    if (!validation.valid) {
+                        securityLog.log('WARN', 'CONFIG_VALIDATION_FAILED', { 
+                            path: path.basename(configPath),
+                            errors: validation.errors 
+                        });
+                    }
+                    
+                    securityLog.log('INFO', 'CONFIG_AUTO_LOADED', { 
+                        path: path.basename(configPath),
+                        source: configPath.includes(workingDir || '') ? 'workingDir' : 
+                                configPath.includes(portableDir) ? 'portable' : 
+                                configPath.includes(exeDir) ? 'exeDir' : 'userDir'
+                    });
+                    
                     return { 
                         success: true, 
-                        config: config,
-                        path: configPath
+                        config: configSchema.sanitize(config),
+                        path: configPath,
+                        warnings: validation.valid ? undefined : validation.errors
                     };
                 }
             }
@@ -2321,6 +2864,7 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
                 searchedPaths: possiblePaths
             };
         } catch (error) {
+            securityLog.log('ERROR', 'CONFIG_AUTO_LOAD_FAILED', { error: error.message });
             return { success: false, error: error.message };
         } finally {
             // Loading-State zurücksetzen
@@ -2602,6 +3146,14 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
         
         fs.writeFileSync(outputPath, outputBuffer);
         
+        securityLog.log('INFO', 'TEMPLATE_CREATED', { 
+            sourceFile: path.basename(sourcePath),
+            outputFile: path.basename(outputPath),
+            sheetsProcessed: processedSheets,
+            addFlagColumn,
+            addCommentColumn
+        });
+        
         return { 
             success: true, 
             message: 'Template erfolgreich erstellt',
@@ -2615,6 +3167,11 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
         
     } catch (error) {
         console.error('Fehler beim Erstellen des Templates:', error);
+        securityLog.log('ERROR', 'TEMPLATE_CREATION_FAILED', { 
+            sourceFile: path.basename(sourcePath),
+            outputFile: path.basename(outputPath),
+            error: error.message 
+        });
         return { success: false, error: error.message };
     }
 });
