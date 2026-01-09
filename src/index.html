@@ -4324,12 +4324,40 @@
             btnExplorerExport: document.getElementById('btnExplorerExport'),
             btnExplorerSave: document.getElementById('btnExplorerSave'),
             btnExplorerOpenFile: document.getElementById('btnExplorerOpenFile'),
+            btnExplorerSearch: document.getElementById('btnExplorerSearch'),
+            btnExplorerPreview: document.getElementById('btnExplorerPreview'),
+            btnExplorerFullscreen: document.getElementById('btnExplorerFullscreen'),
+            btnCloseExplorerX: document.getElementById('btnCloseExplorerX'),
+            btnCloseExplorerFooter: document.getElementById('btnCloseExplorerFooter'),
+            btnToggleColumns: document.getElementById('btnToggleColumns'),
+            btnShowAllColumns: document.getElementById('btnShowAllColumns'),
+            btnHideAllColumns: document.getElementById('btnHideAllColumns'),
+            btnAddExplorerFilter: document.getElementById('btnAddExplorerFilter'),
+            btnClearExplorerFilters: document.getElementById('btnClearExplorerFilters'),
             explorerDropZone: document.getElementById('explorerDropZone'),
+            explorerPageSize: document.getElementById('explorerPageSize'),
+            btnExplorerFirstPage: document.getElementById('btnExplorerFirstPage'),
+            btnExplorerPrevPage: document.getElementById('btnExplorerPrevPage'),
+            btnExplorerNextPage: document.getElementById('btnExplorerNextPage'),
+            btnExplorerLastPage: document.getElementById('btnExplorerLastPage'),
             
             // Help
             btnHelp: document.getElementById('btnHelp'),
             helpModal: document.getElementById('helpModal')
         };
+
+        // ==================== Utility Functions ====================
+        function debounce(func, wait) {
+            let timeout;
+            return function executedFunction(...args) {
+                const later = () => {
+                    clearTimeout(timeout);
+                    func(...args);
+                };
+                clearTimeout(timeout);
+                timeout = setTimeout(later, wait);
+            };
+        }
 
         // ==================== Local Storage ====================
         const STORAGE_KEY = 'mvmcVertragslistenConfig';
@@ -9208,33 +9236,6 @@
             return parseFloat(normalized);
         }
         
-        /**
-         * Parst einen Wert als Datum (berücksichtigt deutsche Datumsformate)
-         */
-        function parseDateValue(value) {
-            if (value instanceof Date) return value;
-            if (value == null) return null;
-            const str = String(value).trim();
-            
-            // Deutsches Format: DD.MM.YYYY oder DD.MM.YYYY HH:MM
-            const germanMatch = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{4})(?:\s+(\d{1,2}):(\d{2}))?$/);
-            if (germanMatch) {
-                const [, day, month, year, hour, min] = germanMatch;
-                return new Date(parseInt(year), parseInt(month) - 1, parseInt(day), 
-                    parseInt(hour || 0), parseInt(min || 0));
-            }
-            
-            // ISO-Format: YYYY-MM-DD
-            const isoMatch = str.match(/^(\d{4})-(\d{2})-(\d{2})/);
-            if (isoMatch) {
-                return new Date(str);
-            }
-            
-            // Fallback
-            const parsed = new Date(str);
-            return isNaN(parsed.getTime()) ? null : parsed;
-        }
-        
         // ==================== Column Context Menu ====================
         let contextMenuColumn = null;
         
@@ -11653,29 +11654,38 @@
             
             // Data Explorer Event Listeners
             elements.btnDataExplorer.onclick = openDataExplorer;
-            document.getElementById('btnCloseExplorerX').onclick = closeDataExplorer;
-            document.getElementById('btnCloseExplorerFooter').onclick = closeDataExplorer;
-            document.getElementById('btnExplorerFullscreen').onclick = toggleExplorerFullscreen;
+            elements.btnCloseExplorerX.onclick = closeDataExplorer;
+            elements.btnCloseExplorerFooter.onclick = closeDataExplorer;
+            elements.btnExplorerFullscreen.onclick = toggleExplorerFullscreen;
             elements.btnExplorerOpenFile.onclick = loadExplorerFile;
             
             // Drag & Drop Event Listeners for Explorer
             setupExplorerDropZone();
             elements.explorerSheetSelect.onchange = (e) => loadExplorerSheet(e.target.value);
-            elements.explorerSearch.onkeydown = (e) => { 
+            
+            // Debounced Explorer-Suche (300ms Verzögerung)
+            const debouncedExplorerSearch = debounce(() => {
+                explorerState.searchTerm = elements.explorerSearch.value;
+                filterExplorerData();
+            }, 300);
+            
+            elements.explorerSearch.oninput = debouncedExplorerSearch;
+            elements.explorerSearch.onkeydown = (e) => {
                 if (e.key === 'Enter') {
-                    explorerState.searchTerm = e.target.value; 
-                    filterExplorerData(); 
+                    // Bei Enter sofort suchen (ohne Debounce)
+                    explorerState.searchTerm = e.target.value;
+                    filterExplorerData();
                 }
             };
-            document.getElementById('btnExplorerSearch').onclick = () => {
+            elements.btnExplorerSearch.onclick = () => {
                 explorerState.searchTerm = elements.explorerSearch.value;
                 filterExplorerData();
             };
-            document.getElementById('btnToggleColumns').onclick = toggleColumnPanel;
-            document.getElementById('btnShowAllColumns').onclick = showAllExplorerColumns;
-            document.getElementById('btnHideAllColumns').onclick = hideAllExplorerColumns;
-            document.getElementById('btnAddExplorerFilter').onclick = addExplorerFilter;
-            document.getElementById('btnClearExplorerFilters').onclick = clearExplorerFilters;
+            elements.btnToggleColumns.onclick = toggleColumnPanel;
+            elements.btnShowAllColumns.onclick = showAllExplorerColumns;
+            elements.btnHideAllColumns.onclick = hideAllExplorerColumns;
+            elements.btnAddExplorerFilter.onclick = addExplorerFilter;
+            elements.btnClearExplorerFilters.onclick = clearExplorerFilters;
             elements.btnExplorerExport.onclick = exportExplorerData;
             elements.btnExplorerSave.onclick = saveExplorerData;
             
@@ -11691,7 +11701,7 @@
             document.getElementById('btnSheetDelete').onclick = deleteSelectedSheet;
             
             // Explorer-Vorschau Event Listeners
-            document.getElementById('btnExplorerPreview').onclick = showExplorerPreview;
+            elements.btnExplorerPreview.onclick = showExplorerPreview;
             document.getElementById('btnClosePreviewX').onclick = closeExplorerPreview;
             document.getElementById('btnClosePreview').onclick = closeExplorerPreview;
             
@@ -11702,11 +11712,11 @@
             document.getElementById('btnClearRowSelection').onclick = clearRowSelection;
             
             // Pagination Event Listeners (Data Explorer)
-            document.getElementById('btnExplorerFirstPage').onclick = () => explorerGoToPage(1);
-            document.getElementById('btnExplorerPrevPage').onclick = () => explorerGoToPage(explorerState.currentPage - 1);
-            document.getElementById('btnExplorerNextPage').onclick = () => explorerGoToPage(explorerState.currentPage + 1);
-            document.getElementById('btnExplorerLastPage').onclick = () => explorerGoToPage(Math.ceil(explorerState.filteredData.length / explorerState.pageSize));
-            document.getElementById('explorerPageSize').onchange = (e) => explorerChangePageSize(e.target.value);
+            elements.btnExplorerFirstPage.onclick = () => explorerGoToPage(1);
+            elements.btnExplorerPrevPage.onclick = () => explorerGoToPage(explorerState.currentPage - 1);
+            elements.btnExplorerNextPage.onclick = () => explorerGoToPage(explorerState.currentPage + 1);
+            elements.btnExplorerLastPage.onclick = () => explorerGoToPage(Math.ceil(explorerState.filteredData.length / explorerState.pageSize));
+            elements.explorerPageSize.onchange = (e) => explorerChangePageSize(e.target.value);
             
             // Pagination Event Listeners (Suchergebnisse)
             document.getElementById('btnSearchFirstPage').onclick = () => searchGoToPage(1);
