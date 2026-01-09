@@ -9158,6 +9158,7 @@
             let y = e.clientY;
             
             // Sicherstellen, dass das Menü im Viewport bleibt
+            menu.classList.remove('hidden');
             menu.style.display = 'block';
             const menuRect = menu.getBoundingClientRect();
             
@@ -9174,7 +9175,10 @@
         
         function hideColumnContextMenu() {
             const menu = document.getElementById('columnContextMenu');
-            if (menu) menu.style.display = 'none';
+            if (menu) {
+                menu.classList.add('hidden');
+                menu.style.display = 'none';
+            }
             contextMenuColumn = null;
         }
         
