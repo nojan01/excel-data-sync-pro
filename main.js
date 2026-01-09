@@ -3131,7 +3131,18 @@ ipcMain.handle('config:save', async (event, { filePath, config }) => {
         return { success: true };
     } catch (error) {
         securityLog.log('ERROR', 'CONFIG_SAVE_FAILED', { error: error.message });
-        return { success: false, error: error.message };
+        
+        // Benutzerfreundliche Fehlermeldungen
+        let userMessage = error.message;
+        if (error.code === 'EPERM' || error.code === 'EACCES' || error.code === 'EROFS') {
+            userMessage = 'Config-Datei ist schreibgeschützt oder Sie haben keine Schreibberechtigung.';
+        } else if (error.code === 'ENOENT') {
+            userMessage = 'Zielordner existiert nicht.';
+        } else if (error.code === 'ENOSPC') {
+            userMessage = 'Kein Speicherplatz verfügbar.';
+        }
+        
+        return { success: false, error: userMessage };
     }
 });
 
