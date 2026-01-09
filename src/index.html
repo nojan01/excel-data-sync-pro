@@ -9334,6 +9334,20 @@
                     hideColumnContextMenu();
                 }
             });
+            
+            // Event-Delegation für Spalten-Kontextmenü (robuster als pro-Element Listener)
+            const explorerTableHead = document.getElementById('explorerTableHead');
+            if (explorerTableHead) {
+                explorerTableHead.addEventListener('contextmenu', (e) => {
+                    const th = e.target.closest('.sortable-header');
+                    if (th && th.dataset.col !== undefined) {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const colIndex = parseInt(th.dataset.col);
+                        showColumnContextMenu(e, colIndex);
+                    }
+                });
+            }
         });
         
         /**
@@ -9488,13 +9502,7 @@
                     th.classList.remove('was-dragged');
                 });
                 
-                // Rechtsklick für Kontextmenü
-                th.addEventListener('contextmenu', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const colIndex = parseInt(th.dataset.col);
-                    showColumnContextMenu(e, colIndex);
-                });
+                // Rechtsklick für Kontextmenü wird jetzt via Event-Delegation auf thead behandelt
                 
                 // Drag Start
                 th.addEventListener('dragstart', (e) => {
