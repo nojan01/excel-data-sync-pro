@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const XlsxPopulate = require('xlsx-populate');
 const fs = require('fs');
+const os = require('os');
 
 // ============================================
 // JSDoc TYPE DEFINITIONS
@@ -327,6 +328,438 @@ const securityLog = {
 };
 
 /**
+ * Network-Log für Aktionen auf Netzlaufwerken
+ * Ermöglicht Nachverfolgung wer (Rechnername) wann was wo gemacht hat
+ * DSGVO-konform: Nur Hostname, keine persönlichen Daten
+ */
+const networkLog = {
+    hostname: null,
+    lockTimeout: 5000, // 5 Sekunden Lock-Timeout
+    networkDrives: null, // Set von Netzlaufwerk-Buchstaben (Windows)
+    initialScanDone: false, // Flag für einmaliges Logging
+    
+    /**
+     * Initialisiert den Network-Logger
+     */
+    init() {
+        this.hostname = os.hostname();
+        this.networkDrives = new Set();
+        this.initialScanDone = false;
+        
+        // Windows: Netzlaufwerke erkennen
+        if (process.platform === 'win32') {
+            this.updateNetworkDrives(true); // true = initial scan, loggen
+            // Periodisch aktualisieren (alle 30 Sekunden), aber ohne Logging
+            setInterval(() => this.updateNetworkDrives(false), 30000);
+        }
+    },
+    
+    /**
+     * Prüft ob ein Pfad auf einem Netzlaufwerk liegt
+     * @param {string} filePath - Der zu prüfende Pfad
+     * @returns {boolean} true wenn Netzlaufwerk
+     */
+    isNetworkPath(filePath) {
+        if (!filePath || typeof filePath !== 'string') return false;
+        
+        // macOS: /Volumes/ (außer Macintosh HD)
+        if (process.platform === 'darwin') {
+            if (filePath.startsWith('/Volumes/')) {
+                // Lokale Festplatte ausschließen
+                const volumeName = filePath.split('/')[2];
+                // Typische lokale Volume-Namen
+                const localVolumes = ['Macintosh HD', 'Macintosh HD - Data', 'System'];
+                return !localVolumes.includes(volumeName);
+            }
+            // SMB/AFP-Mounts in anderen Pfaden
+            if (filePath.includes('/net/') || filePath.includes('/Network/')) {
+                return true;
+            }
+        }
+        
+        // Windows: UNC-Pfade (\\server\share) oder gemappte Laufwerke prüfen
+        if (process.platform === 'win32') {
+            // UNC-Pfad
+            if (filePath.startsWith('\\\\') || filePath.startsWith('//')) {
+                return true;
+            }
+            
+            // Gemapptes Netzlaufwerk prüfen (z.B. Y:, Z:)
+            // Prüfe synchron mit bekannten Netzlaufwerken aus Cache
+            const driveLetter = filePath.match(/^([A-Za-z]):/);
+            if (driveLetter) {
+                const drive = driveLetter[1].toUpperCase();
+                // Prüfe ob in bekannten Netzlaufwerken
+                if (this.networkDrives && this.networkDrives.has(drive)) {
+                    return true;
+                }
+            }
+        }
+        
+        return false;
+    },
+    
+    /**
+     * Aktualisiert die Liste der Netzlaufwerke (Windows)
+     * Wird beim Start und periodisch aufgerufen
+     * Erkennt: Netzlaufwerke (DriveType=4), gemappte Laufwerke (net use), VMware/VirtualBox Shared Folders
+     * @param {boolean} logResults - Nur beim ersten Aufruf true, um Log-Spam zu vermeiden
+     */
+    async updateNetworkDrives(logResults = false) {
+        if (process.platform !== 'win32') return;
+        
+        try {
+            const { execSync } = require('child_process');
+            this.networkDrives = new Set();
+            
+            // Methode 1: wmic für DriveType=4 (klassische Netzlaufwerke)
+            try {
+                const wmicOutput = execSync('wmic logicaldisk where drivetype=4 get deviceid', { 
+                    encoding: 'utf8',
+                    timeout: 5000,
+                    windowsHide: true
+                });
+                
+                const wmicLines = wmicOutput.split('\n');
+                for (const line of wmicLines) {
+                    const match = line.trim().match(/^([A-Z]):?$/i);
+                    if (match) {
+                        this.networkDrives.add(match[1].toUpperCase());
+                    }
+                }
+            } catch (e) {
+                // wmic fehlgeschlagen, ignorieren
+            }
+            
+            // Methode 2: net use für gemappte Netzlaufwerke (inkl. VMware Shared Folders)
+            try {
+                const netUseOutput = execSync('net use', { 
+                    encoding: 'utf8',
+                    timeout: 5000,
+                    windowsHide: true
+                });
+                
+                // Suche nach Zeilen mit Laufwerksbuchstaben (z.B. "OK           Y:        \\vmware-host\...")
+                const netUseLines = netUseOutput.split('\n');
+                for (const line of netUseLines) {
+                    const match = line.match(/\s+([A-Z]):\s+/i);
+                    if (match) {
+                        this.networkDrives.add(match[1].toUpperCase());
+                    }
+                }
+            } catch (e) {
+                // net use fehlgeschlagen, ignorieren
+            }
+            
+            // Methode 3: Prüfe alle Laufwerke auf Remote-Eigenschaft
+            try {
+                const allDrivesOutput = execSync('wmic logicaldisk get deviceid,drivetype,providername', { 
+                    encoding: 'utf8',
+                    timeout: 5000,
+                    windowsHide: true
+                });
+                
+                const driveLines = allDrivesOutput.split('\n');
+                for (const line of driveLines) {
+                    // Prüfe auf VMware, VirtualBox oder andere Netzwerk-Provider
+                    if (line.toLowerCase().includes('vmware') || 
+                        line.toLowerCase().includes('virtualbox') ||
+                        line.toLowerCase().includes('vboxsvr') ||
+                        line.toLowerCase().includes('\\\\')) {
+                        const match = line.match(/([A-Z]):/i);
+                        if (match) {
+                            this.networkDrives.add(match[1].toUpperCase());
+                        }
+                    }
+                }
+            } catch (e) {
+                // Fallback fehlgeschlagen, ignorieren
+            }
+            
+            // Log gefundene Netzlaufwerke nur beim ersten Scan
+            if (logResults) {
+                securityLog.log('INFO', 'NETWORK_DRIVES_DETECTED', {
+                    detected: this.networkDrives.size > 0 ? Array.from(this.networkDrives).join(', ') : 'none',
+                    count: this.networkDrives.size
+                });
+            }
+            
+        } catch (err) {
+            console.log('Network drive detection error:', err.message);
+            // Nur beim ersten Scan Fehler loggen
+            if (logResults) {
+                securityLog.log('WARN', 'NETWORK_DRIVES_SCAN_FAILED', {
+                    error: err.message
+                });
+            }
+        }
+    },
+    
+    /**
+     * Ermittelt den Log-Dateipfad für ein Netzlaufwerk
+     * @param {string} filePath - Pfad zur bearbeiteten Datei
+     * @returns {string|null} Pfad zur Log-Datei oder null
+     */
+    getNetworkLogPath(filePath) {
+        if (!this.isNetworkPath(filePath)) return null;
+        
+        const dir = path.dirname(filePath);
+        return path.join(dir, '.excel-sync-audit.log');
+    },
+    
+    /**
+     * Schreibt einen Eintrag ins Netzwerk-Log mit File-Locking
+     * @param {string} filePath - Pfad zur bearbeiteten Datei
+     * @param {string} action - Durchgeführte Aktion
+     * @param {Object} details - Zusätzliche Details
+     * @returns {Promise<{success: boolean, error?: string}>}
+     */
+    async log(filePath, action, details = {}) {
+        const logPath = this.getNetworkLogPath(filePath);
+        if (!logPath) return { success: true, skipped: true };
+        
+        const entry = {
+            timestamp: new Date().toISOString(),
+            hostname: this.hostname,
+            action,
+            file: path.basename(filePath),
+            details
+        };
+        
+        // File-Locking: Lock-Datei erstellen
+        const lockPath = logPath + '.lock';
+        const lockContent = `${this.hostname}:${Date.now()}`;
+        
+        try {
+            // Versuche Lock zu erwerben
+            let lockAcquired = false;
+            const startTime = Date.now();
+            
+            while (!lockAcquired && (Date.now() - startTime) < this.lockTimeout) {
+                try {
+                    // Exclusive Schreibzugriff (wx = write exclusive, fails if exists)
+                    fs.writeFileSync(lockPath, lockContent, { flag: 'wx' });
+                    lockAcquired = true;
+                } catch (lockErr) {
+                    if (lockErr.code === 'EEXIST') {
+                        // Lock existiert - prüfe ob er abgelaufen ist
+                        try {
+                            const existingLock = fs.readFileSync(lockPath, 'utf8');
+                            const [, lockTime] = existingLock.split(':');
+                            if (Date.now() - parseInt(lockTime, 10) > this.lockTimeout) {
+                                // Lock ist abgelaufen - entfernen und neu versuchen
+                                fs.unlinkSync(lockPath);
+                            } else {
+                                // Kurz warten und erneut versuchen
+                                await new Promise(r => setTimeout(r, 100));
+                            }
+                        } catch {
+                            await new Promise(r => setTimeout(r, 100));
+                        }
+                    } else {
+                        throw lockErr;
+                    }
+                }
+            }
+            
+            if (!lockAcquired) {
+                return { success: false, error: 'Could not acquire file lock' };
+            }
+            
+            // In Log-Datei schreiben
+            try {
+                fs.appendFileSync(logPath, JSON.stringify(entry) + '\n');
+            } finally {
+                // Lock immer freigeben
+                try {
+                    fs.unlinkSync(lockPath);
+                } catch {
+                    // Ignore unlock errors
+                }
+            }
+            
+            // Vollständige Replikation in lokale Security-Logs
+            // Dies ermöglicht Nachverfolgung auch wenn Netzwerk nicht verfügbar
+            securityLog.log('INFO', `NETWORK_${action}`, { 
+                hostname: this.hostname,
+                file: path.basename(filePath),
+                logPath: logPath.substring(0, 100),
+                ...details
+            });
+            
+            return { success: true };
+        } catch (err) {
+            securityLog.log('WARN', 'NETWORK_LOG_FAILED', { 
+                error: err.message,
+                action 
+            });
+            return { success: false, error: err.message };
+        }
+    },
+    
+    /**
+     * Liest das Netzwerk-Log für einen bestimmten Ordner
+     * @param {string} filePath - Pfad zu einer Datei im Ordner
+     * @returns {Array} Log-Einträge
+     */
+    readLogs(filePath) {
+        const logPath = this.getNetworkLogPath(filePath);
+        if (!logPath) return [];
+        
+        try {
+            if (!fs.existsSync(logPath)) return [];
+            
+            const content = fs.readFileSync(logPath, 'utf8').trim();
+            if (!content) return [];
+            
+            return content.split('\n').map(line => {
+                try {
+                    return JSON.parse(line);
+                } catch {
+                    return null;
+                }
+            }).filter(Boolean);
+        } catch {
+            return [];
+        }
+    },
+    
+    /**
+     * Erstellt eine Session-Lock-Datei für eine geöffnete Datei
+     * @param {string} filePath - Pfad zur Excel-Datei
+     * @returns {{success: boolean, error?: string}}
+     */
+    createSessionLock(filePath) {
+        if (!this.isNetworkPath(filePath)) return { success: true, skipped: true };
+        
+        const lockPath = this.getSessionLockPath(filePath);
+        if (!lockPath) return { success: true, skipped: true };
+        
+        const lockData = {
+            hostname: this.hostname,
+            timestamp: new Date().toISOString(),
+            pid: process.pid
+        };
+        
+        try {
+            fs.writeFileSync(lockPath, JSON.stringify(lockData));
+            return { success: true, lockPath };
+        } catch (err) {
+            return { success: false, error: err.message };
+        }
+    },
+    
+    /**
+     * Entfernt die Session-Lock-Datei
+     * @param {string} filePath - Pfad zur Excel-Datei
+     */
+    removeSessionLock(filePath) {
+        if (!this.isNetworkPath(filePath)) return;
+        
+        const lockPath = this.getSessionLockPath(filePath);
+        if (!lockPath) return;
+        
+        try {
+            if (fs.existsSync(lockPath)) {
+                // Nur löschen wenn es unser Lock ist
+                const content = fs.readFileSync(lockPath, 'utf8');
+                const lockData = JSON.parse(content);
+                if (lockData.hostname === this.hostname) {
+                    fs.unlinkSync(lockPath);
+                }
+            }
+        } catch {
+            // Ignore errors
+        }
+    },
+    
+    /**
+     * Ermittelt den Pfad zur Session-Lock-Datei
+     * @param {string} filePath - Pfad zur Excel-Datei
+     * @returns {string|null}
+     */
+    getSessionLockPath(filePath) {
+        if (!filePath) return null;
+        const dir = path.dirname(filePath);
+        const filename = path.basename(filePath);
+        return path.join(dir, `.~lock.${filename}`);
+    },
+    
+    /**
+     * Prüft ob eine Datei kürzlich von einem anderen Rechner bearbeitet wurde
+     * @param {string} filePath - Pfad zur Excel-Datei
+     * @param {number} minutesThreshold - Schwellwert in Minuten (Standard: 5)
+     * @returns {{conflict: boolean, details?: Object}}
+     */
+    checkConflict(filePath, minutesThreshold = 5) {
+        if (!this.isNetworkPath(filePath)) {
+            return { conflict: false, isNetworkPath: false };
+        }
+        
+        const result = {
+            conflict: false,
+            isNetworkPath: true,
+            recentActivity: null,
+            activeLock: null,
+            hostname: this.hostname
+        };
+        
+        // 1. Prüfe Session-Lock-Datei
+        const lockPath = this.getSessionLockPath(filePath);
+        if (lockPath && fs.existsSync(lockPath)) {
+            try {
+                const content = fs.readFileSync(lockPath, 'utf8');
+                const lockData = JSON.parse(content);
+                
+                // Lock von anderem Rechner?
+                if (lockData.hostname !== this.hostname) {
+                    const lockTime = new Date(lockData.timestamp);
+                    const ageMinutes = (Date.now() - lockTime.getTime()) / 60000;
+                    
+                    // Lock gilt als aktiv wenn jünger als 30 Minuten
+                    if (ageMinutes < 30) {
+                        result.conflict = true;
+                        result.activeLock = {
+                            hostname: lockData.hostname,
+                            timestamp: lockData.timestamp,
+                            ageMinutes: Math.round(ageMinutes)
+                        };
+                    }
+                }
+            } catch {
+                // Ignore parse errors
+            }
+        }
+        
+        // 2. Prüfe Netzwerk-Log nach kürzlicher Aktivität
+        const logs = this.readLogs(filePath);
+        const fileName = path.basename(filePath);
+        const threshold = Date.now() - (minutesThreshold * 60000);
+        
+        // Finde den letzten Eintrag für diese Datei von einem anderen Rechner
+        for (let i = logs.length - 1; i >= 0; i--) {
+            const entry = logs[i];
+            if (entry.file !== fileName) continue;
+            if (entry.hostname === this.hostname) continue;
+            
+            const entryTime = new Date(entry.timestamp).getTime();
+            if (entryTime > threshold) {
+                result.conflict = true;
+                result.recentActivity = {
+                    hostname: entry.hostname,
+                    timestamp: entry.timestamp,
+                    action: entry.action,
+                    ageMinutes: Math.round((Date.now() - entryTime) / 60000)
+                };
+                break;
+            }
+        }
+        
+        return result;
+    }
+};
+
+/**
  * Config-Schema-Validierung
  * Prüft ob die geladene Konfiguration gültige Typen und Werte hat
  */
@@ -609,6 +1042,9 @@ app.whenReady().then(() => {
     // Security-Logger initialisieren (für Datei-basiertes Logging)
     securityLog.init();
     securityLog.log('INFO', 'APP_STARTED', { version: app.getVersion() });
+    
+    // Network-Logger initialisieren (für Netzlaufwerk-Protokollierung)
+    networkLog.init();
     
     createWindow();
 });
@@ -2138,6 +2574,25 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         // Speichern (xlsx-populate erh�lt die originale Formatierung!)
         await workbook.toFileAsync(filePath);
         
+        // Netzwerk-Log für Datenübertragung (falls auf Netzlaufwerk)
+        await networkLog.log(filePath, 'DATA_TRANSFER', {
+            file: path.basename(filePath),
+            sheet: sheetName,
+            rowsInserted: insertedCount,
+            startRow: insertRow,
+            sourceFile: sourceFilePath ? path.basename(sourceFilePath) : null,
+            sourceSheet: sourceSheetName
+        });
+        
+        // Auch Quelldatei loggen (falls auf anderem Netzlaufwerk)
+        if (sourceFilePath) {
+            await networkLog.log(sourceFilePath, 'DATA_TRANSFER_SOURCE', {
+                targetFile: path.basename(filePath),
+                targetSheet: sheetName,
+                rowsTransferred: insertedCount
+            });
+        }
+        
         return { 
             success: true, 
             message: `${insertedCount} Zeile(n) ab Zeile ${insertRow} eingefuegt`,
@@ -2450,6 +2905,18 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
             passwordProtected: !!password
         });
         
+        // Netzwerk-Log für Quelldatei (falls auf Netzlaufwerk)
+        await networkLog.log(sourcePath, 'EXCEL_EXPORT_SOURCE', {
+            targetFile: path.basename(targetPath),
+            sheetsExported: sheetsProcessed
+        });
+        
+        // Netzwerk-Log für Zieldatei (falls auf Netzlaufwerk)
+        await networkLog.log(targetPath, 'EXCEL_EXPORT_TARGET', {
+            sourceFile: path.basename(sourcePath),
+            sheetsExported: sheetsProcessed
+        });
+        
         return { 
             success: true, 
             message: `${sheetsProcessed} Sheet(s) exportiert: ${targetPath}`,
@@ -2589,6 +3056,13 @@ ipcMain.handle('excel:saveFile', async (event, { filePath, sheets, password = nu
             sheetsCount: sheets.length,
             totalChanges,
             passwordProtected: !!password
+        });
+        
+        // Netzwerk-Log (falls auf Netzlaufwerk)
+        await networkLog.log(filePath, 'EXCEL_FILE_SAVED', {
+            file: path.basename(filePath),
+            sheetsCount: sheets.length,
+            totalChanges
         });
         
         return { 
@@ -2737,6 +3211,76 @@ ipcMain.handle('security:clearLogs', async (event) => {
     try {
         const result = securityLog.clearLogs();
         return result;
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Prüfen ob ein Pfad auf einem Netzlaufwerk liegt
+ipcMain.handle('network:isNetworkPath', async (event, filePath) => {
+    try {
+        return { 
+            success: true, 
+            isNetwork: networkLog.isNetworkPath(filePath),
+            hostname: networkLog.hostname
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Netzwerk-Logs für einen Ordner abrufen
+ipcMain.handle('network:getLogs', async (event, filePath) => {
+    try {
+        const entries = networkLog.readLogs(filePath);
+        const logPath = networkLog.getNetworkLogPath(filePath);
+        
+        return { 
+            success: true, 
+            entries: entries.reverse(), // Neueste zuerst
+            totalCount: entries.length,
+            logFilePath: logPath,
+            isNetworkPath: networkLog.isNetworkPath(filePath)
+        };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Konfliktprüfung: Prüft ob Datei kürzlich von anderem Rechner bearbeitet wurde
+ipcMain.handle('network:checkConflict', async (event, filePath, minutesThreshold = 5) => {
+    try {
+        const result = networkLog.checkConflict(filePath, minutesThreshold);
+        return { success: true, ...result };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Session-Lock erstellen (beim Öffnen einer Datei)
+ipcMain.handle('network:createSessionLock', async (event, filePath) => {
+    try {
+        const result = networkLog.createSessionLock(filePath);
+        if (result.success) {
+            securityLog.log('INFO', 'SESSION_LOCK_CREATED', { 
+                file: path.basename(filePath),
+                isNetwork: networkLog.isNetworkPath(filePath)
+            });
+        }
+        return result;
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Session-Lock entfernen (beim Schließen einer Datei)
+ipcMain.handle('network:removeSessionLock', async (event, filePath) => {
+    try {
+        networkLog.removeSessionLock(filePath);
+        securityLog.log('INFO', 'SESSION_LOCK_REMOVED', { 
+            file: path.basename(filePath)
+        });
+        return { success: true };
     } catch (error) {
         return { success: false, error: error.message };
     }

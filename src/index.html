@@ -1551,7 +1551,7 @@
                     </div>
                     <div style="margin-top: 10px;">
                         <button class="btn btn-secondary" id="btnSecurityLogs" style="width: 100%;">
-                            🔒 <span data-i18n="securityLogs">Security-Logs</span>
+                            📋 <span data-i18n="logsButton">Protokolle</span>
                         </button>
                     </div>
                 </div>
@@ -2270,30 +2270,42 @@
     <div class="modal-overlay hidden" id="securityLogsModal">
         <div class="modal" style="max-width: 1100px; width: 95vw;">
             <div class="modal-header">
-                <div class="modal-title">🔒 <span data-i18n="securityLogsTitle">Security-Logs (Manipulationssicher)</span></div>
+                <div class="modal-title">📋 <span data-i18n="logsTitle">Protokolle</span></div>
                 <button class="modal-close" id="btnCloseSecurityLogsModal">&times;</button>
             </div>
             <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
-                <!-- Integritätsstatus -->
-                <div id="securityLogsIntegrity" style="margin-bottom: 15px; padding: 12px; border-radius: 6px; border-left: 4px solid var(--success); background: var(--bg-light);">
-                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-                        <div>
-                            <strong>🛡️ <span data-i18n="integrityStatus">Integritätsstatus:</span></strong>
-                            <span id="securityLogsStatus" style="margin-left: 10px;">Wird geprüft...</span>
-                        </div>
-                        <div style="display: flex; gap: 8px;">
-                            <button class="btn btn-secondary" id="btnRefreshLogs" style="padding: 5px 10px; font-size: 12px;">
-                                🔄 <span data-i18n="refresh">Aktualisieren</span>
-                            </button>
-                            <button class="btn btn-secondary" id="btnVerifyLogs" style="padding: 5px 10px; font-size: 12px;">
-                                ✓ <span data-i18n="verify">Verifizieren</span>
-                            </button>
-                        </div>
-                    </div>
-                    <div id="securityLogsInfo" style="margin-top: 8px; font-size: 12px; color: var(--text-muted);">
-                        Einträge: <span id="logsCount">0</span> | Pfad: <span id="logsPath">-</span>
-                    </div>
+                <!-- Tab-Umschalter -->
+                <div style="display: flex; gap: 0; margin-bottom: 15px; border-bottom: 2px solid var(--border);">
+                    <button class="btn" id="tabLocalLogs" style="padding: 10px 20px; border-radius: 6px 6px 0 0; border: 2px solid var(--primary); border-bottom: none; background: var(--primary); color: white; font-weight: bold; margin-bottom: -2px;">
+                        🔒 <span data-i18n="localLogs">Lokale Security-Logs</span>
+                    </button>
+                    <button class="btn" id="tabNetworkLogs" style="padding: 10px 20px; border-radius: 6px 6px 0 0; border: 2px solid var(--border); border-bottom: none; background: var(--bg-light); color: var(--text); margin-bottom: -2px; margin-left: -2px;">
+                        🌐 <span data-i18n="networkLogs">Netzwerk-Logs</span>
+                    </button>
                 </div>
+                
+                <!-- LOKALE LOGS SECTION -->
+                <div id="localLogsSection">
+                    <!-- Integritätsstatus -->
+                    <div id="securityLogsIntegrity" style="margin-bottom: 15px; padding: 12px; border-radius: 6px; border-left: 4px solid var(--success); background: var(--bg-light);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                            <div>
+                                <strong>🛡️ <span data-i18n="integrityStatus">Integritätsstatus:</span></strong>
+                                <span id="securityLogsStatus" style="margin-left: 10px;">Wird geprüft...</span>
+                            </div>
+                            <div style="display: flex; gap: 8px;">
+                                <button class="btn btn-secondary" id="btnRefreshLogs" style="padding: 5px 10px; font-size: 12px;">
+                                    🔄 <span data-i18n="refresh">Aktualisieren</span>
+                                </button>
+                                <button class="btn btn-secondary" id="btnVerifyLogs" style="padding: 5px 10px; font-size: 12px;">
+                                    ✓ <span data-i18n="verify">Verifizieren</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="securityLogsInfo" style="margin-top: 8px; font-size: 12px; color: var(--text-muted);">
+                            Einträge: <span id="logsCount">0</span> | Pfad: <span id="logsPath">-</span>
+                        </div>
+                    </div>
                 
                 <!-- Filter -->
                 <div style="margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
@@ -2326,10 +2338,63 @@
                     </table>
                 </div>
                 
-                <!-- Verifikationsfehler (falls vorhanden) -->
-                <div id="securityLogsErrors" class="hidden" style="margin-top: 15px; padding: 12px; background: rgba(244, 67, 54, 0.1); border: 1px solid var(--error); border-radius: 6px;">
-                    <strong style="color: var(--error);">⚠️ Integritätsfehler gefunden:</strong>
-                    <ul id="securityLogsErrorList" style="margin: 10px 0 0 20px; color: var(--error); font-size: 12px;"></ul>
+                    <!-- Verifikationsfehler (falls vorhanden) -->
+                    <div id="securityLogsErrors" class="hidden" style="margin-top: 15px; padding: 12px; background: rgba(244, 67, 54, 0.1); border: 1px solid var(--error); border-radius: 6px;">
+                        <strong style="color: var(--error);">⚠️ Integritätsfehler gefunden:</strong>
+                        <ul id="securityLogsErrorList" style="margin: 10px 0 0 20px; color: var(--error); font-size: 12px;"></ul>
+                    </div>
+                </div>
+                
+                <!-- NETZWERK LOGS SECTION -->
+                <div id="networkLogsSection" class="hidden">
+                    <!-- Netzwerk-Info -->
+                    <div id="networkLogsInfo" style="margin-bottom: 15px; padding: 12px; border-radius: 6px; border-left: 4px solid var(--primary); background: var(--bg-light);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                            <div>
+                                <strong>🖥️ <span data-i18n="currentComputer">Aktueller Rechner:</span></strong>
+                                <span id="networkHostname" style="margin-left: 10px; font-family: monospace;">-</span>
+                            </div>
+                            <button class="btn btn-secondary" id="btnRefreshNetworkLogs" style="padding: 5px 10px; font-size: 12px;">
+                                🔄 <span data-i18n="refresh">Aktualisieren</span>
+                            </button>
+                        </div>
+                        <div style="margin-top: 8px; font-size: 12px; color: var(--text-muted);">
+                            <span data-i18n="networkLogPath">Log-Pfad:</span> <span id="networkLogsPath" style="font-family: monospace;">-</span><br>
+                            <span data-i18n="entries">Einträge:</span> <span id="networkLogsCount">0</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Filter -->
+                    <div style="margin-bottom: 15px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+                        <label style="font-size: 13px;">Filter:</label>
+                        <select id="networkLogsHostFilter" class="config-select" style="width: auto; padding: 5px 10px;">
+                            <option value=""><span data-i18n="allComputers">Alle Rechner</span></option>
+                        </select>
+                        <input type="text" id="networkLogsSearchFilter" class="config-input" placeholder="Aktion suchen..." style="width: 200px; padding: 5px 10px;">
+                    </div>
+                    
+                    <!-- Log-Tabelle -->
+                    <div style="overflow-x: auto;">
+                        <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                            <thead>
+                                <tr style="background: var(--bg-lighter);">
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid var(--border); white-space: nowrap;"><span data-i18n="timestamp">Zeitstempel</span></th>
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid var(--border); white-space: nowrap;">🖥️ <span data-i18n="computer">Rechner</span></th>
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid var(--border);"><span data-i18n="action">Aktion</span></th>
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid var(--border);"><span data-i18n="file">Datei</span></th>
+                                    <th style="padding: 10px; text-align: left; border-bottom: 2px solid var(--border);"><span data-i18n="details">Details</span></th>
+                                </tr>
+                            </thead>
+                            <tbody id="networkLogsTableBody">
+                                <tr><td colspan="5" style="padding: 20px; text-align: center; color: var(--text-muted);" data-i18n="noNetworkLogs">Keine Netzwerk-Logs vorhanden</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    
+                    <!-- Hinweis -->
+                    <div style="margin-top: 15px; padding: 10px; background: var(--bg-lighter); border-radius: 6px; font-size: 12px; color: var(--text-muted);">
+                        <strong>ℹ️ Hinweis:</strong> <span data-i18n="networkLogsNote">Das Netzwerk-Protokoll wird nur für Dateien auf Netzlaufwerken geführt. Es zeigt welcher Rechner wann welche Aktion durchgeführt hat (DSGVO-konform, keine persönlichen Daten).</span>
+                    </div>
                 </div>
             </div>
             <div class="modal-footer" style="display: flex; justify-content: space-between;">
@@ -2927,12 +2992,30 @@
                 packagesTotal: 'Pakete gesamt',
                 
                 // Security Logs
+                logsButton: 'Protokolle',
+                logsTitle: 'Protokolle',
+                localLogs: 'Lokale Security-Logs',
                 securityLogs: 'Security-Logs',
                 securityLogsTitle: 'Security-Logs (Manipulationssicher)',
                 integrityStatus: 'Integritätsstatus:',
                 refresh: 'Aktualisieren',
                 verify: 'Verifizieren',
-                clearLogs: 'Logs löschen'
+                clearLogs: 'Logs löschen',
+                
+                // Network Logs
+                networkLogs: 'Netzwerk-Logs',
+                networkLogsTitle: 'Netzwerk-Protokoll',
+                currentComputer: 'Aktueller Rechner:',
+                networkLogPath: 'Log-Pfad:',
+                entries: 'Einträge:',
+                allComputers: 'Alle Rechner',
+                timestamp: 'Zeitstempel',
+                computer: 'Rechner',
+                action: 'Aktion',
+                file: 'Datei',
+                details: 'Details',
+                noNetworkLogs: 'Keine Netzwerk-Logs vorhanden',
+                networkLogsNote: 'Das Netzwerk-Protokoll wird nur für Dateien auf Netzlaufwerken geführt. Es zeigt welcher Rechner wann welche Aktion durchgeführt hat (DSGVO-konform, keine persönlichen Daten).'
             },
             en: {
                 // Header
@@ -3123,12 +3206,30 @@
                 packagesTotal: 'packages total',
                 
                 // Security Logs
+                logsButton: 'Logs',
+                logsTitle: 'Logs',
+                localLogs: 'Local Security Logs',
                 securityLogs: 'Security Logs',
                 securityLogsTitle: 'Security Logs (Tamper-Proof)',
                 integrityStatus: 'Integrity Status:',
                 refresh: 'Refresh',
                 verify: 'Verify',
-                clearLogs: 'Clear Logs'
+                clearLogs: 'Clear Logs',
+                
+                // Network Logs
+                networkLogs: 'Network Logs',
+                networkLogsTitle: 'Network Protocol',
+                currentComputer: 'Current Computer:',
+                networkLogPath: 'Log Path:',
+                entries: 'Entries:',
+                allComputers: 'All Computers',
+                timestamp: 'Timestamp',
+                computer: 'Computer',
+                action: 'Action',
+                file: 'File',
+                details: 'Details',
+                noNetworkLogs: 'No network logs available',
+                networkLogsNote: 'The network log is only kept for files on network drives. It shows which computer performed which action and when (GDPR compliant, no personal data).'
             }
         };
         
@@ -5897,6 +5998,10 @@
             });
             if (!filePath) return;
             
+            // Konfliktprüfung für Netzlaufwerke
+            const conflictCheck = await checkAndWarnNetworkConflict(filePath);
+            if (!conflictCheck.proceed) return;
+            
             const result = await window.electronAPI.readExcelFile(filePath);
             if (!result.success) {
                 showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
@@ -5913,6 +6018,9 @@
             elements.file1Info.textContent = `✓ ${result.fileName}`;
             elements.file1Info.classList.add('loaded');
             
+            // Session-Lock erstellen
+            await window.electronAPI.createSessionLock(filePath);
+            
             await loadSheet1Electron(result.sheets[0]);
         }
         
@@ -5923,6 +6031,10 @@
                 defaultPath: getWorkingDirectoryPath()
             });
             if (!filePath) return;
+            
+            // Konfliktprüfung für Netzlaufwerke
+            const conflictCheck = await checkAndWarnNetworkConflict(filePath);
+            if (!conflictCheck.proceed) return;
             
             const result = await window.electronAPI.readExcelFile(filePath);
             if (!result.success) {
@@ -5939,6 +6051,9 @@
             elements.selectSheet2.disabled = false;
             elements.file2Info.textContent = `✓ ${result.fileName}`;
             elements.file2Info.classList.add('loaded');
+            
+            // Session-Lock erstellen
+            await window.electronAPI.createSessionLock(filePath);
             
             await loadSheet2Electron(result.sheets[0]);
         }
@@ -9323,8 +9438,10 @@
             const allVisibleSelected = pageData.length > 0 && pageData.every(item => explorerState.selectedRows.has(item.originalIndex));
             
             let headerHtml = '<tr>';
+            // Zeilennummer-Spalte (fest, nicht verschiebbar)
+            headerHtml += `<th style="width: 50px; text-align: center; padding: 8px; background: var(--bg-lighter); color: var(--text-muted); font-size: 11px; position: sticky; left: 0; z-index: 2;" title="Zeilennummer (Excel-Zeile)">#</th>`;
             // Checkbox-Spalte für Zeilenauswahl
-            headerHtml += `<th style="width: 40px; text-align: center; padding: 8px;">
+            headerHtml += `<th style="width: 40px; text-align: center; padding: 8px; position: sticky; left: 50px; z-index: 2; background: var(--bg-lighter);">
                 <input type="checkbox" id="selectAllRows" ${allVisibleSelected ? 'checked' : ''} 
                     title="Alle sichtbaren Zeilen auswählen" style="cursor: pointer; width: 16px; height: 16px;">
             </th>`;
@@ -9430,7 +9547,11 @@
                 const row = item.row;
                 const isSelected = explorerState.selectedRows.has(originalIndex);
                 const selectedClass = isSelected ? ' class="row-selected"' : '';
+                // Excel-Zeilennummer = originalIndex + 2 (weil Header in Zeile 1 ist und Index bei 0 beginnt)
+                const excelRowNumber = originalIndex + 2;
                 bodyHtml += `<tr data-original-index="${originalIndex}"${selectedClass}>`;
+                // Zeilennummer-Zelle (fest, sticky)
+                bodyHtml += `<td class="row-number-cell" style="width: 50px; text-align: center; padding: 8px; background: var(--bg-lighter); color: var(--text-muted); font-size: 11px; font-family: monospace; position: sticky; left: 0; z-index: 1; user-select: none;" title="Zeile ${excelRowNumber} in Excel">${excelRowNumber}</td>`;
                 // Checkbox-Zelle für Zeilenauswahl
                 bodyHtml += `<td class="row-checkbox-cell ${isSelected ? 'selected' : ''}">
                     <input type="checkbox" class="row-select-checkbox" data-row-index="${originalIndex}" 
@@ -11505,13 +11626,22 @@
             
             // Security Logs Modal Event Listeners
             document.getElementById('btnSecurityLogs').onclick = openSecurityLogsModal;
-            document.getElementById('btnCloseSecurityLogsModal').onclick = () => document.getElementById('securityLogsModal').classList.add('hidden');
-            document.getElementById('btnCloseSecurityLogs').onclick = () => document.getElementById('securityLogsModal').classList.add('hidden');
+            document.getElementById('btnCloseSecurityLogsModal').onclick = closeLogsModal;
+            document.getElementById('btnCloseSecurityLogs').onclick = closeLogsModal;
             document.getElementById('btnRefreshLogs').onclick = loadSecurityLogs;
             document.getElementById('btnVerifyLogs').onclick = verifySecurityLogs;
             document.getElementById('btnClearLogs').onclick = clearSecurityLogs;
             document.getElementById('logsLevelFilter').onchange = filterSecurityLogs;
             document.getElementById('logsSearchFilter').oninput = filterSecurityLogs;
+            
+            // Tab-Switching für Logs
+            document.getElementById('tabLocalLogs').onclick = () => switchLogsTab('local');
+            document.getElementById('tabNetworkLogs').onclick = () => switchLogsTab('network');
+            
+            // Network Logs Event Listeners (innerhalb des Security Modals)
+            document.getElementById('btnRefreshNetworkLogs').onclick = loadNetworkLogs;
+            document.getElementById('networkLogsHostFilter').onchange = filterNetworkLogs;
+            document.getElementById('networkLogsSearchFilter').oninput = filterNetworkLogs;
             
             // Sidebar Toggle
             document.getElementById('sidebarToggle').onclick = () => {
@@ -11530,7 +11660,7 @@
                     elements.newMonthModal.classList.add('hidden');
                     elements.createTemplateModal.classList.add('hidden');
                     document.getElementById('licenseModal').classList.add('hidden');
-                    document.getElementById('securityLogsModal').classList.add('hidden');
+                    closeLogsModal();
                     closeDataExplorer();
                 }
             };
@@ -11584,11 +11714,56 @@
         // ==================== SECURITY LOGS FUNCTIONS ====================
         
         let securityLogsCache = [];
+        let currentLogsTab = 'local'; // 'local' oder 'network'
         
         async function openSecurityLogsModal() {
             document.getElementById('securityLogsModal').classList.remove('hidden');
-            await loadSecurityLogs();
-            await verifySecurityLogs();
+            // Reset auf lokale Logs
+            switchLogsTab('local');
+        }
+        
+        function closeLogsModal() {
+            document.getElementById('securityLogsModal').classList.add('hidden');
+        }
+        
+        async function switchLogsTab(tab) {
+            currentLogsTab = tab;
+            const tabLocal = document.getElementById('tabLocalLogs');
+            const tabNetwork = document.getElementById('tabNetworkLogs');
+            const sectionLocal = document.getElementById('localLogsSection');
+            const sectionNetwork = document.getElementById('networkLogsSection');
+            const clearBtn = document.getElementById('btnClearLogs');
+            
+            if (tab === 'local') {
+                // Lokale Logs Tab aktiv
+                tabLocal.style.background = 'var(--primary)';
+                tabLocal.style.color = 'white';
+                tabLocal.style.borderColor = 'var(--primary)';
+                tabNetwork.style.background = 'var(--bg-light)';
+                tabNetwork.style.color = 'var(--text)';
+                tabNetwork.style.borderColor = 'var(--border)';
+                
+                sectionLocal.classList.remove('hidden');
+                sectionNetwork.classList.add('hidden');
+                clearBtn.style.display = 'block';
+                
+                await loadSecurityLogs();
+                await verifySecurityLogs();
+            } else {
+                // Netzwerk Logs Tab aktiv
+                tabNetwork.style.background = 'var(--primary)';
+                tabNetwork.style.color = 'white';
+                tabNetwork.style.borderColor = 'var(--primary)';
+                tabLocal.style.background = 'var(--bg-light)';
+                tabLocal.style.color = 'var(--text)';
+                tabLocal.style.borderColor = 'var(--border)';
+                
+                sectionNetwork.classList.remove('hidden');
+                sectionLocal.classList.add('hidden');
+                clearBtn.style.display = 'none'; // Netzwerk-Logs nicht löschbar
+                
+                await loadNetworkLogs();
+            }
         }
         
         async function loadSecurityLogs() {
@@ -11720,6 +11895,195 @@
             } catch (e) {
                 console.error('Fehler beim Löschen der Logs:', e);
             }
+        }
+        
+        // ==================== NETWORK LOGS FUNCTIONS ====================
+        
+        let networkLogsCache = [];
+        let currentNetworkPath = null;
+        
+        /**
+         * Prüft ob eine Datei kürzlich von einem anderen Rechner bearbeitet wurde
+         * und zeigt ggf. eine Warnung an.
+         * @param {string} filePath - Pfad zur Datei
+         * @returns {{proceed: boolean}} - true wenn fortgefahren werden soll
+         */
+        async function checkAndWarnNetworkConflict(filePath) {
+            try {
+                const result = await window.electronAPI.checkNetworkConflict(filePath, 5);
+                
+                if (!result.success || !result.isNetworkPath) {
+                    // Kein Netzlaufwerk oder Fehler - einfach fortfahren
+                    return { proceed: true };
+                }
+                
+                if (!result.conflict) {
+                    // Kein Konflikt
+                    return { proceed: true };
+                }
+                
+                // Warnung zusammenstellen
+                let message = '⚠️ Achtung: Möglicher Bearbeitungskonflikt!\n\n';
+                
+                if (result.activeLock) {
+                    message += `Diese Datei ist möglicherweise bereits geöffnet:\n`;
+                    message += `• Rechner: ${result.activeLock.hostname}\n`;
+                    message += `• Seit: ${result.activeLock.ageMinutes} Minute(n)\n\n`;
+                }
+                
+                if (result.recentActivity) {
+                    message += `Diese Datei wurde kürzlich bearbeitet:\n`;
+                    message += `• Rechner: ${result.recentActivity.hostname}\n`;
+                    message += `• Aktion: ${result.recentActivity.action}\n`;
+                    message += `• Vor: ${result.recentActivity.ageMinutes} Minute(n)\n\n`;
+                }
+                
+                message += 'Wenn Sie die Datei gleichzeitig bearbeiten, können Änderungen verloren gehen.\n\n';
+                message += 'Trotzdem öffnen?';
+                
+                const proceed = confirm(message);
+                
+                return { proceed };
+            } catch (e) {
+                console.error('Fehler bei Konfliktprüfung:', e);
+                // Bei Fehler trotzdem fortfahren
+                return { proceed: true };
+            }
+        }
+        
+        /**
+         * Session-Locks beim Schließen der App entfernen
+         */
+        async function cleanupSessionLocks() {
+            try {
+                if (state.file1?.filePath) {
+                    await window.electronAPI.removeSessionLock(state.file1.filePath);
+                }
+                if (state.file2?.filePath) {
+                    await window.electronAPI.removeSessionLock(state.file2.filePath);
+                }
+            } catch (e) {
+                console.error('Fehler beim Entfernen der Session-Locks:', e);
+            }
+        }
+        
+        // Session-Locks beim Verlassen der Seite aufräumen
+        window.addEventListener('beforeunload', () => {
+            cleanupSessionLocks();
+        });
+        
+        async function loadNetworkLogs() {
+            const tbody = document.getElementById('networkLogsTableBody');
+            const countEl = document.getElementById('networkLogsCount');
+            const pathEl = document.getElementById('networkLogsPath');
+            const hostnameEl = document.getElementById('networkHostname');
+            const hostFilterEl = document.getElementById('networkLogsHostFilter');
+            
+            // Ermittle den aktuellen Dateipfad (von file1 oder file2)
+            const filePath = state.file1?.filePath || state.file2?.filePath;
+            
+            if (!filePath) {
+                tbody.innerHTML = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: var(--text-muted);">Bitte zuerst eine Datei laden</td></tr>`;
+                countEl.textContent = '0';
+                pathEl.textContent = '-';
+                return;
+            }
+            
+            try {
+                // Hostname abrufen
+                const networkInfo = await window.electronAPI.isNetworkPath(filePath);
+                hostnameEl.textContent = networkInfo.hostname || '-';
+                
+                if (!networkInfo.isNetwork) {
+                    tbody.innerHTML = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: var(--text-muted);">Die aktuelle Datei liegt nicht auf einem Netzlaufwerk.<br>Netzwerk-Logs werden nur für Dateien auf Netzlaufwerken geführt.</td></tr>`;
+                    countEl.textContent = '0';
+                    pathEl.textContent = 'Kein Netzlaufwerk';
+                    return;
+                }
+                
+                // Netzwerk-Logs laden
+                const result = await window.electronAPI.getNetworkLogs(filePath);
+                
+                if (result.success) {
+                    networkLogsCache = result.entries;
+                    currentNetworkPath = result.logFilePath;
+                    countEl.textContent = result.totalCount;
+                    pathEl.textContent = result.logFilePath || '-';
+                    
+                    // Host-Filter befüllen
+                    const hosts = [...new Set(result.entries.map(e => e.hostname))];
+                    hostFilterEl.innerHTML = '<option value="">Alle Rechner</option>' + 
+                        hosts.map(h => `<option value="${h}">${h}</option>`).join('');
+                    
+                    renderNetworkLogs(result.entries);
+                } else {
+                    tbody.innerHTML = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: var(--error);">Fehler: ${result.error}</td></tr>`;
+                }
+            } catch (e) {
+                console.error('Fehler beim Laden der Netzwerk-Logs:', e);
+                tbody.innerHTML = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: var(--error);">Fehler beim Laden</td></tr>`;
+            }
+        }
+        
+        function renderNetworkLogs(entries) {
+            const tbody = document.getElementById('networkLogsTableBody');
+            
+            if (!entries || entries.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: var(--text-muted);">Keine Netzwerk-Log-Einträge vorhanden</td></tr>`;
+                return;
+            }
+            
+            const actionColors = {
+                'EXCEL_FILE_SAVED': { bg: 'rgba(76, 175, 80, 0.2)', text: '#4CAF50', icon: '💾' },
+                'EXCEL_EXPORT_SOURCE': { bg: 'rgba(33, 150, 243, 0.2)', text: '#2196F3', icon: '📤' },
+                'EXCEL_EXPORT_TARGET': { bg: 'rgba(33, 150, 243, 0.2)', text: '#2196F3', icon: '📥' },
+                'DATA_TRANSFER': { bg: 'rgba(156, 39, 176, 0.2)', text: '#9C27B0', icon: '🔀' },
+                'DATA_TRANSFER_SOURCE': { bg: 'rgba(255, 152, 0, 0.2)', text: '#FF9800', icon: '📤' }
+            };
+            
+            tbody.innerHTML = entries.map(entry => {
+                const actionStyle = actionColors[entry.action] || { bg: 'rgba(158, 158, 158, 0.2)', text: '#9E9E9E', icon: '📋' };
+                const timestamp = new Date(entry.timestamp).toLocaleString('de-DE');
+                const details = entry.details ? Object.entries(entry.details)
+                    .filter(([k, v]) => v !== null && v !== undefined)
+                    .map(([k, v]) => `<span style="color: var(--text-muted);">${k}:</span> ${v}`)
+                    .join(', ') : '-';
+                
+                return `
+                    <tr style="border-bottom: 1px solid var(--border);">
+                        <td style="padding: 8px; white-space: nowrap; font-family: monospace; font-size: 11px;">${timestamp}</td>
+                        <td style="padding: 8px; font-family: monospace; font-size: 11px;">${entry.hostname}</td>
+                        <td style="padding: 8px;">
+                            <span style="background: ${actionStyle.bg}; color: ${actionStyle.text}; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: bold;">
+                                ${actionStyle.icon} ${entry.action}
+                            </span>
+                        </td>
+                        <td style="padding: 8px; font-weight: 500;">${entry.file || '-'}</td>
+                        <td style="padding: 8px; font-size: 11px; max-width: 300px; overflow: hidden; text-overflow: ellipsis;" title="${details}">${details}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        function filterNetworkLogs() {
+            const hostFilter = document.getElementById('networkLogsHostFilter').value;
+            const searchFilter = document.getElementById('networkLogsSearchFilter').value.toLowerCase();
+            
+            let filtered = networkLogsCache;
+            
+            if (hostFilter) {
+                filtered = filtered.filter(e => e.hostname === hostFilter);
+            }
+            
+            if (searchFilter) {
+                filtered = filtered.filter(e => 
+                    e.action.toLowerCase().includes(searchFilter) ||
+                    (e.file && e.file.toLowerCase().includes(searchFilter)) ||
+                    JSON.stringify(e.details).toLowerCase().includes(searchFilter)
+                );
+            }
+            
+            renderNetworkLogs(filtered);
         }
 
         initApp();

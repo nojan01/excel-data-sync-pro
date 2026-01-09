@@ -59,6 +59,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
     verifySecurityLogs: () => ipcRenderer.invoke('security:verifyLogs'),
     clearSecurityLogs: () => ipcRenderer.invoke('security:clearLogs'),
     
+    // Netzwerk-Logs
+    isNetworkPath: (filePath) => ipcRenderer.invoke('network:isNetworkPath', filePath),
+    getNetworkLogs: (filePath) => ipcRenderer.invoke('network:getLogs', filePath),
+    checkNetworkConflict: (filePath, minutes) => ipcRenderer.invoke('network:checkConflict', filePath, minutes),
+    createSessionLock: (filePath) => ipcRenderer.invoke('network:createSessionLock', filePath),
+    removeSessionLock: (filePath) => ipcRenderer.invoke('network:removeSessionLock', filePath),
+    
     // Event-Listener für App-Schließen
     onBeforeClose: (callback) => ipcRenderer.on('app:beforeClose', callback),
     confirmClose: (canClose) => ipcRenderer.send('app:confirmClose', canClose)

@@ -231,13 +231,87 @@ Excel Data Sync Pro verfügt über ein manipulationssicheres Sicherheits-Protoko
 4. Nutzen Sie **"Überprüfen"** zur Integritätsprüfung
 5. Filtern Sie nach Level oder durchsuchen Sie die Logs
 
+## Netzwerk-Protokoll
+
+Für Dateien auf Netzlaufwerken wird automatisch ein zusätzliches Protokoll geführt, das die Zusammenarbeit mehrerer Benutzer nachvollziehbar macht.
+
+### Funktionen
+
+- **Automatische Erkennung**: Netzlaufwerke werden automatisch erkannt (UNC-Pfade, /Volumes/)
+- **DSGVO-konform**: Nur Rechnername wird protokolliert, keine persönlichen Daten
+- **File-Locking**: Verhindert Schreibkonflikte bei gleichzeitigem Zugriff
+- **Zentrale Speicherung**: Log-Datei liegt im gleichen Ordner wie die Excel-Dateien
+- **Konflikt-Warnung**: Warnt beim Öffnen wenn Datei kürzlich von anderem Rechner bearbeitet wurde
+- **Session-Lock**: Markiert Dateien als "in Bearbeitung" für Kollegen
+
+### Konflikt-Erkennung
+
+Beim Öffnen einer Datei auf einem Netzlaufwerk wird automatisch geprüft:
+
+1. **Session-Lock**: Wurde eine Lock-Datei (`.~lock.Dateiname.xlsx`) von einem anderen Rechner erstellt?
+2. **Kürzliche Aktivität**: Hat ein anderer Rechner die Datei in den letzten 5 Minuten bearbeitet?
+
+Falls ja, erscheint eine Warnung:
+
+```
+⚠️ Achtung: Möglicher Bearbeitungskonflikt!
+
+Diese Datei wurde kürzlich bearbeitet:
+• Rechner: PC-BUCHHALTUNG
+• Aktion: EXCEL_FILE_SAVED
+• Vor: 2 Minute(n)
+
+Wenn Sie die Datei gleichzeitig bearbeiten, 
+können Änderungen verloren gehen.
+
+Trotzdem öffnen?
+```
+
+### Protokollierte Aktionen
+
+- Datei speichern (`EXCEL_FILE_SAVED`)
+- Datenübertragung (`DATA_TRANSFER`)
+- Export-Operationen (`EXCEL_EXPORT_SOURCE`, `EXCEL_EXPORT_TARGET`)
+
+### Log-Datei
+
+Die Netzwerk-Log-Datei wird automatisch erstellt unter:
+```
+\\server\share\.excel-sync-audit.log  (Windows)
+/Volumes/Share/.excel-sync-audit.log  (macOS)
+```
+
+### Verwendung
+
+1. Laden Sie eine Datei von einem Netzlaufwerk
+2. Klicken Sie auf **"🌐 Netzwerk-Logs"** in den Einstellungen
+3. Sehen Sie alle Aktionen aller Kollegen auf diesem Laufwerk
+4. Filtern Sie nach Rechner oder durchsuchen Sie die Logs
+
+### Beispiel-Eintrag
+
+```json
+{
+  "timestamp": "2026-01-09T14:30:22.123Z",
+  "hostname": "PC-BUCHHALTUNG",
+  "action": "DATA_TRANSFER",
+  "file": "Umsatz_2026.xlsx",
+  "details": { "sheet": "Januar", "rowsInserted": 15 }
+}
+```
+
 ## Changelog
 
 ### v1.0.12
 - **Neu**: Sicherheits-Protokoll (Security-Logs) mit manipulationssicherer Speicherung
+- **Neu**: Netzwerk-Protokoll für Dateien auf Netzlaufwerken (Multi-User-Tracking)
+- **Neu**: Konflikt-Warnung beim Öffnen: Zeigt an wenn Datei kürzlich von anderem Rechner bearbeitet wurde
+- **Neu**: Session-Lock: Markiert Dateien als "in Bearbeitung" für Kollegen
+- **Neu**: DSGVO-konforme Protokollierung (nur Rechnername, keine persönlichen Daten)
 - **Neu**: HMAC-SHA256-Signaturen für jeden Log-Eintrag
 - **Neu**: Hash-Chain (Blockchain-ähnlich) zur Integritätsprüfung
 - **Neu**: Security-Logs Modal zur Anzeige und Überprüfung aller Aktionen
+- **Neu**: Netzwerk-Logs Modal mit Rechner-Filter
 - **Neu**: Konfigurationsschema-Validierung für sichere Einstellungen
 - **Neu**: Integritätsprüfung erkennt nachträgliche Manipulationen
 
