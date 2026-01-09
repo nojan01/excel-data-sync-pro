@@ -7636,8 +7636,10 @@
             let menuHtml = '<div class="context-menu cell-context-menu">';
             menuHtml += `<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">📋 ${cellLabel} ausgewählt</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
-            menuHtml += `<div class="context-menu-item" data-action="delete-content">🗑️ Inhalt löschen</div>`;
             menuHtml += `<div class="context-menu-item" data-action="copy-content">📋 Kopieren</div>`;
+            menuHtml += `<div class="context-menu-item" data-action="paste-content">📥 Einfügen</div>`;
+            menuHtml += '<div class="context-menu-divider"></div>';
+            menuHtml += `<div class="context-menu-item" data-action="delete-content">🗑️ Inhalt löschen</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
             menuHtml += `<div class="context-menu-item" data-action="clear-selection">❌ Auswahl aufheben</div>`;
             menuHtml += '</div>';
@@ -7673,6 +7675,12 @@
             // Event-Handler: Kopieren
             menuEl.querySelector('[data-action="copy-content"]').addEventListener('click', () => {
                 copySelectedCellsContent();
+                menuEl.remove();
+            });
+            
+            // Event-Handler: Einfügen
+            menuEl.querySelector('[data-action="paste-content"]').addEventListener('click', async () => {
+                await pasteToSelectedCells();
                 menuEl.remove();
             });
             
@@ -7774,6 +7782,92 @@
                 console.error('Kopieren fehlgeschlagen:', err);
                 showFloatingStatus('Kopieren fehlgeschlagen', true);
             });
+        }
+        
+        // Aus Zwischenablage in ausgewählte Zelle(n) einfügen
+        async function pasteToSelectedCells() {
+            try {
+                const text = await navigator.clipboard.readText();
+                if (!text) {
+                    showFloatingStatus('Zwischenablage ist leer', true);
+                    return;
+                }
+                
+                // Wenn nur eine Zelle ausgewählt ist, dort einfügen
+                if (explorerState.selectedCells.size === 1) {
+                    const cellKey = explorerState.selectedCells.values().next().value;
+                    const [rowIndex, colIndex] = cellKey.split('-').map(Number);
+                    const td = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+                    
+                    if (td) {
+                        const original = td.dataset.original;
+                        const oldValue = explorerState.data[rowIndex][colIndex];
+                        
+                        // Wert setzen
+                        explorerState.data[rowIndex][colIndex] = text;
+                        explorerState.editedCells.set(cellKey, text);
+                        
+                        // UI aktualisieren
+                        const contentSpan = td.querySelector('.cell-content');
+                        if (contentSpan) {
+                            contentSpan.textContent = text;
+                        } else {
+                            td.textContent = text;
+                        }
+                        
+                        if (text !== original) {
+                            td.classList.add('edited');
+                        } else {
+                            td.classList.remove('edited');
+                        }
+                        
+                        // Undo speichern
+                        pushExplorerUndo({
+                            rowIndex,
+                            colIndex,
+                            oldValue: oldValue,
+                            newValue: text,
+                            originalValue: original
+                        });
+                        
+                        updateExplorerEditStatus();
+                        showFloatingStatus('Eingefügt');
+                    }
+                } else if (explorerState.selectedCells.size > 1) {
+                    // Bei mehreren Zellen: gleichen Wert in alle einfügen
+                    let count = 0;
+                    explorerState.selectedCells.forEach(cellKey => {
+                        const [rowIndex, colIndex] = cellKey.split('-').map(Number);
+                        const td = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+                        
+                        if (td) {
+                            const original = td.dataset.original;
+                            explorerState.data[rowIndex][colIndex] = text;
+                            explorerState.editedCells.set(cellKey, text);
+                            
+                            const contentSpan = td.querySelector('.cell-content');
+                            if (contentSpan) {
+                                contentSpan.textContent = text;
+                            } else {
+                                td.textContent = text;
+                            }
+                            
+                            if (text !== original) {
+                                td.classList.add('edited');
+                            }
+                            count++;
+                        }
+                    });
+                    
+                    updateExplorerEditStatus();
+                    showFloatingStatus(`In ${count} Zelle(n) eingefügt`);
+                } else {
+                    showFloatingStatus('Keine Zelle ausgewählt', true);
+                }
+            } catch (err) {
+                console.error('Einfügen fehlgeschlagen:', err);
+                showFloatingStatus('Einfügen fehlgeschlagen', true);
+            }
         }
         
         // ============ SUCHEN & ERSETZEN (Find & Replace) ============
@@ -9828,6 +9922,15 @@
                 // Fokus-Verhalten
                 td.addEventListener('focus', function() {
                     this.parentElement.classList.add('editing-row');
+                });
+                
+                // Paste-Handler für Einfügen aus Zwischenablage
+                td.addEventListener('paste', function(e) {
+                    e.preventDefault();
+                    const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+                    
+                    // Text als reinen Text einfügen (ohne Formatierung)
+                    document.execCommand('insertText', false, text);
                 });
                 
                 // Enter-Taste: Zur nächsten Zeile springen
