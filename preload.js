@@ -51,6 +51,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // App-Infos
     getAppPath: () => ipcRenderer.invoke('app:getPath'),
     
+    // System-Infos (für Computer-spezifische Config)
+    getComputerName: () => ipcRenderer.invoke('system:getComputerName'),
+    
     // Externe URLs öffnen
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
     

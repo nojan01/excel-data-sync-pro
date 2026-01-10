@@ -103,6 +103,7 @@ Dieses Dokument dokumentiert alle xlsx-populate Funktionen, die in die App integ
 
 | Datum | Version | Änderung |
 |-------|---------|----------|
+| 2026-01-10 | 1.0.13 | Computer-spezifische Konfiguration - config.json mit Abschnitten pro Computer für unterschiedliche Netzwerkpfade |
 | 2026-01-10 | 1.0.12 | DatenExplorer: Excel-Spaltenbuchstaben (A, B, C...) als zusätzliche Header-Zeile |
 | 2026-01-10 | 1.0.12 | DatenExplorer: Kopieren/Einfügen mit Formatierung (Styles, Formeln, Hyperlinks, Rich Text) |
 | 2026-01-08 | 1.0.12 | Passwortschutz implementiert (Prio NIEDRIG #7) - Speichern und Exportieren mit Excel-kompatibler Verschlüsselung |

@@ -2142,6 +2142,28 @@
                     • Änderungen werden direkt in die Excel-Datei geschrieben (kein separater Export nötig)<br>
                     • Die Sidebar kann mit dem ◀ Button eingeklappt werden
                 </p>
+                
+                <h3 style="margin-bottom: 10px;">📋 Excel-Funktionen: Was wird unterstützt?</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong style="color: var(--success);">✅ Vollständig unterstützt:</strong><br>
+                    • Zellwerte, Formatierungen (Schrift, Farben, Ausrichtung)<br>
+                    • Formeln, Hyperlinks, Rich Text<br>
+                    • Verbundene Zellen (Merged Cells)<br>
+                    • Dropdown-Listen (Data Validation)<br>
+                    • Passwortgeschützte Dateien<br>
+                    • Ausgeblendete Zeilen und Spalten<br>
+                    • AutoFilter (bleibt beim Speichern erhalten)
+                </p>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong style="color: var(--warning);">⚠️ Bedingte Formatierung:</strong><br>
+                    Bedingte Formatierung kann in der App <strong>nicht angezeigt oder bearbeitet</strong> werden.<br>
+                    Sie bleibt jedoch beim Laden und Speichern <strong>vollständig erhalten</strong>.
+                </p>
+                <p style="color: var(--text-muted); line-height: 1.6;">
+                    <strong style="color: var(--error);">❌ Pivot-Tabellen:</strong><br>
+                    Pivot-Tabellen werden <strong>nicht unterstützt</strong> und können beim Speichern beschädigt werden.<br>
+                    Bei Dateien mit Pivot-Tabellen erscheint eine Warnung vor dem Speichern.
+                </p>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-primary" id="btnCloseHelp">Schließen</button>
@@ -4595,7 +4617,16 @@
                         showStatus(elements.transferStatus, `⚠️ ${result.error}`, 'error');
                         alert(`❌ Speichern fehlgeschlagen:\n\n${result.error}`);
                     } else {
-                        showStatus(elements.transferStatus, `✓ config.json gespeichert: ${savePath}`, 'success');
+                        // Zeige Info über Computer-Abschnitt
+                        let statusMsg = `✓ config.json gespeichert: ${savePath}`;
+                        if (result.savedToSection) {
+                            if (result.convertedToNested) {
+                                statusMsg = `✓ Config für "${result.savedToSection}" gespeichert (Datei wurde für Mehrbenutzer konvertiert)`;
+                            } else {
+                                statusMsg = `✓ Config für "${result.savedToSection}" gespeichert`;
+                            }
+                        }
+                        showStatus(elements.transferStatus, statusMsg, 'success');
                     }
                 }
             } catch (e) {
@@ -6396,7 +6427,14 @@
                     const result = await window.electronAPI.loadConfig(filePath);
                     if (result.success && result.config) {
                         await applyLoadedConfig(result.config);
-                        showStatus(elements.transferStatus, `✓ config.json geladen: ${filePath}`, 'success');
+                        // Zeige Computer-spezifische Info
+                        let statusMsg = `✓ config.json geladen: ${filePath}`;
+                        if (result.computerName && !result.isLegacyFormat) {
+                            statusMsg = result.hasComputerSection 
+                                ? `✓ Config für "${result.computerName}" geladen`
+                                : `✓ Config geladen (Standard, kein Abschnitt für "${result.computerName}")`;
+                        }
+                        showStatus(elements.transferStatus, statusMsg, 'success');
                     } else {
                         showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
                     }
@@ -11057,7 +11095,10 @@
                         headers: explorerState.headers,
                         data: explorerState.data,
                         visibleColumns: explorerState.visibleColumns,
-                        hiddenRows: Array.from(explorerState.hiddenRows)
+                        hiddenRows: Array.from(explorerState.hiddenRows),
+                        cellStyles: { ...explorerState.cellStyles },
+                        cellFormulas: { ...explorerState.cellFormulas },
+                        cellHyperlinks: { ...explorerState.cellHyperlinks }
                     });
                 }
                 
@@ -11069,7 +11110,10 @@
                             headers: cached.headers,
                             data: cached.data,
                             visibleColumns: cached.visibleColumns,
-                            hiddenRows: Array.from(cached.hiddenRows || [])
+                            hiddenRows: Array.from(cached.hiddenRows || []),
+                            cellStyles: { ...(cached.cellStyles || {}) },
+                            cellFormulas: { ...(cached.cellFormulas || {}) },
+                            cellHyperlinks: { ...(cached.cellHyperlinks || {}) }
                         });
                     }
                 }
@@ -12042,7 +12086,18 @@
                 if (autoResult.success && autoResult.config) {
                     await applyLoadedConfig(autoResult.config);
                     console.log('[Config] config.json automatisch geladen:', autoResult.path);
-                    showStatus(elements.transferStatus, `✓ config.json geladen: ${autoResult.path}`, 'success');
+                    console.log('[Config] Computername:', autoResult.computerName || '(unbekannt)');
+                    console.log('[Config] Hat Computer-Abschnitt:', autoResult.hasComputerSection);
+                    console.log('[Config] Legacy-Format:', autoResult.isLegacyFormat);
+                    
+                    // Zeige Computer-spezifische Info
+                    let statusMsg = `✓ config.json geladen: ${autoResult.path}`;
+                    if (autoResult.computerName && !autoResult.isLegacyFormat) {
+                        statusMsg = autoResult.hasComputerSection 
+                            ? `✓ Config für "${autoResult.computerName}" geladen`
+                            : `✓ Config geladen (Standard, kein Abschnitt für "${autoResult.computerName}")`;
+                    }
+                    showStatus(elements.transferStatus, statusMsg, 'success');
                 } else {
                     console.log('[Config] Keine config.json gefunden.');
                     if (autoResult.searchedPaths) {

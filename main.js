@@ -763,10 +763,73 @@ const networkLog = {
  * Config-Schema-Validierung
  * Prüft ob die geladene Konfiguration gültige Typen und Werte hat
  */
+/**
+ * Ermittelt den Computernamen für die Computer-spezifische Konfiguration
+ * @returns {string} Der Computername in Großbuchstaben
+ */
+function getComputerName() {
+    return (os.hostname() || 'UNKNOWN').toUpperCase();
+}
+
+/**
+ * Führt die default-Konfiguration mit der Computer-spezifischen zusammen
+ * @param {Object} rawConfig - Die rohe Config mit default und Computer-Abschnitten
+ * @returns {{mergedConfig: Object, computerName: string, hasComputerSection: boolean}}
+ */
+function mergeComputerConfig(rawConfig) {
+    const computerName = getComputerName();
+    
+    // Prüfe ob es eine verschachtelte Struktur ist (hat 'default' Abschnitt)
+    if (!rawConfig.default && !rawConfig[computerName]) {
+        // Alte flache Struktur - direkt zurückgeben
+        return {
+            mergedConfig: rawConfig,
+            computerName: computerName,
+            hasComputerSection: false,
+            isLegacyFormat: true
+        };
+    }
+    
+    // Neue verschachtelte Struktur
+    const defaultConfig = rawConfig.default || {};
+    const computerConfig = rawConfig[computerName] || {};
+    
+    // Deep merge: Computer-spezifische Werte überschreiben default
+    const mergedConfig = { ...defaultConfig, ...computerConfig };
+    
+    return {
+        mergedConfig,
+        computerName,
+        hasComputerSection: !!rawConfig[computerName],
+        isLegacyFormat: false
+    };
+}
+
 const configSchema = {
+    // Liste der erlaubten Config-Felder
+    configFields: [
+        'file1Path', 'file2Path', 'templatePath', 'sheet1Name', 'sheet2Name',
+        'startColumn', 'checkColumn', 'flagColumn', 'commentColumn',
+        'sourceColumns', 'enableFlag', 'enableComment', 'workingDir',
+        'theme', 'language', 'file1SheetName', 'file2SheetName', 'mapping',
+        'exportDate', 'extraColumns', 'file1Name', 'file2Name', 'templateName'
+    ],
+
+    /**
+     * Prüft ob ein Schlüssel ein Computer-Name sein könnte (für verschachtelte Configs)
+     * @param {string} key - Der zu prüfende Schlüssel
+     * @returns {boolean}
+     */
+    isComputerSection(key) {
+        // 'default' ist speziell, alle anderen unbekannten Keys könnten Computer-Namen sein
+        if (key === 'default') return true;
+        // Bekannte Config-Felder sind keine Computer-Abschnitte
+        return !this.configFields.includes(key);
+    },
+
     /**
      * Validiert ein Config-Objekt gegen das erwartete Schema
-     * @param {Object} config - Das zu validierende Config-Objekt
+     * @param {Object} config - Das zu validierende Config-Objekt (bereits gemergt)
      * @returns {{valid: boolean, errors: string[]}} Validierungsergebnis
      */
     validate(config) {
@@ -819,9 +882,13 @@ const configSchema = {
 
             const expectedType = fieldTypes[key];
 
-            // Unbekannter Schlüssel (Warnung, aber kein Fehler)
+            // Unbekannter Schlüssel - könnte ein Computer-Abschnitt sein (bei verschachtelter Config)
+            // oder ein wirklich unbekannter Key
             if (!expectedType) {
-                securityLog.log('WARN', 'CONFIG_UNKNOWN_KEY', { key });
+                // Nur warnen wenn es kein Objekt ist (Computer-Abschnitte sind Objekte)
+                if (typeof value !== 'object' || Array.isArray(value)) {
+                    securityLog.log('WARN', 'CONFIG_UNKNOWN_KEY', { key });
+                }
                 continue;
             }
 
@@ -2989,7 +3056,13 @@ ipcMain.handle('excel:saveFile', async (event, { filePath, sheets, password = nu
             if (usedRange) {
                 originalColumnCount = usedRange.endCell().columnNumber();
                 originalRowCount = usedRange.endCell().rowNumber();
-                usedRange.clear();
+                // NUR Werte löschen, Formatierung beibehalten!
+                // xlsx-populate clear() löscht auch Formatierung, daher einzeln leeren
+                for (let r = usedRange.startCell().rowNumber(); r <= originalRowCount; r++) {
+                    for (let c = usedRange.startCell().columnNumber(); c <= originalColumnCount; c++) {
+                        worksheet.cell(r, c).value(undefined);
+                    }
+                }
             }
 
             // Wenn Spalten gelöscht wurden (headers.length < originalColumnCount),
@@ -3018,6 +3091,77 @@ ipcMain.handle('excel:saveFile', async (event, { filePath, sheets, password = nu
                 });
                 totalChanges++;
             });
+
+            // Cell Styles anwenden (falls vorhanden)
+            // Keys sind im Format "rowIndex-colIndex" (0-basiert, inkl. Header als Zeile 0)
+            const cellStyles = sheetData.cellStyles || {};
+            const cellFormulas = sheetData.cellFormulas || {};
+            const cellHyperlinks = sheetData.cellHyperlinks || {};
+            
+            for (const [key, style] of Object.entries(cellStyles)) {
+                try {
+                    const [rowStr, colStr] = key.split('-');
+                    const rowIndex = parseInt(rowStr);  // 0-basiert (Header = 0, erste Daten = 1)
+                    const colIndex = parseInt(colStr);  // 0-basiert
+                    // Excel-Zeilen sind 1-basiert, also +1
+                    const cell = worksheet.cell(rowIndex + 1, colIndex + 1);
+                    
+                    // Style anwenden
+                    if (style.bold !== undefined) cell.style('bold', style.bold);
+                    if (style.italic !== undefined) cell.style('italic', style.italic);
+                    if (style.underline !== undefined) cell.style('underline', style.underline);
+                    if (style.strikethrough !== undefined) cell.style('strikethrough', style.strikethrough);
+                    if (style.fontSize) cell.style('fontSize', style.fontSize);
+                    if (style.fontColor) {
+                        // Farbe als hex ohne #
+                        const color = style.fontColor.replace('#', '');
+                        cell.style('fontColor', color);
+                    }
+                    if (style.fill) {
+                        // Hintergrundfarbe als hex ohne #
+                        const fillColor = style.fill.replace('#', '');
+                        cell.style('fill', fillColor);
+                    }
+                    if (style.textAlign) {
+                        cell.style('horizontalAlignment', style.textAlign);
+                    }
+                    if (style.verticalAlign) {
+                        cell.style('verticalAlignment', style.verticalAlign);
+                    }
+                } catch (styleError) {
+                    console.warn(`Style für Zelle ${key} konnte nicht gesetzt werden:`, styleError.message);
+                }
+            }
+            
+            // Formeln anwenden (falls vorhanden)
+            for (const [key, formula] of Object.entries(cellFormulas)) {
+                try {
+                    const [rowStr, colStr] = key.split('-');
+                    const rowIndex = parseInt(rowStr);  // 0-basiert
+                    const colIndex = parseInt(colStr);  // 0-basiert
+                    // Excel-Zeilen sind 1-basiert, also +1
+                    const cell = worksheet.cell(rowIndex + 1, colIndex + 1);
+                    // Formel setzen (mit = Präfix falls nicht vorhanden)
+                    const formulaStr = formula.startsWith('=') ? formula : '=' + formula;
+                    cell.formula(formulaStr);
+                } catch (formulaError) {
+                    console.warn(`Formel für Zelle ${key} konnte nicht gesetzt werden:`, formulaError.message);
+                }
+            }
+            
+            // Hyperlinks anwenden (falls vorhanden)
+            for (const [key, hyperlink] of Object.entries(cellHyperlinks)) {
+                try {
+                    const [rowStr, colStr] = key.split('-');
+                    const rowIndex = parseInt(rowStr);  // 0-basiert
+                    const colIndex = parseInt(colStr);  // 0-basiert
+                    // Excel-Zeilen sind 1-basiert, also +1
+                    const cell = worksheet.cell(rowIndex + 1, colIndex + 1);
+                    cell.hyperlink(hyperlink);
+                } catch (linkError) {
+                    console.warn(`Hyperlink für Zelle ${key} konnte nicht gesetzt werden:`, linkError.message);
+                }
+            }
 
             // Ausgeblendete Spalten in Excel als hidden markieren
             // visibleColumns enthält die Indices der sichtbaren Spalten
@@ -3105,8 +3249,8 @@ ipcMain.handle('excel:saveFile', async (event, { filePath, sheets, password = nu
 // KONFIGURATION
 // ============================================
 
-// Config speichern
-ipcMain.handle('config:save', async (event, { filePath, config }) => {
+// Config speichern (mit Unterstützung für Computer-spezifische Abschnitte)
+ipcMain.handle('config:save', async (event, { filePath, config, mergeMode = 'auto' }) => {
     // Sicherheitsprüfung: Pfad validieren
     if (!isValidFilePath(filePath)) {
         return { success: false, error: 'Ungültiger Dateipfad' };
@@ -3125,10 +3269,71 @@ ipcMain.handle('config:save', async (event, { filePath, config }) => {
 
         // Config bereinigen (nur bekannte Felder speichern)
         const sanitizedConfig = configSchema.sanitize(config);
+        const computerName = getComputerName();
+        
+        let finalConfig = sanitizedConfig;
+        let savedToSection = null;
+        let convertedToNested = false;
+        
+        // Prüfen ob die Datei existiert
+        if (fs.existsSync(filePath) && mergeMode !== 'overwrite') {
+            try {
+                const existingContent = fs.readFileSync(filePath, 'utf8');
+                const existingConfig = JSON.parse(existingContent);
+                
+                // Prüfe ob es bereits eine verschachtelte Struktur ist (hat 'default' Abschnitt)
+                const hasNestedStructure = existingConfig.default !== undefined;
+                
+                if (hasNestedStructure) {
+                    // Bereits verschachtelt: Nur den eigenen Computer-Abschnitt aktualisieren
+                    finalConfig = { ...existingConfig };
+                    finalConfig[computerName] = sanitizedConfig;
+                    savedToSection = computerName;
+                    
+                    securityLog.log('INFO', 'CONFIG_MERGED_TO_SECTION', {
+                        computerName: computerName,
+                        path: path.basename(filePath)
+                    });
+                } else {
+                    // Flache Struktur existiert -> In verschachtelte Struktur konvertieren!
+                    // Die bestehende flache Config wird zu "default"
+                    // Die neue Config wird unter dem Computernamen gespeichert
+                    finalConfig = {
+                        default: existingConfig,  // Bestehende Config wird default
+                        [computerName]: sanitizedConfig  // Neue Config unter Computer-Name
+                    };
+                    savedToSection = computerName;
+                    convertedToNested = true;
+                    
+                    securityLog.log('INFO', 'CONFIG_CONVERTED_TO_NESTED', {
+                        computerName: computerName,
+                        path: path.basename(filePath)
+                    });
+                }
+            } catch (parseError) {
+                // Datei existiert aber ist kein gültiges JSON -> überschreiben
+                securityLog.log('WARN', 'CONFIG_EXISTING_INVALID', {
+                    path: path.basename(filePath),
+                    error: parseError.message
+                });
+            }
+        }
 
-        fs.writeFileSync(filePath, JSON.stringify(sanitizedConfig, null, 2), 'utf8');
-        securityLog.log('INFO', 'CONFIG_SAVED', { path: path.basename(filePath) });
-        return { success: true };
+        fs.writeFileSync(filePath, JSON.stringify(finalConfig, null, 2), 'utf8');
+        
+        securityLog.log('INFO', 'CONFIG_SAVED', { 
+            path: path.basename(filePath),
+            computerName: savedToSection || 'flat',
+            mode: savedToSection ? 'merged' : 'overwrite',
+            convertedToNested: convertedToNested
+        });
+        
+        return { 
+            success: true,
+            savedToSection: savedToSection,
+            computerName: computerName,
+            convertedToNested: convertedToNested
+        };
     } catch (error) {
         securityLog.log('ERROR', 'CONFIG_SAVE_FAILED', { error: error.message });
         
@@ -3169,8 +3374,11 @@ ipcMain.handle('config:load', async (event, filePath) => {
             return { success: false, error: 'Ungültige JSON-Syntax' };
         }
 
-        // Schema-Validierung
-        const validation = configSchema.validate(config);
+        // Computer-spezifische Config zusammenführen
+        const { mergedConfig, computerName, hasComputerSection, isLegacyFormat } = mergeComputerConfig(config);
+
+        // Schema-Validierung (auf der gemergten Config)
+        const validation = configSchema.validate(mergedConfig);
         if (!validation.valid) {
             securityLog.log('WARN', 'CONFIG_VALIDATION_FAILED', {
                 path: path.basename(filePath),
@@ -3179,13 +3387,26 @@ ipcMain.handle('config:load', async (event, filePath) => {
             // Config trotzdem laden, aber Warnungen zurückgeben
             return {
                 success: true,
-                config: configSchema.sanitize(config),
+                config: configSchema.sanitize(mergedConfig),
+                computerName: computerName,
+                hasComputerSection: hasComputerSection,
+                isLegacyFormat: isLegacyFormat,
                 warnings: validation.errors
             };
         }
 
-        securityLog.log('INFO', 'CONFIG_LOADED', { path: path.basename(filePath) });
-        return { success: true, config: configSchema.sanitize(config) };
+        securityLog.log('INFO', 'CONFIG_LOADED', { 
+            path: path.basename(filePath),
+            computerName: computerName,
+            hasComputerSection: hasComputerSection
+        });
+        return { 
+            success: true, 
+            config: configSchema.sanitize(mergedConfig),
+            computerName: computerName,
+            hasComputerSection: hasComputerSection,
+            isLegacyFormat: isLegacyFormat
+        };
     } catch (error) {
         securityLog.log('ERROR', 'CONFIG_LOAD_FAILED', { error: error.message });
         return { success: false, error: error.message };
@@ -3247,6 +3468,16 @@ ipcMain.handle('security:clearLogs', async (event) => {
     } catch (error) {
         return { success: false, error: error.message };
     }
+});
+
+// Computername abrufen (für Computer-spezifische Config)
+ipcMain.handle('system:getComputerName', async (event) => {
+    return {
+        computerName: getComputerName(),
+        hostname: os.hostname(),
+        platform: os.platform(),
+        username: os.userInfo().username
+    };
 });
 
 // Prüfen ob ein Pfad auf einem Netzlaufwerk liegt
@@ -3409,8 +3640,11 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
                         continue; // Nächsten Pfad probieren
                     }
 
-                    // Schema-Validierung
-                    const validation = configSchema.validate(config);
+                    // Computer-spezifische Config zusammenführen
+                    const { mergedConfig, computerName, hasComputerSection, isLegacyFormat } = mergeComputerConfig(config);
+
+                    // Schema-Validierung (auf der gemergten Config)
+                    const validation = configSchema.validate(mergedConfig);
                     if (!validation.valid) {
                         securityLog.log('WARN', 'CONFIG_VALIDATION_FAILED', {
                             path: path.basename(configPath),
@@ -3418,17 +3652,25 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
                         });
                     }
 
+                    const source = configPath.includes(workingDir || '') ? 'workingDir' :
+                                   configPath.includes(portableDir) ? 'portable' :
+                                   configPath.includes(exeDir) ? 'exeDir' : 'userDir';
+
                     securityLog.log('INFO', 'CONFIG_AUTO_LOADED', {
                         path: path.basename(configPath),
-                        source: configPath.includes(workingDir || '') ? 'workingDir' :
-                                configPath.includes(portableDir) ? 'portable' :
-                                configPath.includes(exeDir) ? 'exeDir' : 'userDir'
+                        source: source,
+                        computerName: computerName,
+                        hasComputerSection: hasComputerSection,
+                        isLegacyFormat: isLegacyFormat
                     });
 
                     return {
                         success: true,
-                        config: configSchema.sanitize(config),
+                        config: configSchema.sanitize(mergedConfig),
                         path: configPath,
+                        computerName: computerName,
+                        hasComputerSection: hasComputerSection,
+                        isLegacyFormat: isLegacyFormat,
                         warnings: validation.valid ? undefined : validation.errors
                     };
                 }
