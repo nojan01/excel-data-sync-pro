@@ -6410,6 +6410,9 @@
         const EXPLORER_RECOVERY_KEY = 'excelSyncExplorerRecovery';
         let explorerAutoSaveInterval = null;
         
+        // Zwischenspeicher für kopierte Zellen mit Formatierung
+        let copiedCellsWithFormat = null;  // { cells: [{row, col, value, style, formula, hyperlink}], minRow, minCol }
+
         const explorerState = {
             filePath: null,
             fileName: null,
@@ -7671,7 +7674,11 @@
             menuHtml += `<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">📋 ${cellLabel} ausgewählt</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
             menuHtml += `<div class="context-menu-item" data-action="copy-content">📋 Kopieren</div>`;
+            menuHtml += `<div class="context-menu-item" data-action="copy-with-format">🎨 Kopieren mit Formatierung</div>`;
+            menuHtml += '<div class="context-menu-divider"></div>';
             menuHtml += `<div class="context-menu-item" data-action="paste-content">📥 Einfügen</div>`;
+            const hasFormatClipboard = copiedCellsWithFormat !== null;
+            menuHtml += `<div class="context-menu-item${hasFormatClipboard ? '' : ' disabled'}" data-action="paste-with-format" style="${hasFormatClipboard ? '' : 'opacity: 0.5; cursor: not-allowed;'}">🎨 Einfügen mit Formatierung${hasFormatClipboard ? '' : ' (leer)'}</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
             menuHtml += `<div class="context-menu-item" data-action="delete-content">🗑️ Inhalt löschen</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
@@ -7712,11 +7719,26 @@
                 menuEl.remove();
             });
             
+            // Event-Handler: Kopieren mit Formatierung
+            menuEl.querySelector('[data-action="copy-with-format"]').addEventListener('click', () => {
+                copySelectedCellsWithFormat();
+                menuEl.remove();
+            });
+            
             // Event-Handler: Einfügen
             menuEl.querySelector('[data-action="paste-content"]').addEventListener('click', async () => {
                 await pasteToSelectedCells();
                 menuEl.remove();
             });
+            
+            // Event-Handler: Einfügen mit Formatierung
+            const pasteFormatItem = menuEl.querySelector('[data-action="paste-with-format"]');
+            if (pasteFormatItem && copiedCellsWithFormat !== null) {
+                pasteFormatItem.addEventListener('click', () => {
+                    pasteSelectedCellsWithFormat();
+                    menuEl.remove();
+                });
+            }
             
             // Event-Handler: Auswahl aufheben
             menuEl.querySelector('[data-action="clear-selection"]').addEventListener('click', () => {
@@ -7816,6 +7838,179 @@
                 console.error('Kopieren fehlgeschlagen:', err);
                 showFloatingStatus('Kopieren fehlgeschlagen', true);
             });
+        }
+        
+        // Ausgewählte Zelleninhalte MIT Formatierung kopieren
+        function copySelectedCellsWithFormat() {
+            if (explorerState.selectedCells.size === 0) return;
+            
+            // Zellen nach Position sortieren und mit Formatierung erfassen
+            const cells = Array.from(explorerState.selectedCells).map(key => {
+                const [row, col] = key.split('-').map(Number);
+                // WICHTIG: cellStyles, cellFormulas etc. verwenden "originalIndex+1"-Format (1-basiert wegen Header)
+                const styleKey = `${row + 1}-${col}`;
+                return {
+                    row,
+                    col,
+                    value: explorerState.data[row][col] ?? '',
+                    style: explorerState.cellStyles[styleKey] || null,
+                    formula: explorerState.cellFormulas[styleKey] || null,
+                    hyperlink: explorerState.cellHyperlinks[styleKey] || null,
+                    richText: explorerState.richTextCells[styleKey] || null
+                };
+            }).sort((a, b) => a.row - b.row || a.col - b.col);
+            
+            // Debug: Ausgabe was kopiert wurde
+            const stylesFound = cells.filter(c => c.style !== null).length;
+            console.log(`Kopiert: ${cells.length} Zellen, davon ${stylesFound} mit Style`);
+            if (stylesFound > 0) {
+                console.log('Gefundene Styles:', cells.filter(c => c.style).map(c => ({ key: `${c.row+1}-${c.col}`, style: c.style })));
+            }
+            
+            // Minimale Position ermitteln (für relatives Einfügen)
+            const minRow = Math.min(...cells.map(c => c.row));
+            const minCol = Math.min(...cells.map(c => c.col));
+            
+            // Relative Positionen berechnen
+            copiedCellsWithFormat = {
+                cells: cells.map(c => ({
+                    ...c,
+                    relRow: c.row - minRow,
+                    relCol: c.col - minCol
+                })),
+                minRow,
+                minCol,
+                sourceSheet: explorerState.selectedSheet
+            };
+            
+            // Auch als Text in Zwischenablage kopieren
+            const rows = new Map();
+            cells.forEach(cell => {
+                if (!rows.has(cell.row)) {
+                    rows.set(cell.row, []);
+                }
+                rows.get(cell.row).push(String(cell.value));
+            });
+            
+            const text = Array.from(rows.values())
+                .map(rowCells => rowCells.join('\t'))
+                .join('\n');
+            
+            navigator.clipboard.writeText(text).then(() => {
+                showFloatingStatus(`${explorerState.selectedCells.size} Zelle(n) mit Formatierung kopiert 🎨`);
+            }).catch(err => {
+                console.error('Kopieren fehlgeschlagen:', err);
+                showFloatingStatus('Kopieren fehlgeschlagen', true);
+            });
+        }
+        
+        // Zellen MIT Formatierung einfügen
+        function pasteSelectedCellsWithFormat() {
+            if (!copiedCellsWithFormat || copiedCellsWithFormat.cells.length === 0) {
+                showFloatingStatus('Keine formatierten Zellen zum Einfügen', true);
+                return;
+            }
+            
+            // Zielposition ermitteln (erste ausgewählte Zelle oder Anker)
+            let targetRow, targetCol;
+            if (explorerState.selectedCells.size > 0) {
+                const firstCell = explorerState.selectedCells.values().next().value;
+                [targetRow, targetCol] = firstCell.split('-').map(Number);
+            } else if (explorerState.selectionAnchor) {
+                targetRow = explorerState.selectionAnchor.row;
+                targetCol = explorerState.selectionAnchor.col;
+            } else {
+                showFloatingStatus('Keine Zielzelle ausgewählt', true);
+                return;
+            }
+            
+            const undoActions = [];
+            let pastedCount = 0;
+            
+            copiedCellsWithFormat.cells.forEach(cell => {
+                const newRow = targetRow + cell.relRow;
+                const newCol = targetCol + cell.relCol;
+                const cellKey = `${newRow}-${newCol}`;  // Für editedCells (0-basiert)
+                const styleKey = `${newRow + 1}-${newCol}`;  // Für Styles (1-basiert wegen Header)
+                
+                // Prüfen ob Zielzelle existiert
+                if (newRow >= 0 && newRow < explorerState.data.length && 
+                    newCol >= 0 && newCol < explorerState.headers.length) {
+                    
+                    const oldValue = explorerState.data[newRow][newCol];
+                    const oldStyle = explorerState.cellStyles[styleKey];
+                    const oldFormula = explorerState.cellFormulas[styleKey];
+                    const oldHyperlink = explorerState.cellHyperlinks[styleKey];
+                    const oldRichText = explorerState.richTextCells[styleKey];
+                    
+                    // Undo-Aktion speichern
+                    undoActions.push({
+                        rowIndex: newRow,
+                        colIndex: newCol,
+                        oldValue: oldValue ?? '',
+                        newValue: cell.value,
+                        oldStyle: oldStyle ? { ...oldStyle } : null,
+                        newStyle: cell.style ? { ...cell.style } : null,
+                        oldFormula,
+                        newFormula: cell.formula,
+                        oldHyperlink,
+                        newHyperlink: cell.hyperlink,
+                        oldRichText: oldRichText ? [...oldRichText] : null,
+                        newRichText: cell.richText ? [...cell.richText] : null
+                    });
+                    
+                    // Wert setzen
+                    explorerState.data[newRow][newCol] = cell.value;
+                    explorerState.editedCells.set(cellKey, cell.value);
+                    
+                    // Style kopieren (mit styleKey = 1-basiert)
+                    if (cell.style) {
+                        explorerState.cellStyles[styleKey] = { ...cell.style };
+                    } else {
+                        delete explorerState.cellStyles[styleKey];
+                    }
+                    
+                    // Formel kopieren
+                    if (cell.formula) {
+                        explorerState.cellFormulas[styleKey] = cell.formula;
+                    } else {
+                        delete explorerState.cellFormulas[styleKey];
+                    }
+                    
+                    // Hyperlink kopieren
+                    if (cell.hyperlink) {
+                        explorerState.cellHyperlinks[styleKey] = cell.hyperlink;
+                    } else {
+                        delete explorerState.cellHyperlinks[styleKey];
+                    }
+                    
+                    // Rich Text kopieren
+                    if (cell.richText) {
+                        explorerState.richTextCells[styleKey] = [...cell.richText];
+                    } else {
+                        delete explorerState.richTextCells[styleKey];
+                    }
+                    
+                    pastedCount++;
+                }
+            });
+            
+            // Debug
+            console.log(`Eingefügt: ${pastedCount} Zellen mit Formatierung`);
+            
+            // Undo speichern
+            if (undoActions.length > 0) {
+                pushExplorerUndo({
+                    type: 'multi-format',
+                    actions: undoActions
+                });
+            }
+            
+            // Tabelle neu rendern um Formatierung anzuzeigen
+            renderExplorerTable();
+            updateExplorerEditStatus();
+            
+            showFloatingStatus(`${pastedCount} Zelle(n) mit Formatierung eingefügt 🎨`);
         }
         
         // Aus Zwischenablage in ausgewählte Zelle(n) einfügen
@@ -9556,7 +9751,20 @@
             // Prüfe ob alle sichtbaren Zeilen ausgewählt sind
             const allVisibleSelected = pageData.length > 0 && pageData.every(item => explorerState.selectedRows.has(item.originalIndex));
             
-            let headerHtml = '<tr>';
+            // Erste Zeile: Excel-Spaltenbuchstaben (A, B, C, ...)
+            let headerHtml = '<tr class="column-letter-row">';
+            // Leere Zelle für Zeilennummer-Spalte
+            headerHtml += `<th style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 2px 4px; background: var(--bg-lighter); color: var(--text-muted); font-size: 10px; font-weight: normal; position: sticky; left: 0; z-index: 2; border-bottom: none;"></th>`;
+            // Leere Zelle für Checkbox-Spalte
+            headerHtml += `<th style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 2px 4px; background: var(--bg-lighter); position: sticky; left: 40px; z-index: 2; border-bottom: none;"></th>`;
+            displayColumns.forEach(colIndex => {
+                const colLetter = getColumnLetter(colIndex + 1);
+                headerHtml += `<th style="text-align: center; padding: 2px 4px; background: var(--bg-lighter); color: var(--text-muted); font-size: 10px; font-weight: normal; border-bottom: none;" title="Excel-Spalte ${colLetter}">${colLetter}</th>`;
+            });
+            headerHtml += '</tr>';
+            
+            // Zweite Zeile: Spaltenüberschriften mit Sortierung
+            headerHtml += '<tr>';
             // Zeilennummer-Spalte (fest, nicht verschiebbar)
             headerHtml += `<th style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 4px; background: var(--bg-lighter); color: var(--text-muted); font-size: 11px; position: sticky; left: 0; z-index: 2;" title="Zeilennummer">#</th>`;
             // Checkbox-Spalte für Zeilenauswahl
@@ -9566,11 +9774,12 @@
             </th>`;
             displayColumns.forEach(colIndex => {
                 const headerText = escapeHtml(explorerState.headers[colIndex] || `Spalte ${colIndex + 1}`);
+                const colLetter = getColumnLetter(colIndex + 1);
                 let sortIcon = '';
                 if (explorerState.sortColumn === colIndex) {
                     sortIcon = explorerState.sortDirection === 'asc' ? ' ▲' : ' ▼';
                 }
-                headerHtml += `<th class="sortable-header" data-col="${colIndex}" draggable="true" title="Klicken zum Sortieren, Ziehen zum Verschieben">${headerText}${sortIcon}</th>`;
+                headerHtml += `<th class="sortable-header" data-col="${colIndex}" draggable="true" title="Spalte ${colLetter} - Klicken zum Sortieren, Ziehen zum Verschieben">${headerText}${sortIcon}</th>`;
             });
             headerHtml += '</tr>';
             elements.explorerTableHead.innerHTML = headerHtml;
