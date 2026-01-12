@@ -74,7 +74,8 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
                 const colIndex = colNumber - 1;
                 const dataRowIndex = rowNumber - 2; // -1 für Header, -1 für 0-basiert
-                const styleKey = `${dataRowIndex}-${colIndex}`;
+                // WICHTIG: Frontend erwartet 1-basierte Indizes (wie xlsx-populate)
+                const styleKey = `${dataRowIndex + 1}-${colIndex}`;
                 
                 let cellValue = cell.value;
                 

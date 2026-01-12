@@ -60,7 +60,10 @@ async function exportSheetWithExcelJS(sourcePath, targetPath, sheetData) {
             // Dann neue Styles anwenden
             for (const [styleKey, style] of Object.entries(sheetData.cellStyles)) {
                 const [rowIdx, colIdx] = styleKey.split('-').map(Number);
-                const cell = worksheet.getCell(rowIdx + 2, colIdx + 1);
+                // Frontend sendet 1-basierte rowIdx (originalIndex + 1)
+                // Excel: Zeile 1 = Header, Zeile 2+ = Daten
+                // Also: rowIdx 1 = Zeile 2 in Excel
+                const cell = worksheet.getCell(rowIdx + 1, colIdx + 1);
                 
                 // Font-Styles
                 const font = {};
