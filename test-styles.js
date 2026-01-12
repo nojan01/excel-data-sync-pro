@@ -23,12 +23,32 @@ async function testStyles() {
     console.log(`   Hyperlinks: ${Object.keys(result.cellHyperlinks).length}`);
     console.log(`   AutoFilter: ${result.autoFilterRange || 'Nicht vorhanden'}\n`);
     
+    // Zähle Styles mit Fill
+    const stylesWithFill = Object.entries(result.cellStyles).filter(([k, v]) => v.fill);
+    console.log(`   Styles mit Fill-Farbe: ${stylesWithFill.length}`);
+    
     // Zeige erste 5 Styles
-    console.log('Erste 5 Styles:');
-    const styleEntries = Object.entries(result.cellStyles).slice(0, 5);
+    console.log('\nErste 10 Styles:');
+    const styleEntries = Object.entries(result.cellStyles).slice(0, 10);
     styleEntries.forEach(([key, style]) => {
         console.log(`   ${key}:`, JSON.stringify(style));
     });
+    
+    // Zeige RichText Details
+    if (Object.keys(result.richTextCells).length > 0) {
+        console.log('\nRichText Zellen:');
+        Object.entries(result.richTextCells).forEach(([key, fragments]) => {
+            console.log(`   ${key}:`, JSON.stringify(fragments));
+        });
+    }
+    
+    // Zeige Styles mit Fill
+    if (stylesWithFill.length > 0) {
+        console.log('\nStyles mit Fill (erste 5):');
+        stylesWithFill.slice(0, 5).forEach(([key, style]) => {
+            console.log(`   ${key}:`, JSON.stringify(style));
+        });
+    }
 }
 
 testStyles();

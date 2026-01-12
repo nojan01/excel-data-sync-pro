@@ -9775,7 +9775,23 @@
                 if (explorerState.sortColumn === colIndex) {
                     sortIcon = explorerState.sortDirection === 'asc' ? ' ▲' : ' ▼';
                 }
-                headerHtml += `<th class="sortable-header" data-col="${colIndex}" draggable="true" title="Spalte ${colLetter} - Klicken zum Sortieren, Ziehen zum Verschieben">${headerText}${sortIcon}</th>`;
+                
+                // Header-Styles anwenden (Zeile 0)
+                const headerStyleKey = `0-${colIndex}`;
+                const headerStyle = explorerState.cellStyles[headerStyleKey];
+                let inlineStyle = '';
+                if (headerStyle) {
+                    const styles = [];
+                    if (headerStyle.bold) styles.push('font-weight: bold');
+                    if (headerStyle.italic) styles.push('font-style: italic');
+                    if (headerStyle.fontColor) styles.push(`color: ${headerStyle.fontColor}`);
+                    if (headerStyle.fill) styles.push(`background-color: ${headerStyle.fill}`);
+                    if (styles.length > 0) {
+                        inlineStyle = ` style="${styles.join('; ')}"`;
+                    }
+                }
+                
+                headerHtml += `<th class="sortable-header" data-col="${colIndex}" draggable="true" title="Spalte ${colLetter} - Klicken zum Sortieren, Ziehen zum Verschieben"${inlineStyle}>${headerText}${sortIcon}</th>`;
             });
             headerHtml += '</tr>';
             elements.explorerTableHead.innerHTML = headerHtml;

@@ -62,8 +62,31 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
             // Erste Zeile = Header
             if (rowNumber === 1) {
-                row.eachCell({ includeEmpty: true }, (cell) => {
+                row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+                    const colIndex = colNumber - 1;
                     headers.push(cell.value ? String(cell.value) : '');
+                    
+                    // WICHTIG: Auch Header-Styles extrahieren (für Frontend-Kompatibilität)
+                    const styleKey = `0-${colIndex}`; // Header = Zeile 0
+                    const style = {};
+                    
+                    if (cell.font) {
+                        if (cell.font.bold) style.bold = true;
+                        if (cell.font.italic) style.italic = true;
+                        if (cell.font.underline) style.underline = true;
+                        if (cell.font.strike) style.strikethrough = true;
+                        if (cell.font.color?.argb) {
+                            style.fontColor = `#${cell.font.color.argb.substring(2)}`;
+                        }
+                    }
+                    
+                    if (cell.fill && cell.fill.type === 'pattern' && cell.fill.fgColor?.argb) {
+                        style.fill = `#${cell.fill.fgColor.argb.substring(2)}`;
+                    }
+                    
+                    if (Object.keys(style).length > 0) {
+                        cellStyles[styleKey] = style;
+                    }
                 });
                 return; // Weiter zur nächsten Zeile
             }
