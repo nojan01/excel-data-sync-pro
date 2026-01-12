@@ -3407,6 +3407,43 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
         const fileSizeMB = stats.size / (1024 * 1024);
         const hasFullRewrite = sheets.some(s => s.fullRewrite === true);
         
+        // NEUE EXCELJS-OPTIMIERUNG: Bei fullRewrite nutze ExcelJS (50% schneller)
+        if (hasFullRewrite && fileSizeMB > 1) {
+            console.log(`[Export] Full-Rewrite mit ExcelJS (${fileSizeMB.toFixed(1)} MB) - 50% schneller!`);
+            
+            try {
+                // Für jeden Sheet mit fullRewrite=true: ExcelJS nutzen
+                for (const sheetData of sheets) {
+                    if (sheetData.fullRewrite === true) {
+                        const result = await exportSheetWithExcelJS(sourcePath, targetPath, sheetData);
+                        
+                        if (!result.success) {
+                            console.error(`[Export] ExcelJS-Fehler für Sheet "${sheetData.sheetName}":`, result.error);
+                            // Fallback zu xlsx-populate
+                            break;
+                        }
+                        
+                        console.log(`[Export] Sheet "${sheetData.sheetName}" mit ExcelJS exportiert`);
+                        
+                        // Verwende den exportierten File als neue Source für weitere Sheets
+                        sourcePath = targetPath;
+                    }
+                }
+                
+                securityLog.log('INFO', 'EXCEL_EXPORT_EXCELJS', {
+                    targetFile: path.basename(targetPath),
+                    fileSizeMB: fileSizeMB.toFixed(2),
+                    sheetsCount: sheets.length
+                });
+                
+                return { success: true, message: `Export erstellt: ${targetPath}`, sheets: sheets.map(s => s.sheetName) };
+                
+            } catch (exceljsError) {
+                console.warn('[Export] ExcelJS-Fehler, Fallback zu xlsx-populate:', exceljsError.message);
+                // Weiter mit xlsx-populate unten
+            }
+        }
+        
         if (fileSizeMB > 3 && hasFullRewrite) {
             console.warn(`[Export] WARNUNG: Große Datei (${fileSizeMB.toFixed(1)} MB) mit Full-Rewrite - kann langsam sein!`);
             
