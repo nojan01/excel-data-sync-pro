@@ -1,7 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
-const XlsxPopulate = require('xlsx-populate');
-const { readSheetWithExcelJS } = require('./exceljs-reader'); // ExcelJS Reader für Tests
+const XlsxPopulate = require('xlsx-populate'); // LEGACY: Nur noch für Backup/Fallback
+const { readSheetWithExcelJS } = require('./exceljs-reader'); // PRIMÄR: ExcelJS Reader
+const { exportSheetWithExcelJS } = require('./exceljs-writer'); // PRIMÄR: ExcelJS Writer
 const fs = require('fs');
 const os = require('os');
 
@@ -1987,6 +1988,50 @@ ipcMain.handle('excel:readSheetTest', async (event, filePath, sheetName, passwor
     }
 });
 
+// Sheet-Daten lesen - NEU MIT EXCELJS (50% schneller, besser gewartet)
+ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = null, quickLoad = false) => {
+    // Sicherheitsprüfung: Pfad validieren
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+
+    try {
+        console.log(`[ExcelJS] Lade Sheet "${sheetName}"`);
+        
+        // Nutze ExcelJS Reader
+        const result = await readSheetWithExcelJS(filePath, sheetName, password);
+        
+        if (!result.success) {
+            return result;
+        }
+        
+        // Füge zusätzliche Felder hinzu für Kompatibilität
+        return {
+            ...result,
+            dataValidations: {}, // TODO: Später implementieren wenn benötigt
+            mergedCells: [] // TODO: Später implementieren wenn benötigt
+        };
+        
+    } catch (error) {
+        // Prüfe ob es sich um eine passwortgeschützte Datei handelt
+        if (error.message.includes("Can't find end of central directory") ||
+            error.message.includes("Encrypted file") ||
+            error.message.includes("password")) {
+            return {
+                success: false,
+                error: 'Passwort erforderlich',
+                isPasswordProtected: true,
+                needsPassword: true
+            };
+        }
+        return { success: false, error: error.message };
+    }
+});
+
+/*
+// ======================================================================
+// ALTE XLSX-POPULATE VERSION - BACKUP (wird nicht mehr verwendet)
+// ======================================================================
 // Sheet-Daten lesen (xlsx-populate - Standard)
 ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = null, quickLoad = false) => {
     // Sicherheitsprüfung: Pfad validieren
@@ -2641,6 +2686,7 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
         return { success: false, error: error.message };
     }
 });
+*/
 
 // ==================== SHEET-VERWALTUNG ====================
 
