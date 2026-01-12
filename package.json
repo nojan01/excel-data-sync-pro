@@ -5,8 +5,8 @@
   "main": "main.js",
   "license": "MIT",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --dev",
+    "start": "electron --max-old-space-size=16384 --expose-gc .",
+    "dev": "electron --max-old-space-size=16384 --expose-gc . --dev",
     "build": "electron-builder --win portable --x64",
     "build:mac": "electron-builder --mac",
     "build:mac-arm": "electron-builder --mac --arm64",

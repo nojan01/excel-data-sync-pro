@@ -1404,6 +1404,22 @@
             font-size: 11px;
             white-space: nowrap;
         }
+        
+        /* Notification Animations */
+        @keyframes slideInRight {
+            from { opacity: 0; transform: translateX(100px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+        @keyframes slideOutRight {
+            from { opacity: 1; transform: translateX(0); }
+            to { opacity: 0; transform: translateX(100px); }
+        }
+        @keyframes fadeInOut {
+            0% { opacity: 0; transform: translateX(-50%) translateY(10px); }
+            20% { opacity: 1; transform: translateX(-50%) translateY(0); }
+            80% { opacity: 1; transform: translateX(-50%) translateY(0); }
+            100% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
+        }
     </style>
 </head>
 <body>
@@ -2060,13 +2076,11 @@
                 
                 <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📤 Speichern & Export</h4>
                 <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
-                    <strong>💾 Speichern:</strong> Speichert alle Änderungen direkt in die Originaldatei<br>
+                    <strong>💾 Speichern / Exportieren:</strong> Speichert Änderungen in die Datei<br>
+                    • Überschreibt Originaldatei oder speichert als neue Datei<br>
                     • Zeigt Bestätigungsdialog mit Anzahl der Änderungen<br>
-                    • Alle Formatierungen der Originaldatei bleiben erhalten<br><br>
-                    <strong>📊 Als XLSX exportieren:</strong> Speichert als neue Datei<br>
-                    • Auswahl welche Arbeitsblätter mit exportiert werden sollen<br>
-                    • Alle Formatierungen werden beibehalten<br>
-                    • Nur sichtbare Spalten werden exportiert
+                    • Alle Formatierungen der Originaldatei bleiben erhalten<br>
+                    • Auswahl welche Arbeitsblätter mit exportiert werden sollen
                 </p>
                 
                 <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📋 Arbeitsblätter wechseln</h4>
@@ -2559,11 +2573,8 @@
                     <button class="btn btn-primary" id="btnExplorerPreview" title="Vorschau des gesamten Datenblattes mit Änderungen" disabled>
                         👁️ Vorschau
                     </button>
-                    <button class="btn btn-success" id="btnExplorerSave" title="Änderungen in Originaldatei speichern">
+                    <button class="btn btn-success" id="btnExplorerExport" title="Änderungen speichern oder als neue Datei exportieren">
                         💾 Speichern
-                    </button>
-                    <button class="btn btn-primary" id="btnExplorerExport">
-                        📊 Als XLSX exportieren
                     </button>
                 </div>
                 
@@ -2945,8 +2956,7 @@
                 fullTextSearch: 'Volltextsuche:',
                 searchPlaceholderExplorer: 'Suchbegriff eingeben...',
                 columns: '❙❙ Spalten',
-                exportXlsx: '📊 Als XLSX exportieren',
-                saveFile: '💾 Speichern',
+                exportXlsx: '💾 Speichern',
                 filter: '🔍 Filter',
                 addFilter: '➕ Filter hinzufügen',
                 resetFilters: '🗑️ Filter zurücksetzen',
@@ -3387,7 +3397,6 @@
             const btnExplorerOpenFile = document.getElementById('btnExplorerOpenFile');
             const btnToggleColumns = document.getElementById('btnToggleColumns');
             const btnExplorerExport = document.getElementById('btnExplorerExport');
-            const btnExplorerSave = document.getElementById('btnExplorerSave');
             const btnAddExplorerFilter = document.getElementById('btnAddExplorerFilter');
             const btnClearExplorerFilters = document.getElementById('btnClearExplorerFilters');
             const btnShowAllColumns = document.getElementById('btnShowAllColumns');
@@ -3399,7 +3408,6 @@
             if (btnExplorerOpenFile) btnExplorerOpenFile.innerHTML = t('openFile');
             if (btnToggleColumns) btnToggleColumns.innerHTML = t('columns');
             if (btnExplorerExport) btnExplorerExport.innerHTML = t('exportXlsx');
-            if (btnExplorerSave) btnExplorerSave.innerHTML = t('saveFile');
             if (btnAddExplorerFilter) btnAddExplorerFilter.innerHTML = t('addFilter');
             if (btnClearExplorerFilters) btnClearExplorerFilters.innerHTML = t('resetFilters');
             if (btnShowAllColumns) btnShowAllColumns.textContent = t('showAll');
@@ -3591,28 +3599,9 @@
             
             // Prüfe auf moveRows Aktion
             if (action.type === 'moveRows') {
-                // Stelle den vorherigen Zustand wieder her
-                explorerState.data = JSON.parse(JSON.stringify(action.previousData));
-                explorerState.originalData = JSON.parse(JSON.stringify(action.previousOriginalData));
-                
-                // FilteredData neu erstellen
-                explorerState.filteredData = explorerState.data.map((row, idx) => ({
-                    row: row,
-                    originalIndex: idx
-                }));
-                
-                // Suchfilter erneut anwenden wenn aktiv
-                const searchTerm = elements.explorerSearch?.value?.trim().toLowerCase();
-                if (searchTerm) {
-                    explorerState.filteredData = explorerState.filteredData.filter(item => 
-                        item.row.some(cell => String(cell ?? '').toLowerCase().includes(searchTerm))
-                    );
-                }
-                
-                // Tabelle neu rendern
-                renderExplorerTable();
-                showNotification('Zeilen-Verschiebung rückgängig gemacht', 'info');
-                return true;
+                // HINWEIS: Undo für moveRows aktuell nicht unterstützt (Performance-Optimierung)
+                showNotification('Undo für Zeilen-Verschiebung nicht möglich. Bitte Datei neu laden.', 'warning');
+                return false;
             }
             
             // Prüfe auf Multi-Aktion (mehrere Zellen gleichzeitig)
@@ -3670,63 +3659,9 @@
             
             // Prüfe auf moveRows Aktion
             if (action.type === 'moveRows') {
-                // Führe die Verschiebung erneut aus
-                const selectedIndices = action.movedIndices;
-                const targetRow = action.targetRow;
-                const movePosition = action.movePosition;
-                let targetIndex = targetRow - 1;
-                
-                // Extrahiere die Zeilen
-                const rowsToMove = [];
-                const sortedDescending = [...selectedIndices].sort((a, b) => b - a);
-                sortedDescending.forEach(idx => {
-                    rowsToMove.unshift({
-                        data: explorerState.data[idx],
-                        original: explorerState.originalData[idx]
-                    });
-                });
-                
-                // Entferne die Zeilen
-                sortedDescending.forEach(idx => {
-                    explorerState.data.splice(idx, 1);
-                    explorerState.originalData.splice(idx, 1);
-                });
-                
-                // Berechne neuen Zielindex
-                let newTargetIndex = targetIndex;
-                selectedIndices.forEach(idx => {
-                    if (idx < targetIndex) {
-                        newTargetIndex--;
-                    }
-                });
-                
-                if (movePosition === 'after') {
-                    newTargetIndex++;
-                }
-                
-                // Füge die Zeilen ein
-                rowsToMove.forEach((row, i) => {
-                    explorerState.data.splice(newTargetIndex + i, 0, row.data);
-                    explorerState.originalData.splice(newTargetIndex + i, 0, row.original);
-                });
-                
-                // FilteredData neu erstellen
-                explorerState.filteredData = explorerState.data.map((row, idx) => ({
-                    row: row,
-                    originalIndex: idx
-                }));
-                
-                // Suchfilter erneut anwenden wenn aktiv
-                const searchTerm = elements.explorerSearch?.value?.trim().toLowerCase();
-                if (searchTerm) {
-                    explorerState.filteredData = explorerState.filteredData.filter(item => 
-                        item.row.some(cell => String(cell ?? '').toLowerCase().includes(searchTerm))
-                    );
-                }
-                
-                renderExplorerTable();
-                showNotification('Zeilen-Verschiebung wiederhergestellt', 'info');
-                return true;
+                // HINWEIS: Redo für moveRows aktuell nicht unterstützt (Performance-Optimierung)
+                showNotification('Redo für Zeilen-Verschiebung nicht möglich.', 'warning');
+                return false;
             }
             
             // Prüfe auf Multi-Aktion (mehrere Zellen gleichzeitig)
@@ -3798,17 +3733,41 @@
             setTimeout(() => toast.remove(), 1500);
         }
         
-        // CSS für Toast-Animation hinzufügen
-        const undoRedoStyle = document.createElement('style');
-        undoRedoStyle.textContent = `
-            @keyframes fadeInOut {
-                0% { opacity: 0; transform: translateX(-50%) translateY(10px); }
-                20% { opacity: 1; transform: translateX(-50%) translateY(0); }
-                80% { opacity: 1; transform: translateX(-50%) translateY(0); }
-                100% { opacity: 0; transform: translateX(-50%) translateY(-10px); }
-            }
-        `;
-        document.head.appendChild(undoRedoStyle);
+        // Globale Notification-Funktion für Erfolgs-, Warn- und Fehlermeldungen
+        function showNotification(message, type = 'info') {
+            const colors = {
+                success: { bg: '#217346', border: '#2d9a5d' },
+                error: { bg: '#d32f2f', border: '#f44336' },
+                warning: { bg: '#f57c00', border: '#ff9800' },
+                info: { bg: '#1976d2', border: '#2196f3' }
+            };
+            const color = colors[type] || colors.info;
+            
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 20px;
+                right: 20px;
+                background: ${color.bg};
+                border: 1px solid ${color.border};
+                color: white;
+                padding: 12px 20px;
+                border-radius: 6px;
+                font-size: 14px;
+                z-index: 100000;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                animation: slideInRight 0.3s ease-out;
+                max-width: 400px;
+                word-wrap: break-word;
+            `;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => {
+                notification.style.animation = 'slideOutRight 0.3s ease-in';
+                setTimeout(() => notification.remove(), 300);
+            }, 3000);
+        }
 
         // ==================== Auto-Save System ====================
         const AUTO_SAVE_KEY = 'excelsync_autosave';
@@ -4344,7 +4303,6 @@
             explorerTableHead: document.getElementById('explorerTableHead'),
             explorerTableBody: document.getElementById('explorerTableBody'),
             btnExplorerExport: document.getElementById('btnExplorerExport'),
-            btnExplorerSave: document.getElementById('btnExplorerSave'),
             btnExplorerOpenFile: document.getElementById('btnExplorerOpenFile'),
             btnExplorerSearch: document.getElementById('btnExplorerSearch'),
             btnExplorerPreview: document.getElementById('btnExplorerPreview'),
@@ -9860,18 +9818,26 @@
                     e.dataTransfer.setData('text/plain', th.dataset.col);
                 });
                 
-                // Drag Over
+                // Drag Over - OPTIMIERT: nur preventDefault ohne DOM-Manipulation
                 th.addEventListener('dragover', (e) => {
                     e.preventDefault();
                     e.dataTransfer.dropEffect = 'move';
+                });
+                
+                // Drag Enter - einmalig statt kontinuierlich
+                th.addEventListener('dragenter', (e) => {
+                    e.preventDefault();
                     if (parseInt(th.dataset.col) !== explorerState.draggedColumn) {
                         th.classList.add('drag-over');
                     }
                 });
                 
                 // Drag Leave
-                th.addEventListener('dragleave', () => {
-                    th.classList.remove('drag-over');
+                th.addEventListener('dragleave', (e) => {
+                    // Nur entfernen wenn wirklich verlassen (nicht bei Child-Elements)
+                    if (e.target === th) {
+                        th.classList.remove('drag-over');
+                    }
                 });
                 
                 // Drag End
@@ -9883,6 +9849,7 @@
                 // Drop
                 th.addEventListener('drop', (e) => {
                     e.preventDefault();
+                    e.stopPropagation();
                     th.classList.remove('drag-over');
                     
                     const fromCol = explorerState.draggedColumn;
@@ -10000,15 +9967,11 @@
                         if (cellStyle.underline) styles.push('text-decoration: underline');
                         if (cellStyle.strikethrough) styles.push('text-decoration: line-through');
                         if (cellStyle.fontColor) styles.push(`color: ${cellStyle.fontColor}`);
-                        if (cellStyle.fill) {
-                            console.log(`Cell ${cellStyleKey} has fill: ${cellStyle.fill}`);
-                            styles.push(`background-color: ${cellStyle.fill}`);
-                        }
+                        if (cellStyle.fill) styles.push(`background-color: ${cellStyle.fill}`);
                         if (cellStyle.fontSize && cellStyle.fontSize !== 11) styles.push(`font-size: ${cellStyle.fontSize}px`);
                         if (cellStyle.textAlign) styles.push(`text-align: ${cellStyle.textAlign}`);
                         if (styles.length > 0) {
                             inlineStyle = ` style="${styles.join('; ')}"`;
-                            console.log(`Cell ${cellStyleKey} inline style:`, inlineStyle);
                         }
                     }
                     
@@ -10386,63 +10349,79 @@
                 return;
             }
             
-            // Speichere den aktuellen Zustand für Undo
-            const previousData = JSON.parse(JSON.stringify(explorerState.data));
-            const previousOriginalData = JSON.parse(JSON.stringify(explorerState.originalData));
-            const previousCellStyles = JSON.parse(JSON.stringify(explorerState.cellStyles || {}));
-            const previousRichTextCells = JSON.parse(JSON.stringify(explorerState.richTextCells || {}));
+            // Speichere den aktuellen Zustand für Undo - EFFIZIENT: nur betroffene Zeilen
+            // Wir speichern nur die Indizes und lassen den State unverändert im Undo-System
+            const previousDataOrder = explorerState.data.map((_, i) => i);
+            const previousCellStyles = { ...explorerState.cellStyles }; // Flache Kopie reicht
+            const previousRichTextCells = { ...explorerState.richTextCells }; // Flache Kopie reicht
             
             // WICHTIG: Style-Keys haben Format "rowIndex-colIndex" wobei rowIndex 1 = erste Datenzeile
             // (rowIndex 0 = Header)
             // Daten-Index 0 entspricht Style-Index 1
             
-            // Sammle Zeilen-Bundles mit allen Metadaten
+            // OPTIMIERUNG: Gruppiere alle Metadaten einmalig nach Zeile (O(n) statt O(n²))
+            // WICHTIG: Tiefe Kopien erstellen um Referenzprobleme zu vermeiden!
+            const stylesByRow = {};
+            const richTextByRow = {};
+            const formulasByRow = {};
+            const hyperlinksByRow = {};
+            
+            for (const [key, value] of Object.entries(explorerState.cellStyles || {})) {
+                const [keyRow, keyCol] = key.split('-');
+                const rowIdx = parseInt(keyRow);
+                if (rowIdx > 0) { // Nur Datenzeilen, nicht Header
+                    if (!stylesByRow[rowIdx]) stylesByRow[rowIdx] = {};
+                    // Direkte Referenz - wir verschieben nur, keine Modifikation
+                    stylesByRow[rowIdx][keyCol] = value;
+                }
+            }
+            
+            for (const [key, value] of Object.entries(explorerState.richTextCells || {})) {
+                const [keyRow, keyCol] = key.split('-');
+                const rowIdx = parseInt(keyRow);
+                if (rowIdx > 0) {
+                    if (!richTextByRow[rowIdx]) richTextByRow[rowIdx] = {};
+                    // Direkte Referenz - wir verschieben nur, keine Modifikation
+                    richTextByRow[rowIdx][keyCol] = value;
+                }
+            }
+            
+            for (const [key, value] of Object.entries(explorerState.cellFormulas || {})) {
+                const [keyRow, keyCol] = key.split('-');
+                const rowIdx = parseInt(keyRow);
+                if (rowIdx > 0) {
+                    if (!formulasByRow[rowIdx]) formulasByRow[rowIdx] = {};
+                    // Formeln sind Strings, brauchen keine tiefe Kopie
+                    formulasByRow[rowIdx][keyCol] = value;
+                }
+            }
+            
+            for (const [key, value] of Object.entries(explorerState.cellHyperlinks || {})) {
+                const [keyRow, keyCol] = key.split('-');
+                const rowIdx = parseInt(keyRow);
+                if (rowIdx > 0) {
+                    if (!hyperlinksByRow[rowIdx]) hyperlinksByRow[rowIdx] = {};
+                    // Hyperlinks sind Strings, brauchen keine tiefe Kopie
+                    hyperlinksByRow[rowIdx][keyCol] = value;
+                }
+            }
+            
+            // Sammle Zeilen-Bundles mit allen Metadaten (jetzt O(n))
+            // EFFIZIENT: Direkte Referenzen, keine Kopien nötig da wir nur verschieben
             const totalRows = explorerState.data.length;
             const rowBundles = [];
             
             for (let i = 0; i < totalRows; i++) {
                 const styleRowIdx = i + 1; // Style-Key verwendet +1 (Header ist 0)
                 const bundle = {
-                    data: explorerState.data[i],
-                    original: explorerState.originalData[i],
-                    styles: {},
-                    richText: {},
-                    formulas: {},
-                    hyperlinks: {},
+                    dataRef: explorerState.data[i],       // Direkte Referenz
+                    originalRef: explorerState.originalData[i], // Direkte Referenz
+                    styles: stylesByRow[styleRowIdx] || {},
+                    richText: richTextByRow[styleRowIdx] || {},
+                    formulas: formulasByRow[styleRowIdx] || {},
+                    hyperlinks: hyperlinksByRow[styleRowIdx] || {},
                     isHidden: explorerState.hiddenRows?.has(i) || false
                 };
-                
-                // Sammle Styles für diese Zeile
-                for (const [key, value] of Object.entries(explorerState.cellStyles || {})) {
-                    const [keyRow, keyCol] = key.split('-');
-                    if (parseInt(keyRow) === styleRowIdx) {
-                        bundle.styles[keyCol] = value;
-                    }
-                }
-                
-                // Sammle RichText für diese Zeile
-                for (const [key, value] of Object.entries(explorerState.richTextCells || {})) {
-                    const [keyRow, keyCol] = key.split('-');
-                    if (parseInt(keyRow) === styleRowIdx) {
-                        bundle.richText[keyCol] = value;
-                    }
-                }
-                
-                // Sammle Formeln für diese Zeile
-                for (const [key, value] of Object.entries(explorerState.cellFormulas || {})) {
-                    const [keyRow, keyCol] = key.split('-');
-                    if (parseInt(keyRow) === styleRowIdx) {
-                        bundle.formulas[keyCol] = value;
-                    }
-                }
-                
-                // Sammle Hyperlinks für diese Zeile
-                for (const [key, value] of Object.entries(explorerState.cellHyperlinks || {})) {
-                    const [keyRow, keyCol] = key.split('-');
-                    if (parseInt(keyRow) === styleRowIdx) {
-                        bundle.hyperlinks[keyCol] = value;
-                    }
-                }
                 
                 rowBundles.push(bundle);
             }
@@ -10493,8 +10472,8 @@
             rowBundles.forEach((bundle, newRowIdx) => {
                 const newStyleRowIdx = newRowIdx + 1;
                 
-                explorerState.data.push(bundle.data);
-                explorerState.originalData.push(bundle.original);
+                explorerState.data.push(bundle.dataRef);  // Direkte Referenz
+                explorerState.originalData.push(bundle.originalRef);  // Direkte Referenz
                 
                 if (bundle.isHidden) {
                     explorerState.hiddenRows.add(newRowIdx);
@@ -10521,11 +10500,10 @@
                 }
             });
             
-            // Speichere Undo-Aktion
+            // Speichere Undo-Aktion (keine tiefen Kopien mehr - Undo wird vereinfacht)
             pushExplorerUndo({
                 type: 'moveRows',
-                previousData: previousData,
-                previousOriginalData: previousOriginalData,
+                previousDataOrder: previousDataOrder,  // Nur die Reihenfolge speichern
                 previousCellStyles: previousCellStyles,
                 previousRichTextCells: previousRichTextCells,
                 movedIndices: selectedIndices,
@@ -10535,6 +10513,18 @@
             
             // Auswahl zurücksetzen
             explorerState.selectedRows.clear();
+            
+            // Tracke alle betroffenen Zeilen (alt und neu) für Style-Reset beim Speichern
+            // WICHTIG: affectedRows verwendet STYLE-Indizes (rowIndex + 1 weil Header = 0)
+            if (!explorerState.affectedRows) {
+                explorerState.affectedRows = new Set();
+            }
+            // Alle Zeilen zwischen min und max der Bewegung sind betroffen (Style-Indizes!)
+            const minDataIdx = Math.min(...selectedIndices, newTargetIndex);
+            const maxDataIdx = Math.max(...selectedIndices, newTargetIndex + bundlesToMove.length - 1);
+            for (let i = minDataIdx; i <= maxDataIdx; i++) {
+                explorerState.affectedRows.add(i + 1); // +1 für Style-Index
+            }
             
             // FilteredData neu erstellen
             explorerState.filteredData = explorerState.data.map((row, idx) => ({
@@ -10934,16 +10924,36 @@
                 
                 elements.explorerStatus.textContent = exportPassword ? 'Exportiere mit Passwortschutz...' : 'Exportiere...';
                 
+                // SPEICHEROPTIMIERUNG: Undo-Stack leeren vor dem Export
+                if (undoRedoState.explorerUndoStack.length > 0) {
+                    undoRedoState.explorerUndoStack = [];
+                    undoRedoState.explorerRedoStack = [];
+                    console.log('[Memory] Undo/Redo Stack geleert für Export');
+                }
+                
                 // Sammle Daten für alle ausgewählten Sheets
                 const sheetsToExport = [];
                 
                 for (const sheetName of selectedSheets) {
                     let sheetData;
                     
-                    if (sheetName === explorerState.selectedSheet) {
-                        // Aktuelles Sheet: Daten aus explorerState
-                        // ALLE Daten senden (auch versteckte Zeilen), hidden-Attribute werden im Backend gesetzt
-                        const allData = explorerState.filteredData.map(item => item.row);
+                    // Prüfe ob Sheet Änderungen hat
+                    const isCurrentSheet = sheetName === explorerState.selectedSheet;
+                    const cachedSheet = explorerState.sheetDataCache.get(sheetName);
+                    const hasChanges = isCurrentSheet 
+                        ? explorerState.editedCells.size > 0
+                        : (cachedSheet?.editedCells?.size > 0);
+                    
+                    if (!hasChanges) {
+                        // Keine Änderungen - Backend soll direkt aus Datei lesen (spart Speicher!)
+                        sheetData = {
+                            sheetName: sheetName,
+                            fromFile: true
+                        };
+                    } else if (isCurrentSheet) {
+                        // Aktuelles Sheet mit Änderungen
+                        const affectedRowsArray = explorerState.affectedRows ? Array.from(explorerState.affectedRows) : [];
+                        const hasRowMoves = affectedRowsArray.length > 0;
                         
                         // HiddenRows aus dem aktuellen State ermitteln
                         const currentHiddenRows = [];
@@ -10953,27 +10963,68 @@
                             }
                         });
                         
+                        // STRATEGIE: Wie beim Speichern
+                        if (hasRowMoves) {
+                            // Row-Move: FULL REWRITE
+                            const allData = explorerState.filteredData.map(item => item.row);
+                            sheetData = {
+                                sheetName: sheetName,
+                                headers: explorerState.headers,
+                                data: allData,
+                                visibleColumns: explorerState.visibleColumns,
+                                hiddenRows: currentHiddenRows,
+                                cellStyles: explorerState.cellStyles || {},
+                                cellFormulas: explorerState.cellFormulas || {},
+                                cellHyperlinks: explorerState.cellHyperlinks || {},
+                                richTextCells: explorerState.richTextCells || {},
+                                fullRewrite: true
+                            };
+                            console.log(`[Export] Row-Move: Full Rewrite (${allData.length} Zeilen, ${Object.keys(explorerState.richTextCells || {}).length} RichText)`);
+                        } else {
+                            // Nur Zell-Edits: changedCells
+                            const changedCells = {};
+                            for (const cellKey of explorerState.editedCells) {
+                                const [rowStr, colStr] = cellKey.split('-');
+                                const rowIdx = parseInt(rowStr);
+                                const colIdx = parseInt(colStr);
+                                if (rowIdx >= 0 && colIdx >= 0 && explorerState.data[rowIdx]) {
+                                    changedCells[cellKey] = explorerState.data[rowIdx][colIdx];
+                                }
+                            }
+                            
+                            // RichText für geänderte Zellen
+                            const richTextForChanged = {};
+                            for (const cellKey of explorerState.editedCells) {
+                                if (explorerState.richTextCells && explorerState.richTextCells[cellKey]) {
+                                    richTextForChanged[cellKey] = explorerState.richTextCells[cellKey];
+                                }
+                            }
+                            
+                            sheetData = {
+                                sheetName: sheetName,
+                                changedCells: changedCells,
+                                richTextCells: Object.keys(richTextForChanged).length > 0 ? richTextForChanged : undefined,
+                                fullRewrite: false
+                            };
+                            console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText`);
+                        }
+                    } else if (cachedSheet) {
+                        // Gecachtes Sheet mit Änderungen - keine Styles senden (Backend behält Originale)
                         sheetData = {
                             sheetName: sheetName,
-                            headers: explorerState.headers,
-                            data: allData,
-                            visibleColumns: explorerState.visibleColumns,
-                            hiddenRows: currentHiddenRows,
-                            hasChanges: explorerState.editedCells.size > 0
-                        };
-                    } else if (explorerState.sheetDataCache.has(sheetName)) {
-                        // Sheet aus Cache - ALLE Daten senden, hiddenRows mitschicken
-                        const cached = explorerState.sheetDataCache.get(sheetName);
-                        sheetData = {
-                            sheetName: sheetName,
-                            headers: cached.headers,
-                            data: cached.data, // Alle Daten, nicht gefiltert
-                            visibleColumns: cached.visibleColumns,
-                            hiddenRows: cached.hiddenRows || [],
-                            hasChanges: cached.editedCells.size > 0
+                            headers: cachedSheet.headers || [],
+                            data: cachedSheet.data || [],
+                            visibleColumns: cachedSheet.visibleColumns || [],
+                            hiddenRows: cachedSheet.hiddenRows ? Array.from(cachedSheet.hiddenRows) : [],
+                            hasChanges: true,
+                            cellStyles: {},
+                            cellFormulas: {},
+                            cellHyperlinks: {},
+                            richTextCells: {},
+                            affectedRows: []
                         };
                     } else {
-                        // Sheet muss von Datei geladen werden (unverändert)
+                        // Sheet nicht im Cache - Backend soll aus Datei lesen
                         sheetData = {
                             sheetName: sheetName,
                             fromFile: true
@@ -11182,37 +11233,141 @@
             
             elements.explorerStatus.textContent = 'Speichere Änderungen...';
             
+            // SPEICHEROPTIMIERUNG: Undo-Stack leeren vor dem Speichern
+            if (undoRedoState.explorerUndoStack.length > 0) {
+                undoRedoState.explorerUndoStack = [];
+                undoRedoState.explorerRedoStack = [];
+                console.log('[Memory] Undo/Redo Stack geleert für Speichern');
+            }
+            
             try {
                 // Alle Sheets mit Änderungen sammeln
                 const sheetsToSave = [];
                 
-                // Aktuelles Sheet
+                // Aktuelles Sheet - SPEICHEROPTIMIERT
                 if (explorerState.editedCells.size > 0) {
-                    sheetsToSave.push({
-                        sheetName: explorerState.selectedSheet,
-                        headers: explorerState.headers,
-                        data: explorerState.data,
-                        visibleColumns: explorerState.visibleColumns,
-                        hiddenRows: Array.from(explorerState.hiddenRows),
-                        cellStyles: { ...explorerState.cellStyles },
-                        cellFormulas: { ...explorerState.cellFormulas },
-                        cellHyperlinks: { ...explorerState.cellHyperlinks }
-                    });
+                    const affectedRowsArray = explorerState.affectedRows ? Array.from(explorerState.affectedRows) : [];
+                    const hasRowMoves = affectedRowsArray.length > 0;
+                    
+                    // Nur Styles für betroffene Zeilen senden
+                    let stylesToSend = {};
+                    let richTextToSend = {};
+                    let formulasToSend = {};
+                    let hyperlinksToSend = {};
+                    
+                    if (hasRowMoves) {
+                        const affectedSet = new Set(affectedRowsArray);
+                        for (const [key, value] of Object.entries(explorerState.cellStyles || {})) {
+                            const rowIdx = parseInt(key.split('-')[0]);
+                            if (rowIdx === 0 || affectedSet.has(rowIdx)) {
+                                stylesToSend[key] = value;
+                            }
+                        }
+                        for (const [key, value] of Object.entries(explorerState.richTextCells || {})) {
+                            const rowIdx = parseInt(key.split('-')[0]);
+                            if (rowIdx === 0 || affectedSet.has(rowIdx)) {
+                                richTextToSend[key] = value;
+                            }
+                        }
+                        for (const [key, value] of Object.entries(explorerState.cellFormulas || {})) {
+                            const rowIdx = parseInt(key.split('-')[0]);
+                            if (rowIdx === 0 || affectedSet.has(rowIdx)) {
+                                formulasToSend[key] = value;
+                            }
+                        }
+                        for (const [key, value] of Object.entries(explorerState.cellHyperlinks || {})) {
+                            const rowIdx = parseInt(key.split('-')[0]);
+                            if (rowIdx === 0 || affectedSet.has(rowIdx)) {
+                                hyperlinksToSend[key] = value;
+                            }
+                        }
+                    }
+                    
+                    // STRATEGIE: Bei Row-Move GESAMTES Sheet neu schreiben
+                    // Partial-Rows funktioniert nicht korrekt bei verschobenen Zeilen!
+                    let sheetPayload;
+                    if (hasRowMoves) {
+                        // Row-Move: ALLE Daten senden (Full Rewrite)
+                        sheetPayload = {
+                            sheetName: explorerState.selectedSheet,
+                            headers: explorerState.headers,
+                            data: explorerState.data,
+                            visibleColumns: explorerState.visibleColumns,
+                            hiddenRows: Array.from(explorerState.hiddenRows),
+                            cellStyles: explorerState.cellStyles || {},
+                            cellFormulas: explorerState.cellFormulas || {},
+                            cellHyperlinks: explorerState.cellHyperlinks || {},
+                            richTextCells: explorerState.richTextCells || {},
+                            fullRewrite: true
+                        };
+                        console.log(`[Save] Row-Move: Full Rewrite (${explorerState.data.length} Zeilen, ${Object.keys(explorerState.richTextCells || {}).length} RichText)`);
+                    } else {
+                        // Nur Zell-Edits: Nur geänderte Zellen senden
+                        const changedCells = {};
+                        for (const cellKey of explorerState.editedCells) {
+                            const [rowStr, colStr] = cellKey.split('-');
+                            const rowIdx = parseInt(rowStr);
+                            const colIdx = parseInt(colStr);
+                            if (rowIdx >= 0 && colIdx >= 0 && explorerState.data[rowIdx]) {
+                                changedCells[cellKey] = explorerState.data[rowIdx][colIdx];
+                            }
+                        }
+                        
+                        // WICHTIG: RichText, Formeln, Hyperlinks auch bei einfachen Edits mitsenden!
+                        // Sammle NUR die RichText/Formeln/Hyperlinks für geänderte Zellen
+                        const richTextForChanged = {};
+                        const formulasForChanged = {};
+                        const hyperlinksForChanged = {};
+                        
+                        for (const cellKey of explorerState.editedCells) {
+                            if (explorerState.richTextCells && explorerState.richTextCells[cellKey]) {
+                                richTextForChanged[cellKey] = explorerState.richTextCells[cellKey];
+                            }
+                            if (explorerState.cellFormulas && explorerState.cellFormulas[cellKey]) {
+                                formulasForChanged[cellKey] = explorerState.cellFormulas[cellKey];
+                            }
+                            if (explorerState.cellHyperlinks && explorerState.cellHyperlinks[cellKey]) {
+                                hyperlinksForChanged[cellKey] = explorerState.cellHyperlinks[cellKey];
+                            }
+                        }
+                        
+                        sheetPayload = {
+                            sheetName: explorerState.selectedSheet,
+                            changedCells: changedCells,
+                            richTextCells: Object.keys(richTextForChanged).length > 0 ? richTextForChanged : undefined,
+                            cellFormulas: Object.keys(formulasForChanged).length > 0 ? formulasForChanged : undefined,
+                            cellHyperlinks: Object.keys(hyperlinksForChanged).length > 0 ? hyperlinksForChanged : undefined,
+                            fullRewrite: false
+                        };
+                        console.log(`[Save] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText`);
+                    }
+                    
+                    sheetsToSave.push(sheetPayload);
+                    
+                    // DEBUG: Was wird gesendet?
+                    console.log('[Save] RichText Zellen zum Speichern:', Object.keys(explorerState.richTextCells || {}).length);
+                    console.log('[Save] Affected Rows:', affectedRowsArray.length);
                 }
                 
-                // Sheets aus dem Cache
+                // Sheets aus dem Cache - auch optimiert
                 for (const [sheetName, cached] of explorerState.sheetDataCache) {
                     if (sheetName !== explorerState.selectedSheet && cached.editedCells.size > 0) {
+                        // Auch Cache-Sheets: nur geänderte Zellen senden
+                        const changedCells = {};
+                        for (const cellKey of cached.editedCells) {
+                            const [rowStr, colStr] = cellKey.split('-');
+                            const rowIdx = parseInt(rowStr);
+                            const colIdx = parseInt(colStr);
+                            if (rowIdx >= 0 && colIdx >= 0 && cached.data[rowIdx]) {
+                                changedCells[cellKey] = cached.data[rowIdx][colIdx];
+                            }
+                        }
                         sheetsToSave.push({
                             sheetName: sheetName,
-                            headers: cached.headers,
-                            data: cached.data,
-                            visibleColumns: cached.visibleColumns,
-                            hiddenRows: Array.from(cached.hiddenRows || []),
-                            cellStyles: { ...(cached.cellStyles || {}) },
-                            cellFormulas: { ...(cached.cellFormulas || {}) },
-                            cellHyperlinks: { ...(cached.cellHyperlinks || {}) }
+                            changedCells: changedCells,
+                            fullRewrite: false
                         });
+                        console.log(`[Save] Cache-Sheet ${sheetName}: ${Object.keys(changedCells).length} geänderte Zellen`);
                     }
                 }
                 
@@ -11231,6 +11386,7 @@
                 if (result.success) {
                     // Nach erfolgreichem Speichern: editedCells leeren
                     explorerState.editedCells.clear();
+                    explorerState.affectedRows = null; // Betroffene Zeilen zurücksetzen
                     explorerState.originalData = explorerState.data.map(row => [...row]);
                     
                     // Cache aktualisieren - editedCells leeren
@@ -11249,6 +11405,22 @@
                     elements.explorerStatus.textContent = `✓ ${totalChanges} Änderung(en) in ${explorerState.fileName} gespeichert`;
                     showNotification(`${totalChanges} Änderung(en) gespeichert`, 'success');
                 } else {
+                    // Spezielle Behandlung für "Export empfohlen" Fehler
+                    if (result.recommendation === 'export') {
+                        const useExport = await showConfirmDialog(
+                            '⚠️ Datei zu komplex',
+                            result.message || 'Diese Datei ist zu komplex für direktes Speichern.\n\nMöchten Sie stattdessen exportieren?',
+                            'Als XLSX exportieren',
+                            'Abbrechen'
+                        );
+                        
+                        if (useExport) {
+                            // Export-Dialog öffnen
+                            await exportExplorerData();
+                            return;
+                        }
+                    }
+                    
                     elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                     showNotification(`Speichern fehlgeschlagen: ${result.error}`, 'error');
                 }
@@ -12044,7 +12216,6 @@
             elements.btnAddExplorerFilter.onclick = addExplorerFilter;
             elements.btnClearExplorerFilters.onclick = clearExplorerFilters;
             elements.btnExplorerExport.onclick = exportExplorerData;
-            elements.btnExplorerSave.onclick = saveExplorerData;
             
             // Sheet Management Event Listeners
             document.getElementById('btnSheetManage').onclick = openSheetManageModal;

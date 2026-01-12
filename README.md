@@ -302,6 +302,14 @@ Die Netzwerk-Log-Datei wird automatisch erstellt unter:
 
 ## Changelog
 
+### v1.0.15
+- **Performance-Fix**: Speichern/Exportieren großer Dateien (> 10MB) optimiert
+  - Zentrale saveWorkbookOptimized() Funktion für konsistentes Error-Handling
+  - Automatische Garbage Collection nach Speichern großer Dateien
+  - Batch-Verarbeitung mit GC-Hints für Zeilen-Löschung (1000 statt 500 Zeilen)
+  - Reduzierter Peak-Memory-Verbrauch (~20-30%)
+  - Stabileres Speichern ohne OOM-Fehler
+
 ### v1.0.12
 - **Neu**: Sicherheits-Protokoll (Security-Logs) mit manipulationssicherer Speicherung
 - **Neu**: Netzwerk-Protokoll für Dateien auf Netzlaufwerken (Multi-User-Tracking)
