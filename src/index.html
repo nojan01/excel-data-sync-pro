@@ -10389,24 +10389,74 @@
             // Speichere den aktuellen Zustand für Undo
             const previousData = JSON.parse(JSON.stringify(explorerState.data));
             const previousOriginalData = JSON.parse(JSON.stringify(explorerState.originalData));
+            const previousCellStyles = JSON.parse(JSON.stringify(explorerState.cellStyles || {}));
+            const previousRichTextCells = JSON.parse(JSON.stringify(explorerState.richTextCells || {}));
             
-            // Extrahiere die ausgewählten Zeilen (von hinten nach vorne um Indizes nicht zu verschieben)
-            const rowsToMove = [];
+            // WICHTIG: Style-Keys haben Format "rowIndex-colIndex" wobei rowIndex 1 = erste Datenzeile
+            // (rowIndex 0 = Header)
+            // Daten-Index 0 entspricht Style-Index 1
+            
+            // Sammle Zeilen-Bundles mit allen Metadaten
+            const totalRows = explorerState.data.length;
+            const rowBundles = [];
+            
+            for (let i = 0; i < totalRows; i++) {
+                const styleRowIdx = i + 1; // Style-Key verwendet +1 (Header ist 0)
+                const bundle = {
+                    data: explorerState.data[i],
+                    original: explorerState.originalData[i],
+                    styles: {},
+                    richText: {},
+                    formulas: {},
+                    hyperlinks: {},
+                    isHidden: explorerState.hiddenRows?.has(i) || false
+                };
+                
+                // Sammle Styles für diese Zeile
+                for (const [key, value] of Object.entries(explorerState.cellStyles || {})) {
+                    const [keyRow, keyCol] = key.split('-');
+                    if (parseInt(keyRow) === styleRowIdx) {
+                        bundle.styles[keyCol] = value;
+                    }
+                }
+                
+                // Sammle RichText für diese Zeile
+                for (const [key, value] of Object.entries(explorerState.richTextCells || {})) {
+                    const [keyRow, keyCol] = key.split('-');
+                    if (parseInt(keyRow) === styleRowIdx) {
+                        bundle.richText[keyCol] = value;
+                    }
+                }
+                
+                // Sammle Formeln für diese Zeile
+                for (const [key, value] of Object.entries(explorerState.cellFormulas || {})) {
+                    const [keyRow, keyCol] = key.split('-');
+                    if (parseInt(keyRow) === styleRowIdx) {
+                        bundle.formulas[keyCol] = value;
+                    }
+                }
+                
+                // Sammle Hyperlinks für diese Zeile
+                for (const [key, value] of Object.entries(explorerState.cellHyperlinks || {})) {
+                    const [keyRow, keyCol] = key.split('-');
+                    if (parseInt(keyRow) === styleRowIdx) {
+                        bundle.hyperlinks[keyCol] = value;
+                    }
+                }
+                
+                rowBundles.push(bundle);
+            }
+            
+            // Extrahiere die zu verschiebenden Bundles
+            const bundlesToMove = selectedIndices.map(idx => rowBundles[idx]);
+            
+            // Entferne sie aus der Liste (von hinten nach vorne)
             const sortedDescending = [...selectedIndices].sort((a, b) => b - a);
             sortedDescending.forEach(idx => {
-                rowsToMove.unshift({
-                    data: explorerState.data[idx],
-                    original: explorerState.originalData[idx]
-                });
+                rowBundles.splice(idx, 1);
             });
             
-            // Entferne die ausgewählten Zeilen (von hinten nach vorne)
-            sortedDescending.forEach(idx => {
-                explorerState.data.splice(idx, 1);
-                explorerState.originalData.splice(idx, 1);
-            });
-            
-            // Berechne den neuen Zielindex nach dem Entfernen
+            // Berechne den neuen Zielindex
             let newTargetIndex = targetIndex;
             selectedIndices.forEach(idx => {
                 if (idx < targetIndex) {
@@ -10414,15 +10464,61 @@
                 }
             });
             
-            // Füge nach oder vor dem Ziel ein
             if (movePosition === 'after') {
                 newTargetIndex++;
             }
             
-            // Füge die Zeilen an der neuen Position ein
-            rowsToMove.forEach((row, i) => {
-                explorerState.data.splice(newTargetIndex + i, 0, row.data);
-                explorerState.originalData.splice(newTargetIndex + i, 0, row.original);
+            // Füge die Bundles an der neuen Position ein
+            bundlesToMove.forEach((bundle, i) => {
+                rowBundles.splice(newTargetIndex + i, 0, bundle);
+            });
+            
+            // Rekonstruiere alle States aus den Bundles
+            explorerState.data = [];
+            explorerState.originalData = [];
+            explorerState.cellStyles = {};
+            explorerState.richTextCells = {};
+            explorerState.cellFormulas = {};
+            explorerState.cellHyperlinks = {};
+            explorerState.hiddenRows = new Set();
+            
+            // Header-Styles behalten (Key "0-x")
+            for (const [key, value] of Object.entries(previousCellStyles)) {
+                const [keyRow] = key.split('-');
+                if (parseInt(keyRow) === 0) {
+                    explorerState.cellStyles[key] = value;
+                }
+            }
+            
+            rowBundles.forEach((bundle, newRowIdx) => {
+                const newStyleRowIdx = newRowIdx + 1;
+                
+                explorerState.data.push(bundle.data);
+                explorerState.originalData.push(bundle.original);
+                
+                if (bundle.isHidden) {
+                    explorerState.hiddenRows.add(newRowIdx);
+                }
+                
+                // Styles mit neuem Key
+                for (const [col, style] of Object.entries(bundle.styles)) {
+                    explorerState.cellStyles[`${newStyleRowIdx}-${col}`] = style;
+                }
+                
+                // RichText mit neuem Key
+                for (const [col, rt] of Object.entries(bundle.richText)) {
+                    explorerState.richTextCells[`${newStyleRowIdx}-${col}`] = rt;
+                }
+                
+                // Formeln mit neuem Key
+                for (const [col, formula] of Object.entries(bundle.formulas)) {
+                    explorerState.cellFormulas[`${newStyleRowIdx}-${col}`] = formula;
+                }
+                
+                // Hyperlinks mit neuem Key
+                for (const [col, link] of Object.entries(bundle.hyperlinks)) {
+                    explorerState.cellHyperlinks[`${newStyleRowIdx}-${col}`] = link;
+                }
             });
             
             // Speichere Undo-Aktion
@@ -10430,6 +10526,8 @@
                 type: 'moveRows',
                 previousData: previousData,
                 previousOriginalData: previousOriginalData,
+                previousCellStyles: previousCellStyles,
+                previousRichTextCells: previousRichTextCells,
                 movedIndices: selectedIndices,
                 targetRow: targetRow,
                 movePosition: movePosition
