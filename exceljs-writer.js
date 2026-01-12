@@ -147,6 +147,12 @@ async function exportSheetWithExcelJS(sourcePath, targetPath, sheetData) {
             });
         }
         
+        // AutoFilter wiederherstellen
+        if (sheetData.autoFilterRange) {
+            console.log('[ExcelJS Writer] Setze AutoFilter:', sheetData.autoFilterRange);
+            worksheet.autoFilter = sheetData.autoFilterRange;
+        }
+        
         console.log('[ExcelJS Writer] Speichere Datei...');
         await workbook.xlsx.writeFile(targetPath);
         

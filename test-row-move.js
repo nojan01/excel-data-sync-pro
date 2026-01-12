@@ -93,6 +93,7 @@ async function testRowMove(filePath, sheetName) {
             cellHyperlinks: originalData.cellHyperlinks,
             hiddenColumns: originalData.hiddenColumns,
             hiddenRows: originalData.hiddenRows,
+            autoFilterRange: originalData.autoFilterRange, // AutoFilter erhalten!
             fullRewrite: true // WICHTIG!
         };
         
@@ -133,6 +134,13 @@ async function testRowMove(filePath, sheetName) {
         console.log(`   Original:     ${originalStyleCount}`);
         console.log(`   Nach Move:    ${newStyleCount}`);
         console.log(`   Gespeichert:  ${savedStyleCount}\n`);
+        
+        // AutoFilter-Check
+        if (originalData.autoFilterRange) {
+            console.log('🔍 AutoFilter:');
+            console.log(`   Original:     ${originalData.autoFilterRange}`);
+            console.log(`   Gespeichert:  ${savedData.autoFilterRange || 'NICHT GEFUNDEN ❌'}\n`);
+        }
         
         // Prüfe ob wichtige Styles erhalten sind
         let stylesPreserved = 0;

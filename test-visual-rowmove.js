@@ -53,6 +53,10 @@ async function visualRowMoveTest(filePath, sheetName) {
             process.exit(1);
         }
         
+        // AutoFilter sichern
+        const originalAutoFilter = worksheet.autoFilter;
+        console.log(`   ✓ AutoFilter: ${originalAutoFilter ? originalAutoFilter : 'Nicht vorhanden'}`);
+        
         // Zeile verschieben (Excel-Zeilen sind 1-basiert, +2 wegen Header)
         const sourceExcelRow = sourceRowIdx + 2;
         const targetExcelRow = targetRowIdx + 2;
@@ -116,7 +120,15 @@ async function visualRowMoveTest(filePath, sheetName) {
         });
         
         console.log(`   ✓ Zeile ${sourceExcelRow} → Zeile ${targetExcelRow}`);
-        console.log(`   ✓ Verschobene Zeile GELB markiert\n`);
+        console.log(`   ✓ Verschobene Zeile GELB markiert`);
+        
+        // AutoFilter wiederherstellen
+        if (originalAutoFilter) {
+            worksheet.autoFilter = originalAutoFilter;
+            console.log(`   ✓ AutoFilter wiederhergestellt: ${originalAutoFilter}\n`);
+        } else {
+            console.log(`   ⚠️  Kein AutoFilter vorhanden\n`);
+        }
         
         // RichText separat prüfen
         console.log('► Schritt 4: Prüfe RichText...');
