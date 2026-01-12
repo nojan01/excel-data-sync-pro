@@ -76,7 +76,11 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                         if (cell.font.underline) style.underline = true;
                         if (cell.font.strike) style.strikethrough = true;
                         if (cell.font.color?.argb) {
-                            style.fontColor = `#${cell.font.color.argb.substring(2)}`;
+                            const colorHex = cell.font.color.argb.substring(2);
+                            // Ignoriere Standard-Schwarz (000000)
+                            if (colorHex !== '000000') {
+                                style.fontColor = `#${colorHex}`;
+                            }
                         }
                     }
                     
@@ -137,7 +141,11 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     if (cell.font.underline) style.underline = true;
                     if (cell.font.strike) style.strikethrough = true;
                     if (cell.font.color?.argb) {
-                        style.fontColor = `#${cell.font.color.argb.substring(2)}`;
+                        const colorHex = cell.font.color.argb.substring(2);
+                        // Ignoriere Standard-Schwarz (000000)
+                        if (colorHex !== '000000') {
+                            style.fontColor = `#${colorHex}`;
+                        }
                     }
                 }
                 
