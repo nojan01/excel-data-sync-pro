@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
 const XlsxPopulate = require('xlsx-populate');
+const { readSheetWithExcelJS } = require('./exceljs-reader'); // ExcelJS Reader für Tests
 const fs = require('fs');
 const os = require('os');
 
@@ -1935,7 +1936,58 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
     }
 });
 
-// Sheet-Daten lesen
+// A/B TEST: ExcelJS vs xlsx-populate
+ipcMain.handle('excel:readSheetTest', async (event, filePath, sheetName, password = null) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+
+    try {
+        console.log('\n========== PERFORMANCE-VERGLEICH ==========');
+        
+        // Test 1: xlsx-populate (aktuell)
+        const populateStart = Date.now();
+        const workbook = await XlsxPopulate.fromFileAsync(filePath, password ? { password } : {});
+        const populateLoadTime = Date.now() - populateStart;
+        
+        const worksheet = workbook.sheet(sheetName);
+        const usedRange = worksheet?.usedRange();
+        const populateRows = usedRange ? (usedRange.endCell().rowNumber() - 1) : 0;
+        
+        console.log(`[xlsx-populate] ${populateLoadTime}ms für ${populateRows} Zeilen`);
+        
+        // Test 2: ExcelJS (neu)
+        const exceljsStart = Date.now();
+        const exceljsResult = await readSheetWithExcelJS(filePath, sheetName, password);
+        const exceljsLoadTime = Date.now() - exceljsStart;
+        
+        if (exceljsResult.success) {
+            console.log(`[ExcelJS] ${exceljsLoadTime}ms für ${exceljsResult.data.length} Zeilen`);
+            
+            const speedup = ((populateLoadTime - exceljsLoadTime) / populateLoadTime * 100).toFixed(1);
+            console.log(`[Vergleich] ExcelJS ist ${speedup}% ${speedup > 0 ? 'schneller' : 'langsamer'}`);
+            console.log('==========================================\n');
+            
+            return {
+                success: true,
+                comparison: {
+                    populate: { time: populateLoadTime, rows: populateRows },
+                    exceljs: { time: exceljsLoadTime, rows: exceljsResult.data.length },
+                    speedupPercent: parseFloat(speedup)
+                },
+                data: exceljsResult
+            };
+        } else {
+            return { success: false, error: exceljsResult.error };
+        }
+        
+    } catch (error) {
+        console.error('[Test] Fehler:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Sheet-Daten lesen (xlsx-populate - Standard)
 ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = null, quickLoad = false) => {
     // Sicherheitsprüfung: Pfad validieren
     if (!isValidFilePath(filePath)) {
