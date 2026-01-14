@@ -2005,12 +2005,28 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
             return result;
         }
         
+        // Log Style-Anzahl für Debugging
+        const styleCount = Object.keys(result.cellStyles || {}).length;
+        console.log(`[ExcelJS] cellStyles: ${styleCount} Einträge`);
+        if (styleCount > 50000) {
+            console.log(`[ExcelJS] WARNUNG: Große Datei mit ${styleCount} Styles - Performance kann beeinträchtigt sein`);
+        }
+        
         // Füge zusätzliche Felder hinzu für Kompatibilität
-        return {
+        const finalResult = {
             ...result,
             dataValidations: {}, // TODO: Später implementieren wenn benötigt
-            mergedCells: [] // TODO: Später implementieren wenn benötigt
+            // mergedCells kommt bereits vom ExcelJS-Reader
+            mergedCells: result.mergedCells || [],
+            // richTextCells kommt bereits vom ExcelJS-Reader
+            richTextCells: result.richTextCells || {},
+            // autoFilterRange kommt bereits vom ExcelJS-Reader
+            autoFilterRange: result.autoFilterRange || null
         };
+        
+        console.log(`[ExcelJS] AutoFilter: ${finalResult.autoFilterRange || 'keiner'}`);
+        
+        return finalResult;
         
     } catch (error) {
         // Prüfe ob es sich um eine passwortgeschützte Datei handelt
@@ -3334,6 +3350,9 @@ ipcMain.handle('excel:exportWithAllSheets', async (event, { sourcePath, targetPa
 });
 
 // Export mit Auswahl der Arbeitsblätter (für Datenexplorer) - behält Formatierung bei
+// ============================================================================
+// UNIFIED EXCELJS EXPORT - Ersetzt xlsx-populate komplett
+// ============================================================================
 ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetPath, sheets, password = null, sourcePassword = null }) => {
     // Sicherheitsprüfung: Pfade validieren
     if (!isValidFilePath(sourcePath) || !isValidFilePath(targetPath)) {
@@ -3341,447 +3360,52 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
     }
 
     try {
-        // OPTIMIERUNG: Prüfe ob nur einfache Zell-Änderungen vorliegen
-        let hasComplexChanges = false;
-        let hasChanges = false;
-        const cellChangesBySheet = {};
+        console.log('[Export] Starte Export mit ExcelJS...');
         
-        for (const sheetData of sheets) {
-            // Sheets die nur aus Datei kommen = keine Änderungen
-            if (sheetData.fromFile) continue;
-            
-            // Prüfe auf komplexe Änderungen
-            if (sheetData.fullRewrite !== false ||
-                sheetData.affectedRowData ||
-                sheetData.richTextCells ||
-                sheetData.affectedRows ||
-                sheetData.cellFormulas ||
-                sheetData.cellHyperlinks) {
-                hasComplexChanges = true;
-                break;
-            }
-            
-            // Nur changedCells vorhanden
-            if (sheetData.changedCells && Object.keys(sheetData.changedCells).length > 0) {
-                hasChanges = true;
-                cellChangesBySheet[sheetData.sheetName] = sheetData.changedCells;
-            }
-        }
-        
-        // SCHNELLER WEG: Nur einfache Änderungen + keine Passwörter
-        if (!hasComplexChanges && hasChanges && !password && !sourcePassword) {
-            console.log('[Export] Nur einfache Änderungen - verwende optimierte Methode (direkte ZIP-Manipulation)');
-            
-            // Wenn source !== target: Datei kopieren, sonst direkt bearbeiten
-            if (sourcePath !== targetPath) {
-                fs.copyFileSync(sourcePath, targetPath);
-            }
-            
-            // Direkte ZIP-Manipulation anwenden (auf target oder source falls gleich)
-            const result = await savePartialCellChangesDirectly(targetPath, cellChangesBySheet);
-            
-            if (result.success) {
-                securityLog.log('INFO', 'EXCEL_EXPORT_SUCCESS', {
-                    sourceFile: path.basename(sourcePath),
-                    targetFile: path.basename(targetPath),
-                    sheetsExported: Object.keys(cellChangesBySheet).length,
-                    method: 'optimized'
-                });
-                
-                return {
-                    success: true,
-                    message: `Export erfolgreich: ${targetPath}`,
-                    sheetsExported: Object.keys(cellChangesBySheet).length
-                };
-            }
-            
-            // Falls Fehler -> Fallback auf xlsx-populate
-            console.warn('[Export] Optimierte Methode fehlgeschlagen, verwende xlsx-populate');
-        }
-        
-        // STANDARD-WEG: xlsx-populate (bei komplexen Änderungen oder Passwörtern)
-        console.log('[Export] Komplexe Änderungen erkannt - verwende xlsx-populate');
-        
-        // OOM-WARNUNG: Große Dateien mit fullRewrite können lange dauern
+        // Dateigröße für Logging
         const stats = fs.statSync(sourcePath);
         const fileSizeMB = stats.size / (1024 * 1024);
-        const hasFullRewrite = sheets.some(s => s.fullRewrite === true);
+        console.log(`[Export] Dateigröße: ${fileSizeMB.toFixed(2)} MB`);
         
-        // NEUE EXCELJS-OPTIMIERUNG: Bei fullRewrite nutze ExcelJS (50% schneller)
-        if (hasFullRewrite && fileSizeMB > 1) {
-            console.log(`[Export] Full-Rewrite mit ExcelJS (${fileSizeMB.toFixed(1)} MB) - 50% schneller!`);
-            
-            try {
-                // Für jeden Sheet mit fullRewrite=true: ExcelJS nutzen
-                for (const sheetData of sheets) {
-                    if (sheetData.fullRewrite === true) {
-                        const result = await exportSheetWithExcelJS(sourcePath, targetPath, sheetData);
-                        
-                        if (!result.success) {
-                            console.error(`[Export] ExcelJS-Fehler für Sheet "${sheetData.sheetName}":`, result.error);
-                            // Fallback zu xlsx-populate
-                            break;
-                        }
-                        
-                        console.log(`[Export] Sheet "${sheetData.sheetName}" mit ExcelJS exportiert`);
-                        
-                        // Verwende den exportierten File als neue Source für weitere Sheets
-                        sourcePath = targetPath;
-                    }
-                }
-                
-                securityLog.log('INFO', 'EXCEL_EXPORT_EXCELJS', {
-                    targetFile: path.basename(targetPath),
-                    fileSizeMB: fileSizeMB.toFixed(2),
-                    sheetsCount: sheets.length
-                });
-                
-                return { success: true, message: `Export erstellt: ${targetPath}`, sheets: sheets.map(s => s.sheetName) };
-                
-            } catch (exceljsError) {
-                console.warn('[Export] ExcelJS-Fehler, Fallback zu xlsx-populate:', exceljsError.message);
-                // Weiter mit xlsx-populate unten
-            }
-        }
+        // Import der neuen ExcelJS-Funktion
+        const { exportMultipleSheetsWithExcelJS } = require('./exceljs-writer');
         
-        if (fileSizeMB > 3 && hasFullRewrite) {
-            console.warn(`[Export] WARNUNG: Große Datei (${fileSizeMB.toFixed(1)} MB) mit Full-Rewrite - kann langsam sein!`);
-            
-            securityLog.log('WARN', 'EXCEL_EXPORT_LARGE_FILE_FULL_REWRITE', {
+        // Export mit ExcelJS durchführen
+        const result = await exportMultipleSheetsWithExcelJS(sourcePath, targetPath, sheets, { password, sourcePassword });
+        
+        if (!result.success) {
+            securityLog.log('ERROR', 'EXCEL_EXPORT_FAILED', {
                 sourceFile: path.basename(sourcePath),
-                fileSizeMB: fileSizeMB.toFixed(2),
-                hasFullRewrite: true
+                targetFile: path.basename(targetPath),
+                error: result.error
             });
+            return { success: false, error: result.error };
         }
         
-        // WICHTIG: Cache löschen um OOM zu vermeiden (verhindert doppeltes Laden)
-        clearWorkbookCache();
-        
-        // Originaldatei laden (mit allen Sheets und Formatierung)
-        const loadOptions = sourcePassword ? { password: sourcePassword } : {};
-        const workbook = await XlsxPopulate.fromFileAsync(sourcePath, loadOptions);
-
-        // Liste der ausgewählten Sheet-Namen
-        const selectedSheetNames = sheets.map(s => s.sheetName);
-
-        // Alle Sheets der Originaldatei durchgehen
-        const allSheetNames = workbook.sheets().map(s => s.name());
-
-        // Sheets entfernen, die nicht ausgewählt wurden (von hinten nach vorne, um Indexprobleme zu vermeiden)
-        for (let i = allSheetNames.length - 1; i >= 0; i--) {
-            const sheetName = allSheetNames[i];
-            if (!selectedSheetNames.includes(sheetName)) {
-                // Sheet nicht ausgewählt - entfernen
-                const sheetToDelete = workbook.sheet(sheetName);
-                if (sheetToDelete) {
-                    workbook.deleteSheet(sheetToDelete);
-                }
-            }
-        }
-
-        let sheetsProcessed = 0;
-
-        // Nur Sheets mit Änderungen aktualisieren
-        for (const sheetData of sheets) {
-            const worksheet = workbook.sheet(sheetData.sheetName);
-            if (!worksheet) {
-                console.warn(`Sheet "${sheetData.sheetName}" nicht gefunden - übersprungen`);
-                continue;
-            }
-
-            // Wenn Sheet aus Datei kommt (keine Änderungen), nichts tun - Formatierung bleibt erhalten
-            if (sheetData.fromFile) {
-                sheetsProcessed++;
-                continue;
-            }
-
-            // Sheet mit bearbeiteten Daten - nur Werte aktualisieren, Formatierung bleibt
-            const headers = sheetData.headers;
-            const data = sheetData.data;
-            const visibleColumns = sheetData.visibleColumns;
-            const hiddenRows = sheetData.hiddenRows || []; // Array von 0-basierten Zeilen-Indices
-            const affectedRows = sheetData.affectedRows || []; // Zeilen die durch Verschieben betroffen sind
-
-            // Ursprüngliche Zeilenanzahl ermitteln
-            const usedRange = worksheet.usedRange();
-            let originalRowCount = 0;
-            let originalColumnCount = 0;
-            if (usedRange) {
-                originalRowCount = usedRange.endCell().rowNumber() - 1; // -1 für Header
-                originalColumnCount = usedRange.endCell().columnNumber();
-                // NICHT clear() aufrufen - das löscht die Formatierung!
-                // Stattdessen nur Werte überschreiben
-            }
-
-            // ALLE Spalten exportieren (auch ausgeblendete) und Hidden-Attribute setzen
-            // Header-Zeile - nur Werte setzen, Formatierung bleibt
-            headers.forEach((header, colIndex) => {
-                worksheet.cell(1, colIndex + 1).value(header);
-            });
-
-            // Daten-Zeilen - nur Werte setzen, Formatierung bleibt
-            data.forEach((row, rowIndex) => {
-                row.forEach((value, colIndex) => {
-                    worksheet.cell(rowIndex + 2, colIndex + 1).value(value === null || value === undefined ? '' : value);
-                });
-            });
-
-            // Hidden-Attribute für ausgeblendete Spalten setzen
-            if (visibleColumns && visibleColumns.length > 0 && visibleColumns.length < headers.length) {
-                const visibleSet = new Set(visibleColumns);
-                for (let colIdx = 0; colIdx < headers.length; colIdx++) {
-                    const column = worksheet.column(colIdx + 1);
-                    if (!visibleSet.has(colIdx)) {
-                        column.hidden(true);
-                    } else {
-                        column.hidden(false);
-                    }
-                }
-            }
-
-            // Hidden-Attribute für ausgeblendete Zeilen setzen
-            const hiddenRowSet = new Set(hiddenRows);
-            for (let rowIdx = 0; rowIdx < data.length; rowIdx++) {
-                const row = worksheet.row(rowIdx + 2); // +2 wegen Header
-                if (hiddenRowSet.has(rowIdx)) {
-                    row.hidden(true);
-                } else {
-                    row.hidden(false);
-                }
-            }
-
-            // Cell Styles anwenden
-            // Bei fullRewrite: ALLE Styles anwenden (komplettes Neuschreiben)
-            // Bei affectedRows (ohne fullRewrite): NUR betroffene Zeilen
-            const cellStyles = sheetData.cellStyles || {};
-            const affectedRowsSet = new Set(affectedRows);
-            const isFullRewrite = sheetData.fullRewrite === true;
-            
-            // Bei fullRewrite: Alte Formatierung für ALLE Zeilen zurücksetzen
-            if (isFullRewrite && data.length > 0) {
-                console.log(`[Export] Full Rewrite - setze Styles für alle ${data.length} Zeilen zurück`);
-                for (let rowIndex = 0; rowIndex <= data.length; rowIndex++) {
-                    const excelRowNum = rowIndex + 1;
-                    for (let colIndex = 0; colIndex < headers.length; colIndex++) {
-                        try {
-                            const cell = worksheet.cell(excelRowNum, colIndex + 1);
-                            cell.style('bold', false);
-                            cell.style('italic', false);
-                            cell.style('underline', false);
-                            cell.style('strikethrough', false);
-                            cell.style('fill', undefined);
-                            cell.style('fontColor', undefined);
-                        } catch (resetError) {
-                            // Ignorieren
-                        }
-                    }
-                }
-            } else if (affectedRows.length > 0) {
-                // Nur betroffene Zeilen zurücksetzen
-                for (const rowIndex of affectedRows) {
-                    const excelRowNum = rowIndex + 1;
-                    for (let colIndex = 0; colIndex < headers.length; colIndex++) {
-                        try {
-                            const cell = worksheet.cell(excelRowNum, colIndex + 1);
-                            cell.style('bold', false);
-                            cell.style('italic', false);
-                            cell.style('underline', false);
-                            cell.style('strikethrough', false);
-                            cell.style('fill', undefined);
-                            cell.style('fontColor', undefined);
-                        } catch (resetError) {
-                            // Ignorieren
-                        }
-                    }
-                }
-            }
-            
-            // Styles anwenden
-            for (const [key, style] of Object.entries(cellStyles)) {
-                try {
-                    const [rowStr, colStr] = key.split('-');
-                    const rowIndex = parseInt(rowStr);
-                    const colIndex = parseInt(colStr);
-                    
-                    // Bei fullRewrite: ALLE Styles anwenden
-                    // Bei affectedRows: NUR betroffene Zeilen (oder Header)
-                    if (!isFullRewrite && affectedRows.length > 0 && rowIndex !== 0 && !affectedRowsSet.has(rowIndex)) {
-                        continue;
-                    }
-                    
-                    const cell = worksheet.cell(rowIndex + 1, colIndex + 1);
-                    
-                    if (style.bold !== undefined) cell.style('bold', style.bold);
-                    if (style.italic !== undefined) cell.style('italic', style.italic);
-                    if (style.underline !== undefined) cell.style('underline', style.underline);
-                    if (style.strikethrough !== undefined) cell.style('strikethrough', style.strikethrough);
-                    if (style.fontSize) cell.style('fontSize', style.fontSize);
-                    if (style.fontColor) {
-                        const color = style.fontColor.replace('#', '');
-                        cell.style('fontColor', color);
-                    }
-                    if (style.fill) {
-                        const fillColor = style.fill.replace('#', '');
-                        cell.style('fill', fillColor);
-                    }
-                    if (style.textAlign) cell.style('horizontalAlignment', style.textAlign);
-                    if (style.verticalAlign) cell.style('verticalAlignment', style.verticalAlign);
-                } catch (styleError) {
-                    console.warn(`Style für Zelle ${key} konnte nicht gesetzt werden:`, styleError.message);
-                }
-            }
-            
-            // Formeln anwenden
-            const cellFormulas = sheetData.cellFormulas || {};
-            for (const [key, formula] of Object.entries(cellFormulas)) {
-                try {
-                    const [rowStr, colStr] = key.split('-');
-                    const rowIndex = parseInt(rowStr);
-                    const colIndex = parseInt(colStr);
-                    
-                    // Bei fullRewrite: ALLE anwenden, sonst nur betroffene Zeilen
-                    if (!isFullRewrite && affectedRows.length > 0 && rowIndex !== 0 && !affectedRowsSet.has(rowIndex)) {
-                        continue;
-                    }
-                    
-                    const cell = worksheet.cell(rowIndex + 1, colIndex + 1);
-                    const formulaStr = formula.startsWith('=') ? formula : '=' + formula;
-                    cell.formula(formulaStr);
-                } catch (formulaError) {
-                    console.warn(`Formel für Zelle ${key} konnte nicht gesetzt werden:`, formulaError.message);
-                }
-            }
-            
-            // Hyperlinks anwenden
-            const cellHyperlinks = sheetData.cellHyperlinks || {};
-            for (const [key, hyperlink] of Object.entries(cellHyperlinks)) {
-                try {
-                    const [rowStr, colStr] = key.split('-');
-                    const rowIndex = parseInt(rowStr);
-                    const colIndex = parseInt(colStr);
-                    
-                    // Bei fullRewrite: ALLE anwenden, sonst nur betroffene Zeilen
-                    if (!isFullRewrite && affectedRows.length > 0 && rowIndex !== 0 && !affectedRowsSet.has(rowIndex)) {
-                        continue;
-                    }
-                    
-                    const cell = worksheet.cell(rowIndex + 1, colIndex + 1);
-                    cell.hyperlink(hyperlink);
-                } catch (linkError) {
-                    console.warn(`Hyperlink für Zelle ${key} konnte nicht gesetzt werden:`, linkError.message);
-                }
-            }
-            
-            // RichText anwenden
-            const richTextCells = sheetData.richTextCells || {};
-            for (const [key, fragments] of Object.entries(richTextCells)) {
-                try {
-                    // Validierung: fragments muss ein Array sein
-                    if (!Array.isArray(fragments) || fragments.length === 0) {
-                        continue;
-                    }
-                    
-                    const [rowStr, colStr] = key.split('-');
-                    const rowIndex = parseInt(rowStr);
-                    const colIndex = parseInt(colStr);
-                    
-                    // Validierung: Indizes müssen gültig sein
-                    if (isNaN(rowIndex) || isNaN(colIndex)) {
-                        continue;
-                    }
-                    
-                    // Bei fullRewrite: ALLE anwenden, sonst nur betroffene Zeilen
-                    if (!isFullRewrite && affectedRows.length > 0 && rowIndex !== 0 && !affectedRowsSet.has(rowIndex)) {
-                        continue;
-                    }
-                    
-                    const cell = worksheet.cell(rowIndex + 1, colIndex + 1);
-                    
-                    const richText = new XlsxPopulate.RichText();
-                    let hasValidFragments = false;
-                    
-                    for (const fragment of fragments) {
-                        // Validierung: fragment muss ein Objekt sein mit text-Eigenschaft
-                        if (!fragment || typeof fragment !== 'object') {
-                            continue;
-                        }
-                        
-                        const text = String(fragment.text ?? '');
-                        if (text.length === 0) {
-                            continue; // Leere Fragmente überspringen
-                        }
-                        
-                        const styles = {};
-                        if (fragment.styles && typeof fragment.styles === 'object') {
-                            if (fragment.styles.bold) styles.bold = true;
-                            if (fragment.styles.italic) styles.italic = true;
-                            if (fragment.styles.underline) styles.underline = true;
-                            if (fragment.styles.strikethrough) styles.strikethrough = true;
-                            if (fragment.styles.subscript) styles.subscript = true;
-                            if (fragment.styles.superscript) styles.superscript = true;
-                            if (fragment.styles.fontColor && typeof fragment.styles.fontColor === 'string') {
-                                styles.fontColor = fragment.styles.fontColor.replace('#', '');
-                            }
-                            if (fragment.styles.fontSize && typeof fragment.styles.fontSize === 'number') {
-                                styles.fontSize = fragment.styles.fontSize;
-                            }
-                        }
-                        
-                        if (Object.keys(styles).length > 0) {
-                            richText.add(text, styles);
-                        } else {
-                            richText.add(text);
-                        }
-                        hasValidFragments = true;
-                    }
-                    
-                    // Nur setzen wenn mindestens ein gültiges Fragment vorhanden
-                    if (hasValidFragments) {
-                        cell.value(richText);
-                    }
-                } catch (richTextError) {
-                    // Nur loggen, nicht abbrechen
-                    console.warn(`RichText für Zelle ${key} übersprungen:`, richTextError.message);
-                }
-            }
-
-            // Nicht verwendete Zeilen als hidden markieren (wenn weniger Zeilen als ursprünglich)
-            if (data.length < originalRowCount) {
-                for (let rowIdx = data.length + 2; rowIdx <= originalRowCount + 1; rowIdx++) {
-                    worksheet.row(rowIdx).hidden(true);
-                }
-            }
-
-            sheetsProcessed++;
-        }
-
-        // Als neue Datei speichern (mit optionalem Passwortschutz)
-        const saveOptions = password ? { password } : {};
-        await saveWorkbookOptimized(workbook, targetPath, saveOptions, sourcePath);
-
         securityLog.log('INFO', 'EXCEL_EXPORT_COMPLETED', {
             sourceFile: path.basename(sourcePath),
             targetFile: path.basename(targetPath),
-            sheetsExported: sheetsProcessed,
-            passwordProtected: !!password
+            sheetsExported: result.sheetsExported,
+            method: 'exceljs',
+            timeMs: result.stats?.totalTimeMs
         });
 
         // Netzwerk-Log für Quelldatei (falls auf Netzlaufwerk)
         await networkLog.log(sourcePath, 'EXCEL_EXPORT_SOURCE', {
             targetFile: path.basename(targetPath),
-            sheetsExported: sheetsProcessed
+            sheetsExported: result.sheetsExported
         });
 
         // Netzwerk-Log für Zieldatei (falls auf Netzlaufwerk)
         await networkLog.log(targetPath, 'EXCEL_EXPORT_TARGET', {
             sourceFile: path.basename(sourcePath),
-            sheetsExported: sheetsProcessed
+            sheetsExported: result.sheetsExported
         });
 
         return {
             success: true,
-            message: `${sheetsProcessed} Sheet(s) exportiert: ${targetPath}`,
-            sheetsExported: sheetsProcessed,
+            message: result.message,
+            sheetsExported: result.sheetsExported,
             passwordProtected: !!password
         };
     } catch (error) {
@@ -3795,6 +3419,77 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
 });
 
 // Änderungen direkt in die Originaldatei speichern (für Datenexplorer)
+// ============================================================================
+// SAVE FILE - Speichert Änderungen direkt in die Quelldatei
+// ============================================================================
+ipcMain.handle('excel:saveFile', async (event, { filePath, sheets, password = null, sourcePassword = null }) => {
+    // Sicherheitsprüfung: Pfad validieren
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+
+    try {
+        console.log('[Save] Starte Speichern mit ExcelJS...');
+        console.log(`[Save] Datei: ${filePath}`);
+        console.log(`[Save] Sheets: ${sheets.length}`);
+        
+        // Zeige was gesendet wurde
+        for (const sheet of sheets) {
+            if (sheet.changedCells) {
+                console.log(`[Save] Sheet "${sheet.sheetName}": ${Object.keys(sheet.changedCells).length} geänderte Zellen`);
+            } else if (sheet.fullRewrite) {
+                console.log(`[Save] Sheet "${sheet.sheetName}": Full Rewrite (${sheet.data?.length || 0} Zeilen)`);
+            }
+        }
+        
+        // Speichern = Exportieren in dieselbe Datei
+        // Nutze exportMultipleSheetsWithExcelJS mit targetPath = sourcePath
+        const { exportMultipleSheetsWithExcelJS } = require('./exceljs-writer');
+        
+        const result = await exportMultipleSheetsWithExcelJS(filePath, filePath, sheets, { 
+            password, 
+            sourcePassword: sourcePassword || password 
+        });
+        
+        if (!result.success) {
+            console.error('[Save] Fehler:', result.error);
+            securityLog.log('ERROR', 'EXCEL_SAVE_FAILED', {
+                file: path.basename(filePath),
+                error: result.error
+            });
+            return { success: false, error: result.error };
+        }
+        
+        console.log(`[Save] Erfolgreich in ${result.stats?.totalTimeMs || 0}ms`);
+        
+        securityLog.log('INFO', 'EXCEL_SAVE_COMPLETED', {
+            file: path.basename(filePath),
+            sheetsModified: result.sheetsExported,
+            method: 'exceljs',
+            timeMs: result.stats?.totalTimeMs
+        });
+
+        // Netzwerk-Log für Datei (falls auf Netzlaufwerk)
+        await networkLog.log(filePath, 'EXCEL_SAVE', {
+            sheetsModified: result.sheetsExported
+        });
+
+        return {
+            success: true,
+            message: result.message,
+            sheetsModified: result.sheetsExported,
+            passwordProtected: !!password
+        };
+    } catch (error) {
+        console.error('[Save] Exception:', error);
+        securityLog.log('ERROR', 'EXCEL_SAVE_EXCEPTION', {
+            file: path.basename(filePath),
+            error: error.message
+        });
+        return { success: false, error: error.message };
+    }
+});
+
 // ============================================
 // KONFIGURATION
 // ============================================

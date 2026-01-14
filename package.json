@@ -79,6 +79,7 @@
     "eslint": "^9.39.2"
   },
   "dependencies": {
+    "adm-zip": "^0.5.16",
     "exceljs": "^4.4.0",
     "xlsx-populate": "^1.21.0"
   }

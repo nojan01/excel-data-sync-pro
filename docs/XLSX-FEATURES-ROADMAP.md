@@ -99,10 +99,40 @@ Dieses Dokument dokumentiert alle xlsx-populate Funktionen, die in die App integ
 
 ---
 
+## 🔧 Strukturelle Operationen
+
+### Spalten-Operationen (Column Operations)
+- **Status:** ✅ Abgeschlossen
+- **Funktionen:**
+  - [x] Spalte löschen - Mit Style-Shifting, CF-Anpassung, Formel-Referenzen
+  - [x] Spalte verschieben (Drag & Drop) - Reihenfolge ändern
+  - [x] Spalte ausblenden/einblenden - Hidden-Status persistent
+  - [x] Spalte einfügen - Neue leere Spalte an Position
+  - [x] AutoFilter-Bereich anpassen bei Strukturänderungen
+  - [x] Bedingte Formatierungen (CF) bei Spaltenänderungen anpassen
+  - [x] Formeln mit Spaltenreferenzen aktualisieren
+  - [x] Export mit fullRewrite bei strukturellen Änderungen
+
+### Zeilen-Operationen (Row Operations)
+- **Status:** 🟡 In Arbeit
+- **Geplante Funktionen:**
+  - [x] Zeile löschen (einzeln und mehrfach)
+  - [x] Zeile ausblenden/einblenden
+  - [x] Gefilterte Zeilen exportieren
+  - [ ] Zeile einfügen - Neue leere Zeile an Position
+  - [ ] Zeile duplizieren - Kopie mit Styles und Formeln
+  - [ ] Zeilen verschieben (Drag & Drop)
+  - [ ] Mehrfachauswahl für Zeilen-Operationen
+- **UI:** Kontextmenü für Zeilen-Operationen, Zeilenauswahl mit Shift/Ctrl
+
+---
+
 ## Änderungshistorie
 
 | Datum | Version | Änderung |
 |-------|---------|----------|
+| 2026-01-14 | 1.0.16 | **Spalten-Operationen abgeschlossen**: Löschen, Verschieben, Ausblenden, Einfügen mit vollständiger Style/CF/Formel-Unterstützung |
+| 2026-01-14 | 1.0.16 | **Filter-Export**: Nur gefilterte Zeilen exportieren, überschüssige Zeilen löschen, kompakte Filter-UI |
 | 2026-01-12 | 1.0.15 | **Performance-Fix**: Speichern/Exportieren großer Dateien optimiert - Buffer+Streaming für Dateien > 10MB, Garbage Collection, 2x schnelleres Schreiben |
 | 2026-01-10 | 1.0.13 | Computer-spezifische Konfiguration - config.json mit Abschnitten pro Computer für unterschiedliche Netzwerkpfade |
 | 2026-01-10 | 1.0.12 | DatenExplorer: Excel-Spaltenbuchstaben (A, B, C...) als zusätzliche Header-Zeile |

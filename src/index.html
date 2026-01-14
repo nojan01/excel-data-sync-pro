@@ -476,7 +476,8 @@
         }
         
         .results-table {
-            width: 100%;
+            width: max-content;
+            min-width: 100%;
             border-collapse: collapse;
             font-size: 14px;
         }
@@ -516,6 +517,28 @@
         .sortable-header.drag-over {
             background: var(--primary);
             color: white;
+        }
+        
+        /* Nicht verschiebbare Header (merged cells) */
+        .sortable-header.not-draggable {
+            cursor: not-allowed !important;
+            background: repeating-linear-gradient(
+                45deg,
+                transparent,
+                transparent 3px,
+                rgba(128, 128, 128, 0.1) 3px,
+                rgba(128, 128, 128, 0.1) 6px
+            );
+        }
+        
+        .sortable-header.not-draggable:hover {
+            background: repeating-linear-gradient(
+                45deg,
+                var(--bg-lighter),
+                var(--bg-lighter) 3px,
+                rgba(128, 128, 128, 0.15) 3px,
+                rgba(128, 128, 128, 0.15) 6px
+            );
         }
         
         /* Zellen-Auswahl */
@@ -2546,6 +2569,10 @@
                     <button class="btn btn-primary" id="btnExplorerOpenFile">
                         📂 Datei öffnen
                     </button>
+                    <!-- AutoFilter Indikator (wird dynamisch befüllt) -->
+                    <span id="autoFilterIndicator" style="display: none; background: #2196F3; color: white; font-size: 12px; padding: 6px 12px; border-radius: 4px; align-items: center; gap: 6px; cursor: help; font-weight: 500;">
+                        ▼ AutoFilter
+                    </span>
                     <div class="transfer-field">
                         <label>Arbeitsblatt:</label>
                         <div style="display: flex; gap: 4px; align-items: center;">
@@ -2675,7 +2702,7 @@
                         </select>
                     </div>
                     
-                    <span id="explorerStatus" style="color: var(--text-muted); font-size: 12px;"></span>
+                    <span id="explorerStatus" style="color: #ff9800; font-size: 12px;"></span>
                 </div>
                 
                 <!-- Table Container -->
@@ -2798,31 +2825,31 @@
     
     <!-- Filter Template für Explorer -->
     <template id="explorerFilterTemplate">
-        <div class="explorer-filter-row" style="display: flex; gap: 10px; align-items: center; padding: 8px; background: var(--bg-dark); border-radius: 4px; flex-wrap: wrap;">
-            <select class="filter-column config-select" style="min-width: 180px;"></select>
-            <select class="filter-operator config-select" style="min-width: 180px;">
-                <optgroup label="Text-Filter">
+        <div class="explorer-filter-row" style="display: flex; gap: 8px; align-items: center; padding: 6px 8px; background: var(--bg-dark); border-radius: 4px;">
+            <select class="filter-column config-select" style="flex: 0 0 auto; max-width: 150px;"></select>
+            <select class="filter-operator config-select" style="flex: 0 0 auto; width: auto;">
+                <optgroup label="Text">
                     <option value="contains">enthält</option>
-                    <option value="equals">gleich</option>
+                    <option value="equals">ist gleich</option>
                     <option value="startsWith">beginnt mit</option>
                     <option value="endsWith">endet mit</option>
                     <option value="notContains">enthält nicht</option>
                     <option value="isEmpty">ist leer</option>
-                    <option value="isNotEmpty">ist nicht leer</option>
+                    <option value="isNotEmpty">nicht leer</option>
                 </optgroup>
-                <optgroup label="Datum-Filter">
-                    <option value="dateInDays">📅 Datum in X Tagen</option>
-                    <option value="dateOverdueDays">📅 Datum X Tage überschritten</option>
-                    <option value="dateToday">📅 Datum ist heute</option>
-                    <option value="datePast">📅 Datum liegt in der Vergangenheit</option>
-                    <option value="dateFuture">📅 Datum liegt in der Zukunft</option>
-                    <option value="dateThisWeek">📅 Datum diese Woche</option>
-                    <option value="dateThisMonth">📅 Datum diesen Monat</option>
+                <optgroup label="Datum">
+                    <option value="dateInDays">📅 in X Tagen</option>
+                    <option value="dateOverdueDays">📅 X Tage überschritten</option>
+                    <option value="dateToday">📅 heute</option>
+                    <option value="datePast">📅 Vergangenheit</option>
+                    <option value="dateFuture">📅 Zukunft</option>
+                    <option value="dateThisWeek">📅 diese Woche</option>
+                    <option value="dateThisMonth">📅 diesen Monat</option>
                 </optgroup>
             </select>
-            <input type="text" class="filter-value config-input" placeholder="Filterwert" style="flex: 1; min-width: 150px;">
-            <input type="number" class="filter-days config-input" placeholder="Tage" style="width: 80px; display: none;" min="0">
-            <button type="button" class="btn btn-secondary btn-sm remove-filter">✕</button>
+            <input type="text" class="filter-value config-input" placeholder="Wert..." style="flex: 1; min-width: 100px;">
+            <input type="number" class="filter-days config-input" placeholder="Tage" style="width: 60px; display: none;" min="0">
+            <button type="button" class="btn btn-secondary btn-sm remove-filter" style="padding: 2px 8px;">✕</button>
         </div>
     </template>
 
@@ -3720,7 +3747,7 @@
                 left: 50%;
                 transform: translateX(-50%);
                 background: var(--bg-lighter);
-                color: var(--text);
+                color: #ff9800;
                 padding: 8px 16px;
                 border-radius: 4px;
                 font-size: 13px;
@@ -3750,7 +3777,7 @@
                 right: 20px;
                 background: ${color.bg};
                 border: 1px solid ${color.border};
-                color: white;
+                color: #ff9800;
                 padding: 12px 20px;
                 border-radius: 6px;
                 font-size: 14px;
@@ -6721,6 +6748,7 @@
             explorerState.autoFilterRange = null;
             explorerState.mergedCells = [];
             explorerState.filePassword = null;
+            explorerState.rowMapping = null;  // Mapping: neue Position -> Original Excel-Zeile
             
             // UI zurücksetzen
             if (elements.explorerSheetSelect) {
@@ -7298,61 +7326,19 @@
         
         // Indikator für AutoFilter aktualisieren
         function updateAutoFilterIndicator() {
-            let indicator = document.getElementById('autoFilterIndicator');
+            const indicator = document.getElementById('autoFilterIndicator');
+            if (!indicator) return;
             
             if (!explorerState.autoFilterRange) {
-                if (indicator) indicator.remove();
+                indicator.style.display = 'none';
                 return;
             }
             
-            // Spaltenbereich aus der Range extrahieren (z.B. "A1:H26" -> A bis H)
-            let displayText = 'AutoFilter';
-            let tooltipText = `AutoFilter aktiv: ${explorerState.autoFilterRange}\n(wird beim Speichern erhalten)`;
-            
-            try {
-                const rangeMatch = explorerState.autoFilterRange.match(/^([A-Z]+)\d+:([A-Z]+)\d+$/i);
-                if (rangeMatch && explorerState.headers.length > 0) {
-                    const startColLetter = rangeMatch[1].toUpperCase();
-                    const endColLetter = rangeMatch[2].toUpperCase();
-                    
-                    // Spaltenbuchstaben zu Index konvertieren (A=0, B=1, etc.)
-                    const letterToIndex = (letter) => {
-                        let index = 0;
-                        for (let i = 0; i < letter.length; i++) {
-                            index = index * 26 + (letter.charCodeAt(i) - 64);
-                        }
-                        return index - 1;
-                    };
-                    
-                    const startColIndex = letterToIndex(startColLetter);
-                    const endColIndex = letterToIndex(endColLetter);
-                    
-                    // Header-Namen holen
-                    const startHeader = explorerState.headers[startColIndex] || startColLetter;
-                    const endHeader = explorerState.headers[endColIndex] || endColLetter;
-                    
-                    displayText = `AutoFilter: ${startHeader} → ${endHeader}`;
-                    tooltipText = `AutoFilter aktiv auf Spalten:\n${startHeader} bis ${endHeader}\n(${explorerState.autoFilterRange})\n\nWird beim Speichern erhalten.`;
-                }
-            } catch (e) {
-                console.log('Error parsing autoFilter range:', e);
-            }
-            
-            if (!indicator) {
-                // Erstelle Indikator-Badge
-                indicator = document.createElement('span');
-                indicator.id = 'autoFilterIndicator';
-                indicator.style.cssText = 'margin-left: 8px; background: #2196F3; color: white; font-size: 11px; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;';
-                
-                // Füge nach dem Dateinamen ein
-                const fileNameElement = document.getElementById('explorerFileName');
-                if (fileNameElement && fileNameElement.parentElement) {
-                    fileNameElement.parentElement.appendChild(indicator);
-                }
-            }
-            
-            indicator.innerHTML = `<span style="font-size: 13px;">▼</span> ${displayText}`;
-            indicator.title = tooltipText;
+            // Zeige Indikator
+            let displayText = `▼ AutoFilter: ${explorerState.autoFilterRange}`;
+            indicator.textContent = displayText;
+            indicator.title = `AutoFilter aktiv: ${explorerState.autoFilterRange}\n(wird beim Speichern erhalten)`;
+            indicator.style.display = 'inline-flex';
         }
         
         // Indikator für Passwortschutz aktualisieren
@@ -7437,7 +7423,10 @@
             explorerState.editedCells = newEditedCells;
             
             // Markierung dass Spalte hinzugefügt wurde
-            explorerState.editedCells.set('_columnAdded', true);
+            explorerState.editedCells.set('_columnInserted', { 
+                index: insertIndex,
+                name: headerName || t('newColumn')
+            });
             
             // UI aktualisieren
             filterExplorerData();
@@ -7494,8 +7483,89 @@
             });
             explorerState.editedCells = newEditedCells;
             
-            // Markierung dass Spalte gelöscht wurde
-            explorerState.editedCells.set('_columnDeleted', true);
+            // CellStyles anpassen
+            const newCellStyles = {};
+            for (const [key, value] of Object.entries(explorerState.cellStyles || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (col > colIndex) {
+                    newCellStyles[`${row}-${col - 1}`] = value;
+                } else if (col < colIndex) {
+                    newCellStyles[key] = value;
+                }
+            }
+            explorerState.cellStyles = newCellStyles;
+            
+            // CellFormulas anpassen
+            const newCellFormulas = {};
+            for (const [key, value] of Object.entries(explorerState.cellFormulas || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (col > colIndex) {
+                    newCellFormulas[`${row}-${col - 1}`] = value;
+                } else if (col < colIndex) {
+                    newCellFormulas[key] = value;
+                }
+            }
+            explorerState.cellFormulas = newCellFormulas;
+            
+            // CellHyperlinks anpassen
+            const newCellHyperlinks = {};
+            for (const [key, value] of Object.entries(explorerState.cellHyperlinks || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (col > colIndex) {
+                    newCellHyperlinks[`${row}-${col - 1}`] = value;
+                } else if (col < colIndex) {
+                    newCellHyperlinks[key] = value;
+                }
+            }
+            explorerState.cellHyperlinks = newCellHyperlinks;
+            
+            // RichTextCells anpassen
+            const newRichTextCells = {};
+            for (const [key, value] of Object.entries(explorerState.richTextCells || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (col > colIndex) {
+                    newRichTextCells[`${row}-${col - 1}`] = value;
+                } else if (col < colIndex) {
+                    newRichTextCells[key] = value;
+                }
+            }
+            explorerState.richTextCells = newRichTextCells;
+            
+            // Markierung dass Spalte gelöscht wurde - speichere als Array für mehrere Löschungen
+            // WICHTIG: Wir speichern die ORIGINAL-Spaltenindizes (bezogen auf die ursprüngliche Datei)
+            // colIndex ist der aktuelle Index nach vorherigen Löschungen im Frontend
+            // Wir müssen den Original-Index berechnen
+            const existingDeleted = explorerState.editedCells.get('_columnDeleted');
+            let deletedOriginalIndices = [];
+            if (existingDeleted && Array.isArray(existingDeleted.originalIndices)) {
+                deletedOriginalIndices = existingDeleted.originalIndices.slice();
+            }
+            
+            // Berechne den Original-Index: 
+            // Für jeden vorherigen gelöschten Original-Index, der <= aktuellem+Offset war, erhöhe den Offset
+            let originalIndex = colIndex;
+            for (const prevOrigIdx of deletedOriginalIndices.sort((a, b) => a - b)) {
+                if (prevOrigIdx <= originalIndex) {
+                    originalIndex++;
+                }
+            }
+            
+            deletedOriginalIndices.push(originalIndex);
+            console.log(`[DeleteColumn] Aktueller Index: ${colIndex}, Original-Index: ${originalIndex}, Alle Original-Indices: [${deletedOriginalIndices.join(', ')}]`);
+            
+            explorerState.editedCells.set('_columnDeleted', { 
+                originalIndices: deletedOriginalIndices,  // Array der ORIGINAL-Spalten-Indices (0-basiert)
+                count: deletedOriginalIndices.length,
+                originalHeaderCount: (existingDeleted?.originalHeaderCount) || (explorerState.headers.length + 1)
+            });
             
             // UI aktualisieren
             filterExplorerData();
@@ -9026,6 +9096,19 @@
             explorerState.dataValidations = result.dataValidations || {};
             // Cell Styles (Formatierungen) laden
             explorerState.cellStyles = result.cellStyles || {};
+            // DEBUG: Console-Log für Styles - KRITISCH
+            console.log('==================== STYLE DEBUG ====================');
+            console.log('[FRONTEND] result.cellStyles vorhanden?', !!result.cellStyles);
+            console.log('[FRONTEND] result.cellStyles Typ:', typeof result.cellStyles);
+            console.log('[FRONTEND] explorerState.cellStyles Anzahl:', Object.keys(explorerState.cellStyles).length);
+            if (Object.keys(explorerState.cellStyles).length > 0) {
+                console.log('[FRONTEND] Erste 10 Style-Keys:', Object.keys(explorerState.cellStyles).slice(0, 10));
+                console.log('[FRONTEND] Beispiel-Style 2-0:', explorerState.cellStyles['2-0']);
+                console.log('[FRONTEND] Beispiel-Style 3-0:', explorerState.cellStyles['3-0']);
+            } else {
+                console.log('[FRONTEND] WARNUNG: Keine Styles empfangen!');
+            }
+            console.log('======================================================');
             // Cell Formulas (Formeln) laden
             explorerState.cellFormulas = result.cellFormulas || {};
             console.log('Cell Formulas loaded:', Object.keys(explorerState.cellFormulas).length, 'entries');
@@ -9045,6 +9128,9 @@
             if (explorerState.autoFilterRange) {
                 console.log('AutoFilter Range loaded:', explorerState.autoFilterRange);
             }
+            // Row Mapping initialisieren: [0, 1, 2, ...] = Identity
+            // Bedeutet: Position 0 im Frontend = Excel-Zeile 2 (erste Datenzeile)
+            explorerState.rowMapping = explorerState.data.map((_, i) => i);
             // Merged Cells laden
             explorerState.mergedCells = result.mergedCells || [];
             if (explorerState.mergedCells.length > 0) {
@@ -9646,9 +9732,10 @@
          * Verschiebt eine Spalte per Drag & Drop
          */
         function moveExplorerColumn(fromColIndex, toColIndex) {
-            // Initialisiere columnOrder wenn nötig
+            // Initialisiere columnOrder wenn nötig - mit ALLEN Spalten (auch versteckte)
             if (explorerState.columnOrder.length === 0) {
-                explorerState.columnOrder = [...explorerState.visibleColumns];
+                // Start mit allen Spalten in Original-Reihenfolge
+                explorerState.columnOrder = explorerState.headers.map((_, i) => i);
             }
             
             // Finde die Positionen in columnOrder
@@ -9662,6 +9749,12 @@
             
             // Füge sie an der neuen Position ein
             explorerState.columnOrder.splice(toPos, 0, fromColIndex);
+            
+            // Markiere als strukturelle Änderung
+            const existingMoves = explorerState.editedCells.get('_columnMoved') || [];
+            existingMoves.push({ from: fromColIndex, to: toColIndex });
+            explorerState.editedCells.set('_columnMoved', existingMoves);
+            console.log(`[Column Move] Spalte ${fromColIndex} nach Position ${toColIndex} verschoben. columnOrder:`, explorerState.columnOrder);
             
             // Tabelle neu rendern
             renderExplorerTable();
@@ -9678,15 +9771,47 @@
         // Hilfsfunktion: Prüft ob eine Zelle Teil eines Merged-Bereichs ist
         // Gibt zurück: null (nicht merged), 'master' (Hauptzelle), 'hidden' (Teil eines Merges, ausblenden)
         function getMergedCellInfo(rowIndex, colIndex) {
+            // DEBUG: Log bei letzten Zeilen
+            if (rowIndex >= 18 && colIndex < 3) {
+                console.log(`[MERGE DEBUG] Row ${rowIndex}, Col ${colIndex}, mergedCells:`, explorerState.mergedCells.length);
+            }
             for (const merge of explorerState.mergedCells) {
-                // rowIndex ist 0-basiert für Datenzeilen, merge.startRow ist relativ zur Header-Zeile
-                // Datenzeilen sind ab Index 1 (Header ist 0), also müssen wir +1 rechnen
-                const dataRowIndex = rowIndex + 1; // Konvertiere zu Header-relativen Index
+                // rowIndex ist der Index im data-Array (0 = erste Datenzeile = Excel-Zeile 2)
+                // merge.startRow ist 0-basierter Excel-Zeilen-Index (0 = Excel-Zeile 1)
+                // Um zu vergleichen: Excel-Zeile = rowIndex + 2 (weil data[0] = Excel-Zeile 2)
+                // Oder: 0-basierter Excel-Index = rowIndex + 1
+                const excelRowIndex0Based = rowIndex + 1;
                 
-                if (dataRowIndex >= merge.startRow && dataRowIndex <= merge.endRow &&
+                if (excelRowIndex0Based >= merge.startRow && excelRowIndex0Based <= merge.endRow &&
+                    colIndex >= merge.startCol && colIndex <= merge.endCol) {
+                    // DEBUG
+                    console.log(`[MERGE DEBUG] MATCH! rowIndex=${rowIndex}, excelRow0Based=${excelRowIndex0Based}, col=${colIndex}, merge:`, merge);
+                    // Diese Zelle ist Teil eines Merges
+                    if (excelRowIndex0Based === merge.startRow && colIndex === merge.startCol) {
+                        // Master-Zelle (oben links)
+                        return {
+                            type: 'master',
+                            rowSpan: merge.rowSpan,
+                            colSpan: merge.colSpan
+                        };
+                    } else {
+                        // Versteckte Zelle
+                        return { type: 'hidden' };
+                    }
+                }
+            }
+            return null; // Nicht Teil eines Merges
+        }
+        
+        // Hilfsfunktion: Prüft ob eine Header-Zelle (Excel-Zeile 1) Teil eines Merged-Bereichs ist
+        // excelRow0Based = 0 für Header (Excel-Zeile 1)
+        function getHeaderMergedCellInfo(colIndex) {
+            const excelRowIndex0Based = 0; // Header = Excel-Zeile 1 = 0-basiert Index 0
+            for (const merge of explorerState.mergedCells) {
+                if (excelRowIndex0Based >= merge.startRow && excelRowIndex0Based <= merge.endRow &&
                     colIndex >= merge.startCol && colIndex <= merge.endCol) {
                     // Diese Zelle ist Teil eines Merges
-                    if (dataRowIndex === merge.startRow && colIndex === merge.startCol) {
+                    if (excelRowIndex0Based === merge.startRow && colIndex === merge.startCol) {
                         // Master-Zelle (oben links)
                         return {
                             type: 'master',
@@ -9754,7 +9879,33 @@
             // Leere Zelle für Checkbox-Spalte
             headerHtml += `<th style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 2px 4px; background: var(--bg-lighter); position: sticky; left: 40px; z-index: 2; border-bottom: none;"></th>`;
             displayColumns.forEach(colIndex => {
+                // Prüfe ob dieser Spaltenbuchstabe Teil eines Header-Merges ist
+                const headerMergeInfo = getHeaderMergedCellInfo(colIndex);
+                if (headerMergeInfo && headerMergeInfo.type === 'hidden') {
+                    // Diese Spalte gehört zu einem Header-Merge, wird nicht gerendert
+                    return;
+                }
+                
                 const colLetter = getColumnLetter(colIndex + 1);
+                
+                // Colspan für Merged Header berechnen
+                let colspanAttr = '';
+                if (headerMergeInfo && headerMergeInfo.type === 'master' && headerMergeInfo.colSpan > 1) {
+                    let visibleColSpan = 0;
+                    for (let i = 0; i < headerMergeInfo.colSpan; i++) {
+                        if (displayColumns.includes(colIndex + i)) {
+                            visibleColSpan++;
+                        }
+                    }
+                    if (visibleColSpan > 1) {
+                        // Zeige Bereich wie A-H
+                        const endColLetter = getColumnLetter(colIndex + headerMergeInfo.colSpan);
+                        colspanAttr = ` colspan="${visibleColSpan}"`;
+                        headerHtml += `<th style="text-align: center; padding: 2px 4px; background: var(--bg-lighter); color: var(--text-muted); font-size: 10px; font-weight: normal; border-bottom: none;"${colspanAttr} title="Excel-Spalten ${colLetter}-${endColLetter}">${colLetter}-${endColLetter}</th>`;
+                        return;
+                    }
+                }
+                
                 headerHtml += `<th style="text-align: center; padding: 2px 4px; background: var(--bg-lighter); color: var(--text-muted); font-size: 10px; font-weight: normal; border-bottom: none;" title="Excel-Spalte ${colLetter}">${colLetter}</th>`;
             });
             headerHtml += '</tr>';
@@ -9768,7 +9919,15 @@
                 <input type="checkbox" id="selectAllRows" ${allVisibleSelected ? 'checked' : ''} 
                     title="Alle sichtbaren Zeilen auswählen" style="cursor: pointer; width: 16px; height: 16px;">
             </th>`;
+            
             displayColumns.forEach(colIndex => {
+                // Prüfe ob dieser Header Teil eines Merged-Bereichs ist
+                const headerMergeInfo = getHeaderMergedCellInfo(colIndex);
+                if (headerMergeInfo && headerMergeInfo.type === 'hidden') {
+                    // Diese Spalte gehört zu einem Header-Merge, wird nicht gerendert (colspan übernimmt)
+                    return;
+                }
+                
                 const headerText = escapeHtml(explorerState.headers[colIndex] || `Spalte ${colIndex + 1}`);
                 const colLetter = getColumnLetter(colIndex + 1);
                 let sortIcon = '';
@@ -9791,7 +9950,39 @@
                     }
                 }
                 
-                headerHtml += `<th class="sortable-header" data-col="${colIndex}" draggable="true" title="Spalte ${colLetter} - Klicken zum Sortieren, Ziehen zum Verschieben"${inlineStyle}>${headerText}${sortIcon}</th>`;
+                // Merged Cell Attribute für Header
+                let mergedAttrs = '';
+                let mergedClass = '';
+                let mergedIcon = '';
+                if (headerMergeInfo && headerMergeInfo.type === 'master') {
+                    mergedClass = ' merged-cell merged-cell-master';
+                    // colspan nur für sichtbare Spalten berechnen
+                    const colSpan = headerMergeInfo.colSpan;
+                    // Berechne wie viele der Merge-Spalten tatsächlich in displayColumns sind
+                    let visibleColSpan = 0;
+                    for (let i = 0; i < colSpan; i++) {
+                        if (displayColumns.includes(colIndex + i)) {
+                            visibleColSpan++;
+                        }
+                    }
+                    if (visibleColSpan > 1) {
+                        mergedAttrs = ` colspan="${visibleColSpan}"`;
+                    }
+                    // Icon anzeigen wenn merged
+                    if (headerMergeInfo.colSpan > 1) {
+                        mergedIcon = `<span class="merged-icon" title="Verbundene Header-Zellen: 1×${headerMergeInfo.colSpan}">⊞</span>`;
+                    }
+                }
+                
+                // Merged Headers sind NICHT verschiebbar (zu komplex)
+                const isMergedHeader = headerMergeInfo && headerMergeInfo.type === 'master' && headerMergeInfo.colSpan > 1;
+                const draggableAttr = isMergedHeader ? 'draggable="false"' : 'draggable="true"';
+                const titleText = isMergedHeader 
+                    ? `Spalte ${colLetter} - Verbundene Spalten können nicht verschoben werden` 
+                    : `Spalte ${colLetter} - Klicken zum Sortieren, Ziehen zum Verschieben`;
+                const notDraggableStyle = isMergedHeader ? ' style="cursor: not-allowed;"' : '';
+                
+                headerHtml += `<th class="sortable-header${mergedClass}${isMergedHeader ? ' not-draggable' : ''}" data-col="${colIndex}" ${draggableAttr} title="${titleText}"${inlineStyle}${mergedAttrs}${notDraggableStyle}>${mergedIcon}${headerText}${sortIcon}</th>`;
             });
             headerHtml += '</tr>';
             elements.explorerTableHead.innerHTML = headerHtml;
@@ -9927,8 +10118,18 @@
                         if (visibleColSpan > 1) {
                             mergedAttrs += ` colspan="${visibleColSpan}"`;
                         }
-                        // rowspan (nur innerhalb der aktuellen Seite sinnvoll)
-                        // Da rowspan über Pagination hinweg nicht funktioniert, zeigen wir nur an, dass es merged ist
+                        // rowspan - berechne wie viele Zeilen auf der aktuellen Seite sichtbar sind
+                        if (mergeInfo.rowSpan > 1) {
+                            // Berechne wie viele Zeilen des Merges auf dieser Seite sichtbar sind
+                            const pageStartIndex = (explorerState.currentPage - 1) * explorerState.pageSize;
+                            const pageEndIndex = pageStartIndex + explorerState.pageSize - 1;
+                            const mergeEndRow = originalIndex + mergeInfo.rowSpan - 1;
+                            const visibleRowSpan = Math.min(mergeInfo.rowSpan, pageEndIndex - originalIndex + 1);
+                            if (visibleRowSpan > 1) {
+                                mergedAttrs += ` rowspan="${visibleRowSpan}"`;
+                            }
+                        }
+                        // Icon anzeigen wenn merged
                         if (mergeInfo.rowSpan > 1 || mergeInfo.colSpan > 1) {
                             mergedIcon = `<span class="merged-icon" title="Verbundene Zellen: ${mergeInfo.rowSpan}×${mergeInfo.colSpan}">⊞</span>`;
                         }
@@ -9938,6 +10139,14 @@
                     const cellStyleKey = `${originalIndex + 1}-${colIndex}`; // +1 weil Styles inkl. Header-Zeile gespeichert sind
                     const cellStyle = explorerState.cellStyles[cellStyleKey];
                     let inlineStyle = '';
+                    
+                    // DEBUG: Erste paar Zellen loggen - ERWEITERT
+                    if (originalIndex < 5 && colIndex < 1) {
+                        console.log(`[RENDER] Row ${originalIndex}, Col ${colIndex}`);
+                        console.log(`  -> Key: "${cellStyleKey}"`);
+                        console.log(`  -> cellStyle:`, cellStyle);
+                        console.log(`  -> explorerState.cellStyles hat`, Object.keys(explorerState.cellStyles).length, 'Einträge');
+                    }
                     
                     // Formel prüfen (gleicher Key wie cellStyles)
                     const cellFormula = explorerState.cellFormulas[cellStyleKey];
@@ -9955,8 +10164,13 @@
                     // Rich Text prüfen (gleicher Key wie cellStyles)
                     const richTextFragments = explorerState.richTextCells[cellStyleKey];
                     const hasRichText = richTextFragments && richTextFragments.length > 0;
+                    // DEBUG: Rich Text loggen
+                    if (originalIndex < 15 && colIndex === 0 && Object.keys(explorerState.richTextCells).length > 0) {
+                        console.log(`[RICH TEXT DEBUG] Key: ${cellStyleKey}, hasRichText: ${hasRichText}, richTextCells keys:`, Object.keys(explorerState.richTextCells));
+                    }
                     let richTextHtml = '';
                     if (hasRichText) {
+                        console.log(`[RICH TEXT] Found at ${cellStyleKey}:`, richTextFragments);
                         // Generiere HTML für Rich Text Fragmente
                         richTextHtml = richTextFragments.map(fragment => {
                             const styles = [];
@@ -9967,7 +10181,9 @@
                                 if (fragment.styles.strikethrough) styles.push('text-decoration: line-through');
                                 if (fragment.styles.subscript) styles.push('vertical-align: sub; font-size: smaller');
                                 if (fragment.styles.superscript) styles.push('vertical-align: super; font-size: smaller');
-                                if (fragment.styles.fontColor) styles.push(`color: ${fragment.styles.fontColor}`);
+                                // Unterstütze sowohl "fontColor" als auch "color"
+                                const fragmentColor = fragment.styles.fontColor || fragment.styles.color;
+                                if (fragmentColor) styles.push(`color: ${fragmentColor}`);
                                 if (fragment.styles.fontSize) styles.push(`font-size: ${fragment.styles.fontSize}px`);
                             }
                             const styleAttr = styles.length > 0 ? ` style="${styles.join('; ')}"` : '';
@@ -9976,6 +10192,7 @@
                     }
                     const richTextClass = hasRichText ? ' has-rich-text' : '';
                     
+                    // Echte Style-Anwendung
                     if (cellStyle) {
                         const styles = [];
                         if (cellStyle.bold) styles.push('font-weight: bold');
@@ -9989,6 +10206,14 @@
                         if (styles.length > 0) {
                             inlineStyle = ` style="${styles.join('; ')}"`;
                         }
+                    }
+                    
+                    // DEBUG: Zeige verfügbare Keys bei erster Zeile
+                    if (originalIndex === 0 && colIndex === 0) {
+                        const availableKeys = Object.keys(explorerState.cellStyles).slice(0, 10);
+                        console.log('[STYLE DEBUG] Verfügbare Keys:', availableKeys);
+                        console.log('[STYLE DEBUG] Gesuchter Key:', cellStyleKey);
+                        console.log('[STYLE DEBUG] Anzahl Styles:', Object.keys(explorerState.cellStyles).length);
                     }
                     
                     // Prüfe auf Data Validation (Dropdown-Liste)
@@ -10427,11 +10652,15 @@
             const totalRows = explorerState.data.length;
             const rowBundles = [];
             
+            // Aktuelles rowMapping holen (oder initialisieren)
+            const currentMapping = explorerState.rowMapping || explorerState.data.map((_, i) => i);
+            
             for (let i = 0; i < totalRows; i++) {
                 const styleRowIdx = i + 1; // Style-Key verwendet +1 (Header ist 0)
                 const bundle = {
                     dataRef: explorerState.data[i],       // Direkte Referenz
                     originalRef: explorerState.originalData[i], // Direkte Referenz
+                    originalExcelRow: currentMapping[i],  // Original Excel-Zeilen-Index (0-basiert in Daten)
                     styles: stylesByRow[styleRowIdx] || {},
                     richText: richTextByRow[styleRowIdx] || {},
                     formulas: formulasByRow[styleRowIdx] || {},
@@ -10515,6 +10744,10 @@
                     explorerState.cellHyperlinks[`${newStyleRowIdx}-${col}`] = link;
                 }
             });
+            
+            // WICHTIG: rowMapping aktualisieren - trackt welche Original-Excel-Zeile an welcher neuen Position ist
+            explorerState.rowMapping = rowBundles.map(bundle => bundle.originalExcelRow);
+            console.log('[Row Move] rowMapping aktualisiert:', explorerState.rowMapping.slice(0, 10), '...');
             
             // Speichere Undo-Aktion (keine tiefen Kopien mehr - Undo wird vereinfacht)
             pushExplorerUndo({
@@ -10917,9 +11150,14 @@
             // Aktuelles Sheet im Cache speichern
             saveCurrentSheetToCache();
             
-            // Sheet-Auswahl-Dialog anzeigen
-            const selectedSheets = await showSheetSelectionDialog('export');
-            if (!selectedSheets || selectedSheets.length === 0) return;
+            // Sheet-Auswahl-Dialog anzeigen (inkl. Passwort-Option)
+            const dialogResult = await showSheetSelectionDialog('export');
+            if (!dialogResult || !dialogResult.sheets || dialogResult.sheets.length === 0) return;
+            
+            const selectedSheets = dialogResult.sheets;
+            const exportPassword = dialogResult.password;
+            
+            console.log('[Export] Passwort aus Dialog:', exportPassword ? '***SET***' : 'NICHT GESETZT');
             
             // Dateiname ohne doppelte .xlsx Endung
             let baseName = explorerState.fileName || 'Daten';
@@ -10932,12 +11170,6 @@
             });
             
             if (savePath) {
-                // Passwort-Dialog anzeigen
-                const pwResult = await showPasswordProtectionDialog(null, 'export');
-                if (pwResult === null) return; // Abgebrochen
-                
-                const exportPassword = pwResult.password;
-                
                 elements.explorerStatus.textContent = exportPassword ? 'Exportiere mit Passwortschutz...' : 'Exportiere...';
                 
                 // SPEICHEROPTIMIERUNG: Undo-Stack leeren vor dem Export
@@ -10956,20 +11188,81 @@
                     // Prüfe ob Sheet Änderungen hat
                     const isCurrentSheet = sheetName === explorerState.selectedSheet;
                     const cachedSheet = explorerState.sheetDataCache.get(sheetName);
+                    
+                    // Prüfe ob Filter aktiv sind (Zeilen werden ausgefiltert)
+                    const hasActiveFilters = isCurrentSheet && explorerState.filters && explorerState.filters.length > 0;
+                    const hasSearchFilter = isCurrentSheet && explorerState.searchTerm && explorerState.searchTerm.trim() !== '';
+                    const rowsFiltered = isCurrentSheet && explorerState.filteredData.length < explorerState.data.length;
+                    const isFiltered = (hasActiveFilters || hasSearchFilter) && rowsFiltered;
+                    
+                    // Änderungen = editedCells ODER aktive Filter (gefilterte Daten exportieren)
                     const hasChanges = isCurrentSheet 
-                        ? explorerState.editedCells.size > 0
+                        ? (explorerState.editedCells.size > 0 || isFiltered)
                         : (cachedSheet?.editedCells?.size > 0);
+                    
+                    if (isFiltered) {
+                        console.log(`[Export] Filter aktiv für Sheet "${sheetName}": ${explorerState.filteredData.length} von ${explorerState.data.length} Zeilen werden exportiert`);
+                    }
                     
                     if (!hasChanges) {
                         // Keine Änderungen - Backend soll direkt aus Datei lesen (spart Speicher!)
+                        // OPTIMIERUNG: Bei großen Dateien (>50k Styles) keine Styles senden
+                        // ExcelJS liest die meisten Fills korrekt aus der Datei
+                        const stylesForSheet = isCurrentSheet 
+                            ? explorerState.cellStyles 
+                            : (cachedSheet?.cellStyles || {});
+                        
+                        // Bei großen Dateien keine Styles senden - ExcelJS hat sie bereits
+                        const styleCount = Object.keys(stylesForSheet || {}).length;
+                        const finalStyles = styleCount > 50000 ? {} : stylesForSheet;
+                        if (styleCount > 50000) {
+                            console.log(`[Export] Sheet "${sheetName}": ${styleCount} Styles übersprungen (Performance)`);
+                        }
+                        
+                        // AutoFilter für dieses Sheet ermitteln
+                        const autoFilterForSheet = isCurrentSheet 
+                            ? explorerState.autoFilterRange 
+                            : (cachedSheet?.autoFilterRange || null);
+                        
+                        // Versteckte Spalten berechnen
+                        const visibleColsForSheet = isCurrentSheet 
+                            ? explorerState.visibleColumns 
+                            : (cachedSheet?.visibleColumns || []);
+                        const headersForSheet = isCurrentSheet 
+                            ? explorerState.headers 
+                            : (cachedSheet?.headers || []);
+                        const allCols = headersForSheet.map((_, i) => i);
+                        const visibleSet = new Set(visibleColsForSheet || allCols);
+                        const hiddenColsForSheet = allCols.filter(i => !visibleSet.has(i));
+                        
                         sheetData = {
                             sheetName: sheetName,
-                            fromFile: true
+                            fromFile: true,
+                            cellStyles: finalStyles,
+                            hiddenColumns: hiddenColsForSheet,
+                            autoFilterRange: autoFilterForSheet
                         };
+                        console.log(`[Export] fromFile Sheet "${sheetName}": ${hiddenColsForSheet.length} versteckte Spalten, AutoFilter: ${autoFilterForSheet || 'none'}`);
                     } else if (isCurrentSheet) {
                         // Aktuelles Sheet mit Änderungen
                         const affectedRowsArray = explorerState.affectedRows ? Array.from(explorerState.affectedRows) : [];
                         const hasRowMoves = affectedRowsArray.length > 0;
+                        
+                        // Prüfe ob Filter aktiv sind (Zeilen werden ausgefiltert)
+                        const hasActiveFilters = explorerState.filters && explorerState.filters.length > 0;
+                        const hasSearchFilter = explorerState.searchTerm && explorerState.searchTerm.trim() !== '';
+                        const rowsFiltered = explorerState.filteredData.length < explorerState.data.length;
+                        const isFiltered = (hasActiveFilters || hasSearchFilter) && rowsFiltered;
+                        
+                        // Strukturelle Änderungen erkennen (Spalte gelöscht/eingefügt/verschoben, Zeilen verschoben, Filter aktiv)
+                        const hasStructuralChanges = hasRowMoves || 
+                            explorerState.editedCells.has('_columnDeleted') || 
+                            explorerState.editedCells.has('_columnInserted') ||
+                            explorerState.editedCells.has('_columnMoved') ||
+                            explorerState.editedCells.has('_rowsReordered') ||
+                            isFiltered;  // Filter = strukturelle Änderung (nur gefilterte Zeilen exportieren)
+                        
+                        console.log(`[Export Debug] hasRowMoves: ${hasRowMoves}, _columnDeleted: ${explorerState.editedCells.has('_columnDeleted')}, _columnInserted: ${explorerState.editedCells.has('_columnInserted')}, _columnMoved: ${explorerState.editedCells.has('_columnMoved')}, isFiltered: ${isFiltered} (${explorerState.filteredData.length}/${explorerState.data.length} Zeilen), hasStructuralChanges: ${hasStructuralChanges}`);
                         
                         // HiddenRows aus dem aktuellen State ermitteln
                         const currentHiddenRows = [];
@@ -10979,27 +11272,240 @@
                             }
                         });
                         
-                        // STRATEGIE: Wie beim Speichern
-                        if (hasRowMoves) {
-                            // Row-Move: FULL REWRITE
-                            const allData = explorerState.filteredData.map(item => item.row);
+                        // Versteckte Spalten berechnen
+                        const allCols = explorerState.headers.map((_, i) => i);
+                        const visibleSet = new Set(explorerState.visibleColumns || allCols);
+                        const hiddenCols = allCols.filter(i => !visibleSet.has(i));
+                        
+                        // STRATEGIE: Bei strukturellen Änderungen FULL REWRITE
+                        if (hasStructuralChanges) {
+                            // Strukturelle Änderung: FULL REWRITE
+                            let allData = explorerState.filteredData.map(item => item.row);
+                            
+                            // DEBUG: Zeige genau was exportiert wird
+                            console.log(`[Export FILTER DEBUG] explorerState.data.length: ${explorerState.data.length}`);
+                            console.log(`[Export FILTER DEBUG] explorerState.filteredData.length: ${explorerState.filteredData.length}`);
+                            console.log(`[Export FILTER DEBUG] allData.length (zu exportieren): ${allData.length}`);
+                            console.log(`[Export FILTER DEBUG] Erste 3 filteredData originalIndices: ${explorerState.filteredData.slice(0, 3).map(i => i.originalIndex).join(', ')}`);
+                            console.log(`[Export FILTER DEBUG] Letzte 3 filteredData originalIndices: ${explorerState.filteredData.slice(-3).map(i => i.originalIndex).join(', ')}`);
+                            
+                            let exportHeaders = [...explorerState.headers];
+                            let exportCellStyles = { ...(explorerState.cellStyles || {}) };
+                            let exportCellFormulas = { ...(explorerState.cellFormulas || {}) };
+                            let exportCellHyperlinks = { ...(explorerState.cellHyperlinks || {}) };
+                            let exportRichTextCells = { ...(explorerState.richTextCells || {}) };
+                            let exportVisibleColumns = [...(explorerState.visibleColumns || [])];
+                            let exportHiddenCols = [...hiddenCols];
+                            
+                            // Bei gefilterten Daten: Styles/Formeln/Hyperlinks auf neue Zeilen-Indizes mappen
+                            // originalIndex -> neuer Index in filteredData
+                            if (isFiltered) {
+                                console.log(`[Export] Filter aktiv: Mappe ${explorerState.filteredData.length} von ${explorerState.data.length} Zeilen`);
+                                
+                                // Erstelle Mapping: originalIndex -> newIndex (0-basiert in exportierten Daten)
+                                const rowIndexMap = new Map();
+                                explorerState.filteredData.forEach((item, newIdx) => {
+                                    rowIndexMap.set(item.originalIndex, newIdx);
+                                });
+                                
+                                // Styles remappen
+                                const remappedStyles = {};
+                                for (const [key, style] of Object.entries(exportCellStyles)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    const originalRowIdx = parseInt(rowStr);
+                                    const colIdx = parseInt(colStr);
+                                    const newRowIdx = rowIndexMap.get(originalRowIdx);
+                                    if (newRowIdx !== undefined) {
+                                        remappedStyles[`${newRowIdx}-${colIdx}`] = style;
+                                    }
+                                }
+                                exportCellStyles = remappedStyles;
+                                
+                                // Formeln remappen
+                                const remappedFormulas = {};
+                                for (const [key, formula] of Object.entries(exportCellFormulas)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    const originalRowIdx = parseInt(rowStr);
+                                    const colIdx = parseInt(colStr);
+                                    const newRowIdx = rowIndexMap.get(originalRowIdx);
+                                    if (newRowIdx !== undefined) {
+                                        remappedFormulas[`${newRowIdx}-${colIdx}`] = formula;
+                                    }
+                                }
+                                exportCellFormulas = remappedFormulas;
+                                
+                                // Hyperlinks remappen
+                                const remappedHyperlinks = {};
+                                for (const [key, link] of Object.entries(exportCellHyperlinks)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    const originalRowIdx = parseInt(rowStr);
+                                    const colIdx = parseInt(colStr);
+                                    const newRowIdx = rowIndexMap.get(originalRowIdx);
+                                    if (newRowIdx !== undefined) {
+                                        remappedHyperlinks[`${newRowIdx}-${colIdx}`] = link;
+                                    }
+                                }
+                                exportCellHyperlinks = remappedHyperlinks;
+                                
+                                // RichText remappen
+                                const remappedRichText = {};
+                                for (const [key, rt] of Object.entries(exportRichTextCells)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    const originalRowIdx = parseInt(rowStr);
+                                    const colIdx = parseInt(colStr);
+                                    const newRowIdx = rowIndexMap.get(originalRowIdx);
+                                    if (newRowIdx !== undefined) {
+                                        remappedRichText[`${newRowIdx}-${colIdx}`] = rt;
+                                    }
+                                }
+                                exportRichTextCells = remappedRichText;
+                                
+                                console.log(`[Export] Styles remapped: ${Object.keys(remappedStyles).length}, Formulas: ${Object.keys(remappedFormulas).length}, Hyperlinks: ${Object.keys(remappedHyperlinks).length}`);
+                            }
+                            
+                            // Bei Row-Move: ExcelJS ordnet die Zeilen direkt um (mit allen Styles)
+                            // Kein Frontend-Remapping nötig!
+                            if (hasRowMoves && explorerState.rowMapping && explorerState.rowMapping.length > 0) {
+                                console.log(`[Export] Row-Move: rowMapping wird an Writer gesendet (${explorerState.rowMapping.length} Zeilen)`);
+                                console.log(`[Export] rowMapping (erste 15):`, explorerState.rowMapping.slice(0, 15));
+                            }
+                            
+                            // Bei strukturellen Änderungen MÜSSEN wir alle Styles senden,
+                            // da die alten Styles im Worksheet sonst an falschen Positionen bleiben
+                            const styleCount = Object.keys(exportCellStyles).length;
+                            console.log(`[Export] Strukturelle Änderung: ${styleCount} Styles werden mitgesendet`);
+                            
+                            // Hole die Indizes der gelöschten Spalten falls vorhanden
+                            const columnDeletedInfo = explorerState.editedCells.get('_columnDeleted');
+                            console.log('[Export Debug] columnDeletedInfo:', JSON.stringify(columnDeletedInfo));
+                            
+                            // Extrahiere die Original-Indizes - unterstütze neues Format und Legacy-Formate
+                            let deletedColumnIndices = [];
+                            if (columnDeletedInfo && typeof columnDeletedInfo === 'object') {
+                                if ('originalIndices' in columnDeletedInfo && Array.isArray(columnDeletedInfo.originalIndices)) {
+                                    // Neues Format mit Original-Indices
+                                    deletedColumnIndices = columnDeletedInfo.originalIndices;
+                                } else if ('indices' in columnDeletedInfo && Array.isArray(columnDeletedInfo.indices)) {
+                                    // Altes Array-Format
+                                    deletedColumnIndices = columnDeletedInfo.indices;
+                                } else if ('index' in columnDeletedInfo) {
+                                    // Legacy single-index Format
+                                    deletedColumnIndices = [columnDeletedInfo.index];
+                                }
+                            } else if (typeof columnDeletedInfo === 'number') {
+                                deletedColumnIndices = [columnDeletedInfo];
+                            }
+                            console.log('[Export Debug] deletedColumnIndices (original):', JSON.stringify(deletedColumnIndices));
+                            
+                            // Prüfe ob Spalten verschoben wurden
+                            const hasColumnMoves = explorerState.editedCells.has('_columnMoved');
+                            let columnOrder = hasColumnMoves && explorerState.columnOrder.length > 0 
+                                ? [...explorerState.columnOrder]
+                                : null;
+                            console.log('[Export Debug] columnOrder:', JSON.stringify(columnOrder));
+                            
+                            // Wenn Spalten verschoben wurden UND NICHT gelöscht, ordne die Daten im Frontend um
+                            // (Bei Löschung handhabt der Writer das über spliceColumns)
+                            if (columnOrder && deletedColumnIndices.length === 0) {
+                                console.log('[Export] Ordne Daten gemäß columnOrder um...');
+                                
+                                // Headers umordnen
+                                exportHeaders = columnOrder.map(oldIdx => explorerState.headers[oldIdx]);
+                                
+                                // Daten umordnen
+                                allData = allData.map(row => columnOrder.map(oldIdx => row[oldIdx]));
+                                
+                                // Styles umordnen (Keys sind "rowIdx-colIdx")
+                                const newCellStyles = {};
+                                for (const [key, style] of Object.entries(exportCellStyles)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    const rowIdx = parseInt(rowStr);
+                                    const oldColIdx = parseInt(colStr);
+                                    const newColIdx = columnOrder.indexOf(oldColIdx);
+                                    if (newColIdx !== -1) {
+                                        newCellStyles[`${rowIdx}-${newColIdx}`] = style;
+                                    }
+                                }
+                                exportCellStyles = newCellStyles;
+                                
+                                // Formeln umordnen
+                                const newFormulas = {};
+                                for (const [key, formula] of Object.entries(exportCellFormulas)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    const rowIdx = parseInt(rowStr);
+                                    const oldColIdx = parseInt(colStr);
+                                    const newColIdx = columnOrder.indexOf(oldColIdx);
+                                    if (newColIdx !== -1) {
+                                        newFormulas[`${rowIdx}-${newColIdx}`] = formula;
+                                    }
+                                }
+                                exportCellFormulas = newFormulas;
+                                
+                                // Hyperlinks umordnen
+                                const newHyperlinks = {};
+                                for (const [key, link] of Object.entries(exportCellHyperlinks)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    const rowIdx = parseInt(rowStr);
+                                    const oldColIdx = parseInt(colStr);
+                                    const newColIdx = columnOrder.indexOf(oldColIdx);
+                                    if (newColIdx !== -1) {
+                                        newHyperlinks[`${rowIdx}-${newColIdx}`] = link;
+                                    }
+                                }
+                                exportCellHyperlinks = newHyperlinks;
+                                
+                                // RichText umordnen
+                                const newRichText = {};
+                                for (const [key, rt] of Object.entries(exportRichTextCells)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    const rowIdx = parseInt(rowStr);
+                                    const oldColIdx = parseInt(colStr);
+                                    const newColIdx = columnOrder.indexOf(oldColIdx);
+                                    if (newColIdx !== -1) {
+                                        newRichText[`${rowIdx}-${newColIdx}`] = rt;
+                                    }
+                                }
+                                exportRichTextCells = newRichText;
+                                
+                                // VisibleColumns umordnen (jetzt sind es die neuen Indizes)
+                                exportVisibleColumns = explorerState.visibleColumns.map(oldIdx => columnOrder.indexOf(oldIdx)).filter(idx => idx !== -1);
+                                
+                                // HiddenColumns umordnen
+                                exportHiddenCols = hiddenCols.map(oldIdx => columnOrder.indexOf(oldIdx)).filter(idx => idx !== -1);
+                                
+                                console.log('[Export] Daten umgeordnet: Headers=' + exportHeaders.length + ', Rows=' + allData.length);
+                                
+                                // columnOrder auf null setzen, da die Umordnung bereits erfolgt ist
+                                columnOrder = null;
+                            }
+                            
                             sheetData = {
                                 sheetName: sheetName,
-                                headers: explorerState.headers,
+                                headers: exportHeaders,
                                 data: allData,
-                                visibleColumns: explorerState.visibleColumns,
+                                visibleColumns: exportVisibleColumns,
                                 hiddenRows: currentHiddenRows,
-                                cellStyles: explorerState.cellStyles || {},
-                                cellFormulas: explorerState.cellFormulas || {},
-                                cellHyperlinks: explorerState.cellHyperlinks || {},
-                                richTextCells: explorerState.richTextCells || {},
-                                fullRewrite: true
+                                hiddenColumns: exportHiddenCols,
+                                cellStyles: exportCellStyles,
+                                cellFormulas: exportCellFormulas,
+                                cellHyperlinks: exportCellHyperlinks,
+                                richTextCells: exportRichTextCells,
+                                autoFilterRange: explorerState.autoFilterRange,
+                                fullRewrite: true,
+                                structuralChange: true,  // Signalisiert dass Styles komplett zurückgesetzt werden müssen
+                                deletedColumnIndices: deletedColumnIndices,  // Array der gelöschten Spalten für spliceColumns
+                                columnOrder: columnOrder,  // Neue Spaltenreihenfolge (null = keine Änderung oder bereits angewendet)
+                                affectedRows: affectedRowsArray,  // Betroffene Zeilen bei Row-Move für Style-Reset
+                                rowMapping: hasRowMoves ? explorerState.rowMapping : null  // Mapping für Zeilen-Verschiebung
                             };
-                            console.log(`[Export] Row-Move: Full Rewrite (${allData.length} Zeilen, ${Object.keys(explorerState.richTextCells || {}).length} RichText)`);
+                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${hasRowMoves ? 'ja' : 'nein'}, AutoFilter: ${explorerState.autoFilterRange || 'none'})`);
                         } else {
                             // Nur Zell-Edits: changedCells
                             const changedCells = {};
-                            for (const cellKey of explorerState.editedCells) {
+                            for (const cellKey of explorerState.editedCells.keys()) {
+                                // Überspringe spezielle Marker-Keys
+                                if (cellKey.startsWith('_')) continue;
+                                
                                 const [rowStr, colStr] = cellKey.split('-');
                                 const rowIdx = parseInt(rowStr);
                                 const colIdx = parseInt(colStr);
@@ -11010,7 +11516,10 @@
                             
                             // RichText für geänderte Zellen
                             const richTextForChanged = {};
-                            for (const cellKey of explorerState.editedCells) {
+                            for (const cellKey of explorerState.editedCells.keys()) {
+                                // Überspringe spezielle Marker-Keys
+                                if (cellKey.startsWith('_')) continue;
+                                
                                 if (explorerState.richTextCells && explorerState.richTextCells[cellKey]) {
                                     richTextForChanged[cellKey] = explorerState.richTextCells[cellKey];
                                 }
@@ -11020,9 +11529,11 @@
                                 sheetName: sheetName,
                                 changedCells: changedCells,
                                 richTextCells: Object.keys(richTextForChanged).length > 0 ? richTextForChanged : undefined,
+                                hiddenColumns: hiddenCols,
+                                autoFilterRange: explorerState.autoFilterRange,
                                 fullRewrite: false
                             };
-                            console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText`);
+                            console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${hiddenCols.length} versteckte Spalten, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
                         }
                     } else if (cachedSheet) {
                         // Gecachtes Sheet mit Änderungen - keine Styles senden (Backend behält Originale)
@@ -11037,13 +11548,17 @@
                             cellFormulas: {},
                             cellHyperlinks: {},
                             richTextCells: {},
-                            affectedRows: []
+                            affectedRows: [],
+                            autoFilterRange: cachedSheet.autoFilterRange || null
                         };
                     } else {
                         // Sheet nicht im Cache - Backend soll aus Datei lesen
+                        // Hier sind keine cellStyles vorhanden, Backend muss sie selbst extrahieren
                         sheetData = {
                             sheetName: sheetName,
-                            fromFile: true
+                            fromFile: true,
+                            cellStyles: {},  // Leer - Backend wird sie aus der Datei extrahieren
+                            autoFilterRange: null  // Backend wird es aus der Datei lesen
                         };
                     }
                     
@@ -11062,6 +11577,21 @@
                 if (result.success) {
                     const pwInfo = exportPassword ? ' (passwortgeschützt)' : '';
                     elements.explorerStatus.textContent = `✓ ${selectedSheets.length} Arbeitsblatt/blätter exportiert${pwInfo}: ${savePath}`;
+                    
+                    // WICHTIG: Nach erfolgreichem Export alle Änderungsmarkierungen zurücksetzen
+                    // Damit wird die Warnung "Ohne Speichern schließen" nicht mehr angezeigt
+                    explorerState.editedCells.clear();
+                    explorerState.affectedRows?.clear();
+                    
+                    // Auch im Cache für alle exportierten Sheets die Änderungen zurücksetzen
+                    for (const sheetName of selectedSheets) {
+                        const cachedSheet = explorerState.sheetDataCache.get(sheetName);
+                        if (cachedSheet) {
+                            cachedSheet.editedCells.clear();
+                        }
+                    }
+                    
+                    console.log('[Export] Änderungsmarkierungen zurückgesetzt nach erfolgreichem Export');
                 } else {
                     elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 }
@@ -11144,6 +11674,18 @@
                     <div style="overflow-y: auto; max-height: 300px; display: flex; flex-direction: column; gap: 6px; padding-right: 5px;">
                         ${sheetListHtml}
                     </div>
+                    ${mode === 'export' ? `
+                    <div style="margin-top: 15px; padding-top: 15px; border-top: 1px solid var(--border);">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none;">
+                            <input type="checkbox" id="exportPasswordCheckbox" style="width: 18px; height: 18px; cursor: pointer;">
+                            <span style="color: var(--text);">🔐 Mit Passwortschutz exportieren</span>
+                        </label>
+                        <div id="passwordInputContainer" style="display: none; margin-top: 10px; padding-left: 28px;">
+                            <input type="password" id="exportPasswordInput" placeholder="Passwort eingeben" 
+                                style="width: 100%; padding: 8px 12px; background: var(--bg-light); border: 1px solid var(--border); border-radius: 4px; color: var(--text); font-size: 14px;">
+                        </div>
+                    </div>
+                    ` : ''}
                     <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; padding-top: 15px; border-top: 1px solid var(--border);">
                         <button class="btn btn-secondary" id="sheetDialogCancel">Abbrechen</button>
                         <button class="btn btn-primary" id="sheetDialogConfirm">${confirmText}</button>
@@ -11159,6 +11701,19 @@
                 const selectAllBtn = dialog.querySelector('#selectAllSheets');
                 const selectNoneBtn = dialog.querySelector('#selectNoneSheets');
                 const checkboxes = dialog.querySelectorAll('.sheet-checkbox');
+                const passwordCheckbox = dialog.querySelector('#exportPasswordCheckbox');
+                const passwordContainer = dialog.querySelector('#passwordInputContainer');
+                const passwordInput = dialog.querySelector('#exportPasswordInput');
+                
+                // Passwort-Checkbox Toggle (nur im Export-Modus)
+                if (passwordCheckbox) {
+                    passwordCheckbox.onchange = () => {
+                        passwordContainer.style.display = passwordCheckbox.checked ? 'block' : 'none';
+                        if (passwordCheckbox.checked) {
+                            passwordInput.focus();
+                        }
+                    };
+                }
                 
                 selectAllBtn.onclick = () => {
                     checkboxes.forEach(cb => cb.checked = true);
@@ -11172,8 +11727,25 @@
                     const selected = Array.from(checkboxes)
                         .filter(cb => cb.checked)
                         .map(cb => cb.value);
+                    
+                    console.log('[SheetDialog] Ausgewählte Sheets:', selected);
+                    
+                    // Bei Export: Passwort mit zurückgeben
+                    const password = (mode === 'export' && passwordCheckbox && passwordCheckbox.checked) 
+                        ? (passwordInput?.value || null) 
+                        : null;
+                    
+                    console.log('[SheetDialog] passwordCheckbox.checked:', passwordCheckbox?.checked);
+                    console.log('[SheetDialog] Finales Passwort:', password ? '***SET***' : 'NULL');
+                    
                     overlay.remove();
-                    resolve(selected);
+                    
+                    // Rückgabe als Objekt mit sheets und password
+                    if (mode === 'export') {
+                        resolve({ sheets: selected, password: password });
+                    } else {
+                        resolve(selected);
+                    }
                 };
                 
                 cancelBtn.onclick = () => {
@@ -11191,259 +11763,6 @@
                 };
                 document.addEventListener('keydown', escHandler);
             });
-        }
-        
-        // Speichert Änderungen direkt in die Originaldatei
-        async function saveExplorerData() {
-            if (!explorerState.filePath) {
-                elements.explorerStatus.textContent = 'Keine Datei geladen';
-                return;
-            }
-            
-            // Aktuelles Sheet im Cache speichern
-            saveCurrentSheetToCache();
-            
-            // Prüfe ob es überhaupt Änderungen gibt
-            const totalChanges = countAllChanges();
-            if (totalChanges === 0) {
-                elements.explorerStatus.textContent = 'Keine Änderungen zum Speichern';
-                return;
-            }
-            
-            // Warnung bei Pivot-Tabellen
-            if (explorerState.hasPivotTables) {
-                const pivotConfirmed = await showConfirmDialog(
-                    '⚠️ Pivot-Tabellen gefährdet',
-                    'Diese Datei enthält Pivot-Tabellen!\n\n' +
-                    'Das Speichern kann Pivot-Tabellen beschädigen oder entfernen.\n\n' +
-                    'Möchten Sie trotzdem fortfahren?',
-                    'Trotzdem speichern',
-                    'Abbrechen'
-                );
-                if (!pivotConfirmed) return;
-            }
-            
-            // Bestätigungsdialog
-            const confirmed = await showConfirmDialog(
-                'Änderungen speichern',
-                `Möchten Sie ${totalChanges} Änderung(en) in die Originaldatei speichern?\n\n` +
-                `Datei: ${explorerState.fileName}\n\n` +
-                `⚠️ Die Originaldatei wird überschrieben!`,
-                'Speichern',
-                'Abbrechen'
-            );
-            
-            if (!confirmed) return;
-            
-            // Passwort-Dialog anzeigen
-            const pwResult = await showPasswordProtectionDialog(explorerState.filePassword, 'save');
-            if (pwResult === null) return; // Abgebrochen
-            
-            // Passwort aktualisieren
-            const savePassword = pwResult.password;
-            if (pwResult.action === 'new') {
-                explorerState.filePassword = savePassword;
-            } else if (pwResult.action === 'none') {
-                explorerState.filePassword = null;
-            }
-            
-            elements.explorerStatus.textContent = 'Speichere Änderungen...';
-            
-            // SPEICHEROPTIMIERUNG: Undo-Stack leeren vor dem Speichern
-            if (undoRedoState.explorerUndoStack.length > 0) {
-                undoRedoState.explorerUndoStack = [];
-                undoRedoState.explorerRedoStack = [];
-                console.log('[Memory] Undo/Redo Stack geleert für Speichern');
-            }
-            
-            try {
-                // Alle Sheets mit Änderungen sammeln
-                const sheetsToSave = [];
-                
-                // Aktuelles Sheet - SPEICHEROPTIMIERT
-                if (explorerState.editedCells.size > 0) {
-                    const affectedRowsArray = explorerState.affectedRows ? Array.from(explorerState.affectedRows) : [];
-                    const hasRowMoves = affectedRowsArray.length > 0;
-                    
-                    // Nur Styles für betroffene Zeilen senden
-                    let stylesToSend = {};
-                    let richTextToSend = {};
-                    let formulasToSend = {};
-                    let hyperlinksToSend = {};
-                    
-                    if (hasRowMoves) {
-                        const affectedSet = new Set(affectedRowsArray);
-                        for (const [key, value] of Object.entries(explorerState.cellStyles || {})) {
-                            const rowIdx = parseInt(key.split('-')[0]);
-                            if (rowIdx === 0 || affectedSet.has(rowIdx)) {
-                                stylesToSend[key] = value;
-                            }
-                        }
-                        for (const [key, value] of Object.entries(explorerState.richTextCells || {})) {
-                            const rowIdx = parseInt(key.split('-')[0]);
-                            if (rowIdx === 0 || affectedSet.has(rowIdx)) {
-                                richTextToSend[key] = value;
-                            }
-                        }
-                        for (const [key, value] of Object.entries(explorerState.cellFormulas || {})) {
-                            const rowIdx = parseInt(key.split('-')[0]);
-                            if (rowIdx === 0 || affectedSet.has(rowIdx)) {
-                                formulasToSend[key] = value;
-                            }
-                        }
-                        for (const [key, value] of Object.entries(explorerState.cellHyperlinks || {})) {
-                            const rowIdx = parseInt(key.split('-')[0]);
-                            if (rowIdx === 0 || affectedSet.has(rowIdx)) {
-                                hyperlinksToSend[key] = value;
-                            }
-                        }
-                    }
-                    
-                    // STRATEGIE: Bei Row-Move GESAMTES Sheet neu schreiben
-                    // Partial-Rows funktioniert nicht korrekt bei verschobenen Zeilen!
-                    let sheetPayload;
-                    if (hasRowMoves) {
-                        // Row-Move: ALLE Daten senden (Full Rewrite)
-                        sheetPayload = {
-                            sheetName: explorerState.selectedSheet,
-                            headers: explorerState.headers,
-                            data: explorerState.data,
-                            visibleColumns: explorerState.visibleColumns,
-                            hiddenRows: Array.from(explorerState.hiddenRows),
-                            cellStyles: explorerState.cellStyles || {},
-                            cellFormulas: explorerState.cellFormulas || {},
-                            cellHyperlinks: explorerState.cellHyperlinks || {},
-                            richTextCells: explorerState.richTextCells || {},
-                            fullRewrite: true
-                        };
-                        console.log(`[Save] Row-Move: Full Rewrite (${explorerState.data.length} Zeilen, ${Object.keys(explorerState.richTextCells || {}).length} RichText)`);
-                    } else {
-                        // Nur Zell-Edits: Nur geänderte Zellen senden
-                        const changedCells = {};
-                        for (const cellKey of explorerState.editedCells) {
-                            const [rowStr, colStr] = cellKey.split('-');
-                            const rowIdx = parseInt(rowStr);
-                            const colIdx = parseInt(colStr);
-                            if (rowIdx >= 0 && colIdx >= 0 && explorerState.data[rowIdx]) {
-                                changedCells[cellKey] = explorerState.data[rowIdx][colIdx];
-                            }
-                        }
-                        
-                        // WICHTIG: RichText, Formeln, Hyperlinks auch bei einfachen Edits mitsenden!
-                        // Sammle NUR die RichText/Formeln/Hyperlinks für geänderte Zellen
-                        const richTextForChanged = {};
-                        const formulasForChanged = {};
-                        const hyperlinksForChanged = {};
-                        
-                        for (const cellKey of explorerState.editedCells) {
-                            if (explorerState.richTextCells && explorerState.richTextCells[cellKey]) {
-                                richTextForChanged[cellKey] = explorerState.richTextCells[cellKey];
-                            }
-                            if (explorerState.cellFormulas && explorerState.cellFormulas[cellKey]) {
-                                formulasForChanged[cellKey] = explorerState.cellFormulas[cellKey];
-                            }
-                            if (explorerState.cellHyperlinks && explorerState.cellHyperlinks[cellKey]) {
-                                hyperlinksForChanged[cellKey] = explorerState.cellHyperlinks[cellKey];
-                            }
-                        }
-                        
-                        sheetPayload = {
-                            sheetName: explorerState.selectedSheet,
-                            changedCells: changedCells,
-                            richTextCells: Object.keys(richTextForChanged).length > 0 ? richTextForChanged : undefined,
-                            cellFormulas: Object.keys(formulasForChanged).length > 0 ? formulasForChanged : undefined,
-                            cellHyperlinks: Object.keys(hyperlinksForChanged).length > 0 ? hyperlinksForChanged : undefined,
-                            fullRewrite: false
-                        };
-                        console.log(`[Save] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText`);
-                    }
-                    
-                    sheetsToSave.push(sheetPayload);
-                    
-                    // DEBUG: Was wird gesendet?
-                    console.log('[Save] RichText Zellen zum Speichern:', Object.keys(explorerState.richTextCells || {}).length);
-                    console.log('[Save] Affected Rows:', affectedRowsArray.length);
-                }
-                
-                // Sheets aus dem Cache - auch optimiert
-                for (const [sheetName, cached] of explorerState.sheetDataCache) {
-                    if (sheetName !== explorerState.selectedSheet && cached.editedCells.size > 0) {
-                        // Auch Cache-Sheets: nur geänderte Zellen senden
-                        const changedCells = {};
-                        for (const cellKey of cached.editedCells) {
-                            const [rowStr, colStr] = cellKey.split('-');
-                            const rowIdx = parseInt(rowStr);
-                            const colIdx = parseInt(colStr);
-                            if (rowIdx >= 0 && colIdx >= 0 && cached.data[rowIdx]) {
-                                changedCells[cellKey] = cached.data[rowIdx][colIdx];
-                            }
-                        }
-                        sheetsToSave.push({
-                            sheetName: sheetName,
-                            changedCells: changedCells,
-                            fullRewrite: false
-                        });
-                        console.log(`[Save] Cache-Sheet ${sheetName}: ${Object.keys(changedCells).length} geänderte Zellen`);
-                    }
-                }
-                
-                // Speichern über IPC (mit Passwort falls gewählt)
-                // sourcePassword = altes Passwort zum Laden der Datei
-                // password = neues Passwort zum Speichern (null = kein Schutz)
-                const oldPassword = pwResult.action === 'keep' ? explorerState.filePassword : 
-                                   (pwResult.action === 'none' ? explorerState.filePassword : explorerState.filePassword);
-                const result = await window.electronAPI.saveExcelFile({
-                    filePath: explorerState.filePath,
-                    sheets: sheetsToSave,
-                    sourcePassword: oldPassword,
-                    password: savePassword
-                });
-                
-                if (result.success) {
-                    // Nach erfolgreichem Speichern: editedCells leeren
-                    explorerState.editedCells.clear();
-                    explorerState.affectedRows = null; // Betroffene Zeilen zurücksetzen
-                    explorerState.originalData = explorerState.data.map(row => [...row]);
-                    
-                    // Cache aktualisieren - editedCells leeren
-                    for (const [sheetName, cached] of explorerState.sheetDataCache) {
-                        cached.editedCells.clear();
-                        cached.originalData = cached.data.map(row => [...row]);
-                    }
-                    
-                    // Recovery-Daten löschen (keine ungespeicherten Änderungen mehr)
-                    clearExplorerRecoveryData();
-                    
-                    // UI aktualisieren
-                    renderExplorerTable();
-                    updateExplorerEditStatus();
-                    
-                    elements.explorerStatus.textContent = `✓ ${totalChanges} Änderung(en) in ${explorerState.fileName} gespeichert`;
-                    showNotification(`${totalChanges} Änderung(en) gespeichert`, 'success');
-                } else {
-                    // Spezielle Behandlung für "Export empfohlen" Fehler
-                    if (result.recommendation === 'export') {
-                        const useExport = await showConfirmDialog(
-                            '⚠️ Datei zu komplex',
-                            result.message || 'Diese Datei ist zu komplex für direktes Speichern.\n\nMöchten Sie stattdessen exportieren?',
-                            'Als XLSX exportieren',
-                            'Abbrechen'
-                        );
-                        
-                        if (useExport) {
-                            // Export-Dialog öffnen
-                            await exportExplorerData();
-                            return;
-                        }
-                    }
-                    
-                    elements.explorerStatus.textContent = `Fehler: ${result.error}`;
-                    showNotification(`Speichern fehlgeschlagen: ${result.error}`, 'error');
-                }
-            } catch (error) {
-                elements.explorerStatus.textContent = `Fehler: ${error.message}`;
-                showNotification(`Speichern fehlgeschlagen: ${error.message}`, 'error');
-            }
         }
         
         // Dialog für Passwortschutz beim Speichern/Exportieren
