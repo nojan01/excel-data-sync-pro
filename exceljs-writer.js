@@ -768,6 +768,8 @@ async function processSheet(worksheet, sheetData) {
         cellFormulas = {},
         cellHyperlinks = {},
         richTextCells = {},
+        rowHighlights = {},  // NEU: Zeilenfarben (rowIndex -> 'green'|'yellow'|'orange'|'red'|'blue'|'purple')
+        clearedRowHighlights = [],  // NEU: Zeilen deren Markierung entfernt wurde (Array von rowIndex)
         affectedRows = [],
         fullRewrite = false,
         structuralChange = false,  // NEU: Signalisiert strukturelle Änderung (Spalte gelöscht/eingefügt)
@@ -1205,6 +1207,71 @@ async function processSheet(worksheet, sheetData) {
                 if (rowHeights[rowIdx + 2]) {
                     row.height = rowHeights[rowIdx + 2];
                 }
+            }
+        }
+    }
+    
+    // Entfernte Zeilenfarben (cleared Row Highlights) verarbeiten - Farbe explizit entfernen
+    if (clearedRowHighlights && clearedRowHighlights.length > 0) {
+        console.log(`   Entfernte Markierungen: ${clearedRowHighlights.length} Zeilen`);
+        
+        const colCount = headers ? headers.length : (data[0] ? data[0].length : 0);
+        
+        for (const rowIdx of clearedRowHighlights) {
+            // Excel-Zeile = rowIdx + 2 (Header ist Zeile 1, Daten beginnen bei 2)
+            const excelRowNum = rowIdx + 2;
+            const row = worksheet.getRow(excelRowNum);
+            
+            // Alle Zellen in der Zeile - Fill entfernen (kein Hintergrund)
+            for (let colIdx = 0; colIdx < colCount; colIdx++) {
+                const cell = row.getCell(colIdx + 1);
+                // Fill explizit auf "kein Fill" setzen
+                cell.fill = {
+                    type: 'pattern',
+                    pattern: 'none'
+                };
+            }
+            console.log(`   Zeile ${rowIdx} (Excel ${excelRowNum}): Farbe entfernt`);
+        }
+    }
+    
+    // Zeilenfarben (Row Highlights) anwenden
+    if (rowHighlights && Object.keys(rowHighlights).length > 0) {
+        // Farbmapping: Name -> ARGB
+        const highlightColors = {
+            'green': 'FF90EE90',   // Light Green
+            'yellow': 'FFFFFF00',  // Yellow
+            'orange': 'FFFFA500',  // Orange
+            'red': 'FFFF6B6B',     // Light Red
+            'blue': 'FF87CEEB',    // Sky Blue
+            'purple': 'FFDDA0DD'   // Plum
+        };
+        
+        console.log(`   Zeilenfarben anwenden: ${Object.keys(rowHighlights).length} Zeilen`);
+        
+        for (const [rowIdxStr, color] of Object.entries(rowHighlights)) {
+            const rowIdx = parseInt(rowIdxStr, 10);
+            const argbColor = highlightColors[color];
+            
+            if (!argbColor) {
+                console.warn(`   Unbekannte Farbe: ${color} für Zeile ${rowIdx}`);
+                continue;
+            }
+            
+            // Excel-Zeile = rowIdx + 2 (Header ist Zeile 1, Daten beginnen bei 2)
+            const excelRowNum = rowIdx + 2;
+            const row = worksheet.getRow(excelRowNum);
+            
+            // Alle Zellen in der Zeile mit der Hintergrundfarbe füllen
+            const colCount = headers ? headers.length : (data[0] ? data[0].length : 0);
+            for (let colIdx = 0; colIdx < colCount; colIdx++) {
+                const cell = row.getCell(colIdx + 1);
+                // Bestehenden Style erhalten und nur Fill hinzufügen/überschreiben
+                cell.fill = {
+                    type: 'pattern',
+                    pattern: 'solid',
+                    fgColor: { argb: argbColor }
+                };
             }
         }
     }

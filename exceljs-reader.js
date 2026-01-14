@@ -52,6 +52,75 @@ function parseRangeString(rangeStr) {
 }
 
 /**
+ * Erkennt Zeilenfarben basierend auf cellStyles.
+ * Eine Zeile wird als "markiert" erkannt, wenn ALLE Zellen die gleiche Hintergrundfarbe haben
+ * und diese Farbe einer der bekannten Highlight-Farben entspricht.
+ * 
+ * @param {Object} cellStyles - Map von "rowIndex-colIndex" zu Style-Objekt mit fill
+ * @param {number} rowCount - Anzahl der Datenzeilen
+ * @param {number} colCount - Anzahl der Spalten
+ * @returns {Array} Array von [rowIndex, colorName] Paaren
+ */
+function detectRowHighlights(cellStyles, rowCount, colCount) {
+    const highlights = [];
+    
+    // Mapping von ARGB-Farben zu Highlight-Namen (ohne Alpha-Kanal)
+    const colorMapping = {
+        '90EE90': 'green',   // Light Green
+        'FFFF00': 'yellow',  // Yellow
+        'FFA500': 'orange',  // Orange
+        'FF6B6B': 'red',     // Light Red
+        '87CEEB': 'blue',    // Sky Blue
+        'DDA0DD': 'purple',  // Plum
+        // Alternative Farben die auch erkannt werden sollen
+        '4CAF50': 'green',
+        'FFEB3B': 'yellow',
+        'FF9800': 'orange',
+        'F44336': 'red',
+        '2196F3': 'blue',
+        '9C27B0': 'purple'
+    };
+    
+    // Für jede Zeile prüfen
+    for (let rowIdx = 0; rowIdx < rowCount; rowIdx++) {
+        const rowFills = [];
+        
+        // Alle Zellen in der Zeile durchgehen
+        for (let colIdx = 0; colIdx < colCount; colIdx++) {
+            // cellStyles-Key Format: "rowIndex-colIndex" wobei rowIndex 1-basiert ist für Datenzeilen
+            const styleKey = `${rowIdx + 1}-${colIdx}`;
+            const style = cellStyles[styleKey];
+            
+            if (style && style.fill) {
+                // Fill ist im Format "#RRGGBB"
+                const fillHex = style.fill.replace('#', '').toUpperCase();
+                rowFills.push(fillHex);
+            } else {
+                rowFills.push(null);
+            }
+        }
+        
+        // Prüfen ob alle Zellen die gleiche Farbe haben (und nicht null)
+        const nonNullFills = rowFills.filter(f => f !== null);
+        if (nonNullFills.length === colCount && nonNullFills.length > 0) {
+            const firstFill = nonNullFills[0];
+            const allSame = nonNullFills.every(f => f === firstFill);
+            
+            if (allSame) {
+                // Prüfen ob die Farbe einer bekannten Highlight-Farbe entspricht
+                const colorName = colorMapping[firstFill];
+                if (colorName) {
+                    highlights.push([rowIdx, colorName]);
+                    console.log(`[ExcelJS] Zeile ${rowIdx} als '${colorName}' erkannt (Farbe: #${firstFill})`);
+                }
+            }
+        }
+    }
+    
+    return highlights;
+}
+
+/**
  * Extrahiert Fill-Farben direkt aus der XLSX-Datei (ZIP-Format).
  * Dies ist ein Workaround für ExcelJS, das bei bestimmten Excel-Dateien
  * (z.B. von SoftMaker/PlanMaker erstellt) keine Fills erkennt.
@@ -600,6 +669,10 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         }
         debugLog('[ExcelJS] Alle Style-Keys: ' + Object.keys(cellStyles).join(', '));
         
+        // Zeilenfarben erkennen (wenn alle Zellen einer Zeile die gleiche Hintergrundfarbe haben)
+        const rowHighlights = detectRowHighlights(cellStyles, data.length, headers.length);
+        debugLog(`[ExcelJS] Erkannte Zeilenfarben: ${rowHighlights.length} Zeilen`);
+        
         return {
             success: true,
             headers,
@@ -612,6 +685,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             richTextCells,
             mergedCells,
             autoFilterRange,
+            rowHighlights,  // NEU: Zeilenfarben als Array von [rowIndex, colorName]
             stats: {
                 rows: data.length,
                 columns: headers.length,

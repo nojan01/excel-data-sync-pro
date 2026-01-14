@@ -552,13 +552,13 @@
             background: rgba(33, 150, 243, 0.4) !important;
         }
         
-        /* Zeilen-Highlighting */
-        .row-highlight-green { background: rgba(76, 175, 80, 0.2) !important; }
-        .row-highlight-yellow { background: rgba(255, 235, 59, 0.25) !important; }
-        .row-highlight-orange { background: rgba(255, 152, 0, 0.25) !important; }
-        .row-highlight-red { background: rgba(244, 67, 54, 0.2) !important; }
-        .row-highlight-blue { background: rgba(33, 150, 243, 0.2) !important; }
-        .row-highlight-purple { background: rgba(156, 39, 176, 0.2) !important; }
+        /* Zeilen-Highlighting - auf td anwenden für höhere Spezifität */
+        .row-highlight-green td { background: rgba(76, 175, 80, 0.2) !important; }
+        .row-highlight-yellow td { background: rgba(255, 235, 59, 0.25) !important; }
+        .row-highlight-orange td { background: rgba(255, 152, 0, 0.25) !important; }
+        .row-highlight-red td { background: rgba(244, 67, 54, 0.2) !important; }
+        .row-highlight-blue td { background: rgba(33, 150, 243, 0.2) !important; }
+        .row-highlight-purple td { background: rgba(156, 39, 176, 0.2) !important; }
         
         /* Kontextmenü */
         .context-menu {
@@ -3798,6 +3798,7 @@
 
         // ==================== Auto-Save System ====================
         const AUTO_SAVE_KEY = 'excelsync_autosave';
+        const CLEAN_SHUTDOWN_KEY = 'excelsync_clean_shutdown';
         const AUTO_SAVE_INTERVAL = 30000; // 30 Sekunden
         let autoSaveTimer = null;
         
@@ -3870,12 +3871,34 @@
         
         function clearAutoSave() {
             localStorage.removeItem(AUTO_SAVE_KEY);
+            localStorage.removeItem(CLEAN_SHUTDOWN_KEY);
+        }
+        
+        // Markiert einen sauberen App-Shutdown (kein Crash)
+        function markCleanShutdown() {
+            localStorage.setItem(CLEAN_SHUTDOWN_KEY, 'true');
+            // AutoSave-Daten löschen bei normalem Beenden
+            localStorage.removeItem(AUTO_SAVE_KEY);
+        }
+        
+        // Prüft ob der letzte Shutdown sauber war
+        function wasCleanShutdown() {
+            return localStorage.getItem(CLEAN_SHUTDOWN_KEY) === 'true';
         }
         
         async function checkAutoSaveRecovery() {
             try {
                 const saved = localStorage.getItem(AUTO_SAVE_KEY);
-                if (!saved) return;
+                const cleanShutdown = wasCleanShutdown();
+                
+                // Clean-Shutdown-Flag löschen für nächsten Start
+                localStorage.removeItem(CLEAN_SHUTDOWN_KEY);
+                
+                // Wenn sauberer Shutdown oder keine Daten -> nichts tun
+                if (!saved || cleanShutdown) {
+                    if (saved) clearAutoSave(); // Alte Daten löschen falls vorhanden
+                    return;
+                }
                 
                 const data = JSON.parse(saved);
                 const age = Date.now() - data.timestamp;
@@ -6460,6 +6483,7 @@
             sortType: 'auto',  // 'auto', 'alpha-asc', 'alpha-desc', 'num-asc', 'num-desc', 'date-asc', 'date-desc'
             // Zeilen-Markierungen
             rowHighlights: new Map(),  // rowIndex -> 'green'|'yellow'|'orange'|'red'|'blue'|'purple'
+            originalRowHighlights: new Map(),  // Original-Highlights beim Laden (für Erkennung entfernter Markierungen)
             // Zeilen-Auswahl für Verschiebung
             selectedRows: new Set(),  // Set von originalIndex Werten
             moveMode: false,  // Ob Verschiebe-Modus aktiv ist
@@ -7063,12 +7087,30 @@
         
         function setRowHighlight(rowIndex, color) {
             explorerState.rowHighlights.set(rowIndex, color);
+            // Strukturelle Änderung markieren für Export
+            explorerState.editedCells.set('_rowHighlightChanged', true);
             applyRowHighlights();
         }
         
         function clearRowHighlight(rowIndex) {
             explorerState.rowHighlights.delete(rowIndex);
+            // Strukturelle Änderung markieren für Export
+            explorerState.editedCells.set('_rowHighlightChanged', true);
+            
+            // Fill aus cellStyles für alle Zellen dieser Zeile entfernen
+            // (damit die inline-Styles nicht die Entfernung überschreiben)
+            // WICHTIG: cellStyles verwendet 1-basierte rowIndex Keys!
+            const colCount = explorerState.headers.length;
+            for (let colIdx = 0; colIdx < colCount; colIdx++) {
+                const cellKey = `${rowIndex + 1}-${colIdx}`;
+                if (explorerState.cellStyles[cellKey] && explorerState.cellStyles[cellKey].fill) {
+                    delete explorerState.cellStyles[cellKey].fill;
+                }
+            }
+            
             applyRowHighlights();
+            // Tabelle neu rendern um die Styles zu aktualisieren
+            renderExplorerTable();
         }
         
         function applyRowHighlights() {
@@ -7133,6 +7175,9 @@
             for (let col = 0; col < explorerState.headers.length; col++) {
                 explorerState.editedCells.set(`${insertIndex}-${col}`, '');
             }
+            
+            // WICHTIG: Strukturelle Änderung markieren für Export (Full Rewrite nötig)
+            explorerState.editedCells.set('_rowInserted', true);
             
             // UI aktualisieren
             filterExplorerData();
@@ -9091,7 +9136,16 @@
             explorerState.sortColumn = null; // Sortierung zurücksetzen
             explorerState.sortDirection = null;
             explorerState.editedCells.clear(); // Bearbeitungen zurücksetzen
-            explorerState.rowHighlights.clear(); // Highlights zurücksetzen
+            // Zeilenfarben aus Excel laden (oder leeren wenn keine vorhanden)
+            explorerState.rowHighlights.clear();
+            explorerState.originalRowHighlights.clear();
+            if (result.rowHighlights && result.rowHighlights.length > 0) {
+                for (const [rowIdx, colorName] of result.rowHighlights) {
+                    explorerState.rowHighlights.set(rowIdx, colorName);
+                    explorerState.originalRowHighlights.set(rowIdx, colorName);  // Original-Zustand merken
+                }
+                console.log(`[Explorer] ${result.rowHighlights.length} Zeilenfarben aus Excel geladen`);
+            }
             // Data Validations (Dropdown-Listen) laden
             explorerState.dataValidations = result.dataValidations || {};
             // Cell Styles (Formatierungen) laden
@@ -11254,15 +11308,19 @@
                         const rowsFiltered = explorerState.filteredData.length < explorerState.data.length;
                         const isFiltered = (hasActiveFilters || hasSearchFilter) && rowsFiltered;
                         
-                        // Strukturelle Änderungen erkennen (Spalte gelöscht/eingefügt/verschoben, Zeilen verschoben, Filter aktiv)
+                        // Strukturelle Änderungen erkennen (Spalte/Zeile gelöscht/eingefügt/verschoben, Filter aktiv)
                         const hasStructuralChanges = hasRowMoves || 
                             explorerState.editedCells.has('_columnDeleted') || 
                             explorerState.editedCells.has('_columnInserted') ||
                             explorerState.editedCells.has('_columnMoved') ||
                             explorerState.editedCells.has('_rowsReordered') ||
+                            explorerState.editedCells.has('_rowInserted') ||  // Zeile eingefügt
+                            explorerState.editedCells.has('_rowDeleted') ||   // Zeile gelöscht
+                            explorerState.editedCells.has('_rowVisibilityChanged') ||  // Zeilen ein-/ausgeblendet
+                            explorerState.editedCells.has('_rowHighlightChanged') ||   // Zeilenfarben geändert
                             isFiltered;  // Filter = strukturelle Änderung (nur gefilterte Zeilen exportieren)
                         
-                        console.log(`[Export Debug] hasRowMoves: ${hasRowMoves}, _columnDeleted: ${explorerState.editedCells.has('_columnDeleted')}, _columnInserted: ${explorerState.editedCells.has('_columnInserted')}, _columnMoved: ${explorerState.editedCells.has('_columnMoved')}, isFiltered: ${isFiltered} (${explorerState.filteredData.length}/${explorerState.data.length} Zeilen), hasStructuralChanges: ${hasStructuralChanges}`);
+                        console.log(`[Export Debug] hasRowMoves: ${hasRowMoves}, _columnDeleted: ${explorerState.editedCells.has('_columnDeleted')}, _columnInserted: ${explorerState.editedCells.has('_columnInserted')}, _columnMoved: ${explorerState.editedCells.has('_columnMoved')}, _rowInserted: ${explorerState.editedCells.has('_rowInserted')}, _rowDeleted: ${explorerState.editedCells.has('_rowDeleted')}, _rowVisibilityChanged: ${explorerState.editedCells.has('_rowVisibilityChanged')}, isFiltered: ${isFiltered} (${explorerState.filteredData.length}/${explorerState.data.length} Zeilen), hasStructuralChanges: ${hasStructuralChanges}`);
                         
                         // HiddenRows aus dem aktuellen State ermitteln
                         const currentHiddenRows = [];
@@ -11479,6 +11537,31 @@
                                 columnOrder = null;
                             }
                             
+                            // RowHighlights für Export vorbereiten (originalIndex -> newIndex mappen)
+                            const exportRowHighlights = {};
+                            explorerState.rowHighlights.forEach((color, originalIndex) => {
+                                // Finde den neuen Index in filteredData
+                                const newIdx = explorerState.filteredData.findIndex(item => item.originalIndex === originalIndex);
+                                if (newIdx !== -1) {
+                                    exportRowHighlights[newIdx] = color;
+                                }
+                            });
+                            
+                            // ClearedRowHighlights: Zeilen die ursprünglich markiert waren, jetzt aber nicht mehr
+                            const clearedRowHighlights = [];
+                            explorerState.originalRowHighlights.forEach((color, originalIndex) => {
+                                // Wenn diese Zeile nicht mehr in rowHighlights ist, wurde sie entfernt
+                                if (!explorerState.rowHighlights.has(originalIndex)) {
+                                    const newIdx = explorerState.filteredData.findIndex(item => item.originalIndex === originalIndex);
+                                    if (newIdx !== -1) {
+                                        clearedRowHighlights.push(newIdx);
+                                    }
+                                }
+                            });
+                            if (clearedRowHighlights.length > 0) {
+                                console.log(`[Export] ${clearedRowHighlights.length} entfernte Zeilen-Markierungen: ${clearedRowHighlights.join(', ')}`);
+                            }
+                            
                             sheetData = {
                                 sheetName: sheetName,
                                 headers: exportHeaders,
@@ -11490,6 +11573,8 @@
                                 cellFormulas: exportCellFormulas,
                                 cellHyperlinks: exportCellHyperlinks,
                                 richTextCells: exportRichTextCells,
+                                rowHighlights: exportRowHighlights,  // Zeilenfarben
+                                clearedRowHighlights: clearedRowHighlights,  // Entfernte Markierungen
                                 autoFilterRange: explorerState.autoFilterRange,
                                 fullRewrite: true,
                                 structuralChange: true,  // Signalisiert dass Styles komplett zurückgesetzt werden müssen
@@ -11498,7 +11583,7 @@
                                 affectedRows: affectedRowsArray,  // Betroffene Zeilen bei Row-Move für Style-Reset
                                 rowMapping: hasRowMoves ? explorerState.rowMapping : null  // Mapping für Zeilen-Verschiebung
                             };
-                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${hasRowMoves ? 'ja' : 'nein'}, AutoFilter: ${explorerState.autoFilterRange || 'none'})`);
+                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${hasRowMoves ? 'ja' : 'nein'}, AutoFilter: ${explorerState.autoFilterRange || 'none'})`);
                         } else {
                             // Nur Zell-Edits: changedCells
                             const changedCells = {};
@@ -11530,10 +11615,11 @@
                                 changedCells: changedCells,
                                 richTextCells: Object.keys(richTextForChanged).length > 0 ? richTextForChanged : undefined,
                                 hiddenColumns: hiddenCols,
+                                hiddenRows: currentHiddenRows,  // Auch bei Zell-Edits versteckte Zeilen übergeben
                                 autoFilterRange: explorerState.autoFilterRange,
                                 fullRewrite: false
                             };
-                            console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${hiddenCols.length} versteckte Spalten, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
+                            console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
                         }
                     } else if (cachedSheet) {
                         // Gecachtes Sheet mit Änderungen - keine Styles senden (Backend behält Originale)
@@ -11578,24 +11664,72 @@
                     const pwInfo = exportPassword ? ' (passwortgeschützt)' : '';
                     elements.explorerStatus.textContent = `✓ ${selectedSheets.length} Arbeitsblatt/blätter exportiert${pwInfo}: ${savePath}`;
                     
-                    // WICHTIG: Nach erfolgreichem Export alle Änderungsmarkierungen zurücksetzen
-                    // Damit wird die Warnung "Ohne Speichern schließen" nicht mehr angezeigt
+                    // WICHTIG: Gespeicherte Datei neu einlesen damit alle States synchron sind
+                    // Das ist die sauberste Lösung um sicherzustellen dass data, originalData, filteredData etc. korrekt sind
+                    console.log('[Export] Lade gespeicherte Datei neu...');
+                    
+                    // Erst alle Änderungsmarkierungen zurücksetzen (damit hasUnsavedChanges() false zurückgibt)
                     explorerState.editedCells.clear();
                     explorerState.affectedRows?.clear();
-                    
-                    // Auch im Cache für alle exportierten Sheets die Änderungen zurücksetzen
-                    for (const sheetName of selectedSheets) {
-                        const cachedSheet = explorerState.sheetDataCache.get(sheetName);
-                        if (cachedSheet) {
-                            cachedSheet.editedCells.clear();
-                        }
+                    explorerState.rowMapping = null;
+                    for (const [sheetName, cachedSheet] of explorerState.sheetDataCache) {
+                        cachedSheet.editedCells.clear();
                     }
                     
-                    console.log('[Export] Änderungsmarkierungen zurückgesetzt nach erfolgreichem Export');
+                    // Datei neu laden (skipUnsavedCheck da wir gerade gespeichert haben)
+                    await reloadExplorerFile(savePath, exportPassword);
+                    
+                    showFloatingStatus(`✓ Export erfolgreich${pwInfo}`, 'success');
                 } else {
                     elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 }
             }
+        }
+        
+        // Interne Funktion: Lädt eine Datei ohne "ungespeicherte Änderungen"-Prüfung
+        // Wird nach dem Speichern verwendet um den State zu synchronisieren
+        async function reloadExplorerFile(filePath, password = null) {
+            elements.explorerStatus.textContent = 'Lade Datei...';
+            
+            let result = await window.electronAPI.readExcelFile(filePath, password);
+            
+            if (!result.success) {
+                console.error('[Reload] Fehler beim Neuladen:', result.error);
+                elements.explorerStatus.textContent = `Fehler beim Neuladen: ${result.error}`;
+                return;
+            }
+            
+            // Cache komplett leeren
+            explorerState.sheetDataCache.clear();
+            explorerState.editedCells.clear();
+            explorerState.rowHighlights.clear();
+            explorerState.affectedRows?.clear();
+            explorerState.rowMapping = null;
+            
+            // State aktualisieren
+            explorerState.filePath = filePath;
+            explorerState.fileName = result.fileName;
+            explorerState.sheets = result.sheets;
+            explorerState.filePassword = password;
+            
+            // UI aktualisieren
+            document.getElementById('explorerFileName').textContent = explorerState.fileName;
+            
+            // Sheet-Dropdown füllen
+            elements.explorerSheetSelect.innerHTML = explorerState.sheets
+                .map(s => `<option value="${s}">${s}</option>`)
+                .join('');
+            
+            // Aktuelles Sheet auswählen (falls es noch existiert)
+            const currentSheet = explorerState.selectedSheet;
+            if (currentSheet && explorerState.sheets.includes(currentSheet)) {
+                elements.explorerSheetSelect.value = currentSheet;
+                await loadExplorerSheet(currentSheet);
+            } else if (explorerState.sheets.length > 0) {
+                await loadExplorerSheet(explorerState.sheets[0]);
+            }
+            
+            console.log('[Reload] Datei neu geladen:', filePath);
         }
         
         // Dialog zur Auswahl der Arbeitsblätter
@@ -12972,6 +13106,8 @@
         // Session-Locks beim Verlassen der Seite aufräumen
         window.addEventListener('beforeunload', () => {
             cleanupSessionLocks();
+            // Markiere sauberen Shutdown - AutoSave wird gelöscht
+            markCleanShutdown();
         });
         
         async function loadNetworkLogs() {
