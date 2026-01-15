@@ -537,6 +537,50 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     cellHyperlinks[styleKey] = cell.hyperlink.hyperlink || cell.hyperlink;
                 }
                 
+                // WICHTIG: Datums-Behandlung VOR der allgemeinen Objekt-Behandlung!
+                // Date ist auch ein Objekt, würde sonst mit String() konvertiert werden
+                if (cellValue instanceof Date) {
+                    // Excel-Format aus numFmt extrahieren (falls vorhanden)
+                    const numFmt = cell.numFmt || '';
+                    
+                    // Prüfe ob es ein Zeit-Format ist (h für Stunden, : für Zeit-Separator)
+                    // WICHTIG: 'm' allein ist Monat, nicht Minute!
+                    // Minute wird nur nach 'h' oder vor 's' verwendet
+                    const hasTime = numFmt.includes('h') || numFmt.includes('H') || numFmt.includes(':');
+                    
+                    if (hasTime) {
+                        // Mit Zeit: ISO-Format verwenden
+                        cellValue = cellValue.toISOString().replace('T', ' ').substring(0, 19);
+                    } else {
+                        // Nur Datum: Format aus numFmt ableiten
+                        const day = cellValue.getDate();
+                        const month = cellValue.getMonth() + 1;
+                        const year = cellValue.getFullYear();
+                        
+                        // Führende Nullen hinzufügen wenn Format es verlangt
+                        const dayStr = numFmt.includes('dd') ? String(day).padStart(2, '0') : String(day);
+                        const monthStr = numFmt.includes('mm') ? String(month).padStart(2, '0') : String(month);
+                        
+                        // Jahr-Format: yyyy = 4 Ziffern, yy = 2 Ziffern
+                        let yearStr = String(year);
+                        if (!numFmt.includes('yyyy') && numFmt.includes('yy')) {
+                            yearStr = yearStr.substring(2);
+                        }
+                        
+                        // Separator bestimmen: ., /, oder -
+                        if (numFmt.includes('.')) {
+                            // Deutsches Format: D.M.YYYY
+                            cellValue = `${dayStr}.${monthStr}.${yearStr}`;
+                        } else if (numFmt.includes('-')) {
+                            // ISO-ähnlich: M-D-YYYY
+                            cellValue = `${monthStr}-${dayStr}-${yearStr}`;
+                        } else {
+                            // Standard: D.M.YYYY (da ursprüngliche Datei deutsches Format hatte)
+                            cellValue = `${dayStr}.${monthStr}.${yearStr}`;
+                        }
+                    }
+                }
+                
                 // Objekt-Werte behandeln (Rich Text, Hyperlinks, etc.)
                 // WICHTIG: Nur wenn es KEINE Formel war (die wurde oben schon behandelt)
                 // Wir prüfen cell.value (nicht cellValue), um zu sehen ob es ein spezielles Objekt ist
@@ -614,9 +658,25 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     cellStyles[styleKey] = style;
                 }
                 
-                // Datum formatieren
+                // WICHTIG: Date-Objekte MÜSSEN hier als String formatiert werden
+                // da sie sonst bei der IPC-Serialisierung zu "Thu Sep 19 2013..." werden
                 if (cellValue instanceof Date) {
-                    cellValue = cellValue.toISOString().split('T')[0];
+                    // Fallback-Formatierung falls oben nicht gegriffen hat
+                    const day = cellValue.getDate();
+                    const month = cellValue.getMonth() + 1;
+                    const year = cellValue.getFullYear();
+                    cellValue = `${day}.${month}.${year}`;
+                }
+                // Auch String-Werte prüfen die wie Date.toString() aussehen
+                else if (typeof cellValue === 'string' && /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s/.test(cellValue)) {
+                    // Versuche den Date-String zu parsen
+                    const parsedDate = new Date(cellValue);
+                    if (!isNaN(parsedDate.getTime())) {
+                        const day = parsedDate.getDate();
+                        const month = parsedDate.getMonth() + 1;
+                        const year = parsedDate.getFullYear();
+                        cellValue = `${day}.${month}.${year}`;
+                    }
                 }
                 
                 // Setze den Wert an der korrekten Position
