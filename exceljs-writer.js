@@ -837,6 +837,61 @@ async function processSheet(worksheet, sheetData) {
             worksheet.autoFilter = autoFilterRange;
         }
         
+        // Versteckte Zeilen setzen
+        if (hiddenRows && hiddenRows.length > 0) {
+            const hiddenRowSet = new Set(hiddenRows);
+            for (let rowIdx = 0; rowIdx < worksheet.rowCount - 1; rowIdx++) {
+                const row = worksheet.getRow(rowIdx + 2);  // +2 weil Header in Zeile 1
+                row.hidden = hiddenRowSet.has(rowIdx);
+            }
+            console.log(`   Versteckte Zeilen gesetzt: ${hiddenRows.length}`);
+        }
+        
+        return;
+    }
+    
+    // MODUS 1b: Nur Metadaten-Änderungen (keine Zell-Edits, keine strukturellen Änderungen)
+    // Z.B. nur Zeilen/Spalten ausblenden ohne andere Änderungen
+    if (changedCells && !fullRewrite && Object.keys(changedCells).length === 0) {
+        console.log(`   MODUS 1b: Nur Metadaten-Änderungen`);
+        
+        // Versteckte Spalten setzen
+        if (hiddenColumns !== undefined) {
+            const hiddenSet = new Set(hiddenColumns || []);
+            const columnCount = worksheet.columnCount || 0;
+            for (let colIdx = 0; colIdx < columnCount; colIdx++) {
+                const col = worksheet.getColumn(colIdx + 1);
+                const shouldBeHidden = hiddenSet.has(colIdx);
+                if (col.hidden !== shouldBeHidden) {
+                    col.hidden = shouldBeHidden;
+                }
+            }
+            console.log(`   Versteckte Spalten gesetzt: ${hiddenColumns?.length || 0}`);
+        }
+        
+        // Versteckte Zeilen setzen
+        if (hiddenRows && hiddenRows.length > 0) {
+            const hiddenRowSet = new Set(hiddenRows);
+            for (let rowIdx = 0; rowIdx < worksheet.rowCount - 1; rowIdx++) {
+                const row = worksheet.getRow(rowIdx + 2);  // +2 weil Header in Zeile 1
+                row.hidden = hiddenRowSet.has(rowIdx);
+            }
+            console.log(`   Versteckte Zeilen gesetzt: ${hiddenRows.length}`);
+        } else {
+            // Alle Zeilen einblenden wenn keine versteckten Zeilen übergeben wurden
+            for (let rowIdx = 0; rowIdx < worksheet.rowCount - 1; rowIdx++) {
+                const row = worksheet.getRow(rowIdx + 2);
+                if (row.hidden) {
+                    row.hidden = false;
+                }
+            }
+        }
+        
+        // AutoFilter setzen/erhalten, falls übergeben
+        if (autoFilterRange) {
+            worksheet.autoFilter = autoFilterRange;
+        }
+        
         return;
     }
     
@@ -1064,9 +1119,19 @@ async function processSheet(worksheet, sheetData) {
             }
         } else {
             // Normales Schreiben ohne rowMapping
+            // Bei strukturellen Änderungen (Filter, Zeilen löschen, etc.) müssen die Styles
+            // VORHER zurückgesetzt werden, damit die neuen Frontend-Styles korrekt angewendet werden können
+            const needsStyleReset = fullRewrite && structuralChange && !hasRowMapping;
+            
             data.forEach((row, rowIndex) => {
                 row.forEach((value, colIndex) => {
                     const cell = worksheet.getCell(rowIndex + 2, colIndex + 1);
+                    
+                    // Bei strukturellen Änderungen: Style zurücksetzen (wird später via applyStyles neu gesetzt)
+                    if (needsStyleReset) {
+                        cell.style = {};
+                    }
+                    
                     cell.value = value === null || value === undefined ? '' : value;
                 });
                 

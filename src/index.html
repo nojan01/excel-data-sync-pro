@@ -739,14 +739,21 @@
             font-size: 10px;
             font-style: italic;
             font-weight: bold;
-            color: var(--primary);
-            opacity: 0.7;
+            color: #4fc3f7;
+            opacity: 0.9;
             pointer-events: none;
-            background: rgba(var(--bg-rgb), 0.8);
-            padding: 0 2px;
-            border-radius: 2px;
+            background: var(--bg-secondary);
+            padding: 1px 3px;
+            border-radius: 3px;
             line-height: 1;
             z-index: 1;
+            border: 1px solid rgba(79, 195, 247, 0.5);
+        }
+        
+        body.light-theme .formula-icon {
+            color: #0288d1;
+            background: #e3f2fd;
+            border-color: rgba(2, 136, 209, 0.3);
         }
         
         .results-table td.has-formula.has-dropdown .formula-icon {
@@ -755,8 +762,15 @@
         
         .results-table td.has-formula:hover .formula-icon {
             opacity: 1;
-            background: var(--primary);
+            background: #4fc3f7;
+            color: #1a1a1a;
+            border-color: #4fc3f7;
+        }
+        
+        body.light-theme .results-table td.has-formula:hover .formula-icon {
+            background: #0288d1;
             color: white;
+            border-color: #0288d1;
         }
 
         /* Hyperlink Styles */
@@ -3006,9 +3020,15 @@
                 showRow: 'Zeile einblenden',
                 showAllRows: 'Alle Zeilen einblenden',
                 hiddenRows: 'versteckte Zeilen',
+                hiddenColumns: 'versteckte Spalten',
                 rowHidden: 'Zeile ausgeblendet',
                 rowShown: 'Zeile eingeblendet',
                 allRowsShown: 'Alle Zeilen eingeblendet',
+                columnHidden: 'Spalte ausgeblendet',
+                columnShown: 'Spalte eingeblendet',
+                allColumnsShown: 'Alle Spalten eingeblendet',
+                showColumn: 'Spalte einblenden',
+                showAllColumns: 'Alle Spalten einblenden',
                 insertColumnBefore: 'Spalte links einfügen',
                 insertColumnAfter: 'Spalte rechts einfügen',
                 deleteColumn: 'Spalte löschen',
@@ -3220,9 +3240,15 @@
                 showRow: 'Show row',
                 showAllRows: 'Show all rows',
                 hiddenRows: 'hidden rows',
+                hiddenColumns: 'hidden columns',
                 rowHidden: 'Row hidden',
                 rowShown: 'Row shown',
                 allRowsShown: 'All rows shown',
+                columnHidden: 'Column hidden',
+                columnShown: 'Column shown',
+                allColumnsShown: 'All columns shown',
+                showColumn: 'Show column',
+                showAllColumns: 'Show all columns',
                 insertColumnBefore: 'Insert column left',
                 insertColumnAfter: 'Insert column right',
                 deleteColumn: 'Delete column',
@@ -5364,6 +5390,17 @@
             const comment = elements.newRowComment.value;
             const checkValue = data[state.mapping.duplicateCheckColumn] || '';
             
+            // Prüfe ob bereits in Zieldatei (Datei 2)
+            if (checkValue) {
+                const duplicate = checkForDuplicate(checkValue);
+                if (duplicate) {
+                    const errorMsg = `⚠️ Zeile bereits in Zieldatei vorhanden (Zeile ${duplicate.rowIndex})`;
+                    showStatus(elements.transferStatus, errorMsg, 'warning');
+                    showStatus(elements.newRowStatus, errorMsg, 'warning');
+                    return;
+                }
+            }
+            
             state.transferQueue.push({
                 data: data,
                 flag: flag,
@@ -5431,6 +5468,17 @@
             // Zur Warteschlange hinzufügen und direkt übertragen
             if (state.file2.filePath) {
                 const checkValue = data[state.mapping.duplicateCheckColumn] || '';
+                
+                // Prüfe ob bereits in Zieldatei (Datei 2)
+                if (checkValue) {
+                    const duplicate = checkForDuplicate(checkValue);
+                    if (duplicate) {
+                        const errorMsg = `⚠️ Zeile bereits in Zieldatei vorhanden (Zeile ${duplicate.rowIndex})`;
+                        showStatus(elements.transferStatus, errorMsg, 'warning');
+                        showStatus(elements.newRowStatus, errorMsg, 'warning');
+                        return;
+                    }
+                }
                 
                 state.transferQueue.push({
                     data: data,
@@ -5551,6 +5599,10 @@
             // Zur Warteschlange hinzufügen und direkt übertragen
             if (state.file2.filePath) {
                 // Zeilen zur Warteschlange hinzufügen
+                let addedCount = 0;
+                let skippedQueue = 0;
+                let skippedTarget = 0;
+                
                 for (const rowIndex of state.selectedRows) {
                     const row = state.searchResults[rowIndex];
                     if (!row) continue;
@@ -5558,14 +5610,46 @@
                     const rowData = getEditedRowData(rowIndex);
                     const checkValue = rowData[state.mapping.duplicateCheckColumn];
                     
+                    // Prüfe ob bereits in Warteschlange
+                    const rowAlreadyInQueue = state.transferQueue.some(item => item.rowIndex === row.rowIndex);
+                    if (rowAlreadyInQueue) {
+                        skippedQueue++;
+                        continue;
+                    }
+                    
+                    // Prüfe ob bereits in Zieldatei (Datei 2)
+                    if (checkValue) {
+                        const duplicate = checkForDuplicate(checkValue);
+                        if (duplicate) {
+                            skippedTarget++;
+                            continue;
+                        }
+                    }
+                    
                     state.transferQueue.push({
                         data: [...rowData],
+                        rowIndex: row.rowIndex,
                         flag: flag,
                         comment: comment,
                         checkValue: checkValue,
                         wasEdited: isRowEdited(rowIndex),
                         sourceRowIndex: row.rowIndex + 2 // +2: rowIndex ist 0-basiert, Excel ist 1-basiert + Header-Zeile
                     });
+                    addedCount++;
+                }
+                
+                // Statusmeldung für übersprungene Zeilen
+                if (skippedQueue > 0 || skippedTarget > 0) {
+                    let skipMsg = '';
+                    if (skippedQueue > 0) skipMsg += `${skippedQueue} bereits in Warteschlange, `;
+                    if (skippedTarget > 0) skipMsg += `${skippedTarget} bereits in Zieldatei`;
+                    showStatus(elements.transferStatus, `⚠️ Übersprungen: ${skipMsg}`, 'warning');
+                    await new Promise(r => setTimeout(r, 1500));
+                }
+                
+                if (addedCount === 0) {
+                    showStatus(elements.transferStatus, 'Keine neuen Zeilen zum Übertragen', 'warning');
+                    return;
                 }
                 
                 updateQueueDisplay();
@@ -5674,7 +5758,7 @@
             let addedCount = 0;
             let editedCount = 0;
             let skippedQueue = 0;
-            const duplicatesFound = [];
+            let skippedTarget = 0;
             
             for (const rowIndex of state.selectedRows) {
                 const row = state.searchResults[rowIndex];
@@ -5682,22 +5766,26 @@
                 
                 const rowData = getEditedRowData(rowIndex);
                 const wasEdited = isRowEdited(rowIndex);
-                if (wasEdited) editedCount++;
                 
                 const checkValue = rowData[state.mapping.duplicateCheckColumn];
                 
+                // Prüfe ob bereits in Warteschlange
                 const rowAlreadyInQueue = state.transferQueue.some(item => item.rowIndex === row.rowIndex);
                 if (rowAlreadyInQueue) {
                     skippedQueue++;
                     continue;
                 }
                 
+                // Prüfe ob bereits in Zieldatei (Datei 2)
                 if (checkValue) {
                     const duplicate = checkForDuplicate(checkValue);
                     if (duplicate) {
-                        duplicatesFound.push({ value: checkValue, row: duplicate.rowIndex });
+                        skippedTarget++;
+                        continue;
                     }
                 }
+                
+                if (wasEdited) editedCount++;
                 
                 state.transferQueue.push({
                     data: [...rowData],
@@ -5721,10 +5809,10 @@
                 message += ` (${editedCount} bearbeitet ✏️)`;
             }
             if (skippedQueue > 0) {
-                message += ` (${skippedQueue} bereits vorhanden)`;
+                message += ` (${skippedQueue} bereits in Warteschlange)`;
             }
-            if (duplicatesFound.length > 0) {
-                message += ` ⚠️ ${duplicatesFound.length} Duplikat(e) in Zieldatei!`;
+            if (skippedTarget > 0) {
+                message += ` ⚠️ ${skippedTarget} bereits in Zieldatei!`;
                 status = 'warning';
             }
             
@@ -6803,10 +6891,28 @@
             // Indikatoren entfernen
             const hiddenRowsIndicator = document.getElementById('hiddenRowsIndicator');
             if (hiddenRowsIndicator) hiddenRowsIndicator.remove();
+            const hiddenColumnsIndicator = document.getElementById('hiddenColumnsIndicator');
+            if (hiddenColumnsIndicator) hiddenColumnsIndicator.remove();
             const autoFilterIndicator = document.getElementById('autoFilterIndicator');
             if (autoFilterIndicator) autoFilterIndicator.remove();
             const passwordIndicator = document.getElementById('passwordIndicator');
             if (passwordIndicator) passwordIndicator.remove();
+            
+            // Filter-UI zurücksetzen
+            const explorerFiltersEl = document.getElementById('explorerFilters');
+            if (explorerFiltersEl) explorerFiltersEl.innerHTML = '';
+            const btnClearFilters = document.getElementById('btnClearExplorerFilters');
+            if (btnClearFilters) btnClearFilters.disabled = true;
+            
+            // Status zurücksetzen
+            if (elements.explorerStatus) {
+                elements.explorerStatus.textContent = '';
+                elements.explorerStatus.style.color = '#ff9800';
+            }
+            
+            // Pagination zurücksetzen
+            const explorerPagination = document.getElementById('explorerPagination');
+            if (explorerPagination) explorerPagination.style.display = 'none';
             
             // Auto-Save Intervall stoppen
             stopExplorerAutoSave();
@@ -7298,7 +7404,7 @@
                 }
             }
             
-            indicator.innerHTML = `👁️ ${count} ${currentLanguage === 'en' ? 'hidden' : 'ausgeblendet'}`;
+            indicator.innerHTML = `☰ ${count} ${currentLanguage === 'en' ? 'rows hidden' : 'Zeilen ausgeblendet'}`;
             indicator.onclick = showHiddenRowsMenu;
         }
         
@@ -7312,7 +7418,7 @@
             if (oldMenu) oldMenu.remove();
             
             let menuHtml = '<div class="context-menu hidden-rows-menu">';
-            menuHtml += '<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">👁️ Versteckte Zeilen</div>';
+            menuHtml += `<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">☰ ${currentLanguage === 'en' ? 'Hidden Rows' : 'Versteckte Zeilen'}</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
             
             // Liste der versteckten Zeilen (max 20 anzeigen)
@@ -7322,7 +7428,7 @@
             hiddenArray.slice(0, displayLimit).forEach(rowIndex => {
                 const rowPreview = explorerState.data[rowIndex]?.slice(0, 2).join(', ').substring(0, 30) || '...';
                 menuHtml += `<div class="context-menu-item" data-action="show-row" data-row="${rowIndex}">
-                    👁️ Zeile ${rowIndex + 1}: ${escapeHtml(rowPreview)}...
+                    👁️ ${currentLanguage === 'en' ? 'Row' : 'Zeile'} ${rowIndex + 1}: ${escapeHtml(rowPreview)}...
                 </div>`;
             });
             
@@ -7367,6 +7473,123 @@
                 }
             };
             setTimeout(() => document.addEventListener('click', closeHandler), 10);
+        }
+        
+        // Indikator für versteckte Spalten aktualisieren
+        function updateHiddenColumnsIndicator() {
+            let indicator = document.getElementById('hiddenColumnsIndicator');
+            // Berechne Anzahl versteckter Spalten (alle Spalten die nicht in visibleColumns sind)
+            const totalColumns = explorerState.headers.length;
+            const hiddenCount = totalColumns - explorerState.visibleColumns.length;
+            
+            if (hiddenCount === 0) {
+                if (indicator) indicator.remove();
+                return;
+            }
+            
+            if (!indicator) {
+                // Erstelle Indikator-Button
+                indicator = document.createElement('button');
+                indicator.id = 'hiddenColumnsIndicator';
+                indicator.className = 'btn btn-warning btn-sm';
+                indicator.style.marginLeft = '8px';
+                indicator.title = currentLanguage === 'en' ? 'Click to show hidden columns' : 'Klicken um versteckte Spalten anzuzeigen';
+                
+                // Füge nach der Suche ein (neben hiddenRowsIndicator falls vorhanden)
+                const searchContainer = elements.explorerSearch?.parentElement;
+                if (searchContainer) {
+                    searchContainer.appendChild(indicator);
+                }
+            }
+            
+            indicator.innerHTML = `📊 ${hiddenCount} ${currentLanguage === 'en' ? 'hidden' : 'ausgeblendet'}`;
+            indicator.onclick = showHiddenColumnsMenu;
+        }
+        
+        // Menü für versteckte Spalten anzeigen
+        function showHiddenColumnsMenu(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            // Altes Menü entfernen
+            const oldMenu = document.querySelector('.hidden-columns-menu');
+            if (oldMenu) oldMenu.remove();
+            
+            // Versteckte Spalten ermitteln (alle die nicht in visibleColumns sind)
+            const hiddenColumns = explorerState.headers
+                .map((header, i) => ({ index: i, header }))
+                .filter(({ index }) => !explorerState.visibleColumns.includes(index));
+            
+            let menuHtml = '<div class="context-menu hidden-columns-menu">';
+            menuHtml += `<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">📊 ${currentLanguage === 'en' ? 'Hidden Columns' : 'Versteckte Spalten'}</div>`;
+            menuHtml += '<div class="context-menu-divider"></div>';
+            
+            // Liste der versteckten Spalten (max 20 anzeigen)
+            const displayLimit = 20;
+            
+            hiddenColumns.slice(0, displayLimit).forEach(({ index, header }) => {
+                const displayHeader = header ? header.substring(0, 30) : `Spalte ${index + 1}`;
+                menuHtml += `<div class="context-menu-item" data-action="show-column" data-col="${index}">
+                    👁️ ${escapeHtml(displayHeader)}${header && header.length > 30 ? '...' : ''}
+                </div>`;
+            });
+            
+            if (hiddenColumns.length > displayLimit) {
+                menuHtml += `<div class="context-menu-item" style="color: var(--text-muted); cursor: default;">... ${currentLanguage === 'en' ? 'and' : 'und'} ${hiddenColumns.length - displayLimit} ${currentLanguage === 'en' ? 'more' : 'weitere'}</div>`;
+            }
+            
+            menuHtml += '<div class="context-menu-divider"></div>';
+            menuHtml += `<div class="context-menu-item" data-action="show-all" style="color: var(--primary);">✅ ${currentLanguage === 'en' ? 'Show all' : 'Alle einblenden'}</div>`;
+            menuHtml += '</div>';
+            
+            const menu = document.createElement('div');
+            menu.innerHTML = menuHtml;
+            document.body.appendChild(menu.firstElementChild);
+            
+            const menuEl = document.querySelector('.hidden-columns-menu');
+            
+            // Positionierung
+            const rect = e.target.getBoundingClientRect();
+            menuEl.style.left = rect.left + 'px';
+            menuEl.style.top = (rect.bottom + 5) + 'px';
+            
+            // Event-Handler für einzelne Spalten
+            menuEl.querySelectorAll('[data-action="show-column"]').forEach(item => {
+                item.addEventListener('click', () => {
+                    const col = parseInt(item.dataset.col);
+                    showExplorerColumn(col);
+                    menuEl.remove();
+                });
+            });
+            
+            menuEl.querySelector('[data-action="show-all"]')?.addEventListener('click', () => {
+                showAllExplorerColumns();
+                menuEl.remove();
+            });
+            
+            // Menü bei Klick außerhalb schließen
+            const closeHandler = (event) => {
+                if (!menuEl.contains(event.target)) {
+                    menuEl.remove();
+                    document.removeEventListener('click', closeHandler);
+                }
+            };
+            setTimeout(() => document.addEventListener('click', closeHandler), 10);
+        }
+        
+        // Einzelne Spalte wieder einblenden
+        function showExplorerColumn(colIndex) {
+            if (!explorerState.visibleColumns.includes(colIndex)) {
+                explorerState.visibleColumns.push(colIndex);
+                explorerState.visibleColumns.sort((a, b) => a - b);
+            }
+            // Markierung, dass Spalten-Sichtbarkeit geändert wurde
+            explorerState.editedCells.set('_columnVisibilityChanged', true);
+            renderExplorerTable();
+            updateColumnToggles();
+            updateHiddenColumnsIndicator();
+            updateExplorerEditStatus();
+            showFloatingStatus(currentLanguage === 'en' ? 'Column shown' : 'Spalte eingeblendet');
         }
         
         // Indikator für AutoFilter aktualisieren
@@ -8629,11 +8852,16 @@
         }
 
         async function openDataExplorer() {
+            // State immer zurücksetzen beim Öffnen (außer bei Recovery)
+            const recoveryData = loadExplorerRecoveryData();
+            if (!recoveryData) {
+                resetExplorerState();
+            }
+            
             elements.dataExplorerModal.classList.remove('hidden');
             document.body.classList.add('modal-open');
             
             // Prüfe auf Recovery-Daten (von vorherigem Crash)
-            const recoveryData = loadExplorerRecoveryData();
             if (recoveryData && !explorerState.filePath) {
                 const totalRecoveryChanges = (recoveryData.editedCells?.length || 0);
                 
@@ -9101,6 +9329,7 @@
                 updateColumnToggles();
                 updateExplorerEditStatus();
                 updateHiddenRowsIndicator();
+                updateHiddenColumnsIndicator();
                 updateAutoFilterIndicator();
                 return;
             }
@@ -9233,9 +9462,12 @@
                 elements.explorerStatus.textContent = '';
             }
             
-            renderExplorerTable();
+            // WICHTIG: filterExplorerData() statt renderExplorerTable() verwenden,
+            // damit versteckte Zeilen (hiddenRows) korrekt ausgefiltert werden!
+            filterExplorerData();
             updateColumnToggles();
             updateHiddenRowsIndicator();
+            updateHiddenColumnsIndicator();
             updateAutoFilterIndicator();
         }
         
@@ -11100,20 +11332,34 @@
             } else {
                 explorerState.visibleColumns = explorerState.visibleColumns.filter(i => i !== colIndex);
             }
+            // Markierung, dass Spalten-Sichtbarkeit geändert wurde
+            explorerState.editedCells.set('_columnVisibilityChanged', true);
             renderExplorerTable();
             updateColumnToggles();
+            updateHiddenColumnsIndicator();
+            updateExplorerEditStatus();
+            showFloatingStatus(visible ? (currentLanguage === 'en' ? 'Column shown' : 'Spalte eingeblendet') : (currentLanguage === 'en' ? 'Column hidden' : 'Spalte ausgeblendet'));
         };
         
         function showAllExplorerColumns() {
             explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
+            // Markierung, dass Spalten-Sichtbarkeit geändert wurde
+            explorerState.editedCells.set('_columnVisibilityChanged', true);
             renderExplorerTable();
             updateColumnToggles();
+            updateHiddenColumnsIndicator();
+            updateExplorerEditStatus();
+            showFloatingStatus(currentLanguage === 'en' ? 'All columns shown' : 'Alle Spalten eingeblendet');
         }
         
         function hideAllExplorerColumns() {
             explorerState.visibleColumns = [];
+            // Markierung, dass Spalten-Sichtbarkeit geändert wurde
+            explorerState.editedCells.set('_columnVisibilityChanged', true);
             renderExplorerTable();
             updateColumnToggles();
+            updateHiddenColumnsIndicator();
+            updateExplorerEditStatus();
         }
         
         function addExplorerFilter() {
@@ -11309,6 +11555,9 @@
                         const isFiltered = (hasActiveFilters || hasSearchFilter) && rowsFiltered;
                         
                         // Strukturelle Änderungen erkennen (Spalte/Zeile gelöscht/eingefügt/verschoben, Filter aktiv)
+                        // HINWEIS: _rowVisibilityChanged ist KEINE strukturelle Änderung!
+                        // Versteckte Zeilen bleiben im Excel, nur das hidden-Flag wird gesetzt.
+                        // Die Styles bleiben dadurch an Ort und Stelle.
                         const hasStructuralChanges = hasRowMoves || 
                             explorerState.editedCells.has('_columnDeleted') || 
                             explorerState.editedCells.has('_columnInserted') ||
@@ -11316,19 +11565,27 @@
                             explorerState.editedCells.has('_rowsReordered') ||
                             explorerState.editedCells.has('_rowInserted') ||  // Zeile eingefügt
                             explorerState.editedCells.has('_rowDeleted') ||   // Zeile gelöscht
-                            explorerState.editedCells.has('_rowVisibilityChanged') ||  // Zeilen ein-/ausgeblendet
                             explorerState.editedCells.has('_rowHighlightChanged') ||   // Zeilenfarben geändert
                             isFiltered;  // Filter = strukturelle Änderung (nur gefilterte Zeilen exportieren)
                         
                         console.log(`[Export Debug] hasRowMoves: ${hasRowMoves}, _columnDeleted: ${explorerState.editedCells.has('_columnDeleted')}, _columnInserted: ${explorerState.editedCells.has('_columnInserted')}, _columnMoved: ${explorerState.editedCells.has('_columnMoved')}, _rowInserted: ${explorerState.editedCells.has('_rowInserted')}, _rowDeleted: ${explorerState.editedCells.has('_rowDeleted')}, _rowVisibilityChanged: ${explorerState.editedCells.has('_rowVisibilityChanged')}, isFiltered: ${isFiltered} (${explorerState.filteredData.length}/${explorerState.data.length} Zeilen), hasStructuralChanges: ${hasStructuralChanges}`);
                         
                         // HiddenRows aus dem aktuellen State ermitteln
-                        const currentHiddenRows = [];
-                        explorerState.filteredData.forEach((item, idx) => {
-                            if (explorerState.hiddenRows && explorerState.hiddenRows.has(item.originalIndex)) {
-                                currentHiddenRows.push(idx);
-                            }
-                        });
+                        // Bei strukturellen Änderungen: Index in filteredData (da Zeilen umgeordnet werden)
+                        // Bei Zell-Edits (ohne Filter): originalIndex (da Zeilen an Ort und Stelle bleiben)
+                        let currentHiddenRows = [];
+                        if (hasStructuralChanges) {
+                            // Bei strukturellen Änderungen: Index relativ zu filteredData
+                            explorerState.filteredData.forEach((item, idx) => {
+                                if (explorerState.hiddenRows && explorerState.hiddenRows.has(item.originalIndex)) {
+                                    currentHiddenRows.push(idx);
+                                }
+                            });
+                        } else {
+                            // Bei Zell-Edits: Direkt die originalIndex-Werte verwenden
+                            currentHiddenRows = Array.from(explorerState.hiddenRows || []);
+                        }
+                        console.log(`[Export Debug] hiddenRows: ${currentHiddenRows.length} (${currentHiddenRows.slice(0, 10).join(', ')}${currentHiddenRows.length > 10 ? '...' : ''})`);
                         
                         // Versteckte Spalten berechnen
                         const allCols = explorerState.headers.map((_, i) => i);
@@ -11419,6 +11676,24 @@
                                 exportRichTextCells = remappedRichText;
                                 
                                 console.log(`[Export] Styles remapped: ${Object.keys(remappedStyles).length}, Formulas: ${Object.keys(remappedFormulas).length}, Hyperlinks: ${Object.keys(remappedHyperlinks).length}`);
+                            }
+                            
+                            // Bei Filter: rowMapping erstellen für physische Zeilen-Umordnung
+                            // rowMapping[newPos] = originalPos (0-basiert für Datenzeilen)
+                            // So bleiben die Excel-Styles erhalten!
+                            let filterRowMapping = null;
+                            if (isFiltered && !hasRowMoves) {
+                                filterRowMapping = explorerState.filteredData.map(item => item.originalIndex);
+                                console.log(`[Export] Filter-rowMapping erstellt: ${filterRowMapping.length} Zeilen`);
+                                console.log(`[Export] Filter-rowMapping (erste 10):`, filterRowMapping.slice(0, 10));
+                                
+                                // Bei Filter-Mapping: KEINE Frontend-Styles remappen!
+                                // Die Excel-Styles werden durch physische Umordnung übernommen
+                                exportCellStyles = {};
+                                exportCellFormulas = {};
+                                exportCellHyperlinks = {};
+                                exportRichTextCells = {};
+                                console.log(`[Export] Frontend-Styles zurückgesetzt (Excel-Styles werden via rowMapping übernommen)`);
                             }
                             
                             // Bei Row-Move: ExcelJS ordnet die Zeilen direkt um (mit allen Styles)
@@ -11581,9 +11856,9 @@
                                 deletedColumnIndices: deletedColumnIndices,  // Array der gelöschten Spalten für spliceColumns
                                 columnOrder: columnOrder,  // Neue Spaltenreihenfolge (null = keine Änderung oder bereits angewendet)
                                 affectedRows: affectedRowsArray,  // Betroffene Zeilen bei Row-Move für Style-Reset
-                                rowMapping: hasRowMoves ? explorerState.rowMapping : null  // Mapping für Zeilen-Verschiebung
+                                rowMapping: filterRowMapping || (hasRowMoves ? explorerState.rowMapping : null)  // Filter oder Row-Move Mapping
                             };
-                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${hasRowMoves ? 'ja' : 'nein'}, AutoFilter: ${explorerState.autoFilterRange || 'none'})`);
+                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${(filterRowMapping || hasRowMoves) ? 'ja' : 'nein'}, AutoFilter: ${explorerState.autoFilterRange || 'none'})`);
                         } else {
                             // Nur Zell-Edits: changedCells
                             const changedCells = {};

@@ -292,15 +292,7 @@ function extractFillsFromXLSX(filePath, sheetName) {
     }
 }
 
-// Debug-Log-Datei
-const DEBUG_LOG = '/Users/nojan/Desktop/exceljs-debug.log';
 
-function debugLog(message) {
-    const timestamp = new Date().toISOString();
-    const logLine = `[${timestamp}] ${message}\n`;
-    fs.appendFileSync(DEBUG_LOG, logLine);
-    console.log(message);
-}
 
 /**
  * Liest ein Excel-Sheet mit ExcelJS (Alternative zu xlsx-populate)
@@ -419,17 +411,17 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     // Excel-Tabellen haben immer einen AutoFilter über den gesamten Tabellenbereich
                     if (table.table.autoFilterRef) {
                         autoFilterRange = table.table.autoFilterRef;
-                        debugLog('[ExcelJS] AutoFilter aus Tabelle (autoFilterRef):', tableName, autoFilterRange);
+                        console.log('[ExcelJS] AutoFilter aus Tabelle (autoFilterRef):', tableName, autoFilterRange);
                         break;
                     } else if (table.table.tableRef) {
                         autoFilterRange = table.table.tableRef;
-                        debugLog('[ExcelJS] AutoFilter aus Tabelle (tableRef):', tableName, autoFilterRange);
+                        console.log('[ExcelJS] AutoFilter aus Tabelle (tableRef):', tableName, autoFilterRange);
                         break;
                     }
                 }
             }
         }
-        debugLog('[ExcelJS] AutoFilter Range:', autoFilterRange);
+        console.log('[ExcelJS] AutoFilter Range:', autoFilterRange);
         
         // Merged Cells (verbundene Zellen) extrahieren und konvertieren
         // ExcelJS gibt Strings wie "A1:H1" zurück, Frontend erwartet Objekte
@@ -527,10 +519,17 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 
                 let cellValue = cell.value;
                 
-                // Formel extrahieren
+                // Formel extrahieren - WICHTIG: VOR der Objekt-Behandlung!
+                // Bei Formeln kann cell.value ein Objekt sein mit { formula, result }
+                // oder cell.formula ist direkt verfügbar
                 if (cell.formula) {
                     cellFormulas[styleKey] = cell.formula;
-                    cellValue = cell.result || cellValue;
+                    // Das Ergebnis ist in cell.result (nicht cell.value!)
+                    cellValue = cell.result !== undefined ? cell.result : '';
+                } else if (cell.value && typeof cell.value === 'object' && cell.value.formula) {
+                    // Formel als Objekt gespeichert: { formula: '...', result: ... }
+                    cellFormulas[styleKey] = cell.value.formula;
+                    cellValue = cell.value.result !== undefined ? cell.value.result : '';
                 }
                 
                 // Hyperlink extrahieren
@@ -539,7 +538,9 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 }
                 
                 // Objekt-Werte behandeln (Rich Text, Hyperlinks, etc.)
-                if (cell.value && typeof cell.value === 'object') {
+                // WICHTIG: Nur wenn es KEINE Formel war (die wurde oben schon behandelt)
+                // Wir prüfen cell.value (nicht cellValue), um zu sehen ob es ein spezielles Objekt ist
+                if (cell.value && typeof cell.value === 'object' && !cell.formula && !cell.value.formula) {
                     // Rich Text extrahieren
                     if (cell.value.richText) {
                         const richText = cell.value.richText.map(part => ({
@@ -662,16 +663,12 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         }
         
         const totalTime = Date.now() - startTime;
-        debugLog(`[ExcelJS] Sheet geladen in ${totalTime}ms (${data.length} Zeilen)`);
-        debugLog(`[ExcelJS] Extrahierte Styles: ${Object.keys(cellStyles).length}`);
-        if (Object.keys(cellStyles).length > 0) {
-            debugLog('[ExcelJS] Beispiel-Styles: ' + JSON.stringify(Object.entries(cellStyles).slice(0, 10)));
-        }
-        debugLog('[ExcelJS] Alle Style-Keys: ' + Object.keys(cellStyles).join(', '));
+        console.log(`[ExcelJS] Sheet geladen in ${totalTime}ms (${data.length} Zeilen)`);
+        console.log(`[ExcelJS] Extrahierte Styles: ${Object.keys(cellStyles).length}`);
         
         // Zeilenfarben erkennen (wenn alle Zellen einer Zeile die gleiche Hintergrundfarbe haben)
         const rowHighlights = detectRowHighlights(cellStyles, data.length, headers.length);
-        debugLog(`[ExcelJS] Erkannte Zeilenfarben: ${rowHighlights.length} Zeilen`);
+        console.log(`[ExcelJS] Erkannte Zeilenfarben: ${rowHighlights.length} Zeilen`);
         
         return {
             success: true,
