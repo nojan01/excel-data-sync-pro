@@ -2915,13 +2915,13 @@
                 <div class="config-group">
                     <div class="config-section-title" style="margin-bottom: 10px;" data-i18n="joinStep4">4️⃣ Optionen</div>
                     <div style="display: flex; flex-direction: column; gap: 10px;">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            <input type="checkbox" id="joinInsertAfterKey" class="green-checkbox" checked>
-                            <span data-i18n="joinInsertAfterKeyLabel">Neue Spalten direkt nach der Schlüsselspalte einfügen</span>
-                        </label>
+                        <div style="padding: 10px; background: var(--bg-dark); border-radius: 4px; color: var(--text-muted); font-size: 12px;">
+                            💡 <strong>Tipp:</strong> Wählen Sie für jede Spalte die Zielposition im Dropdown oben.
+                            "Am Ende einfügen" fügt die Spalte ans Ende der Tabelle.
+                        </div>
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
                             <input type="checkbox" id="joinMarkNotFound" class="green-checkbox" checked>
-                            <span data-i18n="joinMarkNotFoundLabel">Nicht gefundene Zeilen markieren (leere Zellen = kein Match)</span>
+                            <span data-i18n="joinMarkNotFoundLabel">Nicht gefundene Zeilen markieren (gelb)</span>
                         </label>
                     </div>
                 </div>
@@ -6845,6 +6845,7 @@
             targetKeyColumnIndex: null,
             sourceKeyColumnIndex: null,
             selectedColumns: [],  // Indices der zu kopierenden Spalten
+            columnPositions: [],  // Array von {sourceIndex, targetPosition}
             previewCalculated: false,
             matchStats: {
                 targetRows: 0,
@@ -6864,6 +6865,7 @@
             dataJoinState.targetKeyColumnIndex = null;
             dataJoinState.sourceKeyColumnIndex = null;
             dataJoinState.selectedColumns = [];
+            dataJoinState.columnPositions = [];
             dataJoinState.previewCalculated = false;
             dataJoinState.matchStats = { targetRows: 0, sourceRows: 0, matches: 0, noMatch: 0 };
         }
@@ -7025,32 +7027,70 @@
                 return;
             }
             
+            // Erstelle Optionen für Ziel-Positionen
+            const targetPositionOptions = explorerState.headers.map((h, idx) => 
+                `<option value="${idx}">nach ${getColumnLetter(idx)}: ${h || '(leer)'}</option>`
+            ).join('');
+            
             dataJoinState.sourceHeaders.forEach((header, index) => {
-                const checkbox = document.createElement('label');
-                checkbox.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-light); border-radius: 4px; cursor: pointer; transition: background 0.2s;';
-                checkbox.innerHTML = `
-                    <input type="checkbox" class="green-checkbox join-column-checkbox" data-index="${index}">
-                    <span style="font-weight: 500; color: var(--primary-light);">${getColumnLetter(index)}</span>
-                    <span style="color: var(--text);">${header || '(leer)'}</span>
+                const row = document.createElement('div');
+                row.className = 'join-column-row';
+                row.style.cssText = 'display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--bg-light); border-radius: 4px; transition: background 0.2s;';
+                row.innerHTML = `
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; flex: 0 0 auto;">
+                        <input type="checkbox" class="green-checkbox join-column-checkbox" data-index="${index}">
+                        <span style="font-weight: 500; color: var(--primary-light); min-width: 30px;">${getColumnLetter(index)}</span>
+                        <span style="color: var(--text); min-width: 120px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${header || '(leer)'}">${header || '(leer)'}</span>
+                    </label>
+                    <span style="color: var(--text-muted); font-size: 12px;">→</span>
+                    <select class="config-select join-target-position" data-source-index="${index}" style="flex: 1; min-width: 150px; font-size: 12px;" disabled>
+                        <option value="end">Am Ende einfügen</option>
+                        ${targetPositionOptions}
+                    </select>
                 `;
-                checkbox.onmouseenter = () => checkbox.style.background = 'var(--bg-lighter)';
-                checkbox.onmouseleave = () => checkbox.style.background = 'var(--bg-light)';
+                row.onmouseenter = () => row.style.background = 'var(--bg-lighter)';
+                row.onmouseleave = () => row.style.background = 'var(--bg-light)';
                 
-                const input = checkbox.querySelector('input');
-                input.onchange = () => {
+                const checkbox = row.querySelector('.join-column-checkbox');
+                const positionSelect = row.querySelector('.join-target-position');
+                
+                checkbox.onchange = () => {
+                    positionSelect.disabled = !checkbox.checked;
                     updateSelectedJoinColumns();
                     dataJoinState.previewCalculated = false;
                     elements.joinPreviewContainer.style.display = 'none';
                     updateJoinButtons();
                 };
                 
-                container.appendChild(checkbox);
+                positionSelect.onchange = () => {
+                    updateSelectedJoinColumns();
+                    dataJoinState.previewCalculated = false;
+                    elements.joinPreviewContainer.style.display = 'none';
+                };
+                
+                container.appendChild(row);
             });
         }
         
         function updateSelectedJoinColumns() {
             const checkboxes = document.querySelectorAll('.join-column-checkbox:checked');
-            dataJoinState.selectedColumns = Array.from(checkboxes).map(cb => parseInt(cb.dataset.index));
+            const positionSelects = document.querySelectorAll('.join-target-position');
+            
+            // Speichere ausgewählte Spalten mit ihren Zielpositionen
+            dataJoinState.selectedColumns = [];
+            dataJoinState.columnPositions = []; // Array von {sourceIndex, targetPosition}
+            
+            checkboxes.forEach(cb => {
+                const sourceIndex = parseInt(cb.dataset.index);
+                const positionSelect = document.querySelector(`.join-target-position[data-source-index="${sourceIndex}"]`);
+                const targetPosition = positionSelect ? positionSelect.value : 'end';
+                
+                dataJoinState.selectedColumns.push(sourceIndex);
+                dataJoinState.columnPositions.push({
+                    sourceIndex: sourceIndex,
+                    targetPosition: targetPosition === 'end' ? 'end' : parseInt(targetPosition)
+                });
+            });
         }
         
         function updateJoinButtons() {
@@ -7124,11 +7164,10 @@
             
             const targetKeyIndex = dataJoinState.targetKeyColumnIndex;
             const sourceKeyIndex = dataJoinState.sourceKeyColumnIndex;
-            const columnsToAdd = dataJoinState.selectedColumns;
-            const insertAfterKey = elements.joinInsertAfterKey.checked;
+            const columnPositions = dataJoinState.columnPositions || [];
             const markNotFound = elements.joinMarkNotFound.checked;
             
-            if (columnsToAdd.length === 0) {
+            if (columnPositions.length === 0) {
                 showNotification('Bitte mindestens eine Spalte auswählen', 'warning');
                 return;
             }
@@ -7142,110 +7181,141 @@
                 }
             });
             
-            // Bestimme Einfüge-Position
-            let insertPosition;
-            if (insertAfterKey) {
-                insertPosition = targetKeyIndex + 1;
-            } else {
-                insertPosition = explorerState.headers.length;  // Am Ende einfügen
-            }
+            // Gruppiere Spalten nach Zielposition und sortiere absteigend
+            // (von hinten nach vorne einfügen, damit Indices nicht durcheinander kommen)
+            const positionGroups = new Map();
             
-            // Neue Header erstellen
-            const newHeaders = [];
-            columnsToAdd.forEach(colIdx => {
-                newHeaders.push(dataJoinState.sourceHeaders[colIdx] || `Spalte ${getColumnLetter(colIdx)}`);
+            columnPositions.forEach(cp => {
+                const pos = cp.targetPosition === 'end' ? Infinity : cp.targetPosition + 1; // +1 weil "nach Spalte X"
+                if (!positionGroups.has(pos)) {
+                    positionGroups.set(pos, []);
+                }
+                positionGroups.get(pos).push(cp.sourceIndex);
             });
             
-            // Header einfügen
-            explorerState.headers.splice(insertPosition, 0, ...newHeaders);
+            // Sortiere Positionen absteigend (höchste zuerst)
+            const sortedPositions = Array.from(positionGroups.keys()).sort((a, b) => b - a);
             
-            // Visible Columns aktualisieren - Indices verschieben und neue einfügen
-            // Alle bestehenden Indices >= insertPosition um newHeaders.length erhöhen
-            explorerState.visibleColumns = explorerState.visibleColumns.map(idx => 
-                idx >= insertPosition ? idx + newHeaders.length : idx
-            );
-            // Neue Spalten-Indices einfügen (an der richtigen Position im Array)
-            for (let i = 0; i < newHeaders.length; i++) {
-                // Finde die richtige Array-Position wo der neue Index eingefügt werden soll
-                let arrayPos = 0;
-                while (arrayPos < explorerState.visibleColumns.length && 
-                       explorerState.visibleColumns[arrayPos] < insertPosition + i) {
-                    arrayPos++;
-                }
-                explorerState.visibleColumns.splice(arrayPos, 0, insertPosition + i);
-            }
+            // Strukturelle Änderungen für Export sammeln
+            const insertOperations = [];
+            let totalInsertCount = 0;
             
-            // Column Order aktualisieren wenn vorhanden
-            if (explorerState.columnOrder.length > 0) {
-                explorerState.columnOrder = explorerState.columnOrder.map(idx => 
-                    idx >= insertPosition ? idx + newHeaders.length : idx
+            // Für jede Position (von hinten nach vorne)
+            sortedPositions.forEach(insertPos => {
+                const sourceIndices = positionGroups.get(insertPos);
+                
+                // Tatsächliche Einfügeposition (berücksichtige Infinity für "am Ende")
+                let actualInsertPos = insertPos === Infinity ? explorerState.headers.length : insertPos;
+                
+                // Neue Header für diese Position
+                const newHeaders = sourceIndices.map(idx => 
+                    dataJoinState.sourceHeaders[idx] || `Spalte ${getColumnLetter(idx)}`
                 );
-                // Neue Indices an der richtigen Position einfügen
+                
+                // Header einfügen
+                explorerState.headers.splice(actualInsertPos, 0, ...newHeaders);
+                
+                // Visible Columns aktualisieren
+                explorerState.visibleColumns = explorerState.visibleColumns.map(idx => 
+                    idx >= actualInsertPos ? idx + newHeaders.length : idx
+                );
                 for (let i = 0; i < newHeaders.length; i++) {
                     let arrayPos = 0;
-                    while (arrayPos < explorerState.columnOrder.length && 
-                           explorerState.columnOrder[arrayPos] < insertPosition + i) {
+                    while (arrayPos < explorerState.visibleColumns.length && 
+                           explorerState.visibleColumns[arrayPos] < actualInsertPos + i) {
                         arrayPos++;
                     }
-                    explorerState.columnOrder.splice(arrayPos, 0, insertPosition + i);
+                    explorerState.visibleColumns.splice(arrayPos, 0, actualInsertPos + i);
                 }
-            }
-            
-            // HINWEIS: Cell Styles werden NICHT manuell verschoben!
-            // Der Writer verwendet spliceColumns, das die Excel-Styles automatisch verschiebt.
-            // Eine manuelle Verschiebung hier würde zu doppelter Verschiebung führen.
-
-            // Daten für jede Zeile hinzufügen
-            let matchCount = 0;
-            explorerState.data.forEach((row, rowIndex) => {
-                const keyValue = String(row[targetKeyIndex] || '').trim();
-                const sourceRow = sourceMap.get(keyValue);
                 
-                const newValues = columnsToAdd.map(colIdx => {
-                    if (sourceRow) {
-                        return sourceRow[colIdx] || '';
-                    } else {
-                        return markNotFound ? '' : '';  // Leere Zelle wenn kein Match
+                // Column Order aktualisieren wenn vorhanden
+                if (explorerState.columnOrder.length > 0) {
+                    explorerState.columnOrder = explorerState.columnOrder.map(idx => 
+                        idx >= actualInsertPos ? idx + newHeaders.length : idx
+                    );
+                    for (let i = 0; i < newHeaders.length; i++) {
+                        let arrayPos = 0;
+                        while (arrayPos < explorerState.columnOrder.length && 
+                               explorerState.columnOrder[arrayPos] < actualInsertPos + i) {
+                            arrayPos++;
+                        }
+                        explorerState.columnOrder.splice(arrayPos, 0, actualInsertPos + i);
+                    }
+                }
+                
+                // Daten für jede Zeile hinzufügen
+                explorerState.data.forEach((row, rowIndex) => {
+                    const keyValue = String(row[targetKeyIndex] || '').trim();
+                    const sourceRow = sourceMap.get(keyValue);
+                    
+                    const newValues = sourceIndices.map(colIdx => {
+                        if (sourceRow) {
+                            return sourceRow[colIdx] || '';
+                        } else {
+                            return '';
+                        }
+                    });
+                    
+                    row.splice(actualInsertPos, 0, ...newValues);
+                    
+                    // Als bearbeitet markieren
+                    newValues.forEach((val, i) => {
+                        const cellKey = `${rowIndex}-${actualInsertPos + i}`;
+                        explorerState.editedCells.set(cellKey, val);
+                    });
+                });
+                
+                // Original-Daten auch aktualisieren
+                explorerState.originalData.forEach((row, rowIndex) => {
+                    const keyValue = String(row[targetKeyIndex] || '').trim();
+                    const sourceRow = sourceMap.get(keyValue);
+                    
+                    const newValues = sourceIndices.map(colIdx => {
+                        return sourceRow ? (sourceRow[colIdx] || '') : '';
+                    });
+                    
+                    row.splice(actualInsertPos, 0, ...newValues);
+                });
+                
+                // Operation für Export speichern (mit Original-Position vor Verschiebung)
+                insertOperations.push({
+                    position: insertPos === Infinity ? explorerState.headers.length - newHeaders.length : actualInsertPos,
+                    count: newHeaders.length,
+                    headers: newHeaders
+                });
+                
+                totalInsertCount += newHeaders.length;
+            });
+            
+            // Strukturelle Änderung markieren für korrekten Export (mit allen Operationen)
+            explorerState.editedCells.set('_columnInserted', {
+                operations: insertOperations.reverse(), // Umkehren für aufsteigende Reihenfolge
+                totalCount: totalInsertCount
+            });
+            
+            // Markierung für nicht gefundene Zeilen
+            if (markNotFound) {
+                explorerState.data.forEach((row, rowIndex) => {
+                    const keyValue = String(row[targetKeyIndex] || '').trim();
+                    if (keyValue && !sourceMap.has(keyValue)) {
+                        explorerState.rowHighlights.set(rowIndex, 'yellow');
                     }
                 });
-                
-                if (sourceRow) matchCount++;
-                
-                // Werte einfügen
-                row.splice(insertPosition, 0, ...newValues);
-                
-                // Als bearbeitet markieren
-                newValues.forEach((val, i) => {
-                    const cellKey = `${rowIndex}-${insertPosition + i}`;
-                    explorerState.editedCells.set(cellKey, val);
-                });
-            });
-            
-            // Original-Daten auch aktualisieren
-            explorerState.originalData.forEach((row, rowIndex) => {
-                const keyValue = String(row[targetKeyIndex] || '').trim();
-                const sourceRow = sourceMap.get(keyValue);
-                
-                const newValues = columnsToAdd.map(colIdx => {
-                    return sourceRow ? (sourceRow[colIdx] || '') : '';
-                });
-                
-                row.splice(insertPosition, 0, ...newValues);
-            });
-            
-            // Strukturelle Änderung markieren für korrekten Export
-            explorerState.editedCells.set('_columnInserted', {
-                position: insertPosition,
-                count: newHeaders.length,
-                headers: newHeaders
-            });
+            }
             
             // UI aktualisieren
             filterExplorerData();
             closeDataJoinModal();
             
+            // Matches zählen
+            let matchCount = 0;
+            explorerState.data.forEach(row => {
+                const keyValue = String(row[targetKeyIndex] || '').trim();
+                if (keyValue && sourceMap.has(keyValue)) matchCount++;
+            });
+            
             showNotification(
-                `✓ ${columnsToAdd.length} Spalte(n) hinzugefügt! ${matchCount} von ${explorerState.data.length} Zeilen mit Daten gefüllt.`,
+                `✓ ${totalInsertCount} Spalte(n) hinzugefügt! ${matchCount} von ${explorerState.data.length} Zeilen mit Daten gefüllt.`,
                 'success',
                 5000
             );
