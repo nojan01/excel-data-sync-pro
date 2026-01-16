@@ -32,3 +32,4 @@ package-lock.json
 .env
 *.pfx
 certificates/
+__pycache__/

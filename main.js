@@ -3,6 +3,7 @@ const path = require('path');
 const XlsxPopulate = require('xlsx-populate'); // LEGACY: Nur noch für Backup/Fallback
 const { readSheetWithExcelJS } = require('./exceljs-reader'); // PRIMÄR: ExcelJS Reader
 const { exportSheetWithExcelJS } = require('./exceljs-writer'); // PRIMÄR: ExcelJS Writer
+const pythonBridge = require('./python/python_bridge'); // NEU: Python/openpyxl für bessere Kompatibilität
 const fs = require('fs');
 const os = require('os');
 
@@ -2040,6 +2041,43 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
                 needsPassword: true
             };
         }
+        return { success: false, error: error.message };
+    }
+});
+
+// ======================================================================
+// PYTHON/OPENPYXL READER - für bessere Excel-Kompatibilität
+// ======================================================================
+// Sheet-Daten lesen mit Python (openpyxl) - Vorteile:
+// - Bessere Theme-Color Unterstützung
+// - Zuverlässigere Style-Erhaltung
+// - Identisches Verhalten wie MS Excel
+ipcMain.handle('python:listSheets', async (event, filePath) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    try {
+        console.log('[Python] Lade Sheet-Liste...');
+        const result = await pythonBridge.listSheets(filePath);
+        return result;
+    } catch (error) {
+        console.error('[Python] Fehler:', error.message);
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('python:readSheet', async (event, filePath, sheetName) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    try {
+        console.log(`[Python] Lade Sheet "${sheetName}"...`);
+        const startTime = Date.now();
+        const result = await pythonBridge.readSheet(filePath, sheetName);
+        console.log(`[Python] Sheet geladen in ${Date.now() - startTime}ms`);
+        return result;
+    } catch (error) {
+        console.error('[Python] Fehler:', error.message);
         return { success: false, error: error.message };
     }
 });
