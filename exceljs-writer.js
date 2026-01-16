@@ -186,6 +186,26 @@ function reduceAutoFilterRange(autoFilterRange) {
 }
 
 /**
+ * Erweitert den AutoFilter-Bereich um N Spalten (nach Spalteneinfügung)
+ * @param {string} autoFilterRange - z.B. "A1:BJ2404"
+ * @param {number} count - Anzahl der einzufügenden Spalten
+ * @returns {string} Erweiterter Bereich z.B. "A1:BL2404"
+ */
+function expandAutoFilterRange(autoFilterRange, count) {
+    const match = autoFilterRange.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/);
+    if (!match) return autoFilterRange;
+    
+    const startCol = match[1];
+    const startRow = match[2];
+    const endCol = match[3];
+    const endRow = match[4];
+    
+    const endColNum = colLetterToNumber(endCol);
+    const newEndCol = colNumberToLetter(endColNum + count);
+    return startCol + startRow + ':' + newEndCol + endRow;
+}
+
+/**
  * Passt eine Zellreferenz (z.B. "AN2135") um deletedCol nach links an
  * @param {string} cellRef - Zellreferenz wie "AN2135"
  * @param {number} deletedColNumber - 1-basierte Spaltennummer die gelöscht wurde
@@ -232,6 +252,165 @@ function adjustRangeReference(rangeRef, deletedColNumber) {
     });
     
     return adjustedRanges.join(' ');
+}
+
+/**
+ * Passt Excel-Tabellen nach Spalteneinfügung an
+ * 
+ * @param {Worksheet} worksheet - Das ExcelJS Worksheet
+ * @param {number} insertColNumber - 1-basierte Spaltennummer ab der eingefügt wurde
+ * @param {number} insertCount - Anzahl der eingefügten Spalten
+ * @param {Array} insertHeaders - Header-Namen der eingefügten Spalten
+ */
+function adjustTablesAfterColumnInsert(worksheet, insertColNumber, insertCount, insertHeaders) {
+    if (!worksheet.tables || Object.keys(worksheet.tables).length === 0) {
+        console.log('[Writer Table Insert] Keine Excel-Tabellen vorhanden');
+        return;
+    }
+    
+    for (const [tableName, tableObj] of Object.entries(worksheet.tables)) {
+        const table = tableObj.table || tableObj;
+        if (!table || !table.tableRef) {
+            continue;
+        }
+        
+        const oldRef = table.tableRef;
+        console.log(`[Writer Table Insert] Tabelle "${tableName}" - alte Referenz: ${oldRef}`);
+        
+        // Parse die Tabellen-Referenz (z.B. "A1:BI2404")
+        const match = oldRef.match(/([A-Z]+)(\d+):([A-Z]+)(\d+)/);
+        if (!match) {
+            console.log(`[Writer Table Insert] Konnte Referenz nicht parsen: ${oldRef}`);
+            continue;
+        }
+        
+        const startCol = match[1];
+        const startRow = match[2];
+        const endCol = match[3];
+        const endRow = match[4];
+        
+        // Konvertiere End-Spalte zu Nummer
+        let endColNum = colLetterToNumber(endCol);
+        
+        // Erweitere um die eingefügten Spalten
+        const newEndColNum = endColNum + insertCount;
+        const newEndCol = colNumberToLetter(newEndColNum);
+        
+        const newRef = `${startCol}${startRow}:${newEndCol}${endRow}`;
+        table.tableRef = newRef;
+        
+        // Auch autoFilterRef anpassen falls vorhanden
+        if (table.autoFilterRef) {
+            const oldAutoFilter = table.autoFilterRef;
+            const afMatch = oldAutoFilter.match(/([A-Z]+)(\d+):([A-Z]+)(\d+)/);
+            if (afMatch) {
+                const newAutoFilter = `${afMatch[1]}${afMatch[2]}:${newEndCol}${afMatch[4]}`;
+                table.autoFilterRef = newAutoFilter;
+                console.log(`[Writer Table Insert] AutoFilter erweitert: ${oldAutoFilter} -> ${newAutoFilter}`);
+            }
+        }
+        
+        // Spalten-Definitionen einfügen
+        if (table.columns && Array.isArray(table.columns)) {
+            // Finde die Position wo die neuen Spalten eingefügt werden müssen
+            // insertColNumber ist 1-basiert, columns ist 0-basiert
+            const insertIdx = insertColNumber - 1;
+            
+            // Erstelle neue Spalten-Definitionen
+            const newColumns = [];
+            for (let i = 0; i < insertCount; i++) {
+                newColumns.push({ name: insertHeaders[i] || `Column${insertIdx + i + 1}` });
+            }
+            
+            // Füge die neuen Spalten ein
+            table.columns.splice(insertIdx, 0, ...newColumns);
+            console.log(`[Writer Table Insert] ${insertCount} Spalten-Definitionen eingefügt bei Index ${insertIdx}`);
+        }
+        
+        console.log(`[Writer Table Insert] Tabelle "${tableName}" - neue Referenz: ${newRef}`);
+    }
+}
+
+/**
+ * Passt alle bedingten Formatierungen nach Spalteneinfügung an
+ * 
+ * LOGIK:
+ * - Alle Spaltenreferenzen >= insertColNumber werden um insertCount nach rechts verschoben
+ * 
+ * @param {Worksheet} worksheet - Das ExcelJS Worksheet
+ * @param {number} insertColNumber - 1-basierte Spaltennummer ab der eingefügt wurde
+ * @param {number} insertCount - Anzahl der eingefügten Spalten
+ */
+function adjustConditionalFormattingsAfterColumnInsert(worksheet, insertColNumber, insertCount) {
+    // ExcelJS speichert CFs intern als conditionalFormattings Array
+    const cf = worksheet.conditionalFormattings;
+    
+    console.log(`[Writer CF Insert] worksheet.conditionalFormattings: ${cf ? cf.length + ' Einträge' : 'NICHT VORHANDEN'}`);
+    
+    if (!cf || !Array.isArray(cf) || cf.length === 0) {
+        console.log('[Writer CF Insert] Keine bedingten Formatierungen vorhanden');
+        return;
+    }
+    
+    // Debug: Zeige CFs die auf hohe Spalten (BH=60, BI=61) zeigen
+    cf.forEach((cfEntry, idx) => {
+        if (cfEntry.ref && /BH|BI/.test(cfEntry.ref)) {
+            console.log(`[Writer CF Debug] CF ${idx} enthält BH/BI: ${cfEntry.ref}`);
+        }
+    });
+    
+    let adjustedCount = 0;
+    
+    cf.forEach((cfEntry, idx) => {
+        if (!cfEntry.ref) return;
+        
+        const oldRef = cfEntry.ref;
+        
+        // Verschiebe alle Spaltenreferenzen >= insertColNumber nach rechts
+        // Regex matcht: A1, AA1, $A$1, A:A, 1:1, A1:B2, etc.
+        const newRef = oldRef.replace(/(\$?)([A-Z]+)(\$?)(\d+)/g, (match, dollarCol, col, dollarRow, row) => {
+            const colNum = colLetterToNumber(col);
+            if (colNum >= insertColNumber) {
+                const newCol = colNumberToLetter(colNum + insertCount);
+                return dollarCol + newCol + dollarRow + row;
+            }
+            return match;
+        });
+        
+        if (newRef !== oldRef) {
+            console.log(`[Writer CF Insert] CF ${idx}: ${oldRef} -> ${newRef}`);
+            cfEntry.ref = newRef;
+            adjustedCount++;
+        }
+        
+        // Auch Formeln in den Regeln anpassen
+        if (cfEntry.rules) {
+            cfEntry.rules.forEach(rule => {
+                if (rule.formulae && Array.isArray(rule.formulae)) {
+                    rule.formulae = rule.formulae.map(formula => {
+                        return formula.replace(/\$?([A-Z]+)\$?(\d+)/g, (match, col, row) => {
+                            const colNum = colLetterToNumber(col);
+                            if (colNum >= insertColNumber) {
+                                const newCol = colNumberToLetter(colNum + insertCount);
+                                // $ Zeichen beibehalten falls vorhanden
+                                const hasColDollar = match.startsWith('$') || match.includes('$' + col);
+                                const hasRowDollar = match.includes('$' + row);
+                                let result = '';
+                                if (hasColDollar) result += '$';
+                                result += newCol;
+                                if (hasRowDollar) result += '$';
+                                result += row;
+                                return result;
+                            }
+                            return match;
+                        });
+                    });
+                }
+            });
+        }
+    });
+    
+    console.log(`[Writer CF Insert] ${adjustedCount} CF-Referenzen um ${insertCount} Spalten nach rechts verschoben`);
 }
 
 /**
@@ -775,6 +954,7 @@ async function processSheet(worksheet, sheetData) {
         structuralChange = false,  // NEU: Signalisiert strukturelle Änderung (Spalte gelöscht/eingefügt)
         deletedColumnIndex,  // LEGACY: Einzelner Index der gelöschten Spalte (0-basiert)
         deletedColumnIndices = [],  // NEU: Array von gelöschten Spalten-Indizes (0-basiert)
+        insertedColumnInfo = null,  // NEU: Info über eingefügte Spalten {position, count, headers}
         columnOrder = null,  // NEU: Neue Spaltenreihenfolge (Array von 0-basierten Indizes)
         rowMapping = null,  // NEU: Mapping für Zeilen-Verschiebung (Array: neue Position -> Original Excel-Zeilen-Index)
         autoFilterRange
@@ -986,6 +1166,163 @@ async function processSheet(worksheet, sheetData) {
             // Nach spliceColumns sind alle Daten bereits korrekt verschoben
             // Die Frontend-Daten werden NICHT geschrieben, nur fehlende Styles ergänzt
             return;
+        }
+        
+        // Bei Spalten-Einfügung: Nur die neuen Spalten schreiben, keine bestehenden überschreiben
+        if (structuralChange && insertedColumnInfo && insertedColumnInfo.count > 0) {
+            const insertPosition = insertedColumnInfo.position;  // 0-basiert
+            const insertCount = insertedColumnInfo.count;
+            const insertHeaders = insertedColumnInfo.headers || [];
+            
+            // Die Anzahl der Spalten VOR dem Einfügen im EXCEL-Worksheet
+            // Das ist die Position wo die neuen Spalten hingehören
+            const worksheetColCount = worksheet.columnCount || 0;
+            
+            console.log(`[Writer] Spalten einfügen: Position ${insertPosition}, Anzahl ${insertCount}`);
+            console.log(`[Writer] Worksheet hat ${worksheetColCount} Spalten, Frontend hat ${headers ? headers.length : 'N/A'} Spalten`);
+            
+            // Excel-Spalte ist 1-basiert
+            const insertColExcel = insertPosition + 1;
+            
+            // WICHTIG: Bei Data Join am Ende einfügen bedeutet:
+            // - insertPosition = die Position im FRONTEND (nach dem Einfügen der Spalten in explorerState)
+            // - Die Excel-Datei hat noch die ORIGINAL Anzahl Spalten
+            // - Wir müssen prüfen ob insertPosition >= worksheetColCount
+            //   (d.h. wir fügen am Ende der EXCEL-Datei ein, nicht in der Mitte)
+            
+            const insertAtEnd = insertPosition >= worksheetColCount;
+            console.log(`[Writer] insertAtEnd: ${insertAtEnd} (insertPosition ${insertPosition} >= worksheetColCount ${worksheetColCount})`);
+            
+            if (insertAtEnd) {
+                // Einfügen am ENDE: Keine Verschiebung nötig, einfach Werte schreiben
+                console.log(`[Writer] Einfügen am Ende - schreibe nur neue Spalten`);
+                
+                // Header schreiben (Zeile 1)
+                for (let c = 0; c < insertCount; c++) {
+                    const cell = worksheet.getCell(1, insertColExcel + c);
+                    cell.value = insertHeaders[c] || '';
+                }
+                
+                // Daten schreiben
+                if (data && data.length > 0) {
+                    for (let rowIdx = 0; rowIdx < data.length; rowIdx++) {
+                        const row = data[rowIdx];
+                        for (let c = 0; c < insertCount; c++) {
+                            const colIdx = insertPosition + c;
+                            if (colIdx < row.length) {
+                                const cell = worksheet.getCell(rowIdx + 2, insertColExcel + c);
+                                const value = row[colIdx];
+                                cell.value = value === null || value === undefined ? '' : value;
+                            }
+                        }
+                    }
+                }
+                
+                // AutoFilter anpassen
+                if (autoFilterRange) {
+                    const expandedRange = expandAutoFilterRange(autoFilterRange, insertCount);
+                    worksheet.autoFilter = expandedRange;
+                    console.log(`[Writer] AutoFilter erweitert: ${autoFilterRange} -> ${expandedRange}`);
+                }
+                
+                // Versteckte Spalten setzen
+                if (hiddenColumns !== undefined) {
+                    const hiddenSet = new Set(hiddenColumns || []);
+                    const columnCount = worksheet.columnCount || 0;
+                    for (let colIdx = 0; colIdx < columnCount; colIdx++) {
+                        const col = worksheet.getColumn(colIdx + 1);
+                        col.hidden = hiddenSet.has(colIdx);
+                    }
+                }
+                
+                console.log(`[Writer] ${insertCount} Spalte(n) am Ende eingefügt (Positionen ${insertPosition} bis ${insertPosition + insertCount - 1})`);
+                
+                // WICHTIG: Hier beenden - keine weiteren Daten schreiben!
+                return;
+            } else {
+                // Einfügen IN DER MITTE: Manuelles Verschieben der Zellen
+                // spliceColumns hat Probleme mit CF und Styles, daher manuell
+                console.log(`[Writer] Einfügen in der Mitte - manuelles Verschieben`);
+                
+                const rowCount = worksheet.rowCount || 1;
+                const colCount = worksheet.columnCount || 1;
+                
+                // 1. ERST alle Zellen von rechts nach links verschieben (von der letzten Spalte beginnend)
+                //    Das verschiebt alle Werte UND Styles
+                for (let row = 1; row <= rowCount; row++) {
+                    // Von der letzten Spalte rückwärts bis zur Einfügeposition
+                    for (let col = colCount; col >= insertColExcel; col--) {
+                        const sourceCell = worksheet.getCell(row, col);
+                        const targetCell = worksheet.getCell(row, col + insertCount);
+                        
+                        // Wert kopieren
+                        targetCell.value = sourceCell.value;
+                        
+                        // Style komplett kopieren
+                        if (sourceCell.style) {
+                            targetCell.style = JSON.parse(JSON.stringify(sourceCell.style));
+                        }
+                        
+                        // Quellzelle leeren
+                        sourceCell.value = null;
+                        sourceCell.style = {};
+                    }
+                }
+                
+                console.log(`[Writer] Zellen verschoben: Spalten ${insertColExcel}-${colCount} nach ${insertColExcel + insertCount}-${colCount + insertCount}`);
+                
+                // 2. Header in die neuen Spalten schreiben
+                for (let c = 0; c < insertCount; c++) {
+                    const cell = worksheet.getCell(1, insertColExcel + c);
+                    cell.value = insertHeaders[c] || '';
+                }
+                
+                // 3. Daten in die neuen Spalten schreiben
+                if (data && data.length > 0) {
+                    for (let rowIdx = 0; rowIdx < data.length; rowIdx++) {
+                        const row = data[rowIdx];
+                        for (let c = 0; c < insertCount; c++) {
+                            const colIdx = insertPosition + c;
+                            if (colIdx < row.length) {
+                                const cell = worksheet.getCell(rowIdx + 2, insertColExcel + c);
+                                const value = row[colIdx];
+                                cell.value = value === null || value === undefined ? '' : value;
+                            }
+                        }
+                    }
+                }
+                
+                // 4. Bedingte Formatierungen anpassen (Spaltenreferenzen nach rechts verschieben)
+                adjustConditionalFormattingsAfterColumnInsert(worksheet, insertColExcel, insertCount);
+                
+                // 5. Excel-Tabellen anpassen (tableRef erweitern)
+                adjustTablesAfterColumnInsert(worksheet, insertColExcel, insertCount, insertHeaders);
+                
+                // 6. AutoFilter anpassen
+                if (autoFilterRange) {
+                    const expandedRange = expandAutoFilterRange(autoFilterRange, insertCount);
+                    worksheet.autoFilter = expandedRange;
+                    console.log(`[Writer] AutoFilter erweitert: ${autoFilterRange} -> ${expandedRange}`);
+                }
+                
+                // 6. Versteckte Spalten setzen
+                if (hiddenColumns !== undefined) {
+                    const hiddenSet = new Set(hiddenColumns || []);
+                    const newColumnCount = colCount + insertCount;
+                    for (let colIdx = 0; colIdx < newColumnCount; colIdx++) {
+                        const col = worksheet.getColumn(colIdx + 1);
+                        col.hidden = hiddenSet.has(colIdx);
+                    }
+                }
+                
+                // 7. CellStyles anwenden falls vorhanden
+                if (cellStyles && Object.keys(cellStyles).length > 0) {
+                    applyMissingFills(worksheet, cellStyles, true);
+                }
+                
+                console.log(`[Writer] ${insertCount} Spalte(n) in der Mitte eingefügt (Position ${insertPosition})`);
+                return;
+            }
         }
         
         // WICHTIG: Spaltenbreiten VOR dem Schreiben sichern

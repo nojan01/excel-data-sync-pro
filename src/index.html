@@ -2605,7 +2605,7 @@
                             <button class="btn btn-primary btn-sm" id="btnExplorerSearch" title="Suche starten (Enter)">🔍</button>
                         </div>
                     </div>
-                    <button class="btn btn-info btn-sm" id="btnToggleFindReplace" title="Suchen & Ersetzen (Strg+H)">
+                    <button class="btn btn-info btn-sm" id="btnToggleFindReplace" title="Suchen & Ersetzen (Strg+H)" data-i18n="findReplace" data-i18n-title="findReplaceTitle">
                         🔄 Ersetzen
                     </button>
                     <button class="btn btn-primary" id="btnToggleColumns" title="Spalten ein-/ausblenden">
@@ -2613,6 +2613,9 @@
                     </button>
                     <button class="btn btn-primary" id="btnExplorerPreview" title="Vorschau des gesamten Datenblattes mit Änderungen" disabled>
                         👁️ Vorschau
+                    </button>
+                    <button class="btn btn-info" id="btnDataJoin" title="Spalten aus einer anderen Excel-Datei hinzufügen (basierend auf gemeinsamer Seriennummer)" disabled data-i18n="addColumns" data-i18n-title="addColumnsTitle">
+                        🔗 Spalten hinzufügen
                     </button>
                     <button class="btn btn-success" id="btnExplorerExport" title="Änderungen speichern oder als neue Datei exportieren">
                         💾 Speichern
@@ -2837,6 +2840,115 @@
         </div>
     </div>
     
+    <!-- Data Join Modal - Spalten aus anderer Datei hinzufügen -->
+    <div class="modal-overlay hidden" id="dataJoinModal">
+        <div class="modal modal-large" style="max-width: 900px; width: 90%; max-height: 85vh;">
+            <div class="modal-header">
+                <div class="modal-title" data-i18n="joinModalTitle">🔗 Spalten aus Datei hinzufügen</div>
+                <button class="modal-close" id="btnCloseDataJoin">&times;</button>
+            </div>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px; overflow-y: auto;">
+                <!-- Info-Box -->
+                <div style="padding: 12px; background: linear-gradient(135deg, #2d2d30 0%, #252526 100%); border-radius: 6px; border-left: 4px solid var(--info);">
+                    <p style="color: var(--text-muted); font-size: 13px; line-height: 1.5;" data-i18n="joinModalInfo">
+                        <strong style="color: var(--text);">📋 Funktion:</strong> Fügt Spalten aus einer anderen Excel-Datei hinzu, basierend auf einem gemeinsamen Schlüssel (z.B. Seriennummer).
+                        Die Zeilen werden automatisch anhand des Schlüssels zugeordnet.
+                    </p>
+                </div>
+                
+                <!-- Schritt 1: Quelldatei wählen -->
+                <div class="config-group">
+                    <div class="config-section-title" style="margin-bottom: 10px;" data-i18n="joinStep1">1️⃣ Datenquelle auswählen</div>
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <button class="btn btn-primary" id="btnJoinSelectFile" data-i18n="joinSelectFile">
+                            📂 Datei auswählen
+                        </button>
+                        <span id="joinSourceFileName" style="color: var(--text-muted); font-size: 13px;" data-i18n="joinNoFileSelected">Keine Datei ausgewählt</span>
+                    </div>
+                    <div style="display: flex; gap: 10px; align-items: center; margin-top: 10px;">
+                        <label class="config-label" style="margin: 0; min-width: 100px;" data-i18n="joinWorksheet">Arbeitsblatt:</label>
+                        <select class="config-select" id="joinSourceSheet" style="flex: 1; max-width: 300px;" disabled>
+                            <option value="" data-i18n="joinLoadFile">-- Datei laden --</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <!-- Schritt 2: Schlüsselspalte wählen -->
+                <div class="config-group">
+                    <div class="config-section-title" style="margin-bottom: 10px;" data-i18n="joinStep2">2️⃣ Schlüsselspalte (z.B. Seriennummer)</div>
+                    <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 10px;" data-i18n="joinStep2Desc">
+                        Wählen Sie die Spalte, die in beiden Dateien als gemeinsamer Schlüssel dient.
+                    </p>
+                    <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                        <div style="flex: 1; min-width: 200px;">
+                            <label class="config-label" data-i18n="joinTargetFile">Aktuelle Datei (Ziel):</label>
+                            <select class="config-select" id="joinTargetKeyColumn" disabled>
+                                <option value="" data-i18n="joinSelectColumn">-- Spalte wählen --</option>
+                            </select>
+                        </div>
+                        <div style="display: flex; align-items: center; color: var(--primary-light); font-size: 20px; padding-top: 20px;">
+                            ⟷
+                        </div>
+                        <div style="flex: 1; min-width: 200px;">
+                            <label class="config-label" data-i18n="joinSourceFile">Quelldatei:</label>
+                            <select class="config-select" id="joinSourceKeyColumn" disabled>
+                                <option value="" data-i18n="joinSelectColumn">-- Spalte wählen --</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Schritt 3: Spalten zum Hinzufügen wählen -->
+                <div class="config-group">
+                    <div class="config-section-title" style="margin-bottom: 10px;" data-i18n="joinStep3">3️⃣ Spalten zum Hinzufügen auswählen</div>
+                    <p style="color: var(--text-muted); font-size: 12px; margin-bottom: 10px;" data-i18n="joinStep3Desc">
+                        Wählen Sie die Spalten aus der Quelldatei, die zur aktuellen Datei hinzugefügt werden sollen.
+                    </p>
+                    <div id="joinColumnsContainer" style="display: flex; flex-direction: column; gap: 8px; max-height: 200px; overflow-y: auto; padding: 10px; background: var(--bg-dark); border-radius: 6px; border: 1px solid var(--border);">
+                        <div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;" data-i18n="joinLoadSourceFirst">
+                            Laden Sie zuerst eine Quelldatei
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Schritt 4: Optionen -->
+                <div class="config-group">
+                    <div class="config-section-title" style="margin-bottom: 10px;" data-i18n="joinStep4">4️⃣ Optionen</div>
+                    <div style="display: flex; flex-direction: column; gap: 10px;">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="joinInsertAfterKey" class="green-checkbox" checked>
+                            <span data-i18n="joinInsertAfterKeyLabel">Neue Spalten direkt nach der Schlüsselspalte einfügen</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                            <input type="checkbox" id="joinMarkNotFound" class="green-checkbox" checked>
+                            <span data-i18n="joinMarkNotFoundLabel">Nicht gefundene Zeilen markieren (leere Zellen = kein Match)</span>
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Vorschau / Status -->
+                <div id="joinPreviewContainer" class="config-group" style="display: none;">
+                    <div class="config-section-title" style="margin-bottom: 10px;" data-i18n="joinPreviewTitle">📊 Vorschau</div>
+                    <div id="joinPreviewStats" style="display: flex; gap: 20px; flex-wrap: wrap; padding: 10px; background: var(--bg-dark); border-radius: 6px;">
+                        <div><strong data-i18n="joinStatTargetRowsLabel">Zeilen in Ziel:</strong> <span id="joinStatTargetRows">0</span></div>
+                        <div><strong data-i18n="joinStatSourceRowsLabel">Zeilen in Quelle:</strong> <span id="joinStatSourceRows">0</span></div>
+                        <div><strong data-i18n="joinStatMatchesLabel">Matches gefunden:</strong> <span id="joinStatMatches" style="color: var(--success);">0</span></div>
+                        <div><strong data-i18n="joinStatNoMatchLabel">Ohne Match:</strong> <span id="joinStatNoMatch" style="color: var(--warning);">0</span></div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="btnCancelDataJoin" data-i18n="cancel">Abbrechen</button>
+                <button class="btn btn-primary" id="btnPreviewDataJoin" disabled data-i18n="joinPreviewBtn">
+                    👁️ Vorschau berechnen
+                </button>
+                <button class="btn btn-success" id="btnExecuteDataJoin" disabled data-i18n="joinExecuteBtn">
+                    ✓ Spalten hinzufügen
+                </button>
+            </div>
+        </div>
+    </div>
+    
     <!-- Filter Template für Explorer -->
     <template id="explorerFilterTemplate">
         <div class="explorer-filter-row" style="display: flex; gap: 8px; align-items: center; padding: 6px 8px; background: var(--bg-dark); border-radius: 4px;">
@@ -3011,6 +3123,37 @@
                 endsWith: 'endet mit',
                 selectColumn: 'Spalte wählen',
                 filterValue: 'Filterwert',
+                findReplace: '🔄 Ersetzen',
+                findReplaceTitle: 'Suchen & Ersetzen (Strg+H)',
+                addColumns: '🔗 Spalten hinzufügen',
+                addColumnsTitle: 'Spalten aus einer anderen Excel-Datei hinzufügen (basierend auf gemeinsamer Seriennummer)',
+                
+                // Data Join Modal
+                joinModalTitle: '🔗 Spalten aus Datei hinzufügen',
+                joinModalInfo: '<strong style="color: var(--text);">📋 Funktion:</strong> Fügt Spalten aus einer anderen Excel-Datei hinzu, basierend auf einem gemeinsamen Schlüssel (z.B. Seriennummer). Die Zeilen werden automatisch anhand des Schlüssels zugeordnet.',
+                joinStep1: '1️⃣ Datenquelle auswählen',
+                joinSelectFile: '📂 Datei auswählen',
+                joinNoFileSelected: 'Keine Datei ausgewählt',
+                joinWorksheet: 'Arbeitsblatt:',
+                joinLoadFile: '-- Datei laden --',
+                joinStep2: '2️⃣ Schlüsselspalte (z.B. Seriennummer)',
+                joinStep2Desc: 'Wählen Sie die Spalte, die in beiden Dateien als gemeinsamer Schlüssel dient.',
+                joinTargetFile: 'Aktuelle Datei (Ziel):',
+                joinSourceFile: 'Quelldatei:',
+                joinSelectColumn: '-- Spalte wählen --',
+                joinStep3: '3️⃣ Spalten zum Hinzufügen auswählen',
+                joinStep3Desc: 'Wählen Sie die Spalten aus der Quelldatei, die zur aktuellen Datei hinzugefügt werden sollen.',
+                joinLoadSourceFirst: 'Laden Sie zuerst eine Quelldatei',
+                joinStep4: '4️⃣ Optionen',
+                joinInsertAfterKeyLabel: 'Neue Spalten direkt nach der Schlüsselspalte einfügen',
+                joinMarkNotFoundLabel: 'Nicht gefundene Zeilen markieren (leere Zellen = kein Match)',
+                joinPreviewTitle: '📊 Vorschau',
+                joinStatTargetRowsLabel: 'Zeilen in Ziel:',
+                joinStatSourceRowsLabel: 'Zeilen in Quelle:',
+                joinStatMatchesLabel: 'Matches gefunden:',
+                joinStatNoMatchLabel: 'Ohne Match:',
+                joinPreviewBtn: '👁️ Vorschau berechnen',
+                joinExecuteBtn: '✓ Spalten hinzufügen',
                 
                 // Row/Column Actions
                 insertRowAbove: 'Zeile darüber einfügen',
@@ -3231,6 +3374,37 @@
                 endsWith: 'ends with',
                 selectColumn: 'Select column',
                 filterValue: 'Filter value',
+                findReplace: '🔄 Replace',
+                findReplaceTitle: 'Find & Replace (Ctrl+H)',
+                addColumns: '🔗 Add Columns',
+                addColumnsTitle: 'Add columns from another Excel file (based on matching serial number)',
+                
+                // Data Join Modal
+                joinModalTitle: '🔗 Add Columns from File',
+                joinModalInfo: '<strong style="color: var(--text);">📋 Function:</strong> Adds columns from another Excel file based on a common key (e.g. serial number). Rows are automatically matched by the key.',
+                joinStep1: '1️⃣ Select Data Source',
+                joinSelectFile: '📂 Select File',
+                joinNoFileSelected: 'No file selected',
+                joinWorksheet: 'Worksheet:',
+                joinLoadFile: '-- Load file --',
+                joinStep2: '2️⃣ Key Column (e.g. Serial Number)',
+                joinStep2Desc: 'Select the column that serves as a common key in both files.',
+                joinTargetFile: 'Current File (Target):',
+                joinSourceFile: 'Source File:',
+                joinSelectColumn: '-- Select column --',
+                joinStep3: '3️⃣ Select Columns to Add',
+                joinStep3Desc: 'Select the columns from the source file to add to the current file.',
+                joinLoadSourceFirst: 'Load a source file first',
+                joinStep4: '4️⃣ Options',
+                joinInsertAfterKeyLabel: 'Insert new columns directly after the key column',
+                joinMarkNotFoundLabel: 'Mark rows not found (empty cells = no match)',
+                joinPreviewTitle: '📊 Preview',
+                joinStatTargetRowsLabel: 'Rows in target:',
+                joinStatSourceRowsLabel: 'Rows in source:',
+                joinStatMatchesLabel: 'Matches found:',
+                joinStatNoMatchLabel: 'No match:',
+                joinPreviewBtn: '👁️ Calculate Preview',
+                joinExecuteBtn: '✓ Add Columns',
                 
                 // Row/Column Actions
                 insertRowAbove: 'Insert row above',
@@ -3356,6 +3530,11 @@
                     if (!dynamicElements.includes(el.id)) {
                         el.innerHTML = text;
                     }
+                }
+                // Update title attribute if data-i18n-title is present
+                const titleKey = el.getAttribute('data-i18n-title');
+                if (titleKey) {
+                    el.title = t(titleKey);
                 }
             });
             
@@ -3500,6 +3679,35 @@
                     if (opt.value === 'endsWith') opt.textContent = t('endsWith');
                 });
             });
+            
+            // Data Join Modal - Update select default options
+            const joinSourceSheet = document.getElementById('joinSourceSheet');
+            const joinTargetKeyColumn = document.getElementById('joinTargetKeyColumn');
+            const joinSourceKeyColumn = document.getElementById('joinSourceKeyColumn');
+            const joinSourceFileName = document.getElementById('joinSourceFileName');
+            const joinColumnsContainer = document.getElementById('joinColumnsContainer');
+            
+            // Update default options if they exist and are in initial state
+            if (joinSourceSheet && joinSourceSheet.options.length === 1) {
+                joinSourceSheet.options[0].textContent = t('joinLoadFile');
+            }
+            if (joinTargetKeyColumn && joinTargetKeyColumn.options.length > 0 && joinTargetKeyColumn.options[0].value === '') {
+                joinTargetKeyColumn.options[0].textContent = t('joinSelectColumn');
+            }
+            if (joinSourceKeyColumn && joinSourceKeyColumn.options.length > 0 && joinSourceKeyColumn.options[0].value === '') {
+                joinSourceKeyColumn.options[0].textContent = t('joinSelectColumn');
+            }
+            // Update "no file selected" text if in initial state
+            if (joinSourceFileName && (joinSourceFileName.textContent === 'Keine Datei ausgewählt' || joinSourceFileName.textContent === 'No file selected')) {
+                joinSourceFileName.textContent = t('joinNoFileSelected');
+            }
+            // Update "load source first" text if in initial state
+            if (joinColumnsContainer) {
+                const initialMsg = joinColumnsContainer.querySelector('div[style*="text-align: center"]');
+                if (initialMsg && (initialMsg.textContent.includes('Laden Sie zuerst') || initialMsg.textContent.includes('Load a source file'))) {
+                    initialMsg.textContent = t('joinLoadSourceFirst');
+                }
+            }
             
             // New Month Modal
             const newMonthTitle = document.querySelector('#newMonthModal .modal-title');
@@ -4396,6 +4604,27 @@
             btnExplorerPrevPage: document.getElementById('btnExplorerPrevPage'),
             btnExplorerNextPage: document.getElementById('btnExplorerNextPage'),
             btnExplorerLastPage: document.getElementById('btnExplorerLastPage'),
+            
+            // Data Join Modal
+            dataJoinModal: document.getElementById('dataJoinModal'),
+            btnDataJoin: document.getElementById('btnDataJoin'),
+            btnCloseDataJoin: document.getElementById('btnCloseDataJoin'),
+            btnJoinSelectFile: document.getElementById('btnJoinSelectFile'),
+            joinSourceFileName: document.getElementById('joinSourceFileName'),
+            joinSourceSheet: document.getElementById('joinSourceSheet'),
+            joinTargetKeyColumn: document.getElementById('joinTargetKeyColumn'),
+            joinSourceKeyColumn: document.getElementById('joinSourceKeyColumn'),
+            joinColumnsContainer: document.getElementById('joinColumnsContainer'),
+            joinInsertAfterKey: document.getElementById('joinInsertAfterKey'),
+            joinMarkNotFound: document.getElementById('joinMarkNotFound'),
+            joinPreviewContainer: document.getElementById('joinPreviewContainer'),
+            joinStatTargetRows: document.getElementById('joinStatTargetRows'),
+            joinStatSourceRows: document.getElementById('joinStatSourceRows'),
+            joinStatMatches: document.getElementById('joinStatMatches'),
+            joinStatNoMatch: document.getElementById('joinStatNoMatch'),
+            btnCancelDataJoin: document.getElementById('btnCancelDataJoin'),
+            btnPreviewDataJoin: document.getElementById('btnPreviewDataJoin'),
+            btnExecuteDataJoin: document.getElementById('btnExecuteDataJoin'),
             
             // Help
             btnHelp: document.getElementById('btnHelp'),
@@ -6604,6 +6833,423 @@
             // Pivot-Tabellen Warnung
             hasPivotTables: false
         };
+        
+        // ==================== Data Join State & Functions ====================
+        const dataJoinState = {
+            sourceFilePath: null,
+            sourceFileName: null,
+            sourceSheets: [],
+            sourceData: [],
+            sourceHeaders: [],
+            selectedSourceSheet: null,
+            targetKeyColumnIndex: null,
+            sourceKeyColumnIndex: null,
+            selectedColumns: [],  // Indices der zu kopierenden Spalten
+            previewCalculated: false,
+            matchStats: {
+                targetRows: 0,
+                sourceRows: 0,
+                matches: 0,
+                noMatch: 0
+            }
+        };
+        
+        function resetDataJoinState() {
+            dataJoinState.sourceFilePath = null;
+            dataJoinState.sourceFileName = null;
+            dataJoinState.sourceSheets = [];
+            dataJoinState.sourceData = [];
+            dataJoinState.sourceHeaders = [];
+            dataJoinState.selectedSourceSheet = null;
+            dataJoinState.targetKeyColumnIndex = null;
+            dataJoinState.sourceKeyColumnIndex = null;
+            dataJoinState.selectedColumns = [];
+            dataJoinState.previewCalculated = false;
+            dataJoinState.matchStats = { targetRows: 0, sourceRows: 0, matches: 0, noMatch: 0 };
+        }
+        
+        function openDataJoinModal() {
+            if (!explorerState.filePath || explorerState.data.length === 0) {
+                showNotification('Bitte zuerst eine Datei im Datenexplorer laden', 'warning');
+                return;
+            }
+            
+            resetDataJoinState();
+            
+            // Ziel-Spalten (aktuelle Datei) befüllen
+            const targetKeySelect = elements.joinTargetKeyColumn;
+            targetKeySelect.innerHTML = `<option value="">${t('joinSelectColumn')}</option>`;
+            explorerState.headers.forEach((header, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = `${getColumnLetter(index)}: ${header || '(leer)'}`;
+                targetKeySelect.appendChild(option);
+            });
+            targetKeySelect.disabled = false;
+            
+            // Reset andere Felder
+            elements.joinSourceFileName.textContent = t('joinNoFileSelected');
+            elements.joinSourceSheet.innerHTML = `<option value="">${t('joinLoadFile')}</option>`;
+            elements.joinSourceSheet.disabled = true;
+            elements.joinSourceKeyColumn.innerHTML = `<option value="">${t('joinSelectColumn')}</option>`;
+            elements.joinSourceKeyColumn.disabled = true;
+            elements.joinColumnsContainer.innerHTML = `<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;">${t('joinLoadSourceFirst')}</div>`;
+            elements.joinPreviewContainer.style.display = 'none';
+            elements.btnPreviewDataJoin.disabled = true;
+            elements.btnExecuteDataJoin.disabled = true;
+            
+            // Modal öffnen
+            elements.dataJoinModal.classList.remove('hidden');
+            document.body.classList.add('modal-open');
+        }
+        
+        function closeDataJoinModal() {
+            elements.dataJoinModal.classList.add('hidden');
+            document.body.classList.remove('modal-open');
+        }
+        
+        async function loadDataJoinSourceFile() {
+            try {
+                const filePath = await window.electronAPI.openFileDialog({
+                    title: 'Quelldatei für Spalten-Join auswählen',
+                    filters: [{ name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] }]
+                });
+                
+                if (!filePath) {
+                    return;
+                }
+                
+                const fileName = filePath.split(/[/\\]/).pop();
+                
+                console.log('[DataJoin] Lade Datei:', filePath);
+                
+                // Datei laden um Sheets zu bekommen
+                const fileResult = await window.electronAPI.readExcelFile(filePath);
+                
+                console.log('[DataJoin] readExcelFile Ergebnis:', fileResult);
+                
+                if (!fileResult.success) {
+                    showNotification('Fehler beim Laden: ' + fileResult.error, 'error');
+                    return;
+                }
+                
+                dataJoinState.sourceFilePath = filePath;
+                dataJoinState.sourceFileName = fileName;
+                dataJoinState.sourceSheets = fileResult.sheets;
+                
+                elements.joinSourceFileName.textContent = fileName;
+                elements.joinSourceFileName.style.color = 'var(--success)';
+                
+                // Sheets-Dropdown befüllen
+                elements.joinSourceSheet.innerHTML = '';
+                fileResult.sheets.forEach(sheetName => {
+                    const option = document.createElement('option');
+                    option.value = sheetName;
+                    option.textContent = sheetName;
+                    elements.joinSourceSheet.appendChild(option);
+                });
+                elements.joinSourceSheet.disabled = false;
+                
+                // Erstes Sheet automatisch laden
+                if (fileResult.sheets.length > 0) {
+                    await loadDataJoinSourceSheet(fileResult.sheets[0]);
+                }
+                
+            } catch (error) {
+                console.error('Fehler beim Laden der Quelldatei:', error);
+                showNotification('Fehler beim Laden: ' + error.message, 'error');
+            }
+        }
+        
+        async function loadDataJoinSourceSheet(sheetName) {
+            if (!dataJoinState.sourceFilePath || !sheetName) return;
+            
+            try {
+                console.log('[DataJoin] Lade Sheet:', sheetName);
+                
+                const sheetResult = await window.electronAPI.readExcelSheet(
+                    dataJoinState.sourceFilePath, 
+                    sheetName, 
+                    null
+                );
+                
+                console.log('[DataJoin] Sheet Ergebnis:', sheetResult);
+                console.log('[DataJoin] Headers:', sheetResult.headers);
+                console.log('[DataJoin] Daten-Zeilen:', sheetResult.data ? sheetResult.data.length : 0);
+                if (sheetResult.data && sheetResult.data.length > 0) {
+                    console.log('[DataJoin] Erste Zeile:', sheetResult.data[0]);
+                }
+                
+                if (!sheetResult.success) {
+                    showNotification('Fehler beim Laden des Sheets: ' + sheetResult.error, 'error');
+                    return;
+                }
+                
+                dataJoinState.selectedSourceSheet = sheetName;
+                dataJoinState.sourceHeaders = sheetResult.headers || [];
+                dataJoinState.sourceData = sheetResult.data || [];
+                
+                console.log('[DataJoin] State nach Laden - Headers:', dataJoinState.sourceHeaders.length, 'Daten:', dataJoinState.sourceData.length);
+                
+                // Schlüsselspalten-Dropdown befüllen
+                const sourceKeySelect = elements.joinSourceKeyColumn;
+                sourceKeySelect.innerHTML = `<option value="">${t('joinSelectColumn')}</option>`;
+                dataJoinState.sourceHeaders.forEach((header, index) => {
+                    const option = document.createElement('option');
+                    option.value = index;
+                    option.textContent = `${getColumnLetter(index)}: ${header || '(leer)'}`;
+                    sourceKeySelect.appendChild(option);
+                });
+                sourceKeySelect.disabled = false;
+                
+                // Spalten-Auswahl befüllen
+                updateJoinColumnsSelection();
+                
+                // Preview zurücksetzen
+                dataJoinState.previewCalculated = false;
+                elements.joinPreviewContainer.style.display = 'none';
+                updateJoinButtons();
+                
+            } catch (error) {
+                console.error('Fehler beim Laden des Source-Sheets:', error);
+                showNotification('Fehler beim Laden: ' + error.message, 'error');
+            }
+        }
+        
+        function updateJoinColumnsSelection() {
+            const container = elements.joinColumnsContainer;
+            container.innerHTML = '';
+            
+            if (dataJoinState.sourceHeaders.length === 0) {
+                container.innerHTML = '<div style="color: var(--text-muted); font-size: 13px; text-align: center; padding: 20px;">Keine Spalten gefunden</div>';
+                return;
+            }
+            
+            dataJoinState.sourceHeaders.forEach((header, index) => {
+                const checkbox = document.createElement('label');
+                checkbox.style.cssText = 'display: flex; align-items: center; gap: 8px; padding: 8px 12px; background: var(--bg-light); border-radius: 4px; cursor: pointer; transition: background 0.2s;';
+                checkbox.innerHTML = `
+                    <input type="checkbox" class="green-checkbox join-column-checkbox" data-index="${index}">
+                    <span style="font-weight: 500; color: var(--primary-light);">${getColumnLetter(index)}</span>
+                    <span style="color: var(--text);">${header || '(leer)'}</span>
+                `;
+                checkbox.onmouseenter = () => checkbox.style.background = 'var(--bg-lighter)';
+                checkbox.onmouseleave = () => checkbox.style.background = 'var(--bg-light)';
+                
+                const input = checkbox.querySelector('input');
+                input.onchange = () => {
+                    updateSelectedJoinColumns();
+                    dataJoinState.previewCalculated = false;
+                    elements.joinPreviewContainer.style.display = 'none';
+                    updateJoinButtons();
+                };
+                
+                container.appendChild(checkbox);
+            });
+        }
+        
+        function updateSelectedJoinColumns() {
+            const checkboxes = document.querySelectorAll('.join-column-checkbox:checked');
+            dataJoinState.selectedColumns = Array.from(checkboxes).map(cb => parseInt(cb.dataset.index));
+        }
+        
+        function updateJoinButtons() {
+            const hasTargetKey = elements.joinTargetKeyColumn.value !== '';
+            const hasSourceKey = elements.joinSourceKeyColumn.value !== '';
+            const hasSelectedColumns = dataJoinState.selectedColumns.length > 0;
+            
+            elements.btnPreviewDataJoin.disabled = !(hasTargetKey && hasSourceKey && hasSelectedColumns);
+            elements.btnExecuteDataJoin.disabled = !dataJoinState.previewCalculated;
+        }
+        
+        function calculateDataJoinPreview() {
+            const targetKeyIndex = parseInt(elements.joinTargetKeyColumn.value);
+            const sourceKeyIndex = parseInt(elements.joinSourceKeyColumn.value);
+            
+            if (isNaN(targetKeyIndex) || isNaN(sourceKeyIndex)) {
+                showNotification('Bitte Schlüsselspalten auswählen', 'warning');
+                return;
+            }
+            
+            dataJoinState.targetKeyColumnIndex = targetKeyIndex;
+            dataJoinState.sourceKeyColumnIndex = sourceKeyIndex;
+            
+            // Source-Daten in Map für schnellen Lookup
+            const sourceMap = new Map();
+            dataJoinState.sourceData.forEach((row, idx) => {
+                const keyValue = String(row[sourceKeyIndex] || '').trim();
+                if (keyValue) {
+                    sourceMap.set(keyValue, row);
+                }
+            });
+            
+            // Matches zählen
+            let matches = 0;
+            let noMatch = 0;
+            
+            explorerState.data.forEach((row, idx) => {
+                const keyValue = String(row[targetKeyIndex] || '').trim();
+                if (keyValue && sourceMap.has(keyValue)) {
+                    matches++;
+                } else if (keyValue) {
+                    noMatch++;
+                }
+            });
+            
+            // Stats speichern und anzeigen
+            dataJoinState.matchStats = {
+                targetRows: explorerState.data.length,
+                sourceRows: dataJoinState.sourceData.length,
+                matches: matches,
+                noMatch: noMatch
+            };
+            
+            elements.joinStatTargetRows.textContent = dataJoinState.matchStats.targetRows;
+            elements.joinStatSourceRows.textContent = dataJoinState.matchStats.sourceRows;
+            elements.joinStatMatches.textContent = dataJoinState.matchStats.matches;
+            elements.joinStatNoMatch.textContent = dataJoinState.matchStats.noMatch;
+            
+            elements.joinPreviewContainer.style.display = 'block';
+            dataJoinState.previewCalculated = true;
+            updateJoinButtons();
+            
+            showNotification(`Vorschau berechnet: ${matches} Matches, ${noMatch} ohne Match`, 'success');
+        }
+        
+        function executeDataJoin() {
+            if (!dataJoinState.previewCalculated) {
+                showNotification('Bitte zuerst Vorschau berechnen', 'warning');
+                return;
+            }
+            
+            const targetKeyIndex = dataJoinState.targetKeyColumnIndex;
+            const sourceKeyIndex = dataJoinState.sourceKeyColumnIndex;
+            const columnsToAdd = dataJoinState.selectedColumns;
+            const insertAfterKey = elements.joinInsertAfterKey.checked;
+            const markNotFound = elements.joinMarkNotFound.checked;
+            
+            if (columnsToAdd.length === 0) {
+                showNotification('Bitte mindestens eine Spalte auswählen', 'warning');
+                return;
+            }
+            
+            // Source-Daten in Map für schnellen Lookup
+            const sourceMap = new Map();
+            dataJoinState.sourceData.forEach(row => {
+                const keyValue = String(row[sourceKeyIndex] || '').trim();
+                if (keyValue) {
+                    sourceMap.set(keyValue, row);
+                }
+            });
+            
+            // Bestimme Einfüge-Position
+            let insertPosition;
+            if (insertAfterKey) {
+                insertPosition = targetKeyIndex + 1;
+            } else {
+                insertPosition = explorerState.headers.length;  // Am Ende einfügen
+            }
+            
+            // Neue Header erstellen
+            const newHeaders = [];
+            columnsToAdd.forEach(colIdx => {
+                newHeaders.push(dataJoinState.sourceHeaders[colIdx] || `Spalte ${getColumnLetter(colIdx)}`);
+            });
+            
+            // Header einfügen
+            explorerState.headers.splice(insertPosition, 0, ...newHeaders);
+            
+            // Visible Columns aktualisieren - Indices verschieben und neue einfügen
+            // Alle bestehenden Indices >= insertPosition um newHeaders.length erhöhen
+            explorerState.visibleColumns = explorerState.visibleColumns.map(idx => 
+                idx >= insertPosition ? idx + newHeaders.length : idx
+            );
+            // Neue Spalten-Indices einfügen (an der richtigen Position im Array)
+            for (let i = 0; i < newHeaders.length; i++) {
+                // Finde die richtige Array-Position wo der neue Index eingefügt werden soll
+                let arrayPos = 0;
+                while (arrayPos < explorerState.visibleColumns.length && 
+                       explorerState.visibleColumns[arrayPos] < insertPosition + i) {
+                    arrayPos++;
+                }
+                explorerState.visibleColumns.splice(arrayPos, 0, insertPosition + i);
+            }
+            
+            // Column Order aktualisieren wenn vorhanden
+            if (explorerState.columnOrder.length > 0) {
+                explorerState.columnOrder = explorerState.columnOrder.map(idx => 
+                    idx >= insertPosition ? idx + newHeaders.length : idx
+                );
+                // Neue Indices an der richtigen Position einfügen
+                for (let i = 0; i < newHeaders.length; i++) {
+                    let arrayPos = 0;
+                    while (arrayPos < explorerState.columnOrder.length && 
+                           explorerState.columnOrder[arrayPos] < insertPosition + i) {
+                        arrayPos++;
+                    }
+                    explorerState.columnOrder.splice(arrayPos, 0, insertPosition + i);
+                }
+            }
+            
+            // HINWEIS: Cell Styles werden NICHT manuell verschoben!
+            // Der Writer verwendet spliceColumns, das die Excel-Styles automatisch verschiebt.
+            // Eine manuelle Verschiebung hier würde zu doppelter Verschiebung führen.
+
+            // Daten für jede Zeile hinzufügen
+            let matchCount = 0;
+            explorerState.data.forEach((row, rowIndex) => {
+                const keyValue = String(row[targetKeyIndex] || '').trim();
+                const sourceRow = sourceMap.get(keyValue);
+                
+                const newValues = columnsToAdd.map(colIdx => {
+                    if (sourceRow) {
+                        return sourceRow[colIdx] || '';
+                    } else {
+                        return markNotFound ? '' : '';  // Leere Zelle wenn kein Match
+                    }
+                });
+                
+                if (sourceRow) matchCount++;
+                
+                // Werte einfügen
+                row.splice(insertPosition, 0, ...newValues);
+                
+                // Als bearbeitet markieren
+                newValues.forEach((val, i) => {
+                    const cellKey = `${rowIndex}-${insertPosition + i}`;
+                    explorerState.editedCells.set(cellKey, val);
+                });
+            });
+            
+            // Original-Daten auch aktualisieren
+            explorerState.originalData.forEach((row, rowIndex) => {
+                const keyValue = String(row[targetKeyIndex] || '').trim();
+                const sourceRow = sourceMap.get(keyValue);
+                
+                const newValues = columnsToAdd.map(colIdx => {
+                    return sourceRow ? (sourceRow[colIdx] || '') : '';
+                });
+                
+                row.splice(insertPosition, 0, ...newValues);
+            });
+            
+            // Strukturelle Änderung markieren für korrekten Export
+            explorerState.editedCells.set('_columnInserted', {
+                position: insertPosition,
+                count: newHeaders.length,
+                headers: newHeaders
+            });
+            
+            // UI aktualisieren
+            filterExplorerData();
+            closeDataJoinModal();
+            
+            showNotification(
+                `✓ ${columnsToAdd.length} Spalte(n) hinzugefügt! ${matchCount} von ${explorerState.data.length} Zeilen mit Daten gefüllt.`,
+                'success',
+                5000
+            );
+        }
         
         // ==================== Sheet Management Functions ====================
         let selectedSheetForManagement = null;
@@ -10115,6 +10761,7 @@
         
         function renderExplorerTable() {
             const btnPreview = document.getElementById('btnExplorerPreview');
+            const btnDataJoin = document.getElementById('btnDataJoin');
             
             if (!explorerState.headers.length) {
                 elements.explorerTableHead.innerHTML = '';
@@ -10122,6 +10769,7 @@
                 elements.explorerResultCount.textContent = t('noDataLoaded');
                 document.getElementById('explorerPagination').style.display = 'none';
                 if (btnPreview) btnPreview.disabled = true;
+                if (btnDataJoin) btnDataJoin.disabled = true;
                 // Drop-Zone anzeigen wenn keine Daten
                 showExplorerDropZone(true);
                 return;
@@ -10132,6 +10780,8 @@
             
             // Preview-Button aktivieren, wenn Daten vorhanden sind
             if (btnPreview) btnPreview.disabled = false;
+            // Data Join Button aktivieren
+            if (btnDataJoin) btnDataJoin.disabled = false;
             
             // Pagination berechnen
             const totalRows = explorerState.filteredData.length;
@@ -11730,6 +12380,18 @@
                             }
                             console.log('[Export Debug] deletedColumnIndices (original):', JSON.stringify(deletedColumnIndices));
                             
+                            // Hole Info über eingefügte Spalten falls vorhanden
+                            const columnInsertedInfo = explorerState.editedCells.get('_columnInserted');
+                            let insertedColumnInfo = null;
+                            if (columnInsertedInfo && typeof columnInsertedInfo === 'object') {
+                                insertedColumnInfo = {
+                                    position: columnInsertedInfo.position,
+                                    count: columnInsertedInfo.count,
+                                    headers: columnInsertedInfo.headers || []
+                                };
+                                console.log('[Export Debug] insertedColumnInfo:', JSON.stringify(insertedColumnInfo));
+                            }
+                            
                             // Prüfe ob Spalten verschoben wurden
                             const hasColumnMoves = explorerState.editedCells.has('_columnMoved');
                             let columnOrder = hasColumnMoves && explorerState.columnOrder.length > 0 
@@ -11854,11 +12516,12 @@
                                 fullRewrite: true,
                                 structuralChange: true,  // Signalisiert dass Styles komplett zurückgesetzt werden müssen
                                 deletedColumnIndices: deletedColumnIndices,  // Array der gelöschten Spalten für spliceColumns
+                                insertedColumnInfo: insertedColumnInfo,  // Info über eingefügte Spalten für spliceColumns
                                 columnOrder: columnOrder,  // Neue Spaltenreihenfolge (null = keine Änderung oder bereits angewendet)
                                 affectedRows: affectedRowsArray,  // Betroffene Zeilen bei Row-Move für Style-Reset
                                 rowMapping: filterRowMapping || (hasRowMoves ? explorerState.rowMapping : null)  // Filter oder Row-Move Mapping
                             };
-                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${(filterRowMapping || hasRowMoves) ? 'ja' : 'nein'}, AutoFilter: ${explorerState.autoFilterRange || 'none'})`);
+                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, insertedColumnInfo: ${JSON.stringify(insertedColumnInfo)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${(filterRowMapping || hasRowMoves) ? 'ja' : 'nein'}, AutoFilter: ${explorerState.autoFilterRange || 'none'})`);
                         } else {
                             // Nur Zell-Edits: changedCells
                             const changedCells = {};
@@ -12960,6 +13623,25 @@
             elements.btnAddExplorerFilter.onclick = addExplorerFilter;
             elements.btnClearExplorerFilters.onclick = clearExplorerFilters;
             elements.btnExplorerExport.onclick = exportExplorerData;
+            
+            // Data Join Event Listeners
+            elements.btnDataJoin.onclick = openDataJoinModal;
+            elements.btnCloseDataJoin.onclick = closeDataJoinModal;
+            elements.btnCancelDataJoin.onclick = closeDataJoinModal;
+            elements.btnJoinSelectFile.onclick = loadDataJoinSourceFile;
+            elements.joinSourceSheet.onchange = (e) => loadDataJoinSourceSheet(e.target.value);
+            elements.joinTargetKeyColumn.onchange = () => {
+                dataJoinState.previewCalculated = false;
+                elements.joinPreviewContainer.style.display = 'none';
+                updateJoinButtons();
+            };
+            elements.joinSourceKeyColumn.onchange = () => {
+                dataJoinState.previewCalculated = false;
+                elements.joinPreviewContainer.style.display = 'none';
+                updateJoinButtons();
+            };
+            elements.btnPreviewDataJoin.onclick = calculateDataJoinPreview;
+            elements.btnExecuteDataJoin.onclick = executeDataJoin;
             
             // Sheet Management Event Listeners
             document.getElementById('btnSheetManage').onclick = openSheetManageModal;
