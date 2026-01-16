@@ -40,6 +40,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     pythonListSheets: (filePath) => ipcRenderer.invoke('python:listSheets', filePath),
     pythonReadSheet: (filePath, sheetName) => ipcRenderer.invoke('python:readSheet', filePath, sheetName),
     
+    // Python/openpyxl Writer (behält ALLE Formatierungen)
+    pythonExportMultipleSheets: (params) => ipcRenderer.invoke('python:exportMultipleSheets', params),
+    
     // Sheet-Verwaltung
     addSheet: (params) => ipcRenderer.invoke('excel:addSheet', params),
     deleteSheet: (params) => ipcRenderer.invoke('excel:deleteSheet', params),

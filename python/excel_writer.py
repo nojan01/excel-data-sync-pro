@@ -75,6 +75,7 @@ def write_sheet(file_path, output_path, sheet_name, changes):
             - insertedColumns: Info über eingefügte Spalten
             - hiddenColumns: Array mit versteckten Spalten
             - hiddenRows: Array mit versteckten Zeilen
+            - fromFile: Bool - wenn True, nur versteckte Spalten/Zeilen setzen
     
     Returns:
         Dict mit success und ggf. error
@@ -98,6 +99,29 @@ def write_sheet(file_path, output_path, sheet_name, changes):
         hidden_columns = changes.get('hiddenColumns', [])
         hidden_rows = changes.get('hiddenRows', [])
         row_mapping = changes.get('rowMapping')
+        from_file = changes.get('fromFile', False)
+        
+        # Bei fromFile: Nur versteckte Spalten/Zeilen setzen, sonst nichts ändern
+        if from_file:
+            # Versteckte Spalten setzen
+            if hidden_columns:
+                hidden_set = set(hidden_columns)
+                max_col = ws.max_column
+                for col_idx in range(max_col):
+                    col_letter = get_column_letter(col_idx + 1)
+                    ws.column_dimensions[col_letter].hidden = col_idx in hidden_set
+            
+            # Versteckte Zeilen setzen
+            if hidden_rows:
+                hidden_set = set(hidden_rows)
+                max_row = ws.max_row
+                for row_idx in range(1, max_row):  # Zeile 1 = Header
+                    ws.row_dimensions[row_idx + 1].hidden = (row_idx - 1) in hidden_set
+            
+            # Speichern und fertig
+            wb.save(output_path)
+            wb.close()
+            return {'success': True, 'outputPath': output_path}
         
         # 1. Spalten löschen (von hinten nach vorne)
         if deleted_columns:

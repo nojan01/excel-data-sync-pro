@@ -1607,14 +1607,14 @@
                             📋 <span data-i18n="logsButton">Protokolle</span>
                         </button>
                     </div>
-                    <!-- Python/openpyxl Toggle (experimentell) -->
+                    <!-- Python/openpyxl Toggle (Standard aktiv) -->
                     <div style="margin-top: 15px; padding: 10px; background: var(--bg-secondary); border-radius: 6px; border: 1px solid var(--border);">
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-                            <input type="checkbox" id="chkUsePython" style="width: 16px; height: 16px;">
+                            <input type="checkbox" id="chkUsePython" style="width: 16px; height: 16px;" checked>
                             <span>🐍 Python/openpyxl verwenden</span>
                         </label>
                         <div style="font-size: 11px; color: var(--text-muted); margin-top: 5px;">
-                            Experimentell: Bessere Excel-Kompatibilität
+                            Bessere Excel-Kompatibilität (behält alle Formatierungen)
                         </div>
                     </div>
                 </div>
@@ -12679,24 +12679,38 @@
                     sheetsToExport.push(sheetData);
                 }
                 
-                // Export über IPC (mit Passwort falls gewählt)
-                const result = await window.electronAPI.exportMultipleSheets({
-                    sourcePath: explorerState.filePath,
-                    targetPath: savePath,
-                    sheets: sheetsToExport,
-                    password: exportPassword,
-                    sourcePassword: explorerState.filePassword
-                });
+                // Prüfe ob Python/openpyxl verwendet werden soll
+                const usePythonForExport = document.getElementById('chkUsePython')?.checked || false;
+                
+                let result;
+                if (usePythonForExport) {
+                    // Python/openpyxl Export (behält ALLE Formatierungen)
+                    console.log('[Export] Verwende Python/openpyxl...');
+                    result = await window.electronAPI.pythonExportMultipleSheets({
+                        sourcePath: explorerState.filePath,
+                        targetPath: savePath,
+                        sheets: sheetsToExport,
+                        password: exportPassword,
+                        sourcePassword: explorerState.filePassword
+                    });
+                } else {
+                    // ExcelJS Export (Standard)
+                    console.log('[Export] Verwende ExcelJS...');
+                    result = await window.electronAPI.exportMultipleSheets({
+                        sourcePath: explorerState.filePath,
+                        targetPath: savePath,
+                        sheets: sheetsToExport,
+                        password: exportPassword,
+                        sourcePassword: explorerState.filePassword
+                    });
+                }
                 
                 if (result.success) {
                     const pwInfo = exportPassword ? ' (passwortgeschützt)' : '';
-                    elements.explorerStatus.textContent = `✓ ${selectedSheets.length} Arbeitsblatt/blätter exportiert${pwInfo}: ${savePath}`;
+                    const engineInfo = usePythonForExport ? ' [Python]' : '';
+                    elements.explorerStatus.textContent = `✓ ${selectedSheets.length} Arbeitsblatt/blätter exportiert${pwInfo}${engineInfo}: ${savePath}`;
                     
-                    // WICHTIG: Gespeicherte Datei neu einlesen damit alle States synchron sind
-                    // Das ist die sauberste Lösung um sicherzustellen dass data, originalData, filteredData etc. korrekt sind
-                    console.log('[Export] Lade gespeicherte Datei neu...');
-                    
-                    // Erst alle Änderungsmarkierungen zurücksetzen (damit hasUnsavedChanges() false zurückgibt)
+                    // Alle Änderungsmarkierungen zurücksetzen
                     explorerState.editedCells.clear();
                     explorerState.affectedRows?.clear();
                     explorerState.rowMapping = null;
@@ -12704,10 +12718,16 @@
                         cachedSheet.editedCells.clear();
                     }
                     
-                    // Datei neu laden (skipUnsavedCheck da wir gerade gespeichert haben)
-                    await reloadExplorerFile(savePath, exportPassword);
+                    // Bei Python-Export: Nicht neu laden (Datei ist bereits korrekt)
+                    // Bei ExcelJS-Export: Neu laden um States zu synchronisieren
+                    if (!usePythonForExport) {
+                        console.log('[Export] Lade gespeicherte Datei neu...');
+                        await reloadExplorerFile(savePath, exportPassword);
+                    } else {
+                        console.log('[Export] Python-Export abgeschlossen, kein Neuladen nötig');
+                    }
                     
-                    showFloatingStatus(`✓ Export erfolgreich${pwInfo}`, 'success');
+                    showFloatingStatus(`✓ Export erfolgreich${pwInfo}${engineInfo}`, 'success');
                 } else {
                     elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 }

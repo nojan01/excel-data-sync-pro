@@ -2082,6 +2082,86 @@ ipcMain.handle('python:readSheet', async (event, filePath, sheetName) => {
     }
 });
 
+// ======================================================================
+// Python/openpyxl Export - Behält ALLE Formatierungen bei
+// Vorteile gegenüber ExcelJS:
+// - Conditional Formatting bleibt vollständig erhalten (2812+ Regeln)
+// - Tabellen bleiben erhalten
+// - Theme-Farben werden korrekt behandelt
+// - Identisches Verhalten wie MS Excel
+// ======================================================================
+ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, targetPath, sheets, password = null, sourcePassword = null }) => {
+    // Sicherheitsprüfung: Pfade validieren
+    if (!isValidFilePath(sourcePath) || !isValidFilePath(targetPath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+
+    try {
+        console.log('[Python Export] Starte Export mit openpyxl...');
+        console.log(`[Python Export] Source: ${sourcePath}`);
+        console.log(`[Python Export] Target: ${targetPath}`);
+        console.log(`[Python Export] Sheets: ${sheets.length}`);
+        
+        // Dateigröße für Logging
+        const stats = fs.statSync(sourcePath);
+        const fileSizeMB = stats.size / (1024 * 1024);
+        console.log(`[Python Export] Dateigröße: ${fileSizeMB.toFixed(2)} MB`);
+        
+        const startTime = Date.now();
+        
+        // Export mit Python/openpyxl durchführen
+        const result = await pythonBridge.exportMultipleSheets(sourcePath, targetPath, sheets, { password, sourcePassword });
+        
+        const duration = Date.now() - startTime;
+        console.log(`[Python Export] Abgeschlossen in ${duration}ms`);
+        
+        if (!result.success) {
+            securityLog.log('ERROR', 'PYTHON_EXPORT_FAILED', {
+                sourceFile: path.basename(sourcePath),
+                targetFile: path.basename(targetPath),
+                error: result.error
+            });
+            return { success: false, error: result.error };
+        }
+        
+        securityLog.log('INFO', 'PYTHON_EXPORT_COMPLETED', {
+            sourceFile: path.basename(sourcePath),
+            targetFile: path.basename(targetPath),
+            sheetsExported: result.sheetsExported,
+            method: 'openpyxl',
+            timeMs: duration
+        });
+
+        // Netzwerk-Log für Quelldatei (falls auf Netzlaufwerk)
+        await networkLog.log(sourcePath, 'PYTHON_EXPORT_SOURCE', {
+            targetFile: path.basename(targetPath),
+            sheetsExported: result.sheetsExported
+        });
+
+        // Netzwerk-Log für Zieldatei (falls auf Netzlaufwerk)
+        await networkLog.log(targetPath, 'PYTHON_EXPORT_TARGET', {
+            sourceFile: path.basename(sourcePath),
+            sheetsExported: result.sheetsExported
+        });
+
+        return {
+            success: true,
+            message: result.message,
+            sheetsExported: result.sheetsExported,
+            passwordProtected: !!password,
+            stats: { totalTimeMs: duration }
+        };
+    } catch (error) {
+        console.error('[Python Export] Exception:', error);
+        securityLog.log('ERROR', 'PYTHON_EXPORT_EXCEPTION', {
+            sourceFile: path.basename(sourcePath),
+            targetFile: path.basename(targetPath),
+            error: error.message
+        });
+        return { success: false, error: error.message };
+    }
+});
+
 /*
 // ======================================================================
 // ALTE XLSX-POPULATE VERSION - BACKUP (wird nicht mehr verwendet)
