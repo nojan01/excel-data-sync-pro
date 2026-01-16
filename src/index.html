@@ -1607,6 +1607,16 @@
                             📋 <span data-i18n="logsButton">Protokolle</span>
                         </button>
                     </div>
+                    <!-- Python/openpyxl Toggle (experimentell) -->
+                    <div style="margin-top: 15px; padding: 10px; background: var(--bg-secondary); border-radius: 6px; border: 1px solid var(--border);">
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                            <input type="checkbox" id="chkUsePython" style="width: 16px; height: 16px;">
+                            <span>🐍 Python/openpyxl verwenden</span>
+                        </label>
+                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 5px;">
+                            Experimentell: Bessere Excel-Kompatibilität
+                        </div>
+                    </div>
                 </div>
             </div>
         </aside>
@@ -10050,8 +10060,18 @@
                 return;
             }
             
-            // Von Datei laden (mit Passwort falls vorhanden)
-            const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName, explorerState.filePassword);
+            // Python/openpyxl oder ExcelJS verwenden?
+            const usePython = document.getElementById('chkUsePython')?.checked || false;
+            let result;
+            
+            if (usePython) {
+                console.log('[Explorer] Verwende Python/openpyxl zum Laden...');
+                result = await window.electronAPI.pythonReadSheet(explorerState.filePath, sheetName);
+            } else {
+                // Von Datei laden (mit Passwort falls vorhanden)
+                result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName, explorerState.filePassword);
+            }
+            
             if (!result.success) {
                 elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 return;
