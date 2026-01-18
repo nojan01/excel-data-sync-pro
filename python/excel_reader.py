@@ -129,8 +129,6 @@ def read_sheet(file_path, sheet_name=None, options=None):
         max_row = ws.max_row or 1
         max_col = ws.max_column or 1
         
-        print(f"Reading sheet with {max_row} rows and {max_col} columns...", file=sys.stderr)
-        
         # Headers (erste Zeile)
         headers = []
         for col in range(1, max_col + 1):
@@ -216,14 +214,17 @@ def read_sheet(file_path, sheet_name=None, options=None):
                 col_widths[col_idx - 1] = col_dim.width
         result['columnWidths'] = col_widths
         
-        # Formeln
+        # Formeln erkennen
         cell_formulas = {}
+        
         for row_idx in range(1, max_row + 1):
             for col_idx in range(1, max_col + 1):
                 cell = ws.cell(row=row_idx, column=col_idx)
                 if cell.data_type == 'f' and cell.value and str(cell.value).startswith('='):
                     key = f"{row_idx - 1}-{col_idx - 1}"
-                    cell_formulas[key] = str(cell.value)
+                    formula = str(cell.value)
+                    cell_formulas[key] = formula
+        
         result['cellFormulas'] = cell_formulas
         
         wb.close()
