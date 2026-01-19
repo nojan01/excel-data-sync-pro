@@ -1359,6 +1359,122 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-delete-only'}
         
         # =====================================================================
+        # FALL 1.7: NUR Spaltenreihenfolge ändern (ohne Insert/Delete)
+        # Dieser Pfad ordnet Spalten physisch um, OHNE alle Zellen neu zu schreiben.
+        # Das erhält Table-Styles (Zebra-Muster) perfekt!
+        # =====================================================================
+        only_column_order = (column_order and len(column_order) > 0 and 
+                            not inserted_columns and not deleted_columns and 
+                            row_mapping_is_identity and not affected_rows)
+        
+        if only_column_order:
+            print(f"[DEBUG] FALL 1.7: Nur Spaltenreihenfolge ändern (Table-Style erhalten)", file=sys.stderr, flush=True)
+            
+            # Prüfe ob sich die Spaltenreihenfolge wirklich geändert hat
+            columns_changed = False
+            for new_idx, old_idx in enumerate(column_order):
+                if new_idx != old_idx:
+                    columns_changed = True
+                    break
+            
+            if not columns_changed:
+                print(f"[DEBUG] FALL 1.7: Keine echte Änderung, überspringe", file=sys.stderr, flush=True)
+            else:
+                # Physische Spaltenumordnung durch Swap-Operationen
+                # column_order[neue_position] = alte_position
+                
+                from openpyxl.cell.cell import MergedCell
+                
+                num_cols = len(column_order)
+                max_row = ws.max_row
+                
+                # Temporärer Speicher für alle Spalten (Werte + Hyperlinks)
+                temp_columns = {}
+                
+                # SCHRITT 1: Alle Spalten in temp_columns speichern
+                for old_col_idx in range(num_cols):
+                    old_excel_col = old_col_idx + 1
+                    temp_columns[old_col_idx] = {}
+                    
+                    for row in range(1, max_row + 1):
+                        cell = ws.cell(row=row, column=old_excel_col)
+                        if isinstance(cell, MergedCell):
+                            continue
+                        temp_columns[old_col_idx][row] = {
+                            'value': cell.value,
+                            'hyperlink': cell.hyperlink.target if cell.hyperlink else None,
+                        }
+                
+                # SCHRITT 2: Spalten in neuer Reihenfolge schreiben
+                for new_col_idx, old_col_idx in enumerate(column_order):
+                    new_excel_col = new_col_idx + 1
+                    
+                    if old_col_idx not in temp_columns:
+                        continue
+                    
+                    for row, data_item in temp_columns[old_col_idx].items():
+                        cell = ws.cell(row=row, column=new_excel_col)
+                        if isinstance(cell, MergedCell):
+                            continue
+                        
+                        # Nur Wert und Hyperlink setzen - KEINE Formatierung!
+                        # So bleibt das Table-Style-Zebra-Muster erhalten
+                        cell.value = data_item['value']
+                        if data_item['hyperlink']:
+                            cell.hyperlink = data_item['hyperlink']
+                
+                print(f"[DEBUG] FALL 1.7: {num_cols} Spalten umgeordnet", file=sys.stderr, flush=True)
+            
+            # Versteckte Spalten/Zeilen anwenden
+            _apply_hidden_columns(ws, hidden_columns, len(headers))
+            _apply_hidden_rows(ws, hidden_rows, len(data) if data else 0)
+            
+            # Row Highlights
+            if row_highlights:
+                _apply_row_highlights(ws, row_highlights, len(headers))
+            
+            # WICHTIG: Bei Spalten-Verschieben die tableColumns AKTUALISIEREN!
+            # Die Spalten wurden physisch umgeordnet, also müssen die Column-Namen
+            # aus den Header-Zellen neu gelesen werden.
+            from openpyxl.worksheet.table import TableColumn
+            from openpyxl.utils.cell import range_boundaries
+            
+            table_changes = {}
+            for table_name in ws.tables:
+                table = ws.tables[table_name]
+                min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+                
+                # Baue tableColumns aus den Header-Zellen (die sind jetzt umgeordnet)
+                new_columns = []
+                for col_idx in range(min_col, max_col + 1):
+                    header_cell = ws.cell(row=min_row, column=col_idx)
+                    col_name = str(header_cell.value) if header_cell.value else f"Column{col_idx}"
+                    new_columns.append(TableColumn(id=col_idx - min_col + 1, name=col_name))
+                
+                table.tableColumns = new_columns
+                
+                col_names = [col.name for col in new_columns]
+                table_changes[table_name] = {
+                    'ref': table.ref,
+                    'columns': col_names
+                }
+                print(f"[DEBUG] FALL 1.7: Table {table_name} tableColumns aktualisiert: {len(new_columns)} Spalten", file=sys.stderr, flush=True)
+            
+            wb.save(output_path)
+            wb.close()
+            fix_xlsx_relationships(output_path)
+            
+            # Stelle Table-XML aus Original wieder her MIT der neuen Spaltenreihenfolge
+            if table_changes:
+                restore_table_xml_from_original(output_path, original_path, table_changes)
+            
+            # Stelle externalLinks aus Original wieder her
+            restore_external_links_from_original(output_path, original_path)
+            
+            print(f"[DEBUG] FALL 1.7 abgeschlossen - Table-Style sollte erhalten sein", file=sys.stderr, flush=True)
+            return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-column-order'}
+        
+        # =====================================================================
         # FALL 2: Strukturelle Änderungen (fullRewrite)
         # WICHTIG: openpyxl's delete_cols() passt CF-Bereiche NICHT an!
         # Wenn Excel installiert ist, nutzen wir xlwings für perfekten CF-Erhalt.
