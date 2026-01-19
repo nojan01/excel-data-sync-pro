@@ -1188,6 +1188,76 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-insert-only'}
         
         # =====================================================================
+        # FALL 1.6: Nur Spalten LÖSCHEN (keine anderen strukturellen Änderungen)
+        # Analog zu FALL 1.5 - nutzt openpyxl's delete_cols() direkt
+        # OHNE alle Daten neu zu schreiben - das erhält Table-Styles!
+        # =====================================================================
+        only_column_delete = deleted_columns and not inserted_columns and row_mapping_is_identity
+        
+        if only_column_delete:
+            print(f"[DEBUG] FALL 1.6: Nur Spalten löschen (Table-Style erhalten)", file=sys.stderr, flush=True)
+            print(f"[DEBUG]   deleted_columns: {deleted_columns}", file=sys.stderr, flush=True)
+            
+            # Sortiere absteigend (von hinten nach vorne löschen)
+            sorted_deleted = sorted(deleted_columns, reverse=True)
+            
+            for col_idx in sorted_deleted:
+                excel_col = col_idx + 1  # 0-basiert → 1-basiert
+                print(f"[DEBUG]   Lösche Spalte {excel_col} ({get_column_letter(excel_col)})", file=sys.stderr, flush=True)
+                
+                max_col = ws.max_column
+                
+                # 1. SPALTENBREITEN SPEICHERN (rechts von der zu löschenden Spalte)
+                saved_widths = {}
+                for col in range(excel_col + 1, max_col + 1):
+                    col_letter = get_column_letter(col)
+                    if col_letter in ws.column_dimensions:
+                        saved_widths[col] = ws.column_dimensions[col_letter].width
+                
+                # 2. SPALTE LÖSCHEN (openpyxl verschiebt alles automatisch)
+                ws.delete_cols(excel_col, 1)
+                
+                # 3. SPALTENBREITEN WIEDERHERSTELLEN (um 1 nach links verschoben)
+                for old_col, width in saved_widths.items():
+                    if width:
+                        new_letter = get_column_letter(old_col - 1)
+                        ws.column_dimensions[new_letter].width = width
+                
+                # 4. CF anpassen
+                adjust_conditional_formatting(ws, [col_idx], None)
+                
+                # 5. Tables anpassen
+                adjust_tables(ws, [col_idx], None, headers)
+            
+            # Versteckte Spalten/Zeilen
+            _apply_hidden_columns(ws, hidden_columns)
+            _apply_hidden_rows(ws, hidden_rows)
+            
+            # Sammle Table-Infos für restore
+            table_changes = {}
+            for table_name in ws.tables:
+                table = ws.tables[table_name]
+                col_names = [col.name for col in table.tableColumns]
+                table_changes[table_name] = {
+                    'ref': table.ref,
+                    'columns': col_names
+                }
+            
+            wb.save(output_path)
+            wb.close()
+            fix_xlsx_relationships(output_path)
+            
+            # Stelle Original-Table-XML wieder her (mit korrekten xr:uid etc.)
+            if table_changes:
+                restore_table_xml_from_original(output_path, original_path, table_changes)
+            
+            # Stelle externalLinks aus Original wieder her (openpyxl verliert Namespaces)
+            restore_external_links_from_original(output_path, original_path)
+            
+            print(f"[DEBUG] FALL 1.6 abgeschlossen - Table-Style sollte erhalten sein", file=sys.stderr, flush=True)
+            return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-delete-only'}
+        
+        # =====================================================================
         # FALL 2: Strukturelle Änderungen (fullRewrite)
         # WICHTIG: openpyxl's delete_cols() passt CF-Bereiche NICHT an!
         # Wenn Excel installiert ist, nutzen wir xlwings für perfekten CF-Erhalt.
@@ -1773,6 +1843,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 restore_table_xml_from_original(output_path, original_path, table_changes)
             elif table_changes and inserted_columns:
                 print(f"[DEBUG] Überspringe restore_table_xml - Spalten wurden eingefügt, openpyxl-XML behalten", file=sys.stderr, flush=True)
+            
+            # Stelle externalLinks aus Original wieder her (openpyxl verliert Namespaces)
+            restore_external_links_from_original(output_path, original_path)
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl'}
         

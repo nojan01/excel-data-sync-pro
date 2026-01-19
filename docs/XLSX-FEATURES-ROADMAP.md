@@ -1,8 +1,19 @@
-# xlsx-populate Features Roadmap
+# Excel Data Sync Pro - Features Roadmap
 
-## Übersicht der geplanten Excel-Funktionen
+## Übersicht
 
-Dieses Dokument dokumentiert alle xlsx-populate Funktionen, die in die App integriert werden sollen.
+**NEU: xlwings-Integration (Januar 2026)**
+
+Die App wurde auf xlwings umgestellt für perfekte Excel-Kompatibilität:
+- ✅ Conditional Formatting (CF) wird bei strukturellen Änderungen automatisch angepasst
+- ✅ Spalten löschen/einfügen mit CF-Erhalt
+- ✅ Zeilen löschen mit CF-Erhalt  
+- ✅ Alle Excel-Features werden von Excel selbst verarbeitet
+
+### Architektur
+- **xlwings**: Native Excel-Integration (Excel macht alle strukturellen Änderungen)
+- **openpyxl**: Fallback für Lesen von Metadaten (merged cells, hidden columns)
+- **Plattformen**: macOS (mit Excel) und Windows
 
 ---
 
@@ -12,6 +23,8 @@ Dieses Dokument dokumentiert alle xlsx-populate Funktionen, die in die App integ
 - [x] Hidden-Status beim Laden/Speichern erhalten
 - [x] Zeilen löschen (einzeln und mehrfach)
 - [x] Arbeitsblätter lesen und wechseln
+- [x] **Conditional Formatting Erhalt bei Spalten löschen** (xlwings)
+- [x] **Conditional Formatting Erhalt bei Spalten einfügen** (xlwings)
 
 ---
 
