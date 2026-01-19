@@ -1997,20 +1997,11 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
     }
 
     try {
-        console.log(`[ExcelJS] Lade Sheet "${sheetName}"`);
-        
         // Nutze ExcelJS Reader
         const result = await readSheetWithExcelJS(filePath, sheetName, password);
         
         if (!result.success) {
             return result;
-        }
-        
-        // Log Style-Anzahl für Debugging
-        const styleCount = Object.keys(result.cellStyles || {}).length;
-        console.log(`[ExcelJS] cellStyles: ${styleCount} Einträge`);
-        if (styleCount > 50000) {
-            console.log(`[ExcelJS] WARNUNG: Große Datei mit ${styleCount} Styles - Performance kann beeinträchtigt sein`);
         }
         
         // Füge zusätzliche Felder hinzu für Kompatibilität
@@ -2024,8 +2015,6 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
             // autoFilterRange kommt bereits vom ExcelJS-Reader
             autoFilterRange: result.autoFilterRange || null
         };
-        
-        console.log(`[ExcelJS] AutoFilter: ${finalResult.autoFilterRange || 'keiner'}`);
         
         return finalResult;
         
@@ -2046,43 +2035,6 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
 });
 
 // ======================================================================
-// PYTHON/OPENPYXL READER - für bessere Excel-Kompatibilität
-// ======================================================================
-// Sheet-Daten lesen mit Python (openpyxl) - Vorteile:
-// - Bessere Theme-Color Unterstützung
-// - Zuverlässigere Style-Erhaltung
-// - Identisches Verhalten wie MS Excel
-ipcMain.handle('python:listSheets', async (event, filePath) => {
-    if (!isValidFilePath(filePath)) {
-        return { success: false, error: 'Ungültiger Dateipfad' };
-    }
-    try {
-        console.log('[Python] Lade Sheet-Liste...');
-        const result = await pythonBridge.listSheets(filePath);
-        return result;
-    } catch (error) {
-        console.error('[Python] Fehler:', error.message);
-        return { success: false, error: error.message };
-    }
-});
-
-ipcMain.handle('python:readSheet', async (event, filePath, sheetName) => {
-    if (!isValidFilePath(filePath)) {
-        return { success: false, error: 'Ungültiger Dateipfad' };
-    }
-    try {
-        console.log(`[Python] Lade Sheet "${sheetName}"...`);
-        const startTime = Date.now();
-        const result = await pythonBridge.readSheet(filePath, sheetName);
-        console.log(`[Python] Sheet geladen in ${Date.now() - startTime}ms`);
-        return result;
-    } catch (error) {
-        console.error('[Python] Fehler:', error.message);
-        return { success: false, error: error.message };
-    }
-});
-
-// ======================================================================
 // Python/openpyxl Export - Behält ALLE Formatierungen bei
 // Vorteile gegenüber ExcelJS:
 // - Conditional Formatting bleibt vollständig erhalten (2812+ Regeln)
@@ -2097,23 +2049,12 @@ ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, target
     }
 
     try {
-        console.log('[Python Export] Starte Export mit openpyxl...');
-        console.log(`[Python Export] Source: ${sourcePath}`);
-        console.log(`[Python Export] Target: ${targetPath}`);
-        console.log(`[Python Export] Sheets: ${sheets.length}`);
-        
-        // Dateigröße für Logging
-        const stats = fs.statSync(sourcePath);
-        const fileSizeMB = stats.size / (1024 * 1024);
-        console.log(`[Python Export] Dateigröße: ${fileSizeMB.toFixed(2)} MB`);
-        
         const startTime = Date.now();
         
         // Export mit Python/openpyxl durchführen
         const result = await pythonBridge.exportMultipleSheets(sourcePath, targetPath, sheets, { password, sourcePassword });
         
         const duration = Date.now() - startTime;
-        console.log(`[Python Export] Abgeschlossen in ${duration}ms`);
         
         if (!result.success) {
             securityLog.log('ERROR', 'PYTHON_EXPORT_FAILED', {
@@ -2768,12 +2709,12 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
                         const end = parseRef(parts[1]);
 
                         if (start && end) {
-                            // Konvertiere zu 0-basierten Indizes relativ zum Datenbereich
-                            // startRow ist die Header-Zeile, also müssen wir das berücksichtigen
+                            // Speichere als 0-basierte Excel-Zeilen-Indizes
+                            // Excel-Zeile 1 → Index 0, Excel-Zeile 2 → Index 1, etc.
                             mergedCells.push({
-                                startRow: start.row - startRow, // relativ zur Header-Zeile
+                                startRow: start.row - 1, // Excel 1-basiert → 0-basiert
                                 startCol: start.col - 1, // 0-basiert
-                                endRow: end.row - startRow,
+                                endRow: end.row - 1,     // Excel 1-basiert → 0-basiert
                                 endCol: end.col - 1,
                                 rowSpan: end.row - start.row + 1,
                                 colSpan: end.col - start.col + 1

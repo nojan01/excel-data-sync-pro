@@ -36,11 +36,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveExcelFile: (params) => ipcRenderer.invoke('excel:saveFile', params),
     createTemplateFromSource: (params) => ipcRenderer.invoke('excel:createTemplateFromSource', params),
     
-    // Python/openpyxl Reader (bessere Excel-Kompatibilität)
-    pythonListSheets: (filePath) => ipcRenderer.invoke('python:listSheets', filePath),
-    pythonReadSheet: (filePath, sheetName) => ipcRenderer.invoke('python:readSheet', filePath, sheetName),
-    
-    // Python/openpyxl Writer (behält ALLE Formatierungen)
+    // Python/openpyxl Writer (behält CF und Formatierungen)
     pythonExportMultipleSheets: (params) => ipcRenderer.invoke('python:exportMultipleSheets', params),
     
     // Sheet-Verwaltung

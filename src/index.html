@@ -1607,16 +1607,7 @@
                             📋 <span data-i18n="logsButton">Protokolle</span>
                         </button>
                     </div>
-                    <!-- Python/openpyxl Toggle (Standard aktiv) -->
-                    <div style="margin-top: 15px; padding: 10px; background: var(--bg-secondary); border-radius: 6px; border: 1px solid var(--border);">
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
-                            <input type="checkbox" id="chkUsePython" style="width: 16px; height: 16px;" checked>
-                            <span>🐍 Python/openpyxl verwenden</span>
-                        </label>
-                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 5px;">
-                            Bessere Excel-Kompatibilität (behält alle Formatierungen)
-                        </div>
-                    </div>
+
                 </div>
             </div>
         </aside>
@@ -2593,10 +2584,6 @@
                     <button class="btn btn-primary" id="btnExplorerOpenFile">
                         📂 Datei öffnen
                     </button>
-                    <!-- AutoFilter Indikator (wird dynamisch befüllt) -->
-                    <span id="autoFilterIndicator" style="display: none; background: #2196F3; color: white; font-size: 12px; padding: 6px 12px; border-radius: 4px; align-items: center; gap: 6px; cursor: help; font-weight: 500;">
-                        ▼ AutoFilter
-                    </span>
                     <div class="transfer-field">
                         <label>Arbeitsblatt:</label>
                         <div style="display: flex; gap: 4px; align-items: center;">
@@ -2638,6 +2625,15 @@
                         <span style="font-weight: 600; font-size: 14px;">🔍 Filter</span>
                         <button class="btn btn-primary btn-sm" id="btnAddExplorerFilter">➕ Filter hinzufügen</button>
                         <button class="btn btn-secondary btn-sm" id="btnClearExplorerFilters" disabled>🗑️ Filter zurücksetzen</button>
+                        <!-- Indikatoren-Bereich (rechts) -->
+                        <div id="filterIndicatorsContainer" style="display: flex; gap: 8px; margin-left: auto; align-items: center;">
+                            <!-- AutoFilter Indikator -->
+                            <span id="autoFilterIndicator" style="display: none; background: #2196F3; color: white; font-size: 12px; padding: 4px 10px; border-radius: 4px; align-items: center; gap: 6px; cursor: help; font-weight: 500;">
+                                ▼ AutoFilter
+                            </span>
+                            <!-- Container für Hidden-Indikatoren (Zeilen/Spalten) -->
+                            <div id="hiddenIndicatorsContainer" style="display: flex; gap: 4px;"></div>
+                        </div>
                     </div>
                     <div id="explorerFilters" style="display: flex; flex-direction: column; gap: 8px;"></div>
                 </div>
@@ -2869,11 +2865,19 @@
                 <!-- Schritt 1: Quelldatei wählen -->
                 <div class="config-group">
                     <div class="config-section-title" style="margin-bottom: 10px;" data-i18n="joinStep1">1️⃣ Datenquelle auswählen</div>
-                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
-                        <button class="btn btn-primary" id="btnJoinSelectFile" data-i18n="joinSelectFile">
-                            📂 Datei auswählen
-                        </button>
-                        <span id="joinSourceFileName" style="color: var(--text-muted); font-size: 13px;" data-i18n="joinNoFileSelected">Keine Datei ausgewählt</span>
+                    <div style="display: flex; gap: 15px; align-items: stretch;">
+                        <!-- Button-Bereich -->
+                        <div style="display: flex; flex-direction: column; gap: 8px; min-width: 180px;">
+                            <button class="btn btn-primary" id="btnJoinSelectFile" data-i18n="joinSelectFile">
+                                📂 Datei auswählen
+                            </button>
+                            <span id="joinSourceFileName" style="color: var(--text-muted); font-size: 12px; word-break: break-all;" data-i18n="joinNoFileSelected">Keine Datei ausgewählt</span>
+                        </div>
+                        <!-- Drag & Drop Zone -->
+                        <div id="joinDropZone" style="flex: 1; min-height: 80px; border: 2px dashed var(--border); border-radius: 8px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; cursor: pointer; transition: all 0.2s ease; background: var(--bg-dark);">
+                            <span style="font-size: 24px;">📁</span>
+                            <span style="color: var(--text-muted); font-size: 12px; text-align: center;" data-i18n="joinDropZoneText">Excel-Datei hierher ziehen</span>
+                        </div>
                     </div>
                     <div style="display: flex; gap: 10px; align-items: center; margin-top: 10px;">
                         <label class="config-label" style="margin: 0; min-width: 100px;" data-i18n="joinWorksheet">Arbeitsblatt:</label>
@@ -3144,6 +3148,7 @@
                 joinStep1: '1️⃣ Datenquelle auswählen',
                 joinSelectFile: '📂 Datei auswählen',
                 joinNoFileSelected: 'Keine Datei ausgewählt',
+                joinDropZoneText: 'Excel-Datei hierher ziehen',
                 joinWorksheet: 'Arbeitsblatt:',
                 joinLoadFile: '-- Datei laden --',
                 joinStep2: '2️⃣ Schlüsselspalte (z.B. Seriennummer)',
@@ -3395,6 +3400,7 @@
                 joinStep1: '1️⃣ Select Data Source',
                 joinSelectFile: '📂 Select File',
                 joinNoFileSelected: 'No file selected',
+                joinDropZoneText: 'Drop Excel file here',
                 joinWorksheet: 'Worksheet:',
                 joinLoadFile: '-- Load file --',
                 joinStep2: '2️⃣ Key Column (e.g. Serial Number)',
@@ -6920,25 +6926,13 @@
             document.body.classList.remove('modal-open');
         }
         
-        async function loadDataJoinSourceFile() {
+        // Hilfsfunktion: Quelldatei laden (von Pfad)
+        async function loadDataJoinSourceFromPath(filePath) {
             try {
-                const filePath = await window.electronAPI.openFileDialog({
-                    title: 'Quelldatei für Spalten-Join auswählen',
-                    filters: [{ name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] }]
-                });
-                
-                if (!filePath) {
-                    return;
-                }
-                
                 const fileName = filePath.split(/[/\\]/).pop();
-                
-                console.log('[DataJoin] Lade Datei:', filePath);
                 
                 // Datei laden um Sheets zu bekommen
                 const fileResult = await window.electronAPI.readExcelFile(filePath);
-                
-                console.log('[DataJoin] readExcelFile Ergebnis:', fileResult);
                 
                 if (!fileResult.success) {
                     showNotification('Fehler beim Laden: ' + fileResult.error, 'error');
@@ -6973,24 +6967,34 @@
             }
         }
         
+        async function loadDataJoinSourceFile() {
+            try {
+                const filePath = await window.electronAPI.openFileDialog({
+                    title: 'Quelldatei für Spalten-Join auswählen',
+                    filters: [{ name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] }]
+                });
+                
+                if (!filePath) {
+                    return;
+                }
+                
+                await loadDataJoinSourceFromPath(filePath);
+                
+            } catch (error) {
+                console.error('Fehler beim Laden der Quelldatei:', error);
+                showNotification('Fehler beim Laden: ' + error.message, 'error');
+            }
+        }
+        
         async function loadDataJoinSourceSheet(sheetName) {
             if (!dataJoinState.sourceFilePath || !sheetName) return;
             
             try {
-                console.log('[DataJoin] Lade Sheet:', sheetName);
-                
                 const sheetResult = await window.electronAPI.readExcelSheet(
                     dataJoinState.sourceFilePath, 
                     sheetName, 
                     null
                 );
-                
-                console.log('[DataJoin] Sheet Ergebnis:', sheetResult);
-                console.log('[DataJoin] Headers:', sheetResult.headers);
-                console.log('[DataJoin] Daten-Zeilen:', sheetResult.data ? sheetResult.data.length : 0);
-                if (sheetResult.data && sheetResult.data.length > 0) {
-                    console.log('[DataJoin] Erste Zeile:', sheetResult.data[0]);
-                }
                 
                 if (!sheetResult.success) {
                     showNotification('Fehler beim Laden des Sheets: ' + sheetResult.error, 'error');
@@ -7000,8 +7004,6 @@
                 dataJoinState.selectedSourceSheet = sheetName;
                 dataJoinState.sourceHeaders = sheetResult.headers || [];
                 dataJoinState.sourceData = sheetResult.data || [];
-                
-                console.log('[DataJoin] State nach Laden - Headers:', dataJoinState.sourceHeaders.length, 'Daten:', dataJoinState.sourceData.length);
                 
                 // Schlüsselspalten-Dropdown befüllen
                 const sourceKeySelect = elements.joinSourceKeyColumn;
@@ -7172,7 +7174,7 @@
                 return;
             }
             
-            const targetKeyIndex = dataJoinState.targetKeyColumnIndex;
+            const originalTargetKeyIndex = dataJoinState.targetKeyColumnIndex;
             const sourceKeyIndex = dataJoinState.sourceKeyColumnIndex;
             const columnPositions = dataJoinState.columnPositions || [];
             const markNotFound = elements.joinMarkNotFound.checked;
@@ -7209,6 +7211,21 @@
             // Strukturelle Änderungen für Export sammeln
             const insertOperations = [];
             let totalInsertCount = 0;
+            
+            // Berechne Original-Positionen BEVOR wir etwas einfügen
+            // (für den Export - die Positionen müssen die Original-Indizes sein)
+            const originalHeaderCount = explorerState.headers.length;
+            const originalPositions = new Map();
+            sortedPositions.forEach(insertPos => {
+                const sourceIndices = positionGroups.get(insertPos);
+                const count = sourceIndices.length;
+                // Original-Position ist entweder die konkrete Position oder "am Ende"
+                const origPos = insertPos === Infinity ? originalHeaderCount : insertPos;
+                originalPositions.set(insertPos, origPos);
+            });
+            
+            // Dynamischer Key-Index: Wird angepasst wenn Spalten VOR der Schlüsselspalte eingefügt werden
+            let currentKeyIndex = originalTargetKeyIndex;
             
             // Für jede Position (von hinten nach vorne)
             sortedPositions.forEach(insertPos => {
@@ -7254,8 +7271,9 @@
                 }
                 
                 // Daten für jede Zeile hinzufügen
+                // WICHTIG: currentKeyIndex verwenden, da sich der Index nach jeder Einfügung verschieben kann
                 explorerState.data.forEach((row, rowIndex) => {
-                    const keyValue = String(row[targetKeyIndex] || '').trim();
+                    const keyValue = String(row[currentKeyIndex] || '').trim();
                     const sourceRow = sourceMap.get(keyValue);
                     
                     const newValues = sourceIndices.map(colIdx => {
@@ -7277,7 +7295,7 @@
                 
                 // Original-Daten auch aktualisieren
                 explorerState.originalData.forEach((row, rowIndex) => {
-                    const keyValue = String(row[targetKeyIndex] || '').trim();
+                    const keyValue = String(row[currentKeyIndex] || '').trim();
                     const sourceRow = sourceMap.get(keyValue);
                     
                     const newValues = sourceIndices.map(colIdx => {
@@ -7287,9 +7305,47 @@
                     row.splice(actualInsertPos, 0, ...newValues);
                 });
                 
-                // Operation für Export speichern (mit Original-Position vor Verschiebung)
+                // CellStyles, Formulas, Hyperlinks, RichText anpassen (Spalten-Indizes verschieben)
+                const shiftColumnIndices = (obj) => {
+                    const newObj = {};
+                    for (const [key, value] of Object.entries(obj)) {
+                        const [rowStr, colStr] = key.split('-');
+                        const colIdx = parseInt(colStr);
+                        if (colIdx >= actualInsertPos) {
+                            // Spalte verschieben
+                            newObj[`${rowStr}-${colIdx + newHeaders.length}`] = value;
+                        } else {
+                            newObj[key] = value;
+                        }
+                    }
+                    return newObj;
+                };
+                
+                explorerState.cellStyles = shiftColumnIndices(explorerState.cellStyles);
+                explorerState.cellFormulas = shiftColumnIndices(explorerState.cellFormulas);
+                explorerState.cellHyperlinks = shiftColumnIndices(explorerState.cellHyperlinks);
+                explorerState.richTextCells = shiftColumnIndices(explorerState.richTextCells);
+                
+                // DataValidations anpassen (Keys sind Spalten-Indizes)
+                const newValidations = {};
+                for (const [colStr, validation] of Object.entries(explorerState.dataValidations)) {
+                    const colIdx = parseInt(colStr);
+                    if (colIdx >= actualInsertPos) {
+                        newValidations[colIdx + newHeaders.length] = validation;
+                    } else {
+                        newValidations[colIdx] = validation;
+                    }
+                }
+                explorerState.dataValidations = newValidations;
+                
+                // Key-Index anpassen wenn Spalten VOR der Schlüsselspalte eingefügt wurden
+                if (actualInsertPos <= currentKeyIndex) {
+                    currentKeyIndex += newHeaders.length;
+                }
+                
+                // Operation für Export speichern mit ORIGINAL-Position (vor allen Einfügungen)
                 insertOperations.push({
-                    position: insertPos === Infinity ? explorerState.headers.length - newHeaders.length : actualInsertPos,
+                    position: originalPositions.get(insertPos),
                     count: newHeaders.length,
                     headers: newHeaders
                 });
@@ -7298,15 +7354,17 @@
             });
             
             // Strukturelle Änderung markieren für korrekten Export (mit allen Operationen)
+            // Sortiere aufsteigend nach Position für den Export
             explorerState.editedCells.set('_columnInserted', {
-                operations: insertOperations.reverse(), // Umkehren für aufsteigende Reihenfolge
+                operations: insertOperations.sort((a, b) => a.position - b.position),
                 totalCount: totalInsertCount
             });
             
             // Markierung für nicht gefundene Zeilen
+            // WICHTIG: currentKeyIndex enthält den korrekten Index nach allen Einfügungen!
             if (markNotFound) {
                 explorerState.data.forEach((row, rowIndex) => {
-                    const keyValue = String(row[targetKeyIndex] || '').trim();
+                    const keyValue = String(row[currentKeyIndex] || '').trim();
                     if (keyValue && !sourceMap.has(keyValue)) {
                         explorerState.rowHighlights.set(rowIndex, 'yellow');
                     }
@@ -7320,7 +7378,7 @@
             // Matches zählen
             let matchCount = 0;
             explorerState.data.forEach(row => {
-                const keyValue = String(row[targetKeyIndex] || '').trim();
+                const keyValue = String(row[currentKeyIndex] || '').trim();
                 if (keyValue && sourceMap.has(keyValue)) matchCount++;
             });
             
@@ -7580,6 +7638,7 @@
             explorerState.dataValidations = {};
             explorerState.cellStyles = {};
             explorerState.cellFormulas = {};
+
             explorerState.cellHyperlinks = {};
             explorerState.richTextCells = {};
             explorerState.hiddenRows.clear();
@@ -7614,13 +7673,13 @@
                 explorerResultCount.textContent = currentLanguage === 'en' ? 'No data loaded.' : 'Keine Daten geladen.';
             }
             
-            // Indikatoren entfernen
+            // Indikatoren zurücksetzen (verstecken statt entfernen)
             const hiddenRowsIndicator = document.getElementById('hiddenRowsIndicator');
             if (hiddenRowsIndicator) hiddenRowsIndicator.remove();
             const hiddenColumnsIndicator = document.getElementById('hiddenColumnsIndicator');
             if (hiddenColumnsIndicator) hiddenColumnsIndicator.remove();
             const autoFilterIndicator = document.getElementById('autoFilterIndicator');
-            if (autoFilterIndicator) autoFilterIndicator.remove();
+            if (autoFilterIndicator) autoFilterIndicator.style.display = 'none';
             const passwordIndicator = document.getElementById('passwordIndicator');
             if (passwordIndicator) passwordIndicator.remove();
             
@@ -7629,6 +7688,12 @@
             if (explorerFiltersEl) explorerFiltersEl.innerHTML = '';
             const btnClearFilters = document.getElementById('btnClearExplorerFilters');
             if (btnClearFilters) btnClearFilters.disabled = true;
+            
+            // Spalten-Panel zurücksetzen und schließen
+            const columnToggles = document.getElementById('columnToggles');
+            if (columnToggles) columnToggles.innerHTML = '';
+            const columnTogglePanel = document.getElementById('columnTogglePanel');
+            if (columnTogglePanel) columnTogglePanel.style.display = 'none';
             
             // Status zurücksetzen
             if (elements.explorerStatus) {
@@ -8120,13 +8185,12 @@
                 indicator = document.createElement('button');
                 indicator.id = 'hiddenRowsIndicator';
                 indicator.className = 'btn btn-warning btn-sm';
-                indicator.style.marginLeft = '8px';
                 indicator.title = currentLanguage === 'en' ? 'Click to show hidden rows' : 'Klicken um versteckte Zeilen anzuzeigen';
                 
-                // Füge nach der Suche ein
-                const searchContainer = elements.explorerSearch?.parentElement;
-                if (searchContainer) {
-                    searchContainer.appendChild(indicator);
+                // Füge in den festen Container ein
+                const container = document.getElementById('hiddenIndicatorsContainer');
+                if (container) {
+                    container.appendChild(indicator);
                 }
             }
             
@@ -8218,13 +8282,12 @@
                 indicator = document.createElement('button');
                 indicator.id = 'hiddenColumnsIndicator';
                 indicator.className = 'btn btn-warning btn-sm';
-                indicator.style.marginLeft = '8px';
                 indicator.title = currentLanguage === 'en' ? 'Click to show hidden columns' : 'Klicken um versteckte Spalten anzuzeigen';
                 
-                // Füge nach der Suche ein (neben hiddenRowsIndicator falls vorhanden)
-                const searchContainer = elements.explorerSearch?.parentElement;
-                if (searchContainer) {
-                    searchContainer.appendChild(indicator);
+                // Füge in den festen Container ein
+                const container = document.getElementById('hiddenIndicatorsContainer');
+                if (container) {
+                    container.appendChild(indicator);
                 }
             }
             
@@ -8417,10 +8480,30 @@
             explorerState.editedCells = newEditedCells;
             
             // Markierung dass Spalte hinzugefügt wurde
-            explorerState.editedCells.set('_columnInserted', { 
-                index: insertIndex,
-                name: headerName || t('newColumn')
-            });
+            // Prüfe ob bereits eine insertedColumns-Info existiert (z.B. von Data Join)
+            const existingInsert = explorerState.editedCells.get('_columnInserted');
+            if (existingInsert && existingInsert.operations) {
+                // Füge neue Operation hinzu
+                existingInsert.operations.push({
+                    position: insertIndex,
+                    count: 1,
+                    headers: [headerName || t('newColumn')],
+                    sourceColumn: colIndex  // Referenzspalte für Formatierung
+                });
+                existingInsert.totalCount = (existingInsert.totalCount || 0) + 1;
+                explorerState.editedCells.set('_columnInserted', existingInsert);
+            } else {
+                // Neue insertedColumns-Info mit korrektem Format
+                explorerState.editedCells.set('_columnInserted', { 
+                    operations: [{
+                        position: insertIndex,
+                        count: 1,
+                        headers: [headerName || t('newColumn')],
+                        sourceColumn: colIndex  // Referenzspalte für Formatierung
+                    }],
+                    totalCount: 1
+                });
+            }
             
             // UI aktualisieren
             filterExplorerData();
@@ -8553,7 +8636,6 @@
             }
             
             deletedOriginalIndices.push(originalIndex);
-            console.log(`[DeleteColumn] Aktueller Index: ${colIndex}, Original-Index: ${originalIndex}, Alle Original-Indices: [${deletedOriginalIndices.join(', ')}]`);
             
             explorerState.editedCells.set('_columnDeleted', { 
                 originalIndices: deletedOriginalIndices,  // Array der ORIGINAL-Spalten-Indices (0-basiert)
@@ -9233,20 +9315,18 @@
                 return;
             }
             
-            // Alle sichtbaren Zellen durchsuchen
+            // ALLE Daten durchsuchen (nicht nur sichtbare Zeilen!)
             const matches = [];
-            const tbody = document.getElementById('explorerTableBody');
-            const rows = tbody.querySelectorAll('tr');
             
-            rows.forEach(row => {
-                const tds = row.querySelectorAll('td[data-row]');
-                tds.forEach(td => {
-                    const cellValue = td.textContent || '';
-                    if (pattern.test(cellValue)) {
-                        const rowIndex = parseInt(td.dataset.row);
-                        const colIndex = parseInt(td.dataset.col);
-                        matches.push({ rowIndex, colIndex, td });
-                        td.classList.add('find-match');
+            // explorerState.data enthält die Rohdaten als 2D-Array
+            const dataToSearch = explorerState.data || [];
+            
+            dataToSearch.forEach((row, rowIndex) => {
+                if (!row || !Array.isArray(row)) return;
+                row.forEach((cellValue, colIndex) => {
+                    const cellText = String(cellValue ?? '');
+                    if (pattern.test(cellText)) {
+                        matches.push({ rowIndex, colIndex, td: null }); // td wird später gesetzt
                     }
                     // Reset pattern lastIndex für globales Matching
                     pattern.lastIndex = 0;
@@ -9270,17 +9350,40 @@
         // Aktuellen Treffer hervorheben und scrollen
         function highlightCurrentMatch() {
             // Vorherigen aktuellen Treffer zurücksetzen
-            document.querySelectorAll('#explorerTableBody td.find-current').forEach(td => {
-                td.classList.remove('find-current');
+            document.querySelectorAll('#explorerTableBody td.find-current, #explorerTableBody td.find-match').forEach(td => {
+                td.classList.remove('find-current', 'find-match');
             });
             
             if (findReplaceState.matches.length === 0 || findReplaceState.currentMatchIndex < 0) return;
             
             const match = findReplaceState.matches[findReplaceState.currentMatchIndex];
-            match.td.classList.add('find-current');
-            match.td.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
             
-            updateFindMatchCounter();
+            // Berechne auf welcher Seite diese Zeile ist und navigiere dorthin
+            const pageForRow = Math.floor(match.rowIndex / explorerState.pageSize) + 1;
+            if (explorerState.currentPage !== pageForRow) {
+                explorerState.currentPage = pageForRow;
+                renderExplorerTable();
+            }
+            
+            // Jetzt nach dem Rendern die TD-Zelle finden und markieren
+            setTimeout(() => {
+                const td = document.querySelector(`#explorerTableBody td[data-row="${match.rowIndex}"][data-col="${match.colIndex}"]`);
+                if (td) {
+                    // Alle Treffer auf der aktuellen Seite markieren
+                    const pageStart = (explorerState.currentPage - 1) * explorerState.pageSize;
+                    const pageEnd = pageStart + explorerState.pageSize;
+                    findReplaceState.matches.forEach(m => {
+                        if (m.rowIndex >= pageStart && m.rowIndex < pageEnd) {
+                            const mtd = document.querySelector(`#explorerTableBody td[data-row="${m.rowIndex}"][data-col="${m.colIndex}"]`);
+                            if (mtd) mtd.classList.add('find-match');
+                        }
+                    });
+                    
+                    td.classList.add('find-current');
+                    td.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+                }
+                updateFindMatchCounter();
+            }, 50);
         }
         
         // Nächsten Treffer finden
@@ -9377,27 +9480,28 @@
             const undoActions = [];
             let replacedCount = 0;
             
-            // Alle Treffer ersetzen
+            // Alle Treffer ersetzen (arbeitet über Daten, nicht DOM)
             findReplaceState.matches.forEach(match => {
-                const oldValue = String(explorerState.data[match.rowIndex][match.colIndex] ?? '');
+                const oldValue = String(explorerState.data[match.rowIndex]?.[match.colIndex] ?? '');
                 const newValue = oldValue.replace(pattern, replaceText);
                 
                 if (oldValue !== newValue) {
+                    // Original-Wert merken (für Undo)
+                    const originalValue = explorerState.data[match.rowIndex]?.[match.colIndex];
+                    
                     undoActions.push({
                         rowIndex: match.rowIndex,
                         colIndex: match.colIndex,
                         oldValue,
                         newValue,
-                        originalValue: match.td.dataset.original
+                        originalValue: originalValue
                     });
                     
-                    explorerState.data[match.rowIndex][match.colIndex] = newValue;
+                    // Daten aktualisieren
+                    if (explorerState.data[match.rowIndex]) {
+                        explorerState.data[match.rowIndex][match.colIndex] = newValue;
+                    }
                     explorerState.editedCells.set(`${match.rowIndex}-${match.colIndex}`, newValue);
-                    
-                    match.td.textContent = newValue;
-                    match.td.dataset.lastValue = newValue;
-                    match.td.classList.add('edited');
-                    match.td.classList.remove('find-match', 'find-current');
                     
                     replacedCount++;
                 }
@@ -9411,8 +9515,9 @@
                 });
             }
             
-            // Status aktualisieren
+            // Tabelle neu rendern und Status aktualisieren
             clearFindHighlights();
+            renderExplorerTable();
             updateExplorerEditStatus();
             
             showFloatingStatus(`${replacedCount} Ersetzung(en) durchgeführt`);
@@ -9435,9 +9540,9 @@
             }
             
             const cellKey = `${rowIndex}-${colIndex}`;
-            const td = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
             
-            if (!td) return;
+            // Immer explorerState.data verwenden (enthält die rohen Daten-Arrays)
+            if (!explorerState.data[rowIndex]) return;
             
             const oldValue = String(explorerState.data[rowIndex][colIndex] ?? '');
             const newValue = oldValue.replace(pattern, replaceText);
@@ -9449,18 +9554,21 @@
                 colIndex,
                 oldValue,
                 newValue,
-                originalValue: td.dataset.original
+                originalValue: oldValue
             });
             
             // Daten aktualisieren
             explorerState.data[rowIndex][colIndex] = newValue;
             explorerState.editedCells.set(cellKey, newValue);
             
-            // UI aktualisieren
-            td.textContent = newValue;
-            td.dataset.lastValue = newValue;
-            td.classList.add('edited');
-            td.classList.remove('find-match', 'find-current');
+            // Falls Zelle sichtbar ist, UI aktualisieren
+            const td = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
+            if (td) {
+                td.textContent = newValue;
+                td.dataset.lastValue = newValue;
+                td.classList.add('edited');
+                td.classList.remove('find-match', 'find-current');
+            }
             
             updateExplorerEditStatus();
         }
@@ -9831,6 +9939,9 @@
                 if (!confirmed) return;
             }
             
+            // State komplett zurücksetzen bevor neue Datei geladen wird
+            resetExplorerState();
+            
             elements.explorerStatus.textContent = 'Lade Datei...';
             
             // Versuche Datei zu öffnen
@@ -9920,6 +10031,9 @@
                 if (!confirmed) return;
             }
             
+            // State komplett zurücksetzen bevor neue Datei geladen wird
+            resetExplorerState();
+            
             const filePath = await window.electronAPI.openFileDialog({
                 title: 'Excel-Datei öffnen',
                 filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
@@ -10007,7 +10121,8 @@
             if (!explorerState.filePath || !sheetName) return;
             
             // VOR dem Wechsel: Aktuelles Sheet im Cache speichern wenn es Änderungen gibt
-            if (explorerState.selectedSheet && explorerState.data.length > 0) {
+            // ABER NICHT wenn editedCells leer ist (z.B. nach Export/Reload)
+            if (explorerState.selectedSheet && explorerState.data.length > 0 && explorerState.editedCells.size > 0) {
                 saveCurrentSheetToCache();
             }
             
@@ -10060,17 +10175,8 @@
                 return;
             }
             
-            // Python/openpyxl oder ExcelJS verwenden?
-            const usePython = document.getElementById('chkUsePython')?.checked || false;
-            let result;
-            
-            if (usePython) {
-                console.log('[Explorer] Verwende Python/openpyxl zum Laden...');
-                result = await window.electronAPI.pythonReadSheet(explorerState.filePath, sheetName);
-            } else {
-                // Von Datei laden (mit Passwort falls vorhanden)
-                result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName, explorerState.filePassword);
-            }
+            // ExcelJS zum Lesen (xlwings wird nur zum Schreiben verwendet)
+            const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName, explorerState.filePassword);
             
             if (!result.success) {
                 elements.explorerStatus.textContent = `Fehler: ${result.error}`;
@@ -10115,53 +10221,21 @@
             explorerState.dataValidations = result.dataValidations || {};
             // Cell Styles (Formatierungen) laden
             explorerState.cellStyles = result.cellStyles || {};
-            // DEBUG: Console-Log für Styles - KRITISCH
-            console.log('==================== STYLE DEBUG ====================');
-            console.log('[FRONTEND] result.cellStyles vorhanden?', !!result.cellStyles);
-            console.log('[FRONTEND] result.cellStyles Typ:', typeof result.cellStyles);
-            console.log('[FRONTEND] explorerState.cellStyles Anzahl:', Object.keys(explorerState.cellStyles).length);
-            if (Object.keys(explorerState.cellStyles).length > 0) {
-                console.log('[FRONTEND] Erste 10 Style-Keys:', Object.keys(explorerState.cellStyles).slice(0, 10));
-                console.log('[FRONTEND] Beispiel-Style 2-0:', explorerState.cellStyles['2-0']);
-                console.log('[FRONTEND] Beispiel-Style 3-0:', explorerState.cellStyles['3-0']);
-            } else {
-                console.log('[FRONTEND] WARNUNG: Keine Styles empfangen!');
-            }
-            console.log('======================================================');
             // Cell Formulas (Formeln) laden
             explorerState.cellFormulas = result.cellFormulas || {};
-            console.log('Cell Formulas loaded:', Object.keys(explorerState.cellFormulas).length, 'entries');
             // Cell Hyperlinks (Links) laden
             explorerState.cellHyperlinks = result.cellHyperlinks || {};
-            console.log('Cell Hyperlinks loaded:', Object.keys(explorerState.cellHyperlinks).length, 'entries');
             // Rich Text Cells (formatierter Text) laden
             explorerState.richTextCells = result.richTextCells || {};
-            if (Object.keys(explorerState.richTextCells).length > 0) {
-                console.log('Rich Text Cells loaded:', Object.keys(explorerState.richTextCells).length, 'entries');
-            }
             // Hidden Rows (ausgeblendete Zeilen) laden
             explorerState.hiddenRows = new Set(result.hiddenRows || []);
-            console.log('Hidden Rows loaded:', explorerState.hiddenRows.size, 'entries');
             // AutoFilter Range laden
             explorerState.autoFilterRange = result.autoFilterRange || null;
-            if (explorerState.autoFilterRange) {
-                console.log('AutoFilter Range loaded:', explorerState.autoFilterRange);
-            }
             // Row Mapping initialisieren: [0, 1, 2, ...] = Identity
             // Bedeutet: Position 0 im Frontend = Excel-Zeile 2 (erste Datenzeile)
             explorerState.rowMapping = explorerState.data.map((_, i) => i);
             // Merged Cells laden
             explorerState.mergedCells = result.mergedCells || [];
-            if (explorerState.mergedCells.length > 0) {
-                console.log('Merged Cells loaded:', explorerState.mergedCells.length, 'regions');
-            }
-            console.log('Cell Styles loaded:', Object.keys(explorerState.cellStyles).length, 'entries');
-            // Debug: Zeige alle Styles mit fill
-            const stylesWithFill = Object.entries(explorerState.cellStyles).filter(([k, v]) => v.fill);
-            console.log('Styles with fill:', stylesWithFill.length);
-            if (stylesWithFill.length > 0) {
-                console.log('Sample fills:', stylesWithFill.slice(0, 5));
-            }
             elements.explorerSearch.value = '';
             
             // Prüfe ob es gespeicherte Bearbeitungen gibt (Auto-Save Recovery)
@@ -10776,7 +10850,6 @@
             const existingMoves = explorerState.editedCells.get('_columnMoved') || [];
             existingMoves.push({ from: fromColIndex, to: toColIndex });
             explorerState.editedCells.set('_columnMoved', existingMoves);
-            console.log(`[Column Move] Spalte ${fromColIndex} nach Position ${toColIndex} verschoben. columnOrder:`, explorerState.columnOrder);
             
             // Tabelle neu rendern
             renderExplorerTable();
@@ -10793,21 +10866,14 @@
         // Hilfsfunktion: Prüft ob eine Zelle Teil eines Merged-Bereichs ist
         // Gibt zurück: null (nicht merged), 'master' (Hauptzelle), 'hidden' (Teil eines Merges, ausblenden)
         function getMergedCellInfo(rowIndex, colIndex) {
-            // DEBUG: Log bei letzten Zeilen
-            if (rowIndex >= 18 && colIndex < 3) {
-                console.log(`[MERGE DEBUG] Row ${rowIndex}, Col ${colIndex}, mergedCells:`, explorerState.mergedCells.length);
-            }
             for (const merge of explorerState.mergedCells) {
                 // rowIndex ist der Index im data-Array (0 = erste Datenzeile = Excel-Zeile 2)
                 // merge.startRow ist 0-basierter Excel-Zeilen-Index (0 = Excel-Zeile 1)
-                // Um zu vergleichen: Excel-Zeile = rowIndex + 2 (weil data[0] = Excel-Zeile 2)
-                // Oder: 0-basierter Excel-Index = rowIndex + 1
+                // Datenzeile 0 entspricht Excel-Zeile 2 → 0-basierter Index 1
                 const excelRowIndex0Based = rowIndex + 1;
                 
                 if (excelRowIndex0Based >= merge.startRow && excelRowIndex0Based <= merge.endRow &&
                     colIndex >= merge.startCol && colIndex <= merge.endCol) {
-                    // DEBUG
-                    console.log(`[MERGE DEBUG] MATCH! rowIndex=${rowIndex}, excelRow0Based=${excelRowIndex0Based}, col=${colIndex}, merge:`, merge);
                     // Diese Zelle ist Teil eines Merges
                     if (excelRowIndex0Based === merge.startRow && colIndex === merge.startCol) {
                         // Master-Zelle (oben links)
@@ -11137,6 +11203,8 @@
                     let mergedClass = '';
                     let mergedAttrs = '';
                     let mergedIcon = '';
+                    let mergedMasterRow = originalIndex;  // Für Style-Lookup bei Merged Cells
+                    let mergedMasterCol = colIndex;
                     if (mergeInfo && mergeInfo.type === 'master') {
                         mergedClass = ' merged-cell merged-cell-master';
                         // colspan nur wenn Spalte sichtbar
@@ -11162,17 +11230,10 @@
                     }
                     
                     // Cell Styles aus Excel
-                    const cellStyleKey = `${originalIndex + 1}-${colIndex}`; // +1 weil Styles inkl. Header-Zeile gespeichert sind
+                    // Bei Merged Cells: Style der Master-Zelle verwenden
+                    const cellStyleKey = `${mergedMasterRow + 1}-${mergedMasterCol}`; // +1 weil Styles inkl. Header-Zeile gespeichert sind
                     const cellStyle = explorerState.cellStyles[cellStyleKey];
                     let inlineStyle = '';
-                    
-                    // DEBUG: Erste paar Zellen loggen - ERWEITERT
-                    if (originalIndex < 5 && colIndex < 1) {
-                        console.log(`[RENDER] Row ${originalIndex}, Col ${colIndex}`);
-                        console.log(`  -> Key: "${cellStyleKey}"`);
-                        console.log(`  -> cellStyle:`, cellStyle);
-                        console.log(`  -> explorerState.cellStyles hat`, Object.keys(explorerState.cellStyles).length, 'Einträge');
-                    }
                     
                     // Formel prüfen (gleicher Key wie cellStyles)
                     const cellFormula = explorerState.cellFormulas[cellStyleKey];
@@ -11190,13 +11251,8 @@
                     // Rich Text prüfen (gleicher Key wie cellStyles)
                     const richTextFragments = explorerState.richTextCells[cellStyleKey];
                     const hasRichText = richTextFragments && richTextFragments.length > 0;
-                    // DEBUG: Rich Text loggen
-                    if (originalIndex < 15 && colIndex === 0 && Object.keys(explorerState.richTextCells).length > 0) {
-                        console.log(`[RICH TEXT DEBUG] Key: ${cellStyleKey}, hasRichText: ${hasRichText}, richTextCells keys:`, Object.keys(explorerState.richTextCells));
-                    }
                     let richTextHtml = '';
                     if (hasRichText) {
-                        console.log(`[RICH TEXT] Found at ${cellStyleKey}:`, richTextFragments);
                         // Generiere HTML für Rich Text Fragmente
                         richTextHtml = richTextFragments.map(fragment => {
                             const styles = [];
@@ -11232,14 +11288,6 @@
                         if (styles.length > 0) {
                             inlineStyle = ` style="${styles.join('; ')}"`;
                         }
-                    }
-                    
-                    // DEBUG: Zeige verfügbare Keys bei erster Zeile
-                    if (originalIndex === 0 && colIndex === 0) {
-                        const availableKeys = Object.keys(explorerState.cellStyles).slice(0, 10);
-                        console.log('[STYLE DEBUG] Verfügbare Keys:', availableKeys);
-                        console.log('[STYLE DEBUG] Gesuchter Key:', cellStyleKey);
-                        console.log('[STYLE DEBUG] Anzahl Styles:', Object.keys(explorerState.cellStyles).length);
                     }
                     
                     // Prüfe auf Data Validation (Dropdown-Liste)
@@ -11773,7 +11821,6 @@
             
             // WICHTIG: rowMapping aktualisieren - trackt welche Original-Excel-Zeile an welcher neuen Position ist
             explorerState.rowMapping = rowBundles.map(bundle => bundle.originalExcelRow);
-            console.log('[Row Move] rowMapping aktualisiert:', explorerState.rowMapping.slice(0, 10), '...');
             
             // Speichere Undo-Aktion (keine tiefen Kopien mehr - Undo wird vereinfacht)
             pushExplorerUndo({
@@ -11886,6 +11933,87 @@
             });
             explorerState.rowHighlights = newHighlights;
             
+            // cellStyles anpassen (Key ist "styleRowIdx-colIdx" wobei styleRowIdx = dataRowIdx + 1)
+            const newCellStyles = {};
+            for (const [key, value] of Object.entries(explorerState.cellStyles || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const styleRow = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (styleRow === 0) {
+                    // Header behalten
+                    newCellStyles[key] = value;
+                    continue;
+                }
+                const dataRow = styleRow - 1; // styleRow = dataRow + 1
+                if (deletedSet.has(dataRow)) continue; // Gelöschte Zeile überspringen
+                let offset = 0;
+                selectedIndices.forEach(delIdx => {
+                    if (delIdx < dataRow) offset++;
+                });
+                newCellStyles[`${styleRow - offset}-${col}`] = value;
+            }
+            explorerState.cellStyles = newCellStyles;
+            
+            // cellHyperlinks anpassen
+            const newCellHyperlinks = {};
+            for (const [key, value] of Object.entries(explorerState.cellHyperlinks || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const styleRow = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (styleRow === 0) {
+                    newCellHyperlinks[key] = value;
+                    continue;
+                }
+                const dataRow = styleRow - 1;
+                if (deletedSet.has(dataRow)) continue;
+                let offset = 0;
+                selectedIndices.forEach(delIdx => {
+                    if (delIdx < dataRow) offset++;
+                });
+                newCellHyperlinks[`${styleRow - offset}-${col}`] = value;
+            }
+            explorerState.cellHyperlinks = newCellHyperlinks;
+            
+            // richTextCells anpassen
+            const newRichTextCells = {};
+            for (const [key, value] of Object.entries(explorerState.richTextCells || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const styleRow = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (styleRow === 0) {
+                    newRichTextCells[key] = value;
+                    continue;
+                }
+                const dataRow = styleRow - 1;
+                if (deletedSet.has(dataRow)) continue;
+                let offset = 0;
+                selectedIndices.forEach(delIdx => {
+                    if (delIdx < dataRow) offset++;
+                });
+                newRichTextCells[`${styleRow - offset}-${col}`] = value;
+            }
+            explorerState.richTextCells = newRichTextCells;
+            
+            // cellFormulas anpassen
+            const newCellFormulas = {};
+            for (const [key, value] of Object.entries(explorerState.cellFormulas || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const styleRow = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (styleRow === 0) {
+                    newCellFormulas[key] = value;
+                    continue;
+                }
+                const dataRow = styleRow - 1;
+                if (deletedSet.has(dataRow)) continue;
+                let offset = 0;
+                selectedIndices.forEach(delIdx => {
+                    if (delIdx < dataRow) offset++;
+                });
+                newCellFormulas[`${styleRow - offset}-${col}`] = value;
+            }
+            explorerState.cellFormulas = newCellFormulas;
+            
             // EditedCells anpassen
             const newEditedCells = new Map();
             explorerState.editedCells.forEach((value, key) => {
@@ -11908,6 +12036,99 @@
             
             // Markierung, dass etwas gelöscht wurde
             explorerState.editedCells.set('_rowDeleted', true);
+            
+            // WICHTIG: rowMapping aktualisieren nach Löschen
+            // Das Mapping zeigt welche Original-Excel-Zeile an welcher neuen Position ist
+            // Nach dem Löschen müssen die gelöschten Zeilen aus dem Mapping entfernt werden
+            if (explorerState.rowMapping && explorerState.rowMapping.length > 0) {
+                // Aktualisiere bestehendes Mapping
+                const newRowMapping = [];
+                for (let i = 0; i < explorerState.data.length; i++) {
+                    // Finde die Original-Position für diese Datenzeile
+                    // selectedIndices sind die gelöschten Indizes (absteigend sortiert)
+                    // Wir müssen den ursprünglichen Index vor dem Löschen berechnen
+                    let originalIdx = i;
+                    // Zähle wie viele gelöschte Zeilen vor dieser Position waren
+                    selectedIndices.slice().reverse().forEach(delIdx => {
+                        if (delIdx <= originalIdx) originalIdx++;
+                    });
+                    if (originalIdx < explorerState.rowMapping.length) {
+                        newRowMapping.push(explorerState.rowMapping[originalIdx]);
+                    }
+                }
+                explorerState.rowMapping = newRowMapping;
+            } else {
+                // Erstelle neues Mapping: neue Position -> Original Excel-Zeile
+                // Nach dem Löschen sind die verbleibenden Zeilen an neuen Positionen
+                explorerState.rowMapping = [];
+                for (let i = 0; i < explorerState.data.length; i++) {
+                    // Berechne welche Original-Position (vor dem Löschen) diese Zeile hatte
+                    let originalIdx = i;
+                    // selectedIndices ist absteigend sortiert, wir brauchen aufsteigend
+                    const sortedDeleted = selectedIndices.slice().sort((a, b) => a - b);
+                    sortedDeleted.forEach(delIdx => {
+                        if (delIdx <= originalIdx) originalIdx++;
+                    });
+                    explorerState.rowMapping.push(originalIdx);
+                }
+            }
+            
+            // WICHTIG: mergedCells in der GUI aktualisieren
+            // Die mergedCells haben 0-basierte Zeilen-Indizes (Datenzeilen, nicht Excel-Zeilen)
+            if (explorerState.mergedCells && explorerState.mergedCells.length > 0) {
+                const sortedDeleted = selectedIndices.slice().sort((a, b) => a - b);
+                const newMergedCells = [];
+                
+                for (const merge of explorerState.mergedCells) {
+                    // mergedCells sind 0-basiert (startRow=0 ist Header, startRow=1 ist erste Datenzeile)
+                    // Prüfe ob die Merged Cell komplett oder teilweise gelöscht wird
+                    let affectedRows = 0;
+                    let allRowsDeleted = true;
+                    
+                    for (let row = merge.startRow; row <= merge.endRow; row++) {
+                        // Prüfe ob diese Zeile gelöscht wurde (row-1 weil mergedCells Header-Zeile einschließt)
+                        const dataRowIdx = row - 1; // -1 weil startRow=1 ist Datenzeile 0
+                        if (dataRowIdx >= 0 && sortedDeleted.includes(dataRowIdx)) {
+                            affectedRows++;
+                        } else {
+                            allRowsDeleted = false;
+                        }
+                    }
+                    
+                    // Wenn alle Zeilen gelöscht wurden, Merged Cell entfernen
+                    if (allRowsDeleted && merge.startRow > 0) {
+                        continue;
+                    }
+                    
+                    // Berechne neue Positionen
+                    let newStartRow = merge.startRow;
+                    let newEndRow = merge.endRow;
+                    
+                    // Für jede gelöschte Zeile vor der Merged Cell: verschiebe nach oben
+                    for (const delIdx of sortedDeleted) {
+                        const delRow = delIdx + 1; // +1 weil delIdx 0-basiert für Daten, mergedCells 1-basiert für Daten
+                        if (delRow < merge.startRow) {
+                            newStartRow--;
+                            newEndRow--;
+                        } else if (delRow >= merge.startRow && delRow <= merge.endRow) {
+                            // Zeile innerhalb der Merged Cell gelöscht
+                            newEndRow--;
+                        }
+                    }
+                    
+                    // Nur hinzufügen wenn die Merged Cell noch gültig ist
+                    if (newStartRow <= newEndRow && newEndRow >= 0) {
+                        newMergedCells.push({
+                            ...merge,
+                            startRow: newStartRow,
+                            endRow: newEndRow,
+                            rowSpan: newEndRow - newStartRow + 1
+                        });
+                    }
+                }
+                
+                explorerState.mergedCells = newMergedCells;
+            }
             
             // Speichere Undo-Aktion
             pushExplorerUndo({
@@ -12197,8 +12418,6 @@
             const selectedSheets = dialogResult.sheets;
             const exportPassword = dialogResult.password;
             
-            console.log('[Export] Passwort aus Dialog:', exportPassword ? '***SET***' : 'NICHT GESETZT');
-            
             // Dateiname ohne doppelte .xlsx Endung
             let baseName = explorerState.fileName || 'Daten';
             baseName = baseName.replace(/\.xlsx$/i, '');
@@ -12308,8 +12527,6 @@
                             explorerState.editedCells.has('_rowHighlightChanged') ||   // Zeilenfarben geändert
                             isFiltered;  // Filter = strukturelle Änderung (nur gefilterte Zeilen exportieren)
                         
-                        console.log(`[Export Debug] hasRowMoves: ${hasRowMoves}, _columnDeleted: ${explorerState.editedCells.has('_columnDeleted')}, _columnInserted: ${explorerState.editedCells.has('_columnInserted')}, _columnMoved: ${explorerState.editedCells.has('_columnMoved')}, _rowInserted: ${explorerState.editedCells.has('_rowInserted')}, _rowDeleted: ${explorerState.editedCells.has('_rowDeleted')}, _rowVisibilityChanged: ${explorerState.editedCells.has('_rowVisibilityChanged')}, isFiltered: ${isFiltered} (${explorerState.filteredData.length}/${explorerState.data.length} Zeilen), hasStructuralChanges: ${hasStructuralChanges}`);
-                        
                         // HiddenRows aus dem aktuellen State ermitteln
                         // Bei strukturellen Änderungen: Index in filteredData (da Zeilen umgeordnet werden)
                         // Bei Zell-Edits (ohne Filter): originalIndex (da Zeilen an Ort und Stelle bleiben)
@@ -12325,7 +12542,6 @@
                             // Bei Zell-Edits: Direkt die originalIndex-Werte verwenden
                             currentHiddenRows = Array.from(explorerState.hiddenRows || []);
                         }
-                        console.log(`[Export Debug] hiddenRows: ${currentHiddenRows.length} (${currentHiddenRows.slice(0, 10).join(', ')}${currentHiddenRows.length > 10 ? '...' : ''})`);
                         
                         // Versteckte Spalten berechnen
                         const allCols = explorerState.headers.map((_, i) => i);
@@ -12337,15 +12553,11 @@
                             // Strukturelle Änderung: FULL REWRITE
                             let allData = explorerState.filteredData.map(item => item.row);
                             
-                            // DEBUG: Zeige genau was exportiert wird
-                            console.log(`[Export FILTER DEBUG] explorerState.data.length: ${explorerState.data.length}`);
-                            console.log(`[Export FILTER DEBUG] explorerState.filteredData.length: ${explorerState.filteredData.length}`);
-                            console.log(`[Export FILTER DEBUG] allData.length (zu exportieren): ${allData.length}`);
-                            console.log(`[Export FILTER DEBUG] Erste 3 filteredData originalIndices: ${explorerState.filteredData.slice(0, 3).map(i => i.originalIndex).join(', ')}`);
-                            console.log(`[Export FILTER DEBUG] Letzte 3 filteredData originalIndices: ${explorerState.filteredData.slice(-3).map(i => i.originalIndex).join(', ')}`);
-                            
                             let exportHeaders = [...explorerState.headers];
-                            let exportCellStyles = { ...(explorerState.cellStyles || {}) };
+                            // WICHTIG: cellStyles werden NICHT mitgesendet!
+                            // xlwings übernimmt Styles automatisch aus der Datei.
+                            // Das spart erheblich Daten (z.B. 146.000 Styles bei großen Dateien)
+                            let exportCellStyles = {};  // Leer - xlwings übernimmt aus Datei
                             let exportCellFormulas = { ...(explorerState.cellFormulas || {}) };
                             let exportCellHyperlinks = { ...(explorerState.cellHyperlinks || {}) };
                             let exportRichTextCells = { ...(explorerState.richTextCells || {}) };
@@ -12414,8 +12626,6 @@
                                     }
                                 }
                                 exportRichTextCells = remappedRichText;
-                                
-                                console.log(`[Export] Styles remapped: ${Object.keys(remappedStyles).length}, Formulas: ${Object.keys(remappedFormulas).length}, Hyperlinks: ${Object.keys(remappedHyperlinks).length}`);
                             }
                             
                             // Bei Filter: rowMapping erstellen für physische Zeilen-Umordnung
@@ -12424,8 +12634,6 @@
                             let filterRowMapping = null;
                             if (isFiltered && !hasRowMoves) {
                                 filterRowMapping = explorerState.filteredData.map(item => item.originalIndex);
-                                console.log(`[Export] Filter-rowMapping erstellt: ${filterRowMapping.length} Zeilen`);
-                                console.log(`[Export] Filter-rowMapping (erste 10):`, filterRowMapping.slice(0, 10));
                                 
                                 // Bei Filter-Mapping: KEINE Frontend-Styles remappen!
                                 // Die Excel-Styles werden durch physische Umordnung übernommen
@@ -12433,24 +12641,16 @@
                                 exportCellFormulas = {};
                                 exportCellHyperlinks = {};
                                 exportRichTextCells = {};
-                                console.log(`[Export] Frontend-Styles zurückgesetzt (Excel-Styles werden via rowMapping übernommen)`);
                             }
                             
                             // Bei Row-Move: ExcelJS ordnet die Zeilen direkt um (mit allen Styles)
                             // Kein Frontend-Remapping nötig!
                             if (hasRowMoves && explorerState.rowMapping && explorerState.rowMapping.length > 0) {
-                                console.log(`[Export] Row-Move: rowMapping wird an Writer gesendet (${explorerState.rowMapping.length} Zeilen)`);
-                                console.log(`[Export] rowMapping (erste 15):`, explorerState.rowMapping.slice(0, 15));
+                                // rowMapping wird an Writer gesendet
                             }
-                            
-                            // Bei strukturellen Änderungen MÜSSEN wir alle Styles senden,
-                            // da die alten Styles im Worksheet sonst an falschen Positionen bleiben
-                            const styleCount = Object.keys(exportCellStyles).length;
-                            console.log(`[Export] Strukturelle Änderung: ${styleCount} Styles werden mitgesendet`);
                             
                             // Hole die Indizes der gelöschten Spalten falls vorhanden
                             const columnDeletedInfo = explorerState.editedCells.get('_columnDeleted');
-                            console.log('[Export Debug] columnDeletedInfo:', JSON.stringify(columnDeletedInfo));
                             
                             // Extrahiere die Original-Indizes - unterstütze neues Format und Legacy-Formate
                             let deletedColumnIndices = [];
@@ -12468,18 +12668,36 @@
                             } else if (typeof columnDeletedInfo === 'number') {
                                 deletedColumnIndices = [columnDeletedInfo];
                             }
-                            console.log('[Export Debug] deletedColumnIndices (original):', JSON.stringify(deletedColumnIndices));
                             
                             // Hole Info über eingefügte Spalten falls vorhanden
                             const columnInsertedInfo = explorerState.editedCells.get('_columnInserted');
                             let insertedColumnInfo = null;
                             if (columnInsertedInfo && typeof columnInsertedInfo === 'object') {
-                                insertedColumnInfo = {
-                                    position: columnInsertedInfo.position,
-                                    count: columnInsertedInfo.count,
-                                    headers: columnInsertedInfo.headers || []
-                                };
-                                console.log('[Export Debug] insertedColumnInfo:', JSON.stringify(insertedColumnInfo));
+                                // Unterstütze neues Format mit 'operations' und alte Formate
+                                if (columnInsertedInfo.operations) {
+                                    // Neues Format mit operations Array
+                                    insertedColumnInfo = {
+                                        operations: columnInsertedInfo.operations
+                                    };
+                                } else if (columnInsertedInfo.position !== undefined) {
+                                    // Altes Format mit position
+                                    insertedColumnInfo = {
+                                        operations: [{
+                                            position: columnInsertedInfo.position,
+                                            count: columnInsertedInfo.count || 1,
+                                            headers: columnInsertedInfo.headers || []
+                                        }]
+                                    };
+                                } else if (columnInsertedInfo.index !== undefined) {
+                                    // Legacy Format mit index/name
+                                    insertedColumnInfo = {
+                                        operations: [{
+                                            position: columnInsertedInfo.index,
+                                            count: 1,
+                                            headers: [columnInsertedInfo.name || 'New Column']
+                                        }]
+                                    };
+                                }
                             }
                             
                             // Prüfe ob Spalten verschoben wurden
@@ -12487,10 +12705,10 @@
                             let columnOrder = hasColumnMoves && explorerState.columnOrder.length > 0 
                                 ? [...explorerState.columnOrder]
                                 : null;
-                            console.log('[Export Debug] columnOrder:', JSON.stringify(columnOrder));
                             
-                            // Wenn Spalten verschoben wurden UND NICHT gelöscht, ordne die Daten im Frontend um
-                            // (Bei Löschung handhabt der Writer das über spliceColumns)
+                            // Wenn Spalten verschoben wurden, ordne die Daten im Frontend um
+                            // WICHTIG: columnOrder wird trotzdem an Python gesendet,
+                            // damit Python die Formatierung in der Excel-Datei umordnen kann!
                             if (columnOrder && deletedColumnIndices.length === 0) {
                                 console.log('[Export] Ordne Daten gemäß columnOrder um...');
                                 
@@ -12560,19 +12778,29 @@
                                 
                                 console.log('[Export] Daten umgeordnet: Headers=' + exportHeaders.length + ', Rows=' + allData.length);
                                 
-                                // columnOrder auf null setzen, da die Umordnung bereits erfolgt ist
-                                columnOrder = null;
+                                // columnOrder wird an Python gesendet für Formatierungs-Umordnung
+                                // NICHT auf null setzen!
                             }
                             
-                            // RowHighlights für Export vorbereiten (originalIndex -> newIndex mappen)
+                            // RowHighlights für Export vorbereiten
+                            // NUR NEUE Markierungen senden (die nicht in originalRowHighlights waren)
+                            // Bestehende Markierungen übernimmt xlwings automatisch aus der Datei
                             const exportRowHighlights = {};
                             explorerState.rowHighlights.forEach((color, originalIndex) => {
-                                // Finde den neuen Index in filteredData
-                                const newIdx = explorerState.filteredData.findIndex(item => item.originalIndex === originalIndex);
-                                if (newIdx !== -1) {
-                                    exportRowHighlights[newIdx] = color;
+                                // Prüfe ob dies eine NEUE Markierung ist (nicht in originalRowHighlights)
+                                const isNewHighlight = !explorerState.originalRowHighlights.has(originalIndex);
+                                if (isNewHighlight) {
+                                    // Finde den neuen Index in filteredData
+                                    const newIdx = explorerState.filteredData.findIndex(item => item.originalIndex === originalIndex);
+                                    if (newIdx !== -1) {
+                                        exportRowHighlights[newIdx] = color;
+                                    }
                                 }
                             });
+                            
+                            if (Object.keys(exportRowHighlights).length > 0) {
+                                console.log(`[Export] ${Object.keys(exportRowHighlights).length} NEUE Zeilen-Markierungen werden gesendet`);
+                            }
                             
                             // ClearedRowHighlights: Zeilen die ursprünglich markiert waren, jetzt aber nicht mehr
                             const clearedRowHighlights = [];
@@ -12600,8 +12828,9 @@
                                 cellFormulas: exportCellFormulas,
                                 cellHyperlinks: exportCellHyperlinks,
                                 richTextCells: exportRichTextCells,
-                                rowHighlights: exportRowHighlights,  // Zeilenfarben
-                                clearedRowHighlights: clearedRowHighlights,  // Entfernte Markierungen
+                                // Nur NEUE Markierungen senden - bestehende übernimmt xlwings aus der Datei
+                                rowHighlights: exportRowHighlights,
+                                clearedRowHighlights: clearedRowHighlights,
                                 autoFilterRange: explorerState.autoFilterRange,
                                 fullRewrite: true,
                                 structuralChange: true,  // Signalisiert dass Styles komplett zurückgesetzt werden müssen
@@ -12609,9 +12838,12 @@
                                 insertedColumnInfo: insertedColumnInfo,  // Info über eingefügte Spalten für spliceColumns
                                 columnOrder: columnOrder,  // Neue Spaltenreihenfolge (null = keine Änderung oder bereits angewendet)
                                 affectedRows: affectedRowsArray,  // Betroffene Zeilen bei Row-Move für Style-Reset
-                                rowMapping: filterRowMapping || (hasRowMoves ? explorerState.rowMapping : null)  // Filter oder Row-Move Mapping
+                                // rowMapping wird gesendet bei: Filter, Row-Move ODER Row-Deleted
+                                rowMapping: filterRowMapping || (explorerState.rowMapping && explorerState.rowMapping.length > 0 ? explorerState.rowMapping : null)
                             };
-                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, insertedColumnInfo: ${JSON.stringify(insertedColumnInfo)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${(filterRowMapping || hasRowMoves) ? 'ja' : 'nein'}, AutoFilter: ${explorerState.autoFilterRange || 'none'})`);
+                            // Prüfe ob rowMapping gesendet wird
+                            const hasRowMapping = !!(filterRowMapping || (explorerState.rowMapping && explorerState.rowMapping.length > 0));
+                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, insertedColumnInfo: ${JSON.stringify(insertedColumnInfo)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${hasRowMapping ? 'ja' : 'nein'}, AutoFilter: ${explorerState.autoFilterRange || 'none'})`);
                         } else {
                             // Nur Zell-Edits: changedCells
                             const changedCells = {};
@@ -12627,27 +12859,55 @@
                                 }
                             }
                             
-                            // RichText für geänderte Zellen
-                            const richTextForChanged = {};
-                            for (const cellKey of explorerState.editedCells.keys()) {
-                                // Überspringe spezielle Marker-Keys
-                                if (cellKey.startsWith('_')) continue;
-                                
-                                if (explorerState.richTextCells && explorerState.richTextCells[cellKey]) {
-                                    richTextForChanged[cellKey] = explorerState.richTextCells[cellKey];
-                                }
-                            }
+                            // Bei vielen Änderungen (>100): Full Rewrite statt einzelne Zellen
+                            // Einzelne Zell-Writes sind bei xlwings sehr langsam!
+                            const useBulkWrite = Object.keys(changedCells).length > 100;
                             
-                            sheetData = {
-                                sheetName: sheetName,
-                                changedCells: changedCells,
-                                richTextCells: Object.keys(richTextForChanged).length > 0 ? richTextForChanged : undefined,
-                                hiddenColumns: hiddenCols,
-                                hiddenRows: currentHiddenRows,  // Auch bei Zell-Edits versteckte Zeilen übergeben
-                                autoFilterRange: explorerState.autoFilterRange,
-                                fullRewrite: false
-                            };
-                            console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
+                            if (useBulkWrite) {
+                                console.log(`[Export] ${Object.keys(changedCells).length} Änderungen - verwende Full Rewrite für Performance`);
+                                
+                                // Full Rewrite mit allen Daten
+                                let allData = explorerState.filteredData.map(item => item.row);
+                                
+                                sheetData = {
+                                    sheetName: sheetName,
+                                    headers: [...explorerState.headers],
+                                    data: allData,
+                                    visibleColumns: [...(explorerState.visibleColumns || [])],
+                                    hiddenRows: currentHiddenRows,
+                                    hiddenColumns: hiddenCols,
+                                    cellStyles: {},  // Styles bleiben erhalten
+                                    cellFormulas: {},
+                                    cellHyperlinks: {},
+                                    richTextCells: {},
+                                    rowHighlights: {},
+                                    autoFilterRange: explorerState.autoFilterRange,
+                                    fullRewrite: true,
+                                    structuralChange: false  // Keine strukturelle Änderung, nur Daten-Update
+                                };
+                            } else {
+                                // RichText für geänderte Zellen
+                                const richTextForChanged = {};
+                                for (const cellKey of explorerState.editedCells.keys()) {
+                                    // Überspringe spezielle Marker-Keys
+                                    if (cellKey.startsWith('_')) continue;
+                                    
+                                    if (explorerState.richTextCells && explorerState.richTextCells[cellKey]) {
+                                        richTextForChanged[cellKey] = explorerState.richTextCells[cellKey];
+                                    }
+                                }
+                                
+                                sheetData = {
+                                    sheetName: sheetName,
+                                    changedCells: changedCells,
+                                    richTextCells: Object.keys(richTextForChanged).length > 0 ? richTextForChanged : undefined,
+                                    hiddenColumns: hiddenCols,
+                                    hiddenRows: currentHiddenRows,
+                                    autoFilterRange: explorerState.autoFilterRange,
+                                    fullRewrite: false
+                                };
+                                console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
+                            }
                         }
                     } else if (cachedSheet) {
                         // Gecachtes Sheet mit Änderungen - keine Styles senden (Backend behält Originale)
@@ -12679,52 +12939,90 @@
                     sheetsToExport.push(sheetData);
                 }
                 
-                // Prüfe ob Python/openpyxl verwendet werden soll
-                const usePythonForExport = document.getElementById('chkUsePython')?.checked || false;
+                // IMMER xlwings/Python für Export verwenden (CF-Erhaltung)
+                // Die Checkbox steuert nur das LESEN, nicht das Schreiben
+                console.log('[Export] Verwende xlwings/Python für CF-Erhaltung...');
                 
                 let result;
-                if (usePythonForExport) {
-                    // Python/openpyxl Export (behält ALLE Formatierungen)
-                    console.log('[Export] Verwende Python/openpyxl...');
-                    result = await window.electronAPI.pythonExportMultipleSheets({
-                        sourcePath: explorerState.filePath,
-                        targetPath: savePath,
-                        sheets: sheetsToExport,
-                        password: exportPassword,
-                        sourcePassword: explorerState.filePassword
-                    });
-                } else {
-                    // ExcelJS Export (Standard)
-                    console.log('[Export] Verwende ExcelJS...');
-                    result = await window.electronAPI.exportMultipleSheets({
-                        sourcePath: explorerState.filePath,
-                        targetPath: savePath,
-                        sheets: sheetsToExport,
-                        password: exportPassword,
-                        sourcePassword: explorerState.filePassword
-                    });
-                }
+                result = await window.electronAPI.pythonExportMultipleSheets({
+                    sourcePath: explorerState.filePath,
+                    targetPath: savePath,
+                    sheets: sheetsToExport,
+                    password: exportPassword,
+                    sourcePassword: explorerState.filePassword
+                });
                 
                 if (result.success) {
                     const pwInfo = exportPassword ? ' (passwortgeschützt)' : '';
-                    const engineInfo = usePythonForExport ? ' [Python]' : '';
+                    const engineInfo = result.method ? ` [${result.method}]` : '';
                     elements.explorerStatus.textContent = `✓ ${selectedSheets.length} Arbeitsblatt/blätter exportiert${pwInfo}${engineInfo}: ${savePath}`;
                     
-                    // Alle Änderungsmarkierungen zurücksetzen
-                    explorerState.editedCells.clear();
-                    explorerState.affectedRows?.clear();
-                    explorerState.rowMapping = null;
-                    for (const [sheetName, cachedSheet] of explorerState.sheetDataCache) {
-                        cachedSheet.editedCells.clear();
-                    }
+                    // Prüfe ob strukturelle Änderungen vorlagen (Spalten eingefügt/gelöscht)
+                    const exportedSheet = sheetsToExport.find(s => s.sheetName === explorerState.selectedSheet);
+                    const hadStructuralChange = exportedSheet && exportedSheet.structuralChange;
                     
-                    // Bei Python-Export: Nicht neu laden (Datei ist bereits korrekt)
-                    // Bei ExcelJS-Export: Neu laden um States zu synchronisieren
-                    if (!usePythonForExport) {
-                        console.log('[Export] Lade gespeicherte Datei neu...');
-                        await reloadExplorerFile(savePath, exportPassword);
+                    if (hadStructuralChange) {
+                        // Bei strukturellen Änderungen: Datei neu einlesen für korrekte Styles
+                        console.log('[Export] Strukturelle Änderung - lade Datei neu für korrekte Styles...');
+                        
+                        // Speichere aktuelle Ansicht für Wiederherstellung
+                        const currentSheet = explorerState.selectedSheet;
+                        const currentPage = explorerState.currentPage;
+                        const currentSort = { column: explorerState.sortColumn, direction: explorerState.sortDirection, type: explorerState.sortType };
+                        
+                        // Datei neu laden (lädt auch das aktuelle Sheet automatisch)
+                        await reloadExplorerFile(savePath, explorerState.filePassword);
+                        
+                        // WICHTIG: Nach Reload nochmal sicherstellen dass alles sauber ist
+                        explorerState.editedCells.clear();
+                        explorerState.sheetDataCache.clear();
+                        explorerState.rowMapping = null;
+                        explorerState.affectedRows?.clear();
+                        
+                        // Sortierung wiederherstellen
+                        if (currentSort.column !== null) {
+                            explorerState.sortColumn = currentSort.column;
+                            explorerState.sortDirection = currentSort.direction;
+                            explorerState.sortType = currentSort.type;
+                            applyExplorerSort();
+                            renderExplorerTable();
+                        }
+                        
+                        // Seite wiederherstellen
+                        if (currentPage <= Math.ceil(explorerState.filteredData.length / explorerState.pageSize)) {
+                            explorerState.currentPage = currentPage;
+                            renderExplorerTable();
+                        }
                     } else {
-                        console.log('[Export] Python-Export abgeschlossen, kein Neuladen nötig');
+                        // Keine strukturelle Änderung: Schneller Refresh ohne Datei neu lesen
+                        console.log('[Export] Keine strukturelle Änderung - schneller State-Refresh...');
+                        
+                        if (exportedSheet && exportedSheet.fullRewrite && exportedSheet.data) {
+                            // Headers und Data übernehmen
+                            explorerState.headers = [...exportedSheet.headers];
+                            explorerState.data = exportedSheet.data.map(row => [...row]);
+                            explorerState.originalData = exportedSheet.data.map(row => [...row]);
+                            
+                            // filteredData neu aufbauen
+                            explorerState.filteredData = explorerState.data.map((row, index) => ({
+                                originalIndex: index,
+                                row: row
+                            }));
+                            
+                            // rowHighlights: Neue wurden gesetzt, sind jetzt "original"
+                            explorerState.originalRowHighlights = new Map(explorerState.rowHighlights);
+                        }
+                        
+                        // Änderungsmarkierungen zurücksetzen
+                        explorerState.editedCells.clear();
+                        explorerState.affectedRows?.clear();
+                        explorerState.rowMapping = null;
+                        
+                        // Cache aktualisieren
+                        saveCurrentSheetToCache();
+                        
+                        // UI aktualisieren
+                        filterExplorerData();
                     }
                     
                     showFloatingStatus(`✓ Export erfolgreich${pwInfo}${engineInfo}`, 'success');
@@ -12910,15 +13208,10 @@
                         .filter(cb => cb.checked)
                         .map(cb => cb.value);
                     
-                    console.log('[SheetDialog] Ausgewählte Sheets:', selected);
-                    
                     // Bei Export: Passwort mit zurückgeben
                     const password = (mode === 'export' && passwordCheckbox && passwordCheckbox.checked) 
                         ? (passwordInput?.value || null) 
                         : null;
-                    
-                    console.log('[SheetDialog] passwordCheckbox.checked:', passwordCheckbox?.checked);
-                    console.log('[SheetDialog] Finales Passwort:', password ? '***SET***' : 'NULL');
                     
                     overlay.remove();
                     
@@ -13752,6 +14045,50 @@
             };
             elements.btnPreviewDataJoin.onclick = calculateDataJoinPreview;
             elements.btnExecuteDataJoin.onclick = executeDataJoin;
+            
+            // Data Join Drag & Drop Zone
+            const joinDropZone = document.getElementById('joinDropZone');
+            if (joinDropZone) {
+                joinDropZone.addEventListener('click', loadDataJoinSourceFile);
+                
+                joinDropZone.addEventListener('dragover', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    joinDropZone.style.borderColor = 'var(--primary)';
+                    joinDropZone.style.background = 'rgba(0, 122, 204, 0.1)';
+                });
+                
+                joinDropZone.addEventListener('dragleave', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    joinDropZone.style.borderColor = 'var(--border)';
+                    joinDropZone.style.background = 'var(--bg-dark)';
+                });
+                
+                joinDropZone.addEventListener('drop', async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    joinDropZone.style.borderColor = 'var(--border)';
+                    joinDropZone.style.background = 'var(--bg-dark)';
+                    
+                    const files = e.dataTransfer.files;
+                    if (files.length > 0) {
+                        const file = files[0];
+                        const ext = file.name.split('.').pop().toLowerCase();
+                        if (ext === 'xlsx' || ext === 'xls') {
+                            // Dateipfad über Electron API abrufen (contextIsolation-sicher)
+                            const filePath = window.electronAPI.getPathForFile(file);
+                            if (!filePath) {
+                                showNotification('Dateipfad konnte nicht ermittelt werden', 'error');
+                                return;
+                            }
+                            await loadDataJoinSourceFromPath(filePath);
+                        } else {
+                            showNotification('Bitte nur Excel-Dateien (.xlsx, .xls) ablegen', 'warning');
+                        }
+                    }
+                });
+            }
             
             // Sheet Management Event Listeners
             document.getElementById('btnSheetManage').onclick = openSheetManageModal;

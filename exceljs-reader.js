@@ -111,7 +111,6 @@ function detectRowHighlights(cellStyles, rowCount, colCount) {
                 const colorName = colorMapping[firstFill];
                 if (colorName) {
                     highlights.push([rowIdx, colorName]);
-                    console.log(`[ExcelJS] Zeile ${rowIdx} als '${colorName}' erkannt (Farbe: #${firstFill})`);
                 }
             }
         }
@@ -138,7 +137,6 @@ function extractFillsFromXLSX(filePath, sheetName) {
         // 1. styles.xml lesen und Fills extrahieren
         const stylesEntry = zip.getEntry('xl/styles.xml');
         if (!stylesEntry) {
-            console.log('[XLSX-Extract] Keine styles.xml gefunden');
             return cellFills;
         }
         
@@ -164,7 +162,6 @@ function extractFillsFromXLSX(filePath, sheetName) {
                 }
             }
         }
-        console.log('[XLSX-Extract] Gefundene Fills:', fills);
         
         // 2. cellXfs extrahieren (Style ID -> Fill ID Mapping)
         const styleToFill = [];
@@ -190,13 +187,11 @@ function extractFillsFromXLSX(filePath, sheetName) {
                 }
             }
         }
-        console.log('[XLSX-Extract] Style zu Fill Mapping:', styleToFill);
         
         // 3. Sheet-Daten finden
         // Zuerst workbook.xml lesen um Sheet rId zu finden
         const workbookEntry = zip.getEntry('xl/workbook.xml');
         if (!workbookEntry) {
-            console.log('[XLSX-Extract] Keine workbook.xml gefunden');
             return cellFills;
         }
         
@@ -214,12 +209,10 @@ function extractFillsFromXLSX(filePath, sheetName) {
                 }
             }
         }
-        console.log(`[XLSX-Extract] Sheet "${sheetName}" hat rId: ${sheetRId}`);
         
         // Relationship-Datei lesen um tatsächlichen Sheet-Pfad zu finden
         const relsEntry = zip.getEntry('xl/_rels/workbook.xml.rels');
         if (!relsEntry) {
-            console.log('[XLSX-Extract] Keine workbook.xml.rels gefunden');
             return cellFills;
         }
         
@@ -236,16 +229,13 @@ function extractFillsFromXLSX(filePath, sheetName) {
         }
         
         if (!sheetPath) {
-            console.log(`[XLSX-Extract] Kein Pfad für ${sheetRId} gefunden`);
             return cellFills;
         }
-        console.log(`[XLSX-Extract] Sheet-Pfad: ${sheetPath}`);
         
         // Sheet-XML laden (Pfad kann relativ sein, z.B. "worksheets/sheet1.xml")
         const fullSheetPath = sheetPath.startsWith('xl/') ? sheetPath : `xl/${sheetPath}`;
         const sheetEntry = zip.getEntry(fullSheetPath);
         if (!sheetEntry) {
-            console.log(`[XLSX-Extract] Sheet ${fullSheetPath} nicht gefunden`);
             return cellFills;
         }
         
@@ -278,12 +268,10 @@ function extractFillsFromXLSX(filePath, sheetName) {
                     const dataRowIndex = rowNum - 1; // Zeile 2 = Datenzeile 1
                     const key = `${dataRowIndex}-${colIndex}`;
                     cellFills[key] = fillColor;
-                    console.log(`[XLSX-Extract] Zelle ${colLetters}${rowNum} (Key: ${key}): Fill ${fillColor}`);
                 }
             }
         }
         
-        console.log('[XLSX-Extract] Extrahierte Fills:', cellFills);
         return cellFills;
         
     } catch (error) {
@@ -309,7 +297,6 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
     try {
         const workbook = new ExcelJS.Workbook();
         
-        console.log('[ExcelJS] Lade Workbook...');
         const loadStart = Date.now();
         
         // Bei passwortgeschützten Dateien: xlsx-populate zum Entschlüsseln verwenden
@@ -317,8 +304,6 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         let actualFilePath = filePath;
         
         if (password) {
-            console.log('[ExcelJS] Passwortgeschützte Datei - verwende xlsx-populate zum Entschlüsseln...');
-            
             try {
                 // Lazy-load xlsx-populate
                 if (!XlsxPopulate) {
@@ -333,7 +318,6 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 await pwWorkbook.toFileAsync(tempFilePath);
                 
                 actualFilePath = tempFilePath;
-                console.log('[ExcelJS] Datei entschlüsselt, lade mit ExcelJS...');
                 
             } catch (pwError) {
                 console.error('[ExcelJS] Fehler beim Entschlüsseln:', pwError.message);
@@ -363,7 +347,6 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 readError.message.includes('Encrypted') ||
                 readError.message.includes('CFB') // Common error for encrypted files
             )) {
-                console.log('[ExcelJS] Datei scheint passwortgeschützt zu sein');
                 return { 
                     success: false, 
                     error: 'Diese Datei ist passwortgeschützt. Bitte Passwort eingeben.',
@@ -372,8 +355,6 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             }
             throw readError;
         }
-        
-        console.log(`[ExcelJS] Workbook geladen in ${Date.now() - loadStart}ms`);
         
         // Sheet finden
         const worksheet = workbook.getWorksheet(sheetName);
@@ -411,17 +392,14 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     // Excel-Tabellen haben immer einen AutoFilter über den gesamten Tabellenbereich
                     if (table.table.autoFilterRef) {
                         autoFilterRange = table.table.autoFilterRef;
-                        console.log('[ExcelJS] AutoFilter aus Tabelle (autoFilterRef):', tableName, autoFilterRange);
                         break;
                     } else if (table.table.tableRef) {
                         autoFilterRange = table.table.tableRef;
-                        console.log('[ExcelJS] AutoFilter aus Tabelle (tableRef):', tableName, autoFilterRange);
                         break;
                     }
                 }
             }
         }
-        console.log('[ExcelJS] AutoFilter Range:', autoFilterRange);
         
         // Merged Cells (verbundene Zellen) extrahieren und konvertieren
         // ExcelJS gibt Strings wie "A1:H1" zurück, Frontend erwartet Objekte
@@ -435,7 +413,6 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 }
             });
         }
-        console.log('[ExcelJS] Merged Cells:', mergedCells);
         
         // Versteckte Spalten ermitteln
         worksheet.columns.forEach((col, colIndex) => {
@@ -446,7 +423,6 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         
         // Ermittle die tatsächliche Spaltenanzahl (kann mehr sein als in Zeile 1)
         const actualColumnCount = worksheet.columnCount;
-        console.log('[ExcelJS] Actual column count:', actualColumnCount);
         
         // Zähler für tatsächliche Daten-Zeilen (ohne Header)
         // WICHTIG: dataRowCounter ist jetzt gleich rowNumber-2, da wir includeEmpty:true verwenden
@@ -700,35 +676,27 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         // FALLBACK: Fill-Farben direkt aus XLSX extrahieren
         // ExcelJS erkennt bei manchen Dateien (z.B. SoftMaker) keine Fills
         // ============================================================
-        console.log('[ExcelJS] Prüfe auf fehlende Fills...');
         const directFills = extractFillsFromXLSX(filePath, sheetName);
         
         if (Object.keys(directFills).length > 0) {
-            console.log(`[ExcelJS] ${Object.keys(directFills).length} Fills aus XLSX extrahiert`);
-            
             // Füge fehlende Fills zu cellStyles hinzu
             for (const [key, fillColor] of Object.entries(directFills)) {
                 if (cellStyles[key]) {
                     // Style existiert, aber vielleicht fehlt fill
                     if (!cellStyles[key].fill) {
                         cellStyles[key].fill = fillColor;
-                        console.log(`[ExcelJS] Fill hinzugefügt für ${key}: ${fillColor}`);
                     }
                 } else {
                     // Neuer Style nur mit fill
                     cellStyles[key] = { fill: fillColor };
-                    console.log(`[ExcelJS] Neuer Style für ${key}: ${fillColor}`);
                 }
             }
         }
         
         const totalTime = Date.now() - startTime;
-        console.log(`[ExcelJS] Sheet geladen in ${totalTime}ms (${data.length} Zeilen)`);
-        console.log(`[ExcelJS] Extrahierte Styles: ${Object.keys(cellStyles).length}`);
         
         // Zeilenfarben erkennen (wenn alle Zellen einer Zeile die gleiche Hintergrundfarbe haben)
         const rowHighlights = detectRowHighlights(cellStyles, data.length, headers.length);
-        console.log(`[ExcelJS] Erkannte Zeilenfarben: ${rowHighlights.length} Zeilen`);
         
         return {
             success: true,
@@ -760,7 +728,6 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 const fs = require('fs');
                 if (fs.existsSync(tempFilePath)) {
                     fs.unlinkSync(tempFilePath);
-                    console.log('[ExcelJS] Temporäre Datei gelöscht:', tempFilePath);
                 }
             } catch (cleanupError) {
                 console.warn('[ExcelJS] Konnte temporäre Datei nicht löschen:', cleanupError.message);

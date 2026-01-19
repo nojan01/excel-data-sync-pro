@@ -239,7 +239,13 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
     import shutil
     import re
     
+    print(f"[DEBUG] restore_table_xml_from_original aufgerufen", file=sys.stderr, flush=True)
+    print(f"[DEBUG]   output_path: {output_path}", file=sys.stderr, flush=True)
+    print(f"[DEBUG]   original_path: {original_path}", file=sys.stderr, flush=True)
+    print(f"[DEBUG]   table_changes: {list(table_changes.keys()) if table_changes else 'None'}", file=sys.stderr, flush=True)
+    
     if not table_changes:
+        print(f"[DEBUG]   ABBRUCH: keine table_changes", file=sys.stderr, flush=True)
         return
     
     temp_dir = tempfile.mkdtemp()
@@ -259,10 +265,15 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
         tables_dir = os.path.join(temp_dir, 'xl', 'tables')
         orig_tables_dir = os.path.join(orig_temp_dir, 'xl', 'tables')
         
+        print(f"[DEBUG]   tables_dir existiert: {os.path.exists(tables_dir)}", file=sys.stderr, flush=True)
+        print(f"[DEBUG]   orig_tables_dir existiert: {os.path.exists(orig_tables_dir)}", file=sys.stderr, flush=True)
+        
         if os.path.exists(tables_dir) and os.path.exists(orig_tables_dir):
             for f in os.listdir(tables_dir):
                 if not f.startswith('table') or not f.endswith('.xml'):
                     continue
+                
+                print(f"[DEBUG]   Verarbeite: {f}", file=sys.stderr, flush=True)
                 
                 export_table_path = os.path.join(tables_dir, f)
                 orig_table_path = os.path.join(orig_tables_dir, f)
@@ -317,19 +328,27 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
                             uid_match = re.search(r'xr3:uid="([^"]+)"', col_xml)
                             return uid_match.group(1) if uid_match else None
                         
+                        # Baue eine Liste von verfügbaren Original-Columns (jede nur einmal verwendbar)
+                        available_orig_columns = list(orig_columns)
+                        
                         # Baue neue tableColumns
                         new_tc_content = f'<tableColumns count="{len(new_columns)}">'
                         
                         for i, col_name in enumerate(new_columns):
                             # Versuche eine passende Original-Column zu finden (nach Name)
+                            # WICHTIG: Jede Original-Column nur EINMAL verwenden!
                             matching_orig = None
-                            for orig_col in orig_columns:
+                            matching_idx = -1
+                            for idx, orig_col in enumerate(available_orig_columns):
                                 name_match = re.search(r'name="([^"]+)"', orig_col)
                                 if name_match and name_match.group(1) == col_name:
                                     matching_orig = orig_col
+                                    matching_idx = idx
                                     break
                             
                             if matching_orig:
+                                # Entferne aus verfügbaren Columns damit nicht doppelt verwendet
+                                del available_orig_columns[matching_idx]
                                 # Nutze Original-Column und aktualisiere nur die ID
                                 col_xml = re.sub(r'id="\d+"', f'id="{i+1}"', matching_orig)
                                 new_tc_content += col_xml
@@ -346,6 +365,9 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
                 with open(export_table_path, 'w', encoding='utf-8') as fp:
                     fp.write(new_content)
                 fixed_count += 1
+                print(f"[DEBUG]   Table {table_name} repariert", file=sys.stderr, flush=True)
+        
+        print(f"[DEBUG]   fixed_count: {fixed_count}", file=sys.stderr, flush=True)
         
         if fixed_count > 0:
             # Erstelle neue XLSX
@@ -359,10 +381,92 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
                         zf.write(full_path, arc_name)
             
             shutil.copy2(temp_xlsx, output_path)
+            print(f"[DEBUG]   XLSX wiederhergestellt: {output_path}", file=sys.stderr, flush=True)
     
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
         shutil.rmtree(orig_temp_dir, ignore_errors=True)
+
+
+def restore_external_links_from_original(output_path, original_path):
+    """
+    Kopiert die externalLinks-Dateien aus dem Original zurück.
+    
+    openpyxl verliert wichtige XML-Namespaces wie xmlns:mc, mc:Ignorable, xmlns:x14 etc.
+    Diese Funktion stellt die Original-externalLinks wieder her.
+    """
+    import tempfile
+    import shutil
+    import zipfile
+    
+    if not original_path or original_path == output_path:
+        return
+    
+    if not os.path.exists(original_path):
+        return
+    
+    temp_dir = None
+    orig_temp_dir = None
+    
+    try:
+        temp_dir = tempfile.mkdtemp()
+        orig_temp_dir = tempfile.mkdtemp()
+        temp_xlsx = os.path.join(temp_dir, 'restored.xlsx')
+        
+        with zipfile.ZipFile(output_path, 'r') as zf:
+            zf.extractall(temp_dir)
+        with zipfile.ZipFile(original_path, 'r') as zf:
+            zf.extractall(orig_temp_dir)
+        
+        ext_links_dir = os.path.join(temp_dir, 'xl', 'externalLinks')
+        orig_ext_links_dir = os.path.join(orig_temp_dir, 'xl', 'externalLinks')
+        
+        if not os.path.exists(orig_ext_links_dir):
+            return
+        
+        fixed_count = 0
+        
+        # Kopiere alle externalLink*.xml Dateien
+        for f in os.listdir(orig_ext_links_dir):
+            if f.startswith('externalLink') and f.endswith('.xml'):
+                orig_file = os.path.join(orig_ext_links_dir, f)
+                dest_file = os.path.join(ext_links_dir, f)
+                if os.path.exists(dest_file):
+                    shutil.copy2(orig_file, dest_file)
+                    fixed_count += 1
+        
+        # WICHTIG: Auch die _rels Dateien kopieren (openpyxl verliert Relationships)
+        orig_rels_dir = os.path.join(orig_ext_links_dir, '_rels')
+        dest_rels_dir = os.path.join(ext_links_dir, '_rels')
+        if os.path.exists(orig_rels_dir) and os.path.exists(dest_rels_dir):
+            for f in os.listdir(orig_rels_dir):
+                if f.endswith('.xml.rels'):
+                    orig_rels = os.path.join(orig_rels_dir, f)
+                    dest_rels = os.path.join(dest_rels_dir, f)
+                    if os.path.exists(dest_rels):
+                        shutil.copy2(orig_rels, dest_rels)
+                        fixed_count += 1
+        
+        if fixed_count > 0:
+            print(f"[DEBUG] restore_external_links: {fixed_count} Dateien wiederhergestellt", file=sys.stderr, flush=True)
+            
+            # Erstelle neue XLSX
+            with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as zf:
+                for root, dirs, files in os.walk(temp_dir):
+                    for f in files:
+                        if f == 'restored.xlsx':
+                            continue
+                        full_path = os.path.join(root, f)
+                        arc_name = full_path.replace(temp_dir + os.sep, '')
+                        zf.write(full_path, arc_name)
+            
+            shutil.copy2(temp_xlsx, output_path)
+    
+    finally:
+        if temp_dir:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        if orig_temp_dir:
+            shutil.rmtree(orig_temp_dir, ignore_errors=True)
 
 
 def apply_tint(rgb_hex, tint):
@@ -850,7 +954,7 @@ def apply_cell_value(cell, value):
         cell.value = str(value)
 
 
-def write_sheet(file_path, output_path, sheet_name, changes):
+def write_sheet(file_path, output_path, sheet_name, changes, original_path=None):
     """
     Schreibt Änderungen in ein Excel-Sheet
     
@@ -858,14 +962,25 @@ def write_sheet(file_path, output_path, sheet_name, changes):
     NEUEN Daten geschrieben. Die Original-Struktur wird beibehalten wo möglich.
     
     Args:
-        file_path: Pfad zur Original-Datei
+        file_path: Pfad zur Arbeitsdatei (kopierte Datei)
         output_path: Pfad zur Ausgabe-Datei
         sheet_name: Name des Sheets
         changes: Dict mit allen Änderungen
+        original_path: Pfad zur Original-Datei (für restore_table_xml)
     
     Returns:
         Dict mit success und ggf. error
     """
+    # Wenn kein original_path gegeben, verwende file_path (Legacy-Kompatibilität)
+    if original_path is None:
+        original_path = file_path
+        print(f"[DEBUG] write_sheet: original_path nicht gegeben, verwende file_path", file=sys.stderr, flush=True)
+    
+    print(f"[DEBUG] write_sheet aufgerufen:", file=sys.stderr, flush=True)
+    print(f"[DEBUG]   file_path: {file_path}", file=sys.stderr, flush=True)
+    print(f"[DEBUG]   output_path: {output_path}", file=sys.stderr, flush=True)
+    print(f"[DEBUG]   original_path: {original_path}", file=sys.stderr, flush=True)
+    
     try:
         # Original-Workbook laden
         # Workaround für openpyxl Bug mit extLst in PatternFill
@@ -905,6 +1020,18 @@ def write_sheet(file_path, output_path, sheet_name, changes):
         frontend_auto_filter = changes.get('autoFilterRange')  # AutoFilter vom Frontend
         
         cleared_row_highlights = changes.get('clearedRowHighlights', [])
+        affected_rows = changes.get('affectedRows', [])
+        
+        # DEBUG: Zeige alle relevanten Flags
+        print(f"[DEBUG] === EXPORT FLAGS ===", file=sys.stderr, flush=True)
+        print(f"[DEBUG] inserted_columns: {bool(inserted_columns)}", file=sys.stderr, flush=True)
+        print(f"[DEBUG] deleted_columns: {bool(deleted_columns)}", file=sys.stderr, flush=True)
+        print(f"[DEBUG] row_mapping: {bool(row_mapping)}", file=sys.stderr, flush=True)
+        print(f"[DEBUG] column_order: {bool(column_order)}", file=sys.stderr, flush=True)
+        print(f"[DEBUG] affected_rows: {bool(affected_rows)}", file=sys.stderr, flush=True)
+        print(f"[DEBUG] full_rewrite: {full_rewrite}", file=sys.stderr, flush=True)
+        print(f"[DEBUG] structural_change: {structural_change}", file=sys.stderr, flush=True)
+        print(f"[DEBUG] from_file: {from_file}", file=sys.stderr, flush=True)
         
         # =====================================================================
         # FALL 1: fromFile - Nur versteckte Spalten/Zeilen setzen
@@ -916,6 +1043,149 @@ def write_sheet(file_path, output_path, sheet_name, changes):
             wb.close()
             fix_xlsx_relationships(output_path)
             return {'success': True, 'outputPath': output_path}
+        
+        # =====================================================================
+        # FALL 1.5: NUR Spalten einfügen (ohne andere strukturelle Änderungen)
+        # Dieser Pfad arbeitet wie das Test-Script: insert_cols + Format kopieren
+        # OHNE alle Daten neu zu schreiben - das erhält Table-Styles!
+        # =====================================================================
+        # Prüfe ob rowMapping nur die Identität ist (keine echte Änderung)
+        row_mapping_is_identity = True
+        if row_mapping:
+            for i, val in enumerate(row_mapping):
+                if val != i:
+                    row_mapping_is_identity = False
+                    break
+        
+        print(f"[DEBUG] FALL 1.5 Check:", file=sys.stderr, flush=True)
+        print(f"[DEBUG]   inserted_columns: {bool(inserted_columns)}", file=sys.stderr, flush=True)
+        print(f"[DEBUG]   deleted_columns: {bool(deleted_columns)}", file=sys.stderr, flush=True)
+        print(f"[DEBUG]   row_mapping_is_identity: {row_mapping_is_identity}", file=sys.stderr, flush=True)
+        print(f"[DEBUG]   column_order: {bool(column_order)}", file=sys.stderr, flush=True)
+        print(f"[DEBUG]   affected_rows: {bool(affected_rows)}", file=sys.stderr, flush=True)
+        
+        # FORCE: Bei Spalten-Insert IMMER FALL 1.5 verwenden!
+        only_column_insert = inserted_columns and not deleted_columns
+        
+        if only_column_insert:
+            print(f"[DEBUG] FALL 1.5: Nur Spalten einfügen (Table-Style erhalten)", file=sys.stderr, flush=True)
+            
+            operations = inserted_columns.get('operations', [])
+            if not operations and inserted_columns.get('position') is not None:
+                operations = [{
+                    'position': inserted_columns['position'],
+                    'count': inserted_columns.get('count', 1),
+                    'sourceColumn': inserted_columns.get('sourceColumn')
+                }]
+            
+            # Sortiere aufsteigend
+            operations.sort(key=lambda x: x['position'])
+            inserted_offset = 0
+            
+            for op in operations:
+                position = op['position']
+                count = op.get('count', 1)
+                source_column = op.get('sourceColumn')
+                excel_col = position + 1 + inserted_offset
+                
+                for i in range(count):
+                    insert_at = excel_col + i
+                    
+                    # Speichere Formatierung der Referenzspalte
+                    source_format = {}
+                    source_width = None
+                    if source_column is not None:
+                        source_excel_col = source_column + 1 + inserted_offset
+                        col_letter = get_column_letter(source_excel_col)
+                        if col_letter in ws.column_dimensions:
+                            source_width = ws.column_dimensions[col_letter].width
+                        
+                        for row in range(1, ws.max_row + 1):
+                            cell = ws.cell(row=row, column=source_excel_col)
+                            source_format[row] = {
+                                'fill': copy(cell.fill) if cell.fill else None,
+                                'font': copy(cell.font) if cell.font else None,
+                                'alignment': copy(cell.alignment) if cell.alignment else None,
+                                'border': copy(cell.border) if cell.border else None,
+                                'number_format': cell.number_format
+                            }
+                    
+                    # Spaltenbreiten speichern
+                    saved_widths = {}
+                    for col in range(insert_at, ws.max_column + 1):
+                        col_letter = get_column_letter(col)
+                        if col_letter in ws.column_dimensions:
+                            saved_widths[col] = ws.column_dimensions[col_letter].width
+                    
+                    # Spalte einfügen
+                    ws.insert_cols(insert_at, 1)
+                    
+                    # Spaltenbreiten wiederherstellen
+                    for old_col, width in saved_widths.items():
+                        if width:
+                            new_letter = get_column_letter(old_col + 1)
+                            ws.column_dimensions[new_letter].width = width
+                    
+                    # CF anpassen
+                    inserted_cols_for_cf = {insert_at - 1: 1}
+                    adjust_conditional_formatting(ws, [], inserted_cols_for_cf)
+                    
+                    # Tables anpassen
+                    adjust_tables(ws, [], inserted_cols_for_cf, headers)
+                    
+                    # Formatierung auf neue Spalte anwenden
+                    if source_width:
+                        ws.column_dimensions[get_column_letter(insert_at)].width = source_width
+                    
+                    for row, fmt in source_format.items():
+                        cell = ws.cell(row=row, column=insert_at)
+                        if fmt['fill']:
+                            cell.fill = fmt['fill']
+                        if fmt['font']:
+                            cell.font = fmt['font']
+                        if fmt['alignment']:
+                            cell.alignment = fmt['alignment']
+                        if fmt['border']:
+                            cell.border = fmt['border']
+                        if fmt.get('number_format'):
+                            cell.number_format = fmt['number_format']
+                
+                # Header für neue Spalten setzen
+                op_headers = op.get('headers', [])
+                for i, header in enumerate(op_headers):
+                    ws.cell(row=1, column=excel_col + i).value = header
+                
+                inserted_offset += count
+            
+            # Daten für die neuen Spalten aus dem Frontend übernehmen
+            # Die neuen Spalten sind in 'data' bereits enthalten
+            if data and headers:
+                # Finde die Positionen der neuen Spalten
+                for op in operations:
+                    position = op['position']
+                    count = op.get('count', 1)
+                    for i in range(count):
+                        col_idx = position + i
+                        if col_idx < len(headers):
+                            # Schreibe Daten für diese Spalte
+                            for row_idx, row_data in enumerate(data):
+                                if col_idx < len(row_data):
+                                    cell = ws.cell(row=row_idx + 2, column=col_idx + 1)
+                                    apply_cell_value(cell, row_data[col_idx])
+            
+            # Versteckte Spalten/Zeilen
+            _apply_hidden_columns(ws, hidden_columns)
+            _apply_hidden_rows(ws, hidden_rows)
+            
+            wb.save(output_path)
+            wb.close()
+            fix_xlsx_relationships(output_path)
+            
+            # Stelle externalLinks aus Original wieder her (openpyxl verliert Namespaces)
+            restore_external_links_from_original(output_path, original_path)
+            
+            print(f"[DEBUG] FALL 1.5 abgeschlossen - Table-Style sollte erhalten sein", file=sys.stderr, flush=True)
+            return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-insert-only'}
         
         # =====================================================================
         # FALL 2: Strukturelle Änderungen (fullRewrite)
@@ -1162,6 +1432,7 @@ def write_sheet(file_path, output_path, sheet_name, changes):
             # Wir müssen das manuell machen.
             # ================================================================
             if inserted_columns:
+                print(f"[DEBUG] inserted_columns empfangen: {inserted_columns}", file=sys.stderr, flush=True)
                 operations = inserted_columns.get('operations', [])
                 if not operations and inserted_columns.get('position') is not None:
                     operations = [{
@@ -1172,11 +1443,18 @@ def write_sheet(file_path, output_path, sheet_name, changes):
                 # Sortiere aufsteigend (von vorne nach hinten)
                 operations.sort(key=lambda x: x['position'])
                 
+                # Akkumulierter Offset für bereits eingefügte Spalten
+                inserted_offset = 0
+                
                 for op in operations:
                     position = op['position']
                     count = op.get('count', 1)
                     source_column = op.get('sourceColumn')  # Referenzspalte für Formatierung
-                    excel_col = position + 1  # 0-basiert → 1-basiert
+                    
+                    # Position und sourceColumn um bereits eingefügte Spalten anpassen
+                    excel_col = position + 1 + inserted_offset  # 0-basiert → 1-basiert + Offset
+                    
+                    print(f"[DEBUG] Insert op: position={position}, sourceColumn={source_column}, inserted_offset={inserted_offset}, excel_col={excel_col}", file=sys.stderr, flush=True)
                     
                     
                     # FÜR JEDE NEUE SPALTE einzeln:
@@ -1187,7 +1465,9 @@ def write_sheet(file_path, output_path, sheet_name, changes):
                         source_format = {}
                         source_width = None
                         if source_column is not None:
-                            source_excel_col = source_column + 1
+                            # sourceColumn auch um Offset anpassen!
+                            source_excel_col = source_column + 1 + inserted_offset
+                            print(f"[DEBUG] Kopiere Format von Spalte {source_excel_col} ({get_column_letter(source_excel_col)})", file=sys.stderr, flush=True)
                             col_letter = get_column_letter(source_excel_col)
                             if col_letter in ws.column_dimensions:
                                 source_width = ws.column_dimensions[col_letter].width
@@ -1253,6 +1533,9 @@ def write_sheet(file_path, output_path, sheet_name, changes):
                                     cell.border = fmt['border']
                                 if fmt.get('number_format'):
                                     cell.number_format = fmt['number_format']
+                    
+                    # Offset für nächste Operation erhöhen
+                    inserted_offset += count
                             
             
             # ================================================================
@@ -1484,8 +1767,12 @@ def write_sheet(file_path, output_path, sheet_name, changes):
             fix_xlsx_relationships(output_path)
             
             # Stelle Original-Table-XML wieder her (mit korrekten xr:uid etc.)
-            if table_changes:
-                restore_table_xml_from_original(output_path, file_path, table_changes)
+            # WICHTIG: Bei Spalten-INSERT NICHT aufrufen - openpyxl erzeugt saubere XML
+            # Bei Spalten-DELETE hingegen schon, um xr:uid/xr3:uid zu erhalten
+            if table_changes and not inserted_columns:
+                restore_table_xml_from_original(output_path, original_path, table_changes)
+            elif table_changes and inserted_columns:
+                print(f"[DEBUG] Überspringe restore_table_xml - Spalten wurden eingefügt, openpyxl-XML behalten", file=sys.stderr, flush=True)
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl'}
         
@@ -1604,7 +1891,8 @@ def main():
             params.get('filePath'),
             params.get('outputPath'),
             params.get('sheetName'),
-            params.get('changes', {})
+            params.get('changes', {}),
+            params.get('originalPath')  # NEU: Original-Datei für restore_table_xml
         )
         print(json.dumps(result, ensure_ascii=False))
     
