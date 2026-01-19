@@ -233,15 +233,16 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
         output_path: Pfad zur Export-Datei (wird modifiziert)
         original_path: Pfad zur Original-Datei
         table_changes: Dict mit {table_name: {'ref': new_ref, 'columns': [col_names]}}
+                       Wenn None oder leer, werden alle Tables vom Original kopiert.
     """
     import zipfile
     import tempfile
     import shutil
     import re
     
-    
-    if not table_changes:
-        return
+    # Bei table_changes=None: Leeres Dict verwenden (alle Tables werden kopiert)
+    if table_changes is None:
+        table_changes = {}
     
     temp_dir = tempfile.mkdtemp()
     temp_xlsx = os.path.join(temp_dir, 'restored.xlsx')
@@ -1332,6 +1333,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     break
             
             if not columns_changed:
+                pass  # Keine Änderung nötig
             else:
                 # Physische Spaltenumordnung durch Swap-Operationen
                 # column_order[neue_position] = alte_position
@@ -2006,6 +2008,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             if table_changes and not inserted_columns:
                 restore_table_xml_from_original(output_path, original_path, table_changes)
             elif table_changes and inserted_columns:
+                pass  # Bei INSERT keine XML-Wiederherstellung nötig
             
             # Stelle externalLinks aus Original wieder her (openpyxl verliert Namespaces)
             restore_external_links_from_original(output_path, original_path)
@@ -2038,6 +2041,15 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         wb.save(output_path)
         wb.close()
         fix_xlsx_relationships(output_path)
+        
+        # WICHTIG: Table-XML vom Original wiederherstellen!
+        # openpyxl verliert beim Speichern xr3:uid Attribute,
+        # deshalb müssen wir die Table-XML aus der Original-Datei kopieren.
+        restore_table_xml_from_original(output_path, original_path, table_changes=None)
+        
+        # WICHTIG: Auch workbook.xml, slicerCaches, etc. vom Original wiederherstellen!
+        # openpyxl verliert Slicers, Extensions und viele Namespaces
+        restore_external_links_from_original(output_path, original_path)
         
         return {'success': True, 'outputPath': output_path}
         
