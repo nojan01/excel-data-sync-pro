@@ -1077,10 +1077,18 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             return {'success': True, 'outputPath': output_path}
         
         # =====================================================================
-        # FALL 1.5: NUR Spalten einfügen (ohne andere strukturelle Änderungen)
-        # Dieser Pfad arbeitet wie das Test-Script: insert_cols + Format kopieren
-        # OHNE alle Daten neu zu schreiben - das erhält Table-Styles!
+        # FALL 1.X: UNIVERSELLE PIPELINE für Spalten-Operationen
+        # Führt alle Operationen SERIELL in korrekter Reihenfolge aus:
+        # 1. Spalten löschen (von hinten nach vorne)
+        # 2. Spalten einfügen (von vorne nach hinten) 
+        # 3. Spalten verschieben/reorder
+        # 4. Zellwerte schreiben
+        # 5. Spalten/Zeilen verstecken
+        # 6. Row Highlights
+        # 7. Tables reparieren
+        # 8. Einmal speichern + restore XML
         # =====================================================================
+        
         # Prüfe ob rowMapping nur die Identität ist (keine echte Änderung)
         row_mapping_is_identity = True
         if row_mapping:
@@ -1089,8 +1097,230 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     row_mapping_is_identity = False
                     break
         
+        # Prüfe ob wir den Pipeline-Pfad nutzen können
+        # (Spalten-Operationen ohne komplexe Zeilen-Änderungen)
+        has_column_operations = deleted_columns or inserted_columns or (column_order and len(column_order) > 0)
+        can_use_pipeline = has_column_operations and row_mapping_is_identity and not affected_rows
         
-        # FORCE: Bei Spalten-Insert IMMER FALL 1.5 verwenden!
+        if can_use_pipeline:
+            from openpyxl.worksheet.table import TableColumn
+            from openpyxl.utils.cell import range_boundaries
+            from openpyxl.cell.cell import MergedCell
+            
+            # ===== SCHRITT 1: Spalten LÖSCHEN (von hinten nach vorne) =====
+            if deleted_columns:
+                sorted_deleted = sorted(deleted_columns, reverse=True)
+                
+                for col_idx in sorted_deleted:
+                    excel_col = col_idx + 1
+                    max_col = ws.max_column
+                    
+                    # Spaltenbreiten speichern
+                    saved_widths = {}
+                    for col in range(excel_col + 1, max_col + 1):
+                        col_letter = get_column_letter(col)
+                        if col_letter in ws.column_dimensions:
+                            saved_widths[col] = ws.column_dimensions[col_letter].width
+                    
+                    # Spalte löschen
+                    ws.delete_cols(excel_col, 1)
+                    
+                    # Spaltenbreiten wiederherstellen
+                    for old_col, width in saved_widths.items():
+                        if width:
+                            new_letter = get_column_letter(old_col - 1)
+                            ws.column_dimensions[new_letter].width = width
+                    
+                    # CF anpassen
+                    adjust_conditional_formatting(ws, [col_idx], None)
+            
+            # ===== SCHRITT 2: Spalten EINFÜGEN (von vorne nach hinten) =====
+            if inserted_columns:
+                operations = inserted_columns.get('operations', [])
+                if not operations and inserted_columns.get('position') is not None:
+                    operations = [{
+                        'position': inserted_columns['position'],
+                        'count': inserted_columns.get('count', 1),
+                        'sourceColumn': inserted_columns.get('sourceColumn')
+                    }]
+                
+                operations.sort(key=lambda x: x['position'])
+                
+                for op_idx, op in enumerate(operations):
+                    position = op['position']
+                    count = op.get('count', 1)
+                    source_column = op.get('sourceColumn')
+                    excel_col = position + 1
+                    
+                    for i in range(count):
+                        insert_at = excel_col + i
+                        
+                        # Formatierung der Referenzspalte speichern
+                        source_format = {}
+                        source_width = None
+                        if source_column is not None:
+                            source_excel_col = source_column + 1
+                            for prev_op in operations[:op_idx]:
+                                if source_column >= prev_op['position']:
+                                    source_excel_col += prev_op.get('count', 1)
+                            
+                            col_letter = get_column_letter(source_excel_col)
+                            if col_letter in ws.column_dimensions:
+                                source_width = ws.column_dimensions[col_letter].width
+                            
+                            for row in range(1, ws.max_row + 1):
+                                cell = ws.cell(row=row, column=source_excel_col)
+                                source_format[row] = {
+                                    'fill': copy(cell.fill) if cell.fill else None,
+                                    'font': copy(cell.font) if cell.font else None,
+                                    'alignment': copy(cell.alignment) if cell.alignment else None,
+                                    'border': copy(cell.border) if cell.border else None,
+                                    'number_format': cell.number_format
+                                }
+                        
+                        # Spaltenbreiten speichern
+                        saved_widths = {}
+                        for col in range(insert_at, ws.max_column + 1):
+                            col_letter = get_column_letter(col)
+                            if col_letter in ws.column_dimensions:
+                                saved_widths[col] = ws.column_dimensions[col_letter].width
+                        
+                        # Spalte einfügen
+                        ws.insert_cols(insert_at, 1)
+                        
+                        # Spaltenbreiten wiederherstellen
+                        for old_col, width in saved_widths.items():
+                            if width:
+                                new_letter = get_column_letter(old_col + 1)
+                                ws.column_dimensions[new_letter].width = width
+                        
+                        # CF anpassen
+                        inserted_cols_for_cf = {insert_at - 1: 1}
+                        adjust_conditional_formatting(ws, [], inserted_cols_for_cf)
+                        
+                        # Formatierung anwenden
+                        if source_width:
+                            ws.column_dimensions[get_column_letter(insert_at)].width = source_width
+                        
+                        for row, fmt in source_format.items():
+                            cell = ws.cell(row=row, column=insert_at)
+                            if fmt['fill']:
+                                cell.fill = fmt['fill']
+                            if fmt['font']:
+                                cell.font = fmt['font']
+                            if fmt['alignment']:
+                                cell.alignment = fmt['alignment']
+                            if fmt['border']:
+                                cell.border = fmt['border']
+                            if fmt.get('number_format'):
+                                cell.number_format = fmt['number_format']
+                    
+                    # Header setzen
+                    op_headers = op.get('headers', [])
+                    for i, header in enumerate(op_headers):
+                        ws.cell(row=1, column=excel_col + i).value = header
+                    
+                    # Daten schreiben
+                    if data and headers:
+                        for i in range(count):
+                            col_idx = position + i
+                            if col_idx < len(headers):
+                                for row_idx, row_data in enumerate(data):
+                                    if col_idx < len(row_data):
+                                        cell = ws.cell(row=row_idx + 2, column=excel_col + i)
+                                        apply_cell_value(cell, row_data[col_idx])
+            
+            # ===== SCHRITT 3: Spalten VERSCHIEBEN/REORDER =====
+            if column_order and len(column_order) > 0:
+                columns_changed = False
+                for new_idx, old_idx in enumerate(column_order):
+                    if new_idx != old_idx:
+                        columns_changed = True
+                        break
+                
+                if columns_changed:
+                    num_cols = len(column_order)
+                    max_row = ws.max_row
+                    
+                    # Alle Spalten in temp_columns speichern
+                    temp_columns = {}
+                    for old_col_idx in range(num_cols):
+                        old_excel_col = old_col_idx + 1
+                        temp_columns[old_col_idx] = {}
+                        
+                        for row in range(1, max_row + 1):
+                            cell = ws.cell(row=row, column=old_excel_col)
+                            if isinstance(cell, MergedCell):
+                                continue
+                            temp_columns[old_col_idx][row] = {
+                                'value': cell.value,
+                                'hyperlink': cell.hyperlink.target if cell.hyperlink else None,
+                            }
+                    
+                    # Spalten in neuer Reihenfolge schreiben
+                    for new_col_idx, old_col_idx in enumerate(column_order):
+                        new_excel_col = new_col_idx + 1
+                        
+                        if old_col_idx not in temp_columns:
+                            continue
+                        
+                        for row, data_item in temp_columns[old_col_idx].items():
+                            cell = ws.cell(row=row, column=new_excel_col)
+                            if isinstance(cell, MergedCell):
+                                continue
+                            cell.value = data_item['value']
+                            if data_item['hyperlink']:
+                                cell.hyperlink = data_item['hyperlink']
+            
+            # ===== SCHRITT 4: Versteckte Spalten/Zeilen =====
+            _apply_hidden_columns(ws, hidden_columns)
+            _apply_hidden_rows(ws, hidden_rows)
+            
+            # ===== SCHRITT 5: Row Highlights =====
+            if row_highlights:
+                _apply_row_highlights(ws, row_highlights, len(headers) if headers else 0)
+            
+            # ===== SCHRITT 6: Tables reparieren =====
+            table_changes = {}
+            for table_name in ws.tables:
+                table = ws.tables[table_name]
+                min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+                
+                new_max_col = ws.max_column
+                new_ref = f"{get_column_letter(min_col)}{min_row}:{get_column_letter(new_max_col)}{max_row}"
+                table.ref = new_ref
+                if table.autoFilter:
+                    table.autoFilter.ref = new_ref
+                
+                # tableColumns aus Header-Zellen neu aufbauen
+                new_columns = []
+                for col_idx in range(min_col, new_max_col + 1):
+                    header_cell = ws.cell(row=min_row, column=col_idx)
+                    col_name = str(header_cell.value) if header_cell.value else f"Column{col_idx}"
+                    new_columns.append(TableColumn(id=col_idx - min_col + 1, name=col_name))
+                
+                table.tableColumns = new_columns
+                table_changes[table_name] = {'ref': table.ref, 'columns': [col.name for col in new_columns]}
+            
+            # ===== SCHRITT 7: EINMAL speichern =====
+            wb.save(output_path)
+            wb.close()
+            fix_xlsx_relationships(output_path)
+            
+            # ===== SCHRITT 8: XML restore =====
+            if table_changes:
+                restore_table_xml_from_original(output_path, original_path, table_changes)
+            
+            restore_external_links_from_original(output_path, original_path)
+            
+            return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-pipeline'}
+        
+        # =====================================================================
+        # LEGACY FALLBACK: Alte Einzel-FÄLLe für Kompatibilität
+        # (werden nur noch erreicht wenn can_use_pipeline = False)
+        # =====================================================================
+        
+        # LEGACY: Bei Spalten-Insert IMMER FALL 1.5 verwenden!
         only_column_insert = inserted_columns and not deleted_columns
         
         if only_column_insert:
@@ -1247,6 +1477,188 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             restore_external_links_from_original(output_path, original_path)
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-insert-only'}
+        
+        # =====================================================================
+        # FALL 1.9: Spalten LÖSCHEN UND EINFÜGEN kombiniert
+        # Führt erst Delete (wie FALL 1.6) und dann Insert (wie FALL 1.5) aus
+        # SERIELL im Speicher - so bleibt die Formatierung erhalten!
+        # =====================================================================
+        column_delete_and_insert = deleted_columns and inserted_columns and row_mapping_is_identity
+        
+        if column_delete_and_insert:
+            
+            from openpyxl.worksheet.table import TableColumn
+            from openpyxl.utils.cell import range_boundaries
+            
+            # ===== SCHRITT 1: Erst alle Spalten LÖSCHEN (von hinten nach vorne) =====
+            sorted_deleted = sorted(deleted_columns, reverse=True)
+            
+            for col_idx in sorted_deleted:
+                excel_col = col_idx + 1  # 0-basiert → 1-basiert
+                max_col = ws.max_column
+                
+                # Spaltenbreiten speichern (rechts von der zu löschenden Spalte)
+                saved_widths = {}
+                for col in range(excel_col + 1, max_col + 1):
+                    col_letter = get_column_letter(col)
+                    if col_letter in ws.column_dimensions:
+                        saved_widths[col] = ws.column_dimensions[col_letter].width
+                
+                # Spalte löschen
+                ws.delete_cols(excel_col, 1)
+                
+                # Spaltenbreiten wiederherstellen (um 1 nach links verschoben)
+                for old_col, width in saved_widths.items():
+                    if width:
+                        new_letter = get_column_letter(old_col - 1)
+                        ws.column_dimensions[new_letter].width = width
+                
+                # CF anpassen
+                adjust_conditional_formatting(ws, [col_idx], None)
+            
+            # ===== SCHRITT 2: Dann alle Spalten EINFÜGEN =====
+            operations = inserted_columns.get('operations', [])
+            if not operations and inserted_columns.get('position') is not None:
+                operations = [{
+                    'position': inserted_columns['position'],
+                    'count': inserted_columns.get('count', 1),
+                    'sourceColumn': inserted_columns.get('sourceColumn')
+                }]
+            
+            # Sortiere aufsteigend
+            operations.sort(key=lambda x: x['position'])
+            
+            for op_idx, op in enumerate(operations):
+                position = op['position']
+                count = op.get('count', 1)
+                source_column = op.get('sourceColumn')
+                excel_col = position + 1  # 0-basiert → 1-basiert
+                
+                for i in range(count):
+                    insert_at = excel_col + i
+                    
+                    # Formatierung der Referenzspalte speichern
+                    source_format = {}
+                    source_width = None
+                    if source_column is not None:
+                        source_excel_col = source_column + 1
+                        # Korrigiere für bereits eingefügte Spalten
+                        for prev_op in operations[:op_idx]:
+                            if source_column >= prev_op['position']:
+                                source_excel_col += prev_op.get('count', 1)
+                        
+                        col_letter = get_column_letter(source_excel_col)
+                        if col_letter in ws.column_dimensions:
+                            source_width = ws.column_dimensions[col_letter].width
+                        
+                        for row in range(1, ws.max_row + 1):
+                            cell = ws.cell(row=row, column=source_excel_col)
+                            source_format[row] = {
+                                'fill': copy(cell.fill) if cell.fill else None,
+                                'font': copy(cell.font) if cell.font else None,
+                                'alignment': copy(cell.alignment) if cell.alignment else None,
+                                'border': copy(cell.border) if cell.border else None,
+                                'number_format': cell.number_format
+                            }
+                    
+                    # Spaltenbreiten speichern
+                    saved_widths = {}
+                    for col in range(insert_at, ws.max_column + 1):
+                        col_letter = get_column_letter(col)
+                        if col_letter in ws.column_dimensions:
+                            saved_widths[col] = ws.column_dimensions[col_letter].width
+                    
+                    # Spalte einfügen
+                    ws.insert_cols(insert_at, 1)
+                    
+                    # Spaltenbreiten wiederherstellen
+                    for old_col, width in saved_widths.items():
+                        if width:
+                            new_letter = get_column_letter(old_col + 1)
+                            ws.column_dimensions[new_letter].width = width
+                    
+                    # CF anpassen
+                    inserted_cols_for_cf = {insert_at - 1: 1}
+                    adjust_conditional_formatting(ws, [], inserted_cols_for_cf)
+                    
+                    # Formatierung auf neue Spalte anwenden
+                    if source_width:
+                        ws.column_dimensions[get_column_letter(insert_at)].width = source_width
+                    
+                    for row, fmt in source_format.items():
+                        cell = ws.cell(row=row, column=insert_at)
+                        if fmt['fill']:
+                            cell.fill = fmt['fill']
+                        if fmt['font']:
+                            cell.font = fmt['font']
+                        if fmt['alignment']:
+                            cell.alignment = fmt['alignment']
+                        if fmt['border']:
+                            cell.border = fmt['border']
+                        if fmt.get('number_format'):
+                            cell.number_format = fmt['number_format']
+                
+                # Header für neue Spalten setzen
+                op_headers = op.get('headers', [])
+                for i, header in enumerate(op_headers):
+                    ws.cell(row=1, column=excel_col + i).value = header
+                
+                # Daten für diese Spalten schreiben
+                if data and headers:
+                    for i in range(count):
+                        col_idx = position + i
+                        if col_idx < len(headers):
+                            for row_idx, row_data in enumerate(data):
+                                if col_idx < len(row_data):
+                                    cell = ws.cell(row=row_idx + 2, column=excel_col + i)
+                                    apply_cell_value(cell, row_data[col_idx])
+            
+            # Versteckte Spalten/Zeilen
+            _apply_hidden_columns(ws, hidden_columns)
+            _apply_hidden_rows(ws, hidden_rows)
+            
+            # Tables reparieren: Am Ende EINMAL aus Header-Zellen neu aufbauen
+            for table_name in ws.tables:
+                table = ws.tables[table_name]
+                min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+                
+                new_max_col = ws.max_column
+                new_ref = f"{get_column_letter(min_col)}{min_row}:{get_column_letter(new_max_col)}{max_row}"
+                table.ref = new_ref
+                if table.autoFilter:
+                    table.autoFilter.ref = new_ref
+                
+                # Baue tableColumns aus den Header-Zellen
+                new_columns = []
+                for col_idx in range(min_col, new_max_col + 1):
+                    header_cell = ws.cell(row=min_row, column=col_idx)
+                    col_name = str(header_cell.value) if header_cell.value else f"Column{col_idx}"
+                    new_columns.append(TableColumn(id=col_idx - min_col + 1, name=col_name))
+                
+                table.tableColumns = new_columns
+            
+            # Einmal speichern
+            wb.save(output_path)
+            wb.close()
+            fix_xlsx_relationships(output_path)
+            
+            # Table-Infos für XML restore sammeln
+            table_changes = {}
+            wb_temp = load_workbook(output_path, rich_text=True)
+            ws_temp = wb_temp[sheet_name]
+            for table_name in ws_temp.tables:
+                table = ws_temp.tables[table_name]
+                col_names = [col.name for col in table.tableColumns]
+                table_changes[table_name] = {'ref': table.ref, 'columns': col_names}
+            wb_temp.close()
+            
+            # Original-Table-XML wiederherstellen (xr:uid etc.)
+            if table_changes:
+                restore_table_xml_from_original(output_path, original_path, table_changes)
+            
+            restore_external_links_from_original(output_path, original_path)
+            
+            return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-delete-and-insert'}
         
         # =====================================================================
         # FALL 1.6: Nur Spalten LÖSCHEN (keine anderen strukturellen Änderungen)
