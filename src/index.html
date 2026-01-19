@@ -8424,21 +8424,56 @@
             indicator.title = 'Diese Datei ist passwortgeschützt.\nDas Passwort wird beim Speichern beibehalten.';
         }
         
+        // Hilfsfunktion: Generiert einen eindeutigen Spaltennamen
+        function getUniqueColumnName(baseName, headers) {
+            // Prüfe ob der Name bereits existiert
+            if (!headers.includes(baseName)) {
+                return baseName;
+            }
+            
+            // Suche nach dem höchsten Suffix für diesen Basisnamen
+            let maxSuffix = 1;
+            const basePattern = baseName.replace(/\d+$/, ''); // Entferne trailing numbers
+            
+            headers.forEach(h => {
+                if (h === basePattern || h.startsWith(basePattern)) {
+                    const suffix = h.slice(basePattern.length);
+                    if (suffix === '') {
+                        // Basisname ohne Suffix gefunden
+                        maxSuffix = Math.max(maxSuffix, 1);
+                    } else {
+                        const num = parseInt(suffix, 10);
+                        if (!isNaN(num)) {
+                            maxSuffix = Math.max(maxSuffix, num);
+                        }
+                    }
+                }
+            });
+            
+            return basePattern + (maxSuffix + 1);
+        }
+        
         // Neue Spalte einfügen
         async function insertExplorerColumn(colIndex, position = 'after') {
             const insertIndex = position === 'before' ? colIndex : colIndex + 1;
+            
+            // Generiere einen eindeutigen Default-Namen
+            const defaultName = getUniqueColumnName(t('newColumn'), explorerState.headers);
             
             // Header-Namen abfragen
             const headerName = await showPromptDialog(
                 t('newColumn'),
                 t('enterColumnName'),
-                t('newColumn')
+                defaultName
             );
             
             if (headerName === null) return; // Abgebrochen
             
+            // Stelle sicher, dass der eingegebene Name eindeutig ist
+            const uniqueHeaderName = getUniqueColumnName(headerName || defaultName, explorerState.headers);
+            
             // Header einfügen
-            explorerState.headers.splice(insertIndex, 0, headerName || t('newColumn'));
+            explorerState.headers.splice(insertIndex, 0, uniqueHeaderName);
             
             // Alle Zeilen erweitern
             explorerState.data.forEach(row => {
@@ -8487,7 +8522,7 @@
                 existingInsert.operations.push({
                     position: insertIndex,
                     count: 1,
-                    headers: [headerName || t('newColumn')],
+                    headers: [uniqueHeaderName],
                     sourceColumn: colIndex  // Referenzspalte für Formatierung
                 });
                 existingInsert.totalCount = (existingInsert.totalCount || 0) + 1;
@@ -8498,7 +8533,7 @@
                     operations: [{
                         position: insertIndex,
                         count: 1,
-                        headers: [headerName || t('newColumn')],
+                        headers: [uniqueHeaderName],
                         sourceColumn: colIndex  // Referenzspalte für Formatierung
                     }],
                     totalCount: 1

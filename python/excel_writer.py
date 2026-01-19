@@ -320,37 +320,45 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
                     # Finde den tableColumns-Block
                     tc_match = re.search(r'<tableColumns[^>]*>.*?</tableColumns>', new_content, re.DOTALL)
                     if tc_match:
-                        # Extrahiere die xr3:uid Attribute aus den Original-Columns (für Wiederverwendung)
+                        # Extrahiere die Original-Columns
                         orig_columns = re.findall(r'<tableColumn\s[^/]*(?:/>|>.*?</tableColumn>)', tc_match.group(0), re.DOTALL)
                         
-                        # Extrahiere xr3:uid falls vorhanden
-                        def get_uid(col_xml):
-                            uid_match = re.search(r'xr3:uid="([^"]+)"', col_xml)
-                            return uid_match.group(1) if uid_match else None
+                        # Erstelle ein Dict: orig_name -> Liste von (index, xml) für Duplikate
+                        orig_by_name = {}
+                        for idx, orig_col in enumerate(orig_columns):
+                            name_match = re.search(r'name="([^"]+)"', orig_col)
+                            if name_match:
+                                orig_name = name_match.group(1)
+                                if orig_name not in orig_by_name:
+                                    orig_by_name[orig_name] = []
+                                orig_by_name[orig_name].append((idx, orig_col))
                         
-                        # Baue eine Liste von verfügbaren Original-Columns (jede nur einmal verwendbar)
-                        available_orig_columns = list(orig_columns)
+                        # Zähler für bereits verwendete Duplikate pro Name
+                        used_count = {}
                         
                         # Baue neue tableColumns
                         new_tc_content = f'<tableColumns count="{len(new_columns)}">'
                         
                         for i, col_name in enumerate(new_columns):
-                            # Versuche eine passende Original-Column zu finden (nach Name)
-                            # WICHTIG: Jede Original-Column nur EINMAL verwenden!
                             matching_orig = None
-                            matching_idx = -1
-                            for idx, orig_col in enumerate(available_orig_columns):
-                                name_match = re.search(r'name="([^"]+)"', orig_col)
-                                if name_match and name_match.group(1) == col_name:
-                                    matching_orig = orig_col
-                                    matching_idx = idx
-                                    break
+                            
+                            # Suche nach Original-Column mit gleichem Namen
+                            if col_name in orig_by_name:
+                                # Wie viele mit diesem Namen haben wir schon verwendet?
+                                used = used_count.get(col_name, 0)
+                                available = orig_by_name[col_name]
+                                
+                                if used < len(available):
+                                    # Nimm die nächste verfügbare mit diesem Namen
+                                    matching_orig = available[used][1]
+                                    used_count[col_name] = used + 1
                             
                             if matching_orig:
-                                # Entferne aus verfügbaren Columns damit nicht doppelt verwendet
-                                del available_orig_columns[matching_idx]
-                                # Nutze Original-Column und aktualisiere nur die ID
+                                # Nutze Original-Column und aktualisiere nur die ID und den Namen
                                 col_xml = re.sub(r'id="\d+"', f'id="{i+1}"', matching_orig)
+                                # Name auch aktualisieren (für den Fall dass er sich geändert hat)
+                                safe_name = col_name.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+                                col_xml = re.sub(r'name="[^"]+"', f'name="{safe_name}"', col_xml)
                                 new_tc_content += col_xml
                             else:
                                 # Neue Spalte ohne xr3:uid
@@ -390,14 +398,15 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
 
 def restore_external_links_from_original(output_path, original_path):
     """
-    Kopiert die externalLinks-Dateien aus dem Original zurück.
+    Kopiert die externalLinks-Dateien, slicerCaches und definedNames aus dem Original zurück.
     
-    openpyxl verliert wichtige XML-Namespaces wie xmlns:mc, mc:Ignorable, xmlns:x14 etc.
-    Diese Funktion stellt die Original-externalLinks wieder her.
+    openpyxl verliert wichtige XML-Namespaces wie xmlns:mc, mc:Ignorable, xmlns:x14 etc.,
+    vereinfacht definedNames (entfernt localSheetId Attribute) und verliert Slicers komplett.
     """
     import tempfile
     import shutil
     import zipfile
+    import re
     
     if not original_path or original_path == output_path:
         return
@@ -421,34 +430,87 @@ def restore_external_links_from_original(output_path, original_path):
         ext_links_dir = os.path.join(temp_dir, 'xl', 'externalLinks')
         orig_ext_links_dir = os.path.join(orig_temp_dir, 'xl', 'externalLinks')
         
-        if not os.path.exists(orig_ext_links_dir):
-            return
-        
         fixed_count = 0
         
-        # Kopiere alle externalLink*.xml Dateien
-        for f in os.listdir(orig_ext_links_dir):
-            if f.startswith('externalLink') and f.endswith('.xml'):
-                orig_file = os.path.join(orig_ext_links_dir, f)
-                dest_file = os.path.join(ext_links_dir, f)
-                if os.path.exists(dest_file):
-                    shutil.copy2(orig_file, dest_file)
-                    fixed_count += 1
-        
-        # WICHTIG: Auch die _rels Dateien kopieren (openpyxl verliert Relationships)
-        orig_rels_dir = os.path.join(orig_ext_links_dir, '_rels')
-        dest_rels_dir = os.path.join(ext_links_dir, '_rels')
-        if os.path.exists(orig_rels_dir) and os.path.exists(dest_rels_dir):
-            for f in os.listdir(orig_rels_dir):
-                if f.endswith('.xml.rels'):
-                    orig_rels = os.path.join(orig_rels_dir, f)
-                    dest_rels = os.path.join(dest_rels_dir, f)
-                    if os.path.exists(dest_rels):
-                        shutil.copy2(orig_rels, dest_rels)
+        if os.path.exists(orig_ext_links_dir) and os.path.exists(ext_links_dir):
+            # Kopiere alle externalLink*.xml Dateien
+            for f in os.listdir(orig_ext_links_dir):
+                if f.startswith('externalLink') and f.endswith('.xml'):
+                    orig_file = os.path.join(orig_ext_links_dir, f)
+                    dest_file = os.path.join(ext_links_dir, f)
+                    if os.path.exists(dest_file):
+                        shutil.copy2(orig_file, dest_file)
                         fixed_count += 1
+            
+            # WICHTIG: Auch die _rels Dateien kopieren (openpyxl verliert Relationships)
+            orig_rels_dir = os.path.join(orig_ext_links_dir, '_rels')
+            dest_rels_dir = os.path.join(ext_links_dir, '_rels')
+            if os.path.exists(orig_rels_dir) and os.path.exists(dest_rels_dir):
+                for f in os.listdir(orig_rels_dir):
+                    if f.endswith('.xml.rels'):
+                        orig_rels = os.path.join(orig_rels_dir, f)
+                        dest_rels = os.path.join(dest_rels_dir, f)
+                        if os.path.exists(dest_rels):
+                            shutil.copy2(orig_rels, dest_rels)
+                            fixed_count += 1
+        
+        # Kopiere slicerCaches aus dem Original (openpyxl verliert Slicers komplett)
+        orig_slicer_dir = os.path.join(orig_temp_dir, 'xl', 'slicerCaches')
+        dest_slicer_dir = os.path.join(temp_dir, 'xl', 'slicerCaches')
+        if os.path.exists(orig_slicer_dir):
+            if not os.path.exists(dest_slicer_dir):
+                os.makedirs(dest_slicer_dir)
+            for f in os.listdir(orig_slicer_dir):
+                if f.endswith('.xml'):
+                    shutil.copy2(os.path.join(orig_slicer_dir, f), os.path.join(dest_slicer_dir, f))
+                    fixed_count += 1
+            print(f"[DEBUG] restore_external_links: slicerCaches kopiert", file=sys.stderr, flush=True)
+        
+        # Kopiere slicers Ordner auch (falls vorhanden)
+        orig_slicers_dir = os.path.join(orig_temp_dir, 'xl', 'slicers')
+        dest_slicers_dir = os.path.join(temp_dir, 'xl', 'slicers')
+        if os.path.exists(orig_slicers_dir):
+            if os.path.exists(dest_slicers_dir):
+                shutil.rmtree(dest_slicers_dir)
+            shutil.copytree(orig_slicers_dir, dest_slicers_dir)
+            fixed_count += 1
+        
+        # Kopiere sharedStrings.xml (Original verwendet shared strings, openpyxl inline strings)
+        orig_shared_strings = os.path.join(orig_temp_dir, 'xl', 'sharedStrings.xml')
+        dest_shared_strings = os.path.join(temp_dir, 'xl', 'sharedStrings.xml')
+        if os.path.exists(orig_shared_strings):
+            shutil.copy2(orig_shared_strings, dest_shared_strings)
+            fixed_count += 1
+            print(f"[DEBUG] restore_external_links: sharedStrings.xml kopiert", file=sys.stderr, flush=True)
+        
+        # Stelle workbook.xml aus Original wieder her (behält definedNames, externalReferences, slicerCaches-Refs)
+        workbook_path = os.path.join(temp_dir, 'xl', 'workbook.xml')
+        orig_workbook_path = os.path.join(orig_temp_dir, 'xl', 'workbook.xml')
+        
+        if os.path.exists(workbook_path) and os.path.exists(orig_workbook_path):
+            # Kopiere komplett das Original workbook.xml
+            shutil.copy2(orig_workbook_path, workbook_path)
+            fixed_count += 1
+            print(f"[DEBUG] restore_external_links: workbook.xml aus Original wiederhergestellt", file=sys.stderr, flush=True)
+        
+        # Stelle workbook.xml.rels aus Original wieder her (enthält slicerCache Referenzen)
+        rels_path = os.path.join(temp_dir, 'xl', '_rels', 'workbook.xml.rels')
+        orig_rels_path = os.path.join(orig_temp_dir, 'xl', '_rels', 'workbook.xml.rels')
+        if os.path.exists(orig_rels_path):
+            shutil.copy2(orig_rels_path, rels_path)
+            fixed_count += 1
+            print(f"[DEBUG] restore_external_links: workbook.xml.rels aus Original wiederhergestellt", file=sys.stderr, flush=True)
+        
+        # Stelle [Content_Types].xml aus Original wieder her (enthält slicerCache ContentTypes)
+        content_types_path = os.path.join(temp_dir, '[Content_Types].xml')
+        orig_content_types_path = os.path.join(orig_temp_dir, '[Content_Types].xml')
+        if os.path.exists(orig_content_types_path):
+            shutil.copy2(orig_content_types_path, content_types_path)
+            fixed_count += 1
+            print(f"[DEBUG] restore_external_links: [Content_Types].xml aus Original wiederhergestellt", file=sys.stderr, flush=True)
         
         if fixed_count > 0:
-            print(f"[DEBUG] restore_external_links: {fixed_count} Dateien wiederhergestellt", file=sys.stderr, flush=True)
+            print(f"[DEBUG] restore_external_links: {fixed_count} Dateien/Elemente wiederhergestellt", file=sys.stderr, flush=True)
             
             # Erstelle neue XLSX
             with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -1078,24 +1140,39 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     'sourceColumn': inserted_columns.get('sourceColumn')
                 }]
             
-            # Sortiere aufsteigend
+            # Sortiere aufsteigend - so kompensiert jede Einfügung die nächste automatisch
             operations.sort(key=lambda x: x['position'])
-            inserted_offset = 0
             
-            for op in operations:
+            from openpyxl.worksheet.table import TableColumn
+            from openpyxl.utils.cell import range_boundaries
+            
+            # Alle Operationen im Speicher durchführen
+            # Die Positionen vom Frontend sind die FINALEN Positionen (nach allen Einfügungen)
+            # Wenn wir aufsteigend einfügen, brauchen wir keinen Offset!
+            
+            for op_idx, op in enumerate(operations):
                 position = op['position']
                 count = op.get('count', 1)
                 source_column = op.get('sourceColumn')
-                excel_col = position + 1 + inserted_offset
+                excel_col = position + 1  # 0-basiert → 1-basiert, KEIN Offset nötig!
+                
+                print(f"[DEBUG] FALL 1.5 Op {op_idx+1}/{len(operations)}: Pos {position} → Excel-Spalte {excel_col}", file=sys.stderr, flush=True)
                 
                 for i in range(count):
                     insert_at = excel_col + i
                     
-                    # Speichere Formatierung der Referenzspalte
+                    # Speichere Formatierung der Referenzspalte (im aktuellen Zustand des Worksheets)
                     source_format = {}
                     source_width = None
                     if source_column is not None:
-                        source_excel_col = source_column + 1 + inserted_offset
+                        # source_column muss auch im aktuellen Worksheet-Zustand gefunden werden
+                        # Nach vorherigen Einfügungen könnte die Position verschoben sein
+                        source_excel_col = source_column + 1
+                        # Korrigiere für bereits eingefügte Spalten
+                        for prev_op in operations[:op_idx]:
+                            if source_column >= prev_op['position']:
+                                source_excel_col += prev_op.get('count', 1)
+                        
                         col_letter = get_column_letter(source_excel_col)
                         if col_letter in ws.column_dimensions:
                             source_width = ws.column_dimensions[col_letter].width
@@ -1130,9 +1207,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     inserted_cols_for_cf = {insert_at - 1: 1}
                     adjust_conditional_formatting(ws, [], inserted_cols_for_cf)
                     
-                    # Tables anpassen
-                    adjust_tables(ws, [], inserted_cols_for_cf, headers)
-                    
                     # Formatierung auf neue Spalte anwenden
                     if source_width:
                         ws.column_dimensions[get_column_letter(insert_at)].width = source_width
@@ -1155,36 +1229,63 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 for i, header in enumerate(op_headers):
                     ws.cell(row=1, column=excel_col + i).value = header
                 
-                inserted_offset += count
-            
-            # Daten für die neuen Spalten aus dem Frontend übernehmen
-            # Die neuen Spalten sind in 'data' bereits enthalten
-            if data and headers:
-                # Finde die Positionen der neuen Spalten
-                for op in operations:
-                    position = op['position']
-                    count = op.get('count', 1)
+                # Daten für diese Spalten schreiben
+                if data and headers:
                     for i in range(count):
                         col_idx = position + i
                         if col_idx < len(headers):
-                            # Schreibe Daten für diese Spalte
                             for row_idx, row_data in enumerate(data):
                                 if col_idx < len(row_data):
-                                    cell = ws.cell(row=row_idx + 2, column=col_idx + 1)
+                                    cell = ws.cell(row=row_idx + 2, column=excel_col + i)
                                     apply_cell_value(cell, row_data[col_idx])
             
             # Versteckte Spalten/Zeilen
             _apply_hidden_columns(ws, hidden_columns)
             _apply_hidden_rows(ws, hidden_rows)
             
+            # Tables reparieren: Am Ende EINMAL aus Header-Zellen neu aufbauen
+            for table_name in ws.tables:
+                table = ws.tables[table_name]
+                min_col, min_row, max_col, max_row = range_boundaries(table.ref)
+                
+                new_max_col = ws.max_column
+                new_ref = f"{get_column_letter(min_col)}{min_row}:{get_column_letter(new_max_col)}{max_row}"
+                table.ref = new_ref
+                if table.autoFilter:
+                    table.autoFilter.ref = new_ref
+                
+                # Baue tableColumns aus den Header-Zellen
+                new_columns = []
+                for col_idx in range(min_col, new_max_col + 1):
+                    header_cell = ws.cell(row=min_row, column=col_idx)
+                    col_name = str(header_cell.value) if header_cell.value else f"Column{col_idx}"
+                    new_columns.append(TableColumn(id=col_idx - min_col + 1, name=col_name))
+                
+                table.tableColumns = new_columns
+                print(f"[DEBUG] Table {table_name}: {len(new_columns)} Spalten", file=sys.stderr, flush=True)
+            
+            # Einmal speichern
             wb.save(output_path)
             wb.close()
             fix_xlsx_relationships(output_path)
             
-            # Stelle externalLinks aus Original wieder her (openpyxl verliert Namespaces)
+            # Table-Infos für XML restore sammeln
+            table_changes = {}
+            wb_temp = load_workbook(output_path, rich_text=True)
+            ws_temp = wb_temp[sheet_name]
+            for table_name in ws_temp.tables:
+                table = ws_temp.tables[table_name]
+                col_names = [col.name for col in table.tableColumns]
+                table_changes[table_name] = {'ref': table.ref, 'columns': col_names}
+            wb_temp.close()
+            
+            # Original-Table-XML wiederherstellen (xr:uid etc.)
+            if table_changes:
+                restore_table_xml_from_original(output_path, original_path, table_changes)
+            
             restore_external_links_from_original(output_path, original_path)
             
-            print(f"[DEBUG] FALL 1.5 abgeschlossen - Table-Style sollte erhalten sein", file=sys.stderr, flush=True)
+            print(f"[DEBUG] FALL 1.5 abgeschlossen - {len(operations)} Operationen", file=sys.stderr, flush=True)
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-insert-only'}
         
         # =====================================================================
