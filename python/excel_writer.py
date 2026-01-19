@@ -239,13 +239,8 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
     import shutil
     import re
     
-    print(f"[DEBUG] restore_table_xml_from_original aufgerufen", file=sys.stderr, flush=True)
-    print(f"[DEBUG]   output_path: {output_path}", file=sys.stderr, flush=True)
-    print(f"[DEBUG]   original_path: {original_path}", file=sys.stderr, flush=True)
-    print(f"[DEBUG]   table_changes: {list(table_changes.keys()) if table_changes else 'None'}", file=sys.stderr, flush=True)
     
     if not table_changes:
-        print(f"[DEBUG]   ABBRUCH: keine table_changes", file=sys.stderr, flush=True)
         return
     
     temp_dir = tempfile.mkdtemp()
@@ -265,15 +260,12 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
         tables_dir = os.path.join(temp_dir, 'xl', 'tables')
         orig_tables_dir = os.path.join(orig_temp_dir, 'xl', 'tables')
         
-        print(f"[DEBUG]   tables_dir existiert: {os.path.exists(tables_dir)}", file=sys.stderr, flush=True)
-        print(f"[DEBUG]   orig_tables_dir existiert: {os.path.exists(orig_tables_dir)}", file=sys.stderr, flush=True)
         
         if os.path.exists(tables_dir) and os.path.exists(orig_tables_dir):
             for f in os.listdir(tables_dir):
                 if not f.startswith('table') or not f.endswith('.xml'):
                     continue
                 
-                print(f"[DEBUG]   Verarbeite: {f}", file=sys.stderr, flush=True)
                 
                 export_table_path = os.path.join(tables_dir, f)
                 orig_table_path = os.path.join(orig_tables_dir, f)
@@ -373,9 +365,7 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
                 with open(export_table_path, 'w', encoding='utf-8') as fp:
                     fp.write(new_content)
                 fixed_count += 1
-                print(f"[DEBUG]   Table {table_name} repariert", file=sys.stderr, flush=True)
         
-        print(f"[DEBUG]   fixed_count: {fixed_count}", file=sys.stderr, flush=True)
         
         if fixed_count > 0:
             # Erstelle neue XLSX
@@ -389,7 +379,6 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
                         zf.write(full_path, arc_name)
             
             shutil.copy2(temp_xlsx, output_path)
-            print(f"[DEBUG]   XLSX wiederhergestellt: {output_path}", file=sys.stderr, flush=True)
     
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -464,7 +453,6 @@ def restore_external_links_from_original(output_path, original_path):
                 if f.endswith('.xml'):
                     shutil.copy2(os.path.join(orig_slicer_dir, f), os.path.join(dest_slicer_dir, f))
                     fixed_count += 1
-            print(f"[DEBUG] restore_external_links: slicerCaches kopiert", file=sys.stderr, flush=True)
         
         # Kopiere slicers Ordner auch (falls vorhanden)
         orig_slicers_dir = os.path.join(orig_temp_dir, 'xl', 'slicers')
@@ -481,7 +469,6 @@ def restore_external_links_from_original(output_path, original_path):
         if os.path.exists(orig_shared_strings):
             shutil.copy2(orig_shared_strings, dest_shared_strings)
             fixed_count += 1
-            print(f"[DEBUG] restore_external_links: sharedStrings.xml kopiert", file=sys.stderr, flush=True)
         
         # Stelle workbook.xml aus Original wieder her (behält definedNames, externalReferences, slicerCaches-Refs)
         workbook_path = os.path.join(temp_dir, 'xl', 'workbook.xml')
@@ -491,7 +478,6 @@ def restore_external_links_from_original(output_path, original_path):
             # Kopiere komplett das Original workbook.xml
             shutil.copy2(orig_workbook_path, workbook_path)
             fixed_count += 1
-            print(f"[DEBUG] restore_external_links: workbook.xml aus Original wiederhergestellt", file=sys.stderr, flush=True)
         
         # Stelle workbook.xml.rels aus Original wieder her (enthält slicerCache Referenzen)
         rels_path = os.path.join(temp_dir, 'xl', '_rels', 'workbook.xml.rels')
@@ -499,7 +485,6 @@ def restore_external_links_from_original(output_path, original_path):
         if os.path.exists(orig_rels_path):
             shutil.copy2(orig_rels_path, rels_path)
             fixed_count += 1
-            print(f"[DEBUG] restore_external_links: workbook.xml.rels aus Original wiederhergestellt", file=sys.stderr, flush=True)
         
         # Stelle [Content_Types].xml aus Original wieder her (enthält slicerCache ContentTypes)
         content_types_path = os.path.join(temp_dir, '[Content_Types].xml')
@@ -507,10 +492,8 @@ def restore_external_links_from_original(output_path, original_path):
         if os.path.exists(orig_content_types_path):
             shutil.copy2(orig_content_types_path, content_types_path)
             fixed_count += 1
-            print(f"[DEBUG] restore_external_links: [Content_Types].xml aus Original wiederhergestellt", file=sys.stderr, flush=True)
         
         if fixed_count > 0:
-            print(f"[DEBUG] restore_external_links: {fixed_count} Dateien/Elemente wiederhergestellt", file=sys.stderr, flush=True)
             
             # Erstelle neue XLSX
             with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as zf:
@@ -1036,12 +1019,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
     # Wenn kein original_path gegeben, verwende file_path (Legacy-Kompatibilität)
     if original_path is None:
         original_path = file_path
-        print(f"[DEBUG] write_sheet: original_path nicht gegeben, verwende file_path", file=sys.stderr, flush=True)
     
-    print(f"[DEBUG] write_sheet aufgerufen:", file=sys.stderr, flush=True)
-    print(f"[DEBUG]   file_path: {file_path}", file=sys.stderr, flush=True)
-    print(f"[DEBUG]   output_path: {output_path}", file=sys.stderr, flush=True)
-    print(f"[DEBUG]   original_path: {original_path}", file=sys.stderr, flush=True)
     
     try:
         # Original-Workbook laden
@@ -1085,15 +1063,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         affected_rows = changes.get('affectedRows', [])
         
         # DEBUG: Zeige alle relevanten Flags
-        print(f"[DEBUG] === EXPORT FLAGS ===", file=sys.stderr, flush=True)
-        print(f"[DEBUG] inserted_columns: {bool(inserted_columns)}", file=sys.stderr, flush=True)
-        print(f"[DEBUG] deleted_columns: {bool(deleted_columns)}", file=sys.stderr, flush=True)
-        print(f"[DEBUG] row_mapping: {bool(row_mapping)}", file=sys.stderr, flush=True)
-        print(f"[DEBUG] column_order: {bool(column_order)}", file=sys.stderr, flush=True)
-        print(f"[DEBUG] affected_rows: {bool(affected_rows)}", file=sys.stderr, flush=True)
-        print(f"[DEBUG] full_rewrite: {full_rewrite}", file=sys.stderr, flush=True)
-        print(f"[DEBUG] structural_change: {structural_change}", file=sys.stderr, flush=True)
-        print(f"[DEBUG] from_file: {from_file}", file=sys.stderr, flush=True)
         
         # =====================================================================
         # FALL 1: fromFile - Nur versteckte Spalten/Zeilen setzen
@@ -1119,18 +1088,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     row_mapping_is_identity = False
                     break
         
-        print(f"[DEBUG] FALL 1.5 Check:", file=sys.stderr, flush=True)
-        print(f"[DEBUG]   inserted_columns: {bool(inserted_columns)}", file=sys.stderr, flush=True)
-        print(f"[DEBUG]   deleted_columns: {bool(deleted_columns)}", file=sys.stderr, flush=True)
-        print(f"[DEBUG]   row_mapping_is_identity: {row_mapping_is_identity}", file=sys.stderr, flush=True)
-        print(f"[DEBUG]   column_order: {bool(column_order)}", file=sys.stderr, flush=True)
-        print(f"[DEBUG]   affected_rows: {bool(affected_rows)}", file=sys.stderr, flush=True)
         
         # FORCE: Bei Spalten-Insert IMMER FALL 1.5 verwenden!
         only_column_insert = inserted_columns and not deleted_columns
         
         if only_column_insert:
-            print(f"[DEBUG] FALL 1.5: Nur Spalten einfügen (Table-Style erhalten)", file=sys.stderr, flush=True)
             
             operations = inserted_columns.get('operations', [])
             if not operations and inserted_columns.get('position') is not None:
@@ -1156,7 +1118,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 source_column = op.get('sourceColumn')
                 excel_col = position + 1  # 0-basiert → 1-basiert, KEIN Offset nötig!
                 
-                print(f"[DEBUG] FALL 1.5 Op {op_idx+1}/{len(operations)}: Pos {position} → Excel-Spalte {excel_col}", file=sys.stderr, flush=True)
                 
                 for i in range(count):
                     insert_at = excel_col + i
@@ -1262,7 +1223,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     new_columns.append(TableColumn(id=col_idx - min_col + 1, name=col_name))
                 
                 table.tableColumns = new_columns
-                print(f"[DEBUG] Table {table_name}: {len(new_columns)} Spalten", file=sys.stderr, flush=True)
             
             # Einmal speichern
             wb.save(output_path)
@@ -1285,7 +1245,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             
             restore_external_links_from_original(output_path, original_path)
             
-            print(f"[DEBUG] FALL 1.5 abgeschlossen - {len(operations)} Operationen", file=sys.stderr, flush=True)
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-insert-only'}
         
         # =====================================================================
@@ -1296,15 +1255,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         only_column_delete = deleted_columns and not inserted_columns and row_mapping_is_identity
         
         if only_column_delete:
-            print(f"[DEBUG] FALL 1.6: Nur Spalten löschen (Table-Style erhalten)", file=sys.stderr, flush=True)
-            print(f"[DEBUG]   deleted_columns: {deleted_columns}", file=sys.stderr, flush=True)
             
             # Sortiere absteigend (von hinten nach vorne löschen)
             sorted_deleted = sorted(deleted_columns, reverse=True)
             
             for col_idx in sorted_deleted:
                 excel_col = col_idx + 1  # 0-basiert → 1-basiert
-                print(f"[DEBUG]   Lösche Spalte {excel_col} ({get_column_letter(excel_col)})", file=sys.stderr, flush=True)
                 
                 max_col = ws.max_column
                 
@@ -1355,7 +1311,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             # Stelle externalLinks aus Original wieder her (openpyxl verliert Namespaces)
             restore_external_links_from_original(output_path, original_path)
             
-            print(f"[DEBUG] FALL 1.6 abgeschlossen - Table-Style sollte erhalten sein", file=sys.stderr, flush=True)
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-delete-only'}
         
         # =====================================================================
@@ -1368,7 +1323,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             row_mapping_is_identity and not affected_rows)
         
         if only_column_order:
-            print(f"[DEBUG] FALL 1.7: Nur Spaltenreihenfolge ändern (Table-Style erhalten)", file=sys.stderr, flush=True)
             
             # Prüfe ob sich die Spaltenreihenfolge wirklich geändert hat
             columns_changed = False
@@ -1378,7 +1332,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     break
             
             if not columns_changed:
-                print(f"[DEBUG] FALL 1.7: Keine echte Änderung, überspringe", file=sys.stderr, flush=True)
             else:
                 # Physische Spaltenumordnung durch Swap-Operationen
                 # column_order[neue_position] = alte_position
@@ -1423,7 +1376,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         if data_item['hyperlink']:
                             cell.hyperlink = data_item['hyperlink']
                 
-                print(f"[DEBUG] FALL 1.7: {num_cols} Spalten umgeordnet", file=sys.stderr, flush=True)
             
             # Versteckte Spalten/Zeilen anwenden
             _apply_hidden_columns(ws, hidden_columns, len(headers))
@@ -1458,7 +1410,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     'ref': table.ref,
                     'columns': col_names
                 }
-                print(f"[DEBUG] FALL 1.7: Table {table_name} tableColumns aktualisiert: {len(new_columns)} Spalten", file=sys.stderr, flush=True)
             
             wb.save(output_path)
             wb.close()
@@ -1471,7 +1422,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             # Stelle externalLinks aus Original wieder her
             restore_external_links_from_original(output_path, original_path)
             
-            print(f"[DEBUG] FALL 1.7 abgeschlossen - Table-Style sollte erhalten sein", file=sys.stderr, flush=True)
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-column-order'}
         
         # =====================================================================
@@ -1719,7 +1669,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             # Wir müssen das manuell machen.
             # ================================================================
             if inserted_columns:
-                print(f"[DEBUG] inserted_columns empfangen: {inserted_columns}", file=sys.stderr, flush=True)
                 operations = inserted_columns.get('operations', [])
                 if not operations and inserted_columns.get('position') is not None:
                     operations = [{
@@ -1741,7 +1690,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     # Position und sourceColumn um bereits eingefügte Spalten anpassen
                     excel_col = position + 1 + inserted_offset  # 0-basiert → 1-basiert + Offset
                     
-                    print(f"[DEBUG] Insert op: position={position}, sourceColumn={source_column}, inserted_offset={inserted_offset}, excel_col={excel_col}", file=sys.stderr, flush=True)
                     
                     
                     # FÜR JEDE NEUE SPALTE einzeln:
@@ -1754,7 +1702,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         if source_column is not None:
                             # sourceColumn auch um Offset anpassen!
                             source_excel_col = source_column + 1 + inserted_offset
-                            print(f"[DEBUG] Kopiere Format von Spalte {source_excel_col} ({get_column_letter(source_excel_col)})", file=sys.stderr, flush=True)
                             col_letter = get_column_letter(source_excel_col)
                             if col_letter in ws.column_dimensions:
                                 source_width = ws.column_dimensions[col_letter].width
@@ -2059,7 +2006,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             if table_changes and not inserted_columns:
                 restore_table_xml_from_original(output_path, original_path, table_changes)
             elif table_changes and inserted_columns:
-                print(f"[DEBUG] Überspringe restore_table_xml - Spalten wurden eingefügt, openpyxl-XML behalten", file=sys.stderr, flush=True)
             
             # Stelle externalLinks aus Original wieder her (openpyxl verliert Namespaces)
             restore_external_links_from_original(output_path, original_path)
