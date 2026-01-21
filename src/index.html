@@ -8073,6 +8073,28 @@
                 explorerState.editedCells.set(`${insertIndex}-${col}`, '');
             }
             
+            // rowMapping aktualisieren - trackt welche Original-Excel-Zeile an welcher Position ist
+            // Bei neuen Zeilen wird -1 als Marker verwendet (keine Original-Zeile)
+            if (explorerState.rowMapping && explorerState.rowMapping.length > 0) {
+                // Bestehendes Mapping: -1 an insertIndex einfügen, alle folgenden Einträge bleiben
+                const newRowMapping = [...explorerState.rowMapping];
+                newRowMapping.splice(insertIndex, 0, -1);  // -1 = neue Zeile
+                explorerState.rowMapping = newRowMapping;
+            } else {
+                // Neues Mapping erstellen
+                explorerState.rowMapping = [];
+                for (let i = 0; i < explorerState.data.length; i++) {
+                    if (i === insertIndex) {
+                        explorerState.rowMapping.push(-1);  // -1 = neue Zeile
+                    } else if (i < insertIndex) {
+                        explorerState.rowMapping.push(i);
+                    } else {
+                        // Zeilen nach der eingefügten Position referenzieren ihre Original-Position - 1
+                        explorerState.rowMapping.push(i - 1);
+                    }
+                }
+            }
+            
             // WICHTIG: Strukturelle Änderung markieren für Export (Full Rewrite nötig)
             explorerState.editedCells.set('_rowInserted', true);
             

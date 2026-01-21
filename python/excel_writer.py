@@ -1999,23 +1999,28 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             # ================================================================
             # NEUER ANSATZ FÜR ROW_MAPPING: shutil.copy() + nur Werte ändern
             # ================================================================
-            # Wenn Zeilen gelöscht wurden (row_mapping vorhanden), nutzen wir
-            # den shutil-Ansatz: Original kopieren, dann NUR Werte überschreiben.
+            # Wenn Zeilen gelöscht oder eingefügt wurden (row_mapping vorhanden), nutzen wir
+            # den shutil-Ansatz: Original kopieren, dann NUR Zeilenreihenfolge ändern.
             # Das erhält ALLE Formatierungen perfekt!
             # ================================================================
             if row_mapping and len(row_mapping) > 0:
                 identity_mapping = list(range(len(row_mapping)))
                 current_max_row = ws.max_row
-                rows_deleted = current_max_row - 1 - len(row_mapping)  # -1 für Header
+                rows_changed = current_max_row - 1 - len(row_mapping)  # -1 für Header (positiv=gelöscht, negativ=eingefügt)
                 
-                if row_mapping != identity_mapping or rows_deleted > 0:
+                # ZIP-Ansatz aktivieren wenn:
+                # - Zeilen gelöscht wurden (rows_changed > 0)
+                # - Zeilen eingefügt wurden (rows_changed < 0)
+                # - Zeilen umsortiert wurden (row_mapping != identity_mapping)
+                if row_mapping != identity_mapping or rows_changed != 0:
                     import shutil
                     import tempfile
                     import zipfile
                     import re
                     from lxml import etree
                     
-                    sys.stderr.write(f"[ZIP-ANSATZ] Verwende direkte XML-Manipulation für {rows_deleted} gelöschte Zeilen\n")
+                    action = "gelöschte" if rows_changed > 0 else "eingefügte" if rows_changed < 0 else "umsortierte"
+                    sys.stderr.write(f"[ZIP-ANSATZ] Verwende direkte XML-Manipulation für {abs(rows_changed)} {action} Zeilen\n")
                     
                     # Workbook schließen (ohne zu speichern!)
                     wb.close()
@@ -2113,124 +2118,146 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                     sys.stderr.write(f"[ZIP-ANSATZ] AutoFilter: {af_ref} -> {new_af_ref}\n")
                         
                         # Aktualisiere Conditional Formatting Bereiche
-                        # Wir müssen die CF-Bereiche an die neuen Zeilenpositionen anpassen
                         # row_mapping[new_idx] = orig_idx bedeutet:
                         # - Originale Datenzeile orig_idx ist jetzt an Position new_idx
                         # - Excel-Zeile orig_idx+2 wird zu Excel-Zeile new_idx+2
+                        # - Bei eingefügten Zeilen ist orig_idx = -1 (neue Zeile ohne Original)
                         
                         # Erstelle Mapping: alte_zeile -> neue_zeile
                         row_shift_map = {}  # old_excel_row -> new_excel_row
+                        inserted_rows = set()  # neue Zeilen die eingefügt wurden
                         for new_idx, orig_idx in enumerate(row_mapping):
-                            old_excel_row = orig_idx + 2  # +2 für Header
                             new_excel_row = new_idx + 2
-                            row_shift_map[old_excel_row] = new_excel_row
+                            if orig_idx < 0:
+                                # Neue eingefügte Zeile (orig_idx = -1)
+                                inserted_rows.add(new_excel_row)
+                            else:
+                                old_excel_row = orig_idx + 2  # +2 für Header
+                                row_shift_map[old_excel_row] = new_excel_row
                         
                         # Finde gelöschte Zeilen (die nicht im Mapping sind)
-                        deleted_rows = set()
-                        for old_row in range(2, current_max_row + 1):
-                            if old_row not in row_shift_map:
-                                deleted_rows.add(old_row)
+                        # WICHTIG: Nur orig_idx aus row_mapping prüfen, nicht alle bis current_max_row
+                        # Bei reiner Verschiebung enthält row_mapping alle Indizes 0 bis len-1
+                        expected_orig_indices = set(range(len(row_mapping)))  # 0 bis n-1
+                        actual_orig_indices = set(idx for idx in row_mapping if idx >= 0)
                         
-                        sys.stderr.write(f"[ZIP-ANSATZ] Gelöschte Zeilen: {sorted(deleted_rows)[:10]}...\n")
+                        deleted_rows = set()
+                        # Prüfe ob alle erwarteten orig_indices vorhanden sind
+                        for expected_idx in expected_orig_indices:
+                            if expected_idx not in actual_orig_indices:
+                                deleted_rows.add(expected_idx + 2)  # +2 für Excel-Zeile
+                        
+                        # Bestimme ob nur Verschiebung (keine Löschung/Einfügung)
+                        is_pure_reorder = len(deleted_rows) == 0 and len(inserted_rows) == 0
+                        
+                        if deleted_rows:
+                            sys.stderr.write(f"[ZIP-ANSATZ] Gelöschte Zeilen: {sorted(deleted_rows)[:10]}...\n")
+                        if inserted_rows:
+                            sys.stderr.write(f"[ZIP-ANSATZ] Eingefügte Zeilen: {sorted(inserted_rows)[:10]}...\n")
+                        if is_pure_reorder:
+                            sys.stderr.write(f"[ZIP-ANSATZ] Reine Verschiebung - CF-Bereiche werden NICHT angepasst\n")
                         
                         cf_elements = sheet_tree.findall('.//main:conditionalFormatting', ns)
                         cf_updated = 0
                         cf_removed = 0
                         
-                        for cf in cf_elements:
-                            sqref = cf.get('sqref')
-                            if sqref:
-                                new_ranges = []
-                                changed = False
-                                
-                                for range_part in sqref.split():
-                                    range_match = re.match(r'([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?', range_part)
-                                    if range_match:
-                                        start_col, start_row_str, end_col, end_row_str = range_match.groups()
-                                        start_row = int(start_row_str)
-                                        
-                                        if end_row_str:
-                                            # Bereich wie L2:L2404
-                                            end_row = int(end_row_str)
+                        # Bei reiner Verschiebung: CF nicht anpassen (Excel-Standardverhalten)
+                        # Die Zeilen wandern, aber die CF-Regeln bleiben an ihren Positionen
+                        # Das bedeutet: Die neue Zeile an Position X bekommt die CF von Position X
+                        if not is_pure_reorder:
+                            for cf in cf_elements:
+                                sqref = cf.get('sqref')
+                                if sqref:
+                                    new_ranges = []
+                                    changed = False
+                                    
+                                    for range_part in sqref.split():
+                                        range_match = re.match(r'([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?', range_part)
+                                        if range_match:
+                                            start_col, start_row_str, end_col, end_row_str = range_match.groups()
+                                            start_row = int(start_row_str)
                                             
-                                            # Neue Start-Zeile berechnen
-                                            if start_row in row_shift_map:
-                                                new_start = row_shift_map[start_row]
-                                            elif start_row in deleted_rows:
-                                                # Start wurde gelöscht - finde nächste gültige Zeile
-                                                new_start = None
-                                                for r in range(start_row + 1, end_row + 1):
-                                                    if r in row_shift_map:
-                                                        new_start = row_shift_map[r]
-                                                        break
-                                                if new_start is None:
-                                                    # Ganzer Bereich gelöscht - überspringen
+                                            if end_row_str:
+                                                # Bereich wie L2:L2404
+                                                end_row = int(end_row_str)
+                                                # Neue Start-Zeile berechnen
+                                                if start_row in row_shift_map:
+                                                    new_start = row_shift_map[start_row]
+                                                elif start_row in deleted_rows:
+                                                    # Start wurde gelöscht - finde nächste gültige Zeile
+                                                    new_start = None
+                                                    for r in range(start_row + 1, end_row + 1):
+                                                        if r in row_shift_map:
+                                                            new_start = row_shift_map[r]
+                                                            break
+                                                    if new_start is None:
+                                                        # Ganzer Bereich gelöscht - überspringen
+                                                        changed = True
+                                                        continue
+                                                else:
+                                                    # Zeile 1 (Header) - bleibt
+                                                    new_start = start_row
+                                                
+                                                # Neue End-Zeile berechnen
+                                                if end_row in row_shift_map:
+                                                    new_end = row_shift_map[end_row]
+                                                elif end_row >= current_max_row:
+                                                    new_end = new_max_row
+                                                else:
+                                                    # Zeile wurde gelöscht - finde nächste gültige davor
+                                                    new_end = None
+                                                    for r in range(end_row, start_row - 1, -1):
+                                                        if r in row_shift_map:
+                                                            new_end = row_shift_map[r]
+                                                            break
+                                                    if new_end is None:
+                                                        new_end = new_max_row
+                                                
+                                                if new_start != start_row or new_end != end_row:
+                                                    changed = True
+                                                
+                                                new_range = f"{start_col}{new_start}:{end_col}{new_end}"
+                                                new_ranges.append(new_range)
+                                            else:
+                                                # Einzelne Zelle wie A5
+                                                if start_row in deleted_rows:
+                                                    # Zelle wurde gelöscht - überspringen
                                                     changed = True
                                                     continue
-                                            else:
-                                                # Zeile 1 (Header) - bleibt
-                                                new_start = start_row
-                                            
-                                            # Neue End-Zeile berechnen
-                                            if end_row in row_shift_map:
-                                                new_end = row_shift_map[end_row]
-                                            elif end_row >= current_max_row:
-                                                new_end = new_max_row
-                                            else:
-                                                # Zeile wurde gelöscht - finde nächste gültige davor
-                                                new_end = None
-                                                for r in range(end_row, start_row - 1, -1):
-                                                    if r in row_shift_map:
-                                                        new_end = row_shift_map[r]
-                                                        break
-                                                if new_end is None:
-                                                    new_end = new_max_row
-                                            
-                                            if new_start != start_row or new_end != end_row:
-                                                changed = True
-                                            
-                                            new_range = f"{start_col}{new_start}:{end_col}{new_end}"
-                                            new_ranges.append(new_range)
-                                        else:
-                                            # Einzelne Zelle wie A5
-                                            if start_row in deleted_rows:
-                                                # Zelle wurde gelöscht - überspringen
-                                                changed = True
-                                                continue
-                                            
-                                            new_row = row_shift_map.get(start_row, start_row)
-                                            if new_row != start_row:
-                                                changed = True
-                                            new_ranges.append(f"{start_col}{new_row}")
-                                    else:
-                                        new_ranges.append(range_part)
-                                
-                                if changed:
-                                    new_sqref = ' '.join(new_ranges)
-                                    cf.set('sqref', new_sqref)
-                                    cf_updated += 1
-                                    
-                                    # Auch die Formeln in den cfRule-Elementen anpassen
-                                    for rule in cf.findall('main:cfRule', ns):
-                                        for formula in rule.findall('main:formula', ns):
-                                            if formula.text:
-                                                # Zellreferenzen in Formel anpassen
-                                                # z.B. $K2 oder K2 oder $K$2
-                                                def adjust_cell_ref(match):
-                                                    col = match.group(1)
-                                                    row_num = int(match.group(2))
-                                                    if row_num in row_shift_map:
-                                                        return f"{col}{row_shift_map[row_num]}"
-                                                    elif row_num in deleted_rows:
-                                                        # Zeile gelöscht - nehme nächste gültige
-                                                        for r in range(row_num + 1, current_max_row + 1):
-                                                            if r in row_shift_map:
-                                                                return f"{col}{row_shift_map[r]}"
-                                                    return match.group(0)
                                                 
-                                                new_formula = re.sub(r'(\$?[A-Z]+\$?)(\d+)', adjust_cell_ref, formula.text)
-                                                if new_formula != formula.text:
-                                                    formula.text = new_formula
+                                                new_row = row_shift_map.get(start_row, start_row)
+                                                if new_row != start_row:
+                                                    changed = True
+                                                new_ranges.append(f"{start_col}{new_row}")
+                                        else:
+                                            new_ranges.append(range_part)
+                                    
+                                    if changed:
+                                        new_sqref = ' '.join(new_ranges)
+                                        cf.set('sqref', new_sqref)
+                                        cf_updated += 1
+                                        
+                                        # Auch die Formeln in den cfRule-Elementen anpassen
+                                        for rule in cf.findall('main:cfRule', ns):
+                                            for formula in rule.findall('main:formula', ns):
+                                                if formula.text:
+                                                    # Zellreferenzen in Formel anpassen
+                                                    # z.B. $K2 oder K2 oder $K$2
+                                                    def adjust_cell_ref(match):
+                                                        col = match.group(1)
+                                                        row_num = int(match.group(2))
+                                                        if row_num in row_shift_map:
+                                                            return f"{col}{row_shift_map[row_num]}"
+                                                        elif row_num in deleted_rows:
+                                                            # Zeile gelöscht - nehme nächste gültige
+                                                            for r in range(row_num + 1, current_max_row + 1):
+                                                                if r in row_shift_map:
+                                                                    return f"{col}{row_shift_map[r]}"
+                                                        return match.group(0)
+                                                    
+                                                    new_formula = re.sub(r'(\$?[A-Z]+\$?)(\d+)', adjust_cell_ref, formula.text)
+                                                    if new_formula != formula.text:
+                                                        formula.text = new_formula
                         
                         if cf_updated > 0:
                             sys.stderr.write(f"[ZIP-ANSATZ] {cf_updated} CF-Bereiche angepasst\n")
@@ -2263,32 +2290,65 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             if 1 in row_dict:
                                 new_rows.append((1, row_dict[1]))
                             
+                            # Finde eine Vorlage-Zeile für neue eingefügte Zeilen
+                            # Wir nehmen die erste existierende Datenzeile als Vorlage
+                            template_row = None
+                            for r in range(2, current_max_row + 1):
+                                if r in row_dict:
+                                    template_row = row_dict[r]
+                                    break
+                            
                             # Datenzeilen umsortieren
                             for new_data_idx, orig_data_idx in enumerate(row_mapping):
                                 new_excel_row = new_data_idx + 2  # Ziel-Zeile in Excel
-                                orig_excel_row = orig_data_idx + 2  # Quell-Zeile mit der Formatierung
                                 
-                                if orig_excel_row in row_dict:
-                                    row_elem = row_dict[orig_excel_row]
+                                if orig_data_idx < 0:
+                                    # NEUE EINGEFÜGTE ZEILE - muss erstellt werden
+                                    if template_row is not None:
+                                        import copy
+                                        new_row_elem = copy.deepcopy(template_row)
+                                        new_row_elem.set('r', str(new_excel_row))
+                                        
+                                        # Alle Zellen umnummerieren und Werte setzen
+                                        cells = new_row_elem.findall('main:c', ns)
+                                        for cell in cells:
+                                            old_ref = cell.get('r')
+                                            if old_ref:
+                                                col_match = re.match(r'([A-Z]+)\d+', old_ref)
+                                                if col_match:
+                                                    col = col_match.group(1)
+                                                    cell.set('r', f"{col}{new_excel_row}")
+                                                    # Wert leeren für neue Zeile
+                                                    v_elem = cell.find('main:v', ns)
+                                                    if v_elem is not None:
+                                                        cell.remove(v_elem)
+                                                    is_elem = cell.find('main:is', ns)
+                                                    if is_elem is not None:
+                                                        cell.remove(is_elem)
+                                        
+                                        new_rows.append((new_excel_row, new_row_elem))
+                                        sys.stderr.write(f"[ZIP-ANSATZ] Neue Zeile {new_excel_row} erstellt\n")
+                                else:
+                                    orig_excel_row = orig_data_idx + 2  # Quell-Zeile mit der Formatierung
                                     
-                                    # Zeile umnummerieren
-                                    row_elem.set('r', str(new_excel_row))
-                                    
-                                    # Alle Zellen in der Zeile umnummerieren
-                                    cells = row_elem.findall('main:c', ns)
-                                    for cell in cells:
-                                        old_ref = cell.get('r')
-                                        if old_ref:
-                                            # Extrahiere Spalte und ersetze Zeile
-                                            col_match = re.match(r'([A-Z]+)\d+', old_ref)
-                                            if col_match:
-                                                col = col_match.group(1)
-                                                cell.set('r', f"{col}{new_excel_row}")
-                                    
-                                    new_rows.append((new_excel_row, row_elem))
-                                    
-                                    # NICHT die Werte überschreiben - sie sind schon korrekt in der Original-Datei!
-                                    # Wir haben nur die Zeilen renummeriert, die Werte bleiben erhalten.
+                                    if orig_excel_row in row_dict:
+                                        row_elem = row_dict[orig_excel_row]
+                                        
+                                        # Zeile umnummerieren
+                                        row_elem.set('r', str(new_excel_row))
+                                        
+                                        # Alle Zellen in der Zeile umnummerieren
+                                        cells = row_elem.findall('main:c', ns)
+                                        for cell in cells:
+                                            old_ref = cell.get('r')
+                                            if old_ref:
+                                                # Extrahiere Spalte und ersetze Zeile
+                                                col_match = re.match(r'([A-Z]+)\d+', old_ref)
+                                                if col_match:
+                                                    col = col_match.group(1)
+                                                    cell.set('r', f"{col}{new_excel_row}")
+                                        
+                                        new_rows.append((new_excel_row, row_elem))
                             
                             # Alle alten Zeilen entfernen
                             for row_elem in list(sheet_data):
