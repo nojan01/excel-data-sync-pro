@@ -883,6 +883,101 @@ def adjust_conditional_formatting(ws, deleted_col_indices, inserted_cols=None):
                 ws.conditional_formatting.add(new_sqref, rule)
 
 
+def adjust_cf_for_row_changes(ws, row_mapping, original_row_count):
+    """
+    Passt alle bedingten Formatierungen an wenn Zeilen gelöscht/verschoben werden.
+    
+    Args:
+        ws: Worksheet
+        row_mapping: Liste wo row_mapping[new_pos] = original_data_row_idx (0-basiert)
+        original_row_count: Ursprüngliche Anzahl der Datenzeilen
+    """
+    import re
+    import sys
+    
+    if not row_mapping:
+        return
+    
+    new_row_count = len(row_mapping)
+    
+    # Wenn keine Änderung in der Anzahl, nichts zu tun
+    rows_deleted = original_row_count - new_row_count
+    if rows_deleted <= 0:
+        return
+    
+    sys.stderr.write(f"[CF ROW ADJUST] {rows_deleted} Zeilen gelöscht, passe CF an...\n")
+    
+    # Sammle alle CF-Regeln
+    old_rules = list(ws.conditional_formatting._cf_rules.items())
+    
+    # Lösche alle CF-Regeln
+    ws.conditional_formatting = ConditionalFormattingList()
+    
+    def adjust_cell_ref(cell_ref, deleted_count, new_max_row):
+        """Passt eine Zellreferenz an (z.B. H2404 -> H2403)"""
+        match = re.match(r'^(\$?)([A-Z]+)(\$?)(\d+)$', cell_ref.upper())
+        if not match:
+            return cell_ref
+        
+        col_abs = match.group(1)
+        col_letter = match.group(2)
+        row_abs = match.group(3)
+        row_num = int(match.group(4))
+        
+        # Header-Zeile (1) nicht anpassen
+        if row_num == 1:
+            return cell_ref
+        
+        # Datenzeilen: Zeile 2 = Datenzeile 0
+        # Nach Löschen: Neue max Zeile = new_max_row + 1 (Header)
+        new_row = row_num - deleted_count
+        
+        # Nicht unter Zeile 2 gehen
+        if new_row < 2:
+            new_row = 2
+        
+        # Nicht über die neue maximale Zeile hinaus
+        max_excel_row = new_max_row + 1  # +1 für Header
+        if new_row > max_excel_row:
+            new_row = max_excel_row
+        
+        return f"{col_abs}{col_letter}{row_abs}{new_row}"
+    
+    def adjust_range(range_str, deleted_count, new_max_row):
+        """Passt einen Bereich an (z.B. H2:H2404 -> H2:H2403)"""
+        # Kann mehrere Bereiche enthalten, getrennt durch Leerzeichen
+        parts = range_str.split(' ')
+        adjusted_parts = []
+        
+        for part in parts:
+            if ':' in part:
+                # Bereich wie H2:H2404
+                start, end = part.split(':')
+                new_start = adjust_cell_ref(start, deleted_count, new_max_row)
+                new_end = adjust_cell_ref(end, deleted_count, new_max_row)
+                adjusted_parts.append(f"{new_start}:{new_end}")
+            else:
+                # Einzelne Zelle wie I458
+                adjusted_parts.append(adjust_cell_ref(part, deleted_count, new_max_row))
+        
+        return ' '.join(adjusted_parts)
+    
+    adjusted_count = 0
+    # Füge angepasste Regeln wieder hinzu
+    for cf_obj, rules in old_rules:
+        old_sqref = str(cf_obj.sqref)
+        new_sqref = adjust_range(old_sqref, rows_deleted, new_row_count)
+        
+        if new_sqref != old_sqref:
+            adjusted_count += 1
+        
+        if new_sqref:
+            for rule in rules:
+                ws.conditional_formatting.add(new_sqref, rule)
+    
+    sys.stderr.write(f"[CF ROW ADJUST] {adjusted_count} CF-Bereiche angepasst\n")
+
+
 def transform_cf_range(range_ref, column_mapping, deleted_set, target_col_count):
     """
     Transformiert CF-Bereiche basierend auf dem Spalten-Mapping.
@@ -1844,6 +1939,13 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         # Wenn Excel installiert ist, nutzen wir xlwings für perfekten CF-Erhalt.
         # =====================================================================
         if structural_change or full_rewrite:
+            import sys
+            sys.stderr.write(f"[FALL 2] structural_change={structural_change}, full_rewrite={full_rewrite}, row_mapping={'ja' if row_mapping else 'nein'}\n")
+            sys.stderr.write(f"[FALL 2] file_path={file_path}\n")
+            sys.stderr.write(f"[FALL 2] output_path={output_path}\n")
+            sys.stderr.write(f"[FALL 2] original_path={original_path}\n")
+            if row_mapping:
+                sys.stderr.write(f"[FALL 2] row_mapping (erste 10): {row_mapping[:10] if len(row_mapping) > 10 else row_mapping}\n")
             
             # OPTION A: Nutze xlwings wenn Excel verfügbar ist
             # Das erhält ALLE Formatierungen inkl. CF perfekt!
@@ -1894,6 +1996,427 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     wb = load_workbook(file_path, rich_text=True)
                     ws = wb[sheet_name]
             
+            # ================================================================
+            # NEUER ANSATZ FÜR ROW_MAPPING: shutil.copy() + nur Werte ändern
+            # ================================================================
+            # Wenn Zeilen gelöscht wurden (row_mapping vorhanden), nutzen wir
+            # den shutil-Ansatz: Original kopieren, dann NUR Werte überschreiben.
+            # Das erhält ALLE Formatierungen perfekt!
+            # ================================================================
+            if row_mapping and len(row_mapping) > 0:
+                identity_mapping = list(range(len(row_mapping)))
+                current_max_row = ws.max_row
+                rows_deleted = current_max_row - 1 - len(row_mapping)  # -1 für Header
+                
+                if row_mapping != identity_mapping or rows_deleted > 0:
+                    import shutil
+                    import tempfile
+                    import zipfile
+                    import re
+                    from lxml import etree
+                    
+                    sys.stderr.write(f"[ZIP-ANSATZ] Verwende direkte XML-Manipulation für {rows_deleted} gelöschte Zeilen\n")
+                    
+                    # Workbook schließen (ohne zu speichern!)
+                    wb.close()
+                    
+                    # WICHTIG: Wir kopieren die ORIGINAL-Datei (nicht file_path, das ist schon die Export-Datei!)
+                    # original_path enthält die unberührte Formatierung
+                    basis_datei = original_path if original_path else file_path
+                    sys.stderr.write(f"[ZIP-ANSATZ] Basis-Datei: {basis_datei}\n")
+                    
+                    # Immer die Basis-Datei zur Ausgabe kopieren (erhält ALLE Formatierungen!)
+                    shutil.copy2(basis_datei, output_path)
+                    sys.stderr.write(f"[ZIP-ANSATZ] Datei kopiert: {basis_datei} -> {output_path}\n")
+                    
+                    # Jetzt direkt die XML im ZIP manipulieren
+                    # xlsx ist ein ZIP mit XML-Dateien drin
+                    
+                    # Finde das richtige Sheet
+                    sheet_xml_path = None
+                    with zipfile.ZipFile(output_path, 'r') as zf:
+                        # Lese workbook.xml um Sheet-Namen zu finden
+                        workbook_xml = zf.read('xl/workbook.xml')
+                        wb_tree = etree.fromstring(workbook_xml)
+                        ns = {'main': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                        
+                        for sheet_elem in wb_tree.findall('.//main:sheet', ns):
+                            if sheet_elem.get('name') == sheet_name:
+                                # rId aus Attribut holen
+                                r_id = sheet_elem.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+                                
+                                # Relationships lesen um Pfad zu finden
+                                rels_xml = zf.read('xl/_rels/workbook.xml.rels')
+                                rels_tree = etree.fromstring(rels_xml)
+                                
+                                for rel in rels_tree:
+                                    if rel.get('Id') == r_id:
+                                        sheet_xml_path = 'xl/' + rel.get('Target')
+                                        break
+                                break
+                    
+                    if not sheet_xml_path:
+                        sys.stderr.write(f"[ZIP-ANSATZ] Sheet {sheet_name} nicht gefunden, fallback zu openpyxl\n")
+                        wb = load_workbook(output_path, rich_text=True)
+                        ws = wb[sheet_name]
+                    else:
+                        sys.stderr.write(f"[ZIP-ANSATZ] Sheet XML: {sheet_xml_path}\n")
+                        
+                        # Sheet-XML lesen und modifizieren
+                        with zipfile.ZipFile(output_path, 'r') as zf:
+                            sheet_xml = zf.read(sheet_xml_path)
+                        
+                        sheet_tree = etree.fromstring(sheet_xml)
+                        ns = {'main': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                        
+                        # sharedStrings.xml lesen (für String-Werte)
+                        shared_strings = []
+                        try:
+                            with zipfile.ZipFile(output_path, 'r') as zf:
+                                ss_xml = zf.read('xl/sharedStrings.xml')
+                                ss_tree = etree.fromstring(ss_xml)
+                                for si in ss_tree.findall('.//main:si', ns):
+                                    t_elem = si.find('.//main:t', ns)
+                                    if t_elem is not None and t_elem.text:
+                                        shared_strings.append(t_elem.text)
+                                    else:
+                                        shared_strings.append('')
+                        except Exception:
+                            pass
+                        
+                        # Finde sheetData Element
+                        sheet_data = sheet_tree.find('.//main:sheetData', ns)
+                        new_max_row = len(data) + 1  # +1 für Header
+                        
+                        # Aktualisiere dimension-Element wenn vorhanden
+                        dimension = sheet_tree.find('.//main:dimension', ns)
+                        if dimension is not None:
+                            ref = dimension.get('ref')
+                            if ref and ':' in ref:
+                                match = re.match(r'([A-Z]+\d+):([A-Z]+)(\d+)', ref)
+                                if match:
+                                    start_ref, end_col, old_end_row = match.groups()
+                                    new_ref = f"{start_ref}:{end_col}{new_max_row}"
+                                    dimension.set('ref', new_ref)
+                                    sys.stderr.write(f"[ZIP-ANSATZ] Dimension: {ref} -> {new_ref}\n")
+                        
+                        # Aktualisiere autoFilter wenn vorhanden
+                        auto_filter = sheet_tree.find('.//main:autoFilter', ns)
+                        if auto_filter is not None:
+                            af_ref = auto_filter.get('ref')
+                            if af_ref:
+                                match = re.match(r'([A-Z]+)(\d+):([A-Z]+)(\d+)', af_ref)
+                                if match:
+                                    start_col, start_row, end_col, end_row = match.groups()
+                                    new_af_ref = f"{start_col}{start_row}:{end_col}{new_max_row}"
+                                    auto_filter.set('ref', new_af_ref)
+                                    sys.stderr.write(f"[ZIP-ANSATZ] AutoFilter: {af_ref} -> {new_af_ref}\n")
+                        
+                        # Aktualisiere Conditional Formatting Bereiche
+                        # Wir müssen die CF-Bereiche an die neuen Zeilenpositionen anpassen
+                        # row_mapping[new_idx] = orig_idx bedeutet:
+                        # - Originale Datenzeile orig_idx ist jetzt an Position new_idx
+                        # - Excel-Zeile orig_idx+2 wird zu Excel-Zeile new_idx+2
+                        
+                        # Erstelle Mapping: alte_zeile -> neue_zeile
+                        row_shift_map = {}  # old_excel_row -> new_excel_row
+                        for new_idx, orig_idx in enumerate(row_mapping):
+                            old_excel_row = orig_idx + 2  # +2 für Header
+                            new_excel_row = new_idx + 2
+                            row_shift_map[old_excel_row] = new_excel_row
+                        
+                        # Finde gelöschte Zeilen (die nicht im Mapping sind)
+                        deleted_rows = set()
+                        for old_row in range(2, current_max_row + 1):
+                            if old_row not in row_shift_map:
+                                deleted_rows.add(old_row)
+                        
+                        sys.stderr.write(f"[ZIP-ANSATZ] Gelöschte Zeilen: {sorted(deleted_rows)[:10]}...\n")
+                        
+                        cf_elements = sheet_tree.findall('.//main:conditionalFormatting', ns)
+                        cf_updated = 0
+                        cf_removed = 0
+                        
+                        for cf in cf_elements:
+                            sqref = cf.get('sqref')
+                            if sqref:
+                                new_ranges = []
+                                changed = False
+                                
+                                for range_part in sqref.split():
+                                    range_match = re.match(r'([A-Z]+)(\d+)(?::([A-Z]+)(\d+))?', range_part)
+                                    if range_match:
+                                        start_col, start_row_str, end_col, end_row_str = range_match.groups()
+                                        start_row = int(start_row_str)
+                                        
+                                        if end_row_str:
+                                            # Bereich wie L2:L2404
+                                            end_row = int(end_row_str)
+                                            
+                                            # Neue Start-Zeile berechnen
+                                            if start_row in row_shift_map:
+                                                new_start = row_shift_map[start_row]
+                                            elif start_row in deleted_rows:
+                                                # Start wurde gelöscht - finde nächste gültige Zeile
+                                                new_start = None
+                                                for r in range(start_row + 1, end_row + 1):
+                                                    if r in row_shift_map:
+                                                        new_start = row_shift_map[r]
+                                                        break
+                                                if new_start is None:
+                                                    # Ganzer Bereich gelöscht - überspringen
+                                                    changed = True
+                                                    continue
+                                            else:
+                                                # Zeile 1 (Header) - bleibt
+                                                new_start = start_row
+                                            
+                                            # Neue End-Zeile berechnen
+                                            if end_row in row_shift_map:
+                                                new_end = row_shift_map[end_row]
+                                            elif end_row >= current_max_row:
+                                                new_end = new_max_row
+                                            else:
+                                                # Zeile wurde gelöscht - finde nächste gültige davor
+                                                new_end = None
+                                                for r in range(end_row, start_row - 1, -1):
+                                                    if r in row_shift_map:
+                                                        new_end = row_shift_map[r]
+                                                        break
+                                                if new_end is None:
+                                                    new_end = new_max_row
+                                            
+                                            if new_start != start_row or new_end != end_row:
+                                                changed = True
+                                            
+                                            new_range = f"{start_col}{new_start}:{end_col}{new_end}"
+                                            new_ranges.append(new_range)
+                                        else:
+                                            # Einzelne Zelle wie A5
+                                            if start_row in deleted_rows:
+                                                # Zelle wurde gelöscht - überspringen
+                                                changed = True
+                                                continue
+                                            
+                                            new_row = row_shift_map.get(start_row, start_row)
+                                            if new_row != start_row:
+                                                changed = True
+                                            new_ranges.append(f"{start_col}{new_row}")
+                                    else:
+                                        new_ranges.append(range_part)
+                                
+                                if changed:
+                                    new_sqref = ' '.join(new_ranges)
+                                    cf.set('sqref', new_sqref)
+                                    cf_updated += 1
+                                    
+                                    # Auch die Formeln in den cfRule-Elementen anpassen
+                                    for rule in cf.findall('main:cfRule', ns):
+                                        for formula in rule.findall('main:formula', ns):
+                                            if formula.text:
+                                                # Zellreferenzen in Formel anpassen
+                                                # z.B. $K2 oder K2 oder $K$2
+                                                def adjust_cell_ref(match):
+                                                    col = match.group(1)
+                                                    row_num = int(match.group(2))
+                                                    if row_num in row_shift_map:
+                                                        return f"{col}{row_shift_map[row_num]}"
+                                                    elif row_num in deleted_rows:
+                                                        # Zeile gelöscht - nehme nächste gültige
+                                                        for r in range(row_num + 1, current_max_row + 1):
+                                                            if r in row_shift_map:
+                                                                return f"{col}{row_shift_map[r]}"
+                                                    return match.group(0)
+                                                
+                                                new_formula = re.sub(r'(\$?[A-Z]+\$?)(\d+)', adjust_cell_ref, formula.text)
+                                                if new_formula != formula.text:
+                                                    formula.text = new_formula
+                        
+                        if cf_updated > 0:
+                            sys.stderr.write(f"[ZIP-ANSATZ] {cf_updated} CF-Bereiche angepasst\n")
+                        
+                        if sheet_data is not None:
+                            # Zellen aktualisieren basierend auf row_mapping
+                            # row_mapping[new_idx] = original_idx (original Excel-Zeile)
+                            
+                            # Sammle alle Zeilen
+                            rows = sheet_data.findall('main:row', ns)
+                            row_dict = {}
+                            for row_elem in rows:
+                                row_num = int(row_elem.get('r'))
+                                row_dict[row_num] = row_elem
+                            
+                            # Strategie: 
+                            # row_mapping[new_idx] = original_idx (0-basiert, ohne Header)
+                            # Das bedeutet: Datenzeile new_idx sollte die Formatierung von Original-Zeile original_idx+2 haben
+                            # 
+                            # Wir müssen:
+                            # 1. Für jede neue Position new_row (2, 3, 4, ...):
+                            #    - Die XML-Zeile von original_row = row_mapping[new_row-2] + 2 nehmen
+                            #    - Diese Zeile auf new_row umnummerieren
+                            #    - Die Werte aus data[new_row-2] einsetzen
+                            
+                            # Erstelle neue sheetData mit korrekt angeordneten Zeilen
+                            new_rows = []
+                            
+                            # Header (Zeile 1) bleibt
+                            if 1 in row_dict:
+                                new_rows.append((1, row_dict[1]))
+                            
+                            # Datenzeilen umsortieren
+                            for new_data_idx, orig_data_idx in enumerate(row_mapping):
+                                new_excel_row = new_data_idx + 2  # Ziel-Zeile in Excel
+                                orig_excel_row = orig_data_idx + 2  # Quell-Zeile mit der Formatierung
+                                
+                                if orig_excel_row in row_dict:
+                                    row_elem = row_dict[orig_excel_row]
+                                    
+                                    # Zeile umnummerieren
+                                    row_elem.set('r', str(new_excel_row))
+                                    
+                                    # Alle Zellen in der Zeile umnummerieren
+                                    cells = row_elem.findall('main:c', ns)
+                                    for cell in cells:
+                                        old_ref = cell.get('r')
+                                        if old_ref:
+                                            # Extrahiere Spalte und ersetze Zeile
+                                            col_match = re.match(r'([A-Z]+)\d+', old_ref)
+                                            if col_match:
+                                                col = col_match.group(1)
+                                                cell.set('r', f"{col}{new_excel_row}")
+                                    
+                                    new_rows.append((new_excel_row, row_elem))
+                                    
+                                    # NICHT die Werte überschreiben - sie sind schon korrekt in der Original-Datei!
+                                    # Wir haben nur die Zeilen renummeriert, die Werte bleiben erhalten.
+                            
+                            # Alle alten Zeilen entfernen
+                            for row_elem in list(sheet_data):
+                                sheet_data.remove(row_elem)
+                            
+                            # Neue Zeilen in korrekter Reihenfolge einfügen
+                            new_rows.sort(key=lambda x: x[0])
+                            for row_num, row_elem in new_rows:
+                                sheet_data.append(row_elem)
+                            
+                            sys.stderr.write(f"[ZIP-ANSATZ] {len(new_rows)} Zeilen neu angeordnet\n")
+                        
+                        # Speichere modifizierte Sheet-XML
+                        new_sheet_xml = etree.tostring(sheet_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+                        
+                        # Finde und aktualisiere Table-Definitionen (für Zebra-Style)
+                        # Tables sind in xl/tables/table*.xml
+                        modified_tables = {}
+                        try:
+                            with zipfile.ZipFile(output_path, 'r') as zf:
+                                for name in zf.namelist():
+                                    if name.startswith('xl/tables/table') and name.endswith('.xml'):
+                                        table_xml = zf.read(name)
+                                        table_tree = etree.fromstring(table_xml)
+                                        
+                                        # Prüfe ob diese Tabelle zum aktuellen Sheet gehört
+                                        # (vereinfacht: wir aktualisieren alle Tables die im richtigen Bereich sind)
+                                        ref = table_tree.get('ref')
+                                        if ref:
+                                            # Parse ref wie "A1:AZ500"
+                                            match = re.match(r'([A-Z]+)(\d+):([A-Z]+)(\d+)', ref)
+                                            if match:
+                                                start_col, start_row, end_col, end_row = match.groups()
+                                                start_row = int(start_row)
+                                                end_row = int(end_row)
+                                                
+                                                # Wenn Tabelle bei Zeile 1 startet, ist es wahrscheinlich unsere Datentabelle
+                                                if start_row == 1:
+                                                    new_end_row = new_max_row
+                                                    new_ref = f"{start_col}{start_row}:{end_col}{new_end_row}"
+                                                    table_tree.set('ref', new_ref)
+                                                    
+                                                    # Auch autoFilter anpassen wenn vorhanden
+                                                    af = table_tree.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}autoFilter')
+                                                    if af is not None:
+                                                        af.set('ref', new_ref)
+                                                    
+                                                    modified_tables[name] = etree.tostring(table_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+                                                    sys.stderr.write(f"[ZIP-ANSATZ] Table {name}: {ref} -> {new_ref}\n")
+                        except Exception as e:
+                            sys.stderr.write(f"[ZIP-ANSATZ] Table-Anpassung Fehler: {e}\n")
+                        
+                        # ZIP aktualisieren mit allen Änderungen
+                        temp_zip = output_path + '.tmp'
+                        with zipfile.ZipFile(output_path, 'r') as zin:
+                            with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zout:
+                                for item in zin.infolist():
+                                    if item.filename == sheet_xml_path:
+                                        zout.writestr(item, new_sheet_xml)
+                                    elif item.filename in modified_tables:
+                                        zout.writestr(item, modified_tables[item.filename])
+                                    else:
+                                        zout.writestr(item, zin.read(item.filename))
+                        
+                        shutil.move(temp_zip, output_path)
+                        
+                        sys.stderr.write(f"[ZIP-ANSATZ] Erfolgreich gespeichert\n")
+                        return {
+                            'success': True,
+                            'outputPath': output_path,
+                            'method': 'direct-xml-manipulation'
+                        }
+                    
+                    # NUR die Zellwerte überschreiben (Formatierungen bleiben!)
+                    # Die Daten werden in neuer Reihenfolge geschrieben
+                    for new_row_idx, row_data in enumerate(data):
+                        excel_row = new_row_idx + 2  # +2 für Header
+                        for col_idx, value in enumerate(row_data):
+                            if col_idx < len(headers):  # Nur vorhandene Spalten
+                                cell = ws.cell(row=excel_row, column=col_idx + 1)
+                                apply_cell_value(cell, value)
+                    
+                    # Header aktualisieren
+                    for col_idx, header in enumerate(headers):
+                        ws.cell(row=1, column=col_idx + 1, value=header)
+                    
+                    # Überschüssige Zeilen am Ende leeren (nur Werte, Formatierung bleibt)
+                    new_max_row = len(data) + 1  # +1 für Header
+                    old_max_row = ws.max_row
+                    if old_max_row > new_max_row:
+                        sys.stderr.write(f"[SHUTIL-ANSATZ] Leere Zeilen {new_max_row + 1} bis {old_max_row}\n")
+                        for row in range(new_max_row + 1, old_max_row + 1):
+                            for col in range(1, len(headers) + 1):
+                                cell = ws.cell(row=row, column=col)
+                                cell.value = None
+                    
+                    # CF-Bereiche anpassen (die Zeilennummern müssen angepasst werden)
+                    # current_max_row wurde VOR dem Schließen gespeichert
+                    adjust_cf_for_row_changes(ws, row_mapping, current_max_row - 1)
+                    
+                    # Hidden Rows/Columns anwenden
+                    _apply_hidden_columns(ws, hidden_columns, len(headers))
+                    _apply_hidden_rows(ws, hidden_rows, len(data))
+                    
+                    # Row Highlights anwenden
+                    if row_highlights:
+                        _apply_row_highlights(ws, row_highlights, len(headers))
+                    
+                    # AutoFilter setzen
+                    if frontend_auto_filter or original_auto_filter:
+                        try:
+                            af_ref = f"A1:{get_column_letter(len(headers))}{new_max_row}"
+                            ws.auto_filter.ref = af_ref
+                        except Exception:
+                            pass
+                    
+                    # Speichern und fertig
+                    wb.save(output_path)
+                    wb.close()
+                    fix_xlsx_relationships(output_path)
+                    
+                    sys.stderr.write(f"[SHUTIL-ANSATZ] Erfolgreich gespeichert\n")
+                    return {
+                        'success': True,
+                        'outputPath': output_path,
+                        'method': 'openpyxl-shutil-copy'
+                    }
+            
             # OPTION B: openpyxl mit insert_cols/delete_cols
             # 
             # RICHTIGER ANSATZ: insert_cols() und delete_cols() verwenden!
@@ -1921,6 +2444,43 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 identity_mapping = list(range(len(row_mapping)))
                 needs_reorder = row_mapping != identity_mapping
                 
+                sys.stderr.write(f"[SCHRITT 0.5] row_mapping Länge: {len(row_mapping)}\n")
+                sys.stderr.write(f"[SCHRITT 0.5] identity_mapping erste 5: {identity_mapping[:5]}\n")
+                sys.stderr.write(f"[SCHRITT 0.5] row_mapping erste 5: {row_mapping[:5]}\n")
+                sys.stderr.write(f"[SCHRITT 0.5] needs_reorder: {needs_reorder}\n")
+                
+                # DEBUG: Prüfe CF-Regeln
+                cf_count = len(list(ws.conditional_formatting._cf_rules.items()))
+                sys.stderr.write(f"[DEBUG] Conditional Formatting Regeln: {cf_count}\n")
+                
+                # DEBUG: Prüfe Tables (Zebra-Muster könnte Table Style sein)
+                if hasattr(ws, '_tables'):
+                    sys.stderr.write(f"[DEBUG] Tables im Worksheet: {len(ws._tables)}\n")
+                    for table in ws._tables:
+                        try:
+                            if hasattr(table, 'name'):
+                                sys.stderr.write(f"[DEBUG] Table: {table.name}, Bereich: {table.ref}, Style: {table.tableStyleInfo.name if table.tableStyleInfo else 'keiner'}\n")
+                            else:
+                                sys.stderr.write(f"[DEBUG] Table (string): {table}\n")
+                        except Exception as e:
+                            sys.stderr.write(f"[DEBUG] Table error: {e}\n")
+                
+                # Zeige nur große Bereiche (Zebra-Muster)
+                for cf_obj, rules in list(ws.conditional_formatting._cf_rules.items()):
+                    sqref_str = str(cf_obj.sqref)
+                    # Prüfe ob es ein großer Bereich ist (mehr als 100 Zeilen)
+                    if ':' in sqref_str:
+                        parts = sqref_str.split(':')
+                        if len(parts) == 2:
+                            import re
+                            match1 = re.search(r'\d+', parts[0])
+                            match2 = re.search(r'\d+', parts[1])
+                            if match1 and match2:
+                                row1 = int(match1.group())
+                                row2 = int(match2.group())
+                                if row2 - row1 > 100:
+                                    sys.stderr.write(f"[DEBUG] Großer CF Bereich: {sqref_str}, Regeln: {len(rules)}, Typ: {rules[0].type if rules else 'unbekannt'}\n")
+                
                 if needs_reorder:
                     # Speichere alle benötigten Zeilen mit Formatierung
                     # Key = Original-Daten-Index (0-basiert), Value = Zellen-Info
@@ -1945,6 +2505,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         has_rich_text_support = False
                     
                     # Sammle alle Original-Zeilen die wir brauchen
+                    styles_found = 0
                     for orig_data_idx in set(row_mapping):
                         excel_row = orig_data_idx + 2  # +2: Excel 1-basiert + Header
                         row_info = {}
@@ -1956,6 +2517,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             # Prüfe ob der Wert RichText ist
                             cell_value = cell.value
                             is_rich_text = has_rich_text_support and isinstance(cell_value, CellRichText) if has_rich_text_support else False
+                            
+                            # Debug: Prüfe ob Zelle Formatierung hat
+                            has_fill = cell.fill and cell.fill.patternType and cell.fill.patternType != 'none'
+                            has_font = cell.font and (cell.font.bold or cell.font.italic or cell.font.color)
+                            if has_fill or has_font:
+                                styles_found += 1
                             
                             row_info[col_idx] = {
                                 'value': cell_value,
@@ -1969,11 +2536,15 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             }
                         row_data_with_styles[orig_data_idx] = row_info
                     
+                    sys.stderr.write(f"[SCHRITT 0.5] Zellen mit Formatierung gefunden: {styles_found}\n")
+                    sys.stderr.write(f"[SCHRITT 0.5] row_data_with_styles Anzahl: {len(row_data_with_styles)}\n")
+                    
                     # Schreibe die Zeilen in neuer Reihenfolge
                     # Speichere RichText und Hyperlinks für später (werden nach SCHRITT 4 angewendet)
                     rich_text_cells_to_restore = {}  # Key: "excel_row-col_idx", Value: CellRichText
                     hyperlinks_to_restore = {}  # Key: "excel_row-col_idx", Value: hyperlink target
                     
+                    styles_applied = 0
                     for new_pos, orig_row_idx in enumerate(row_mapping):
                         excel_row = new_pos + 2  # Zielzeile
                         if orig_row_idx in row_data_with_styles:
@@ -1986,8 +2557,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                 # WICHTIG: Immer kopieren, auch wenn "leer" - sonst gehen Defaults verloren
                                 if cell_info.get('fill'):
                                     cell.fill = cell_info['fill']
+                                    styles_applied += 1
                                 if cell_info.get('font'):
                                     cell.font = cell_info['font']
+                                    styles_applied += 1
                                 if cell_info.get('alignment'):
                                     cell.alignment = cell_info['alignment']
                                 if cell_info.get('border'):
@@ -2001,6 +2574,20 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                 # Hyperlink für später speichern
                                 if cell_info.get('hyperlink'):
                                     hyperlinks_to_restore[f"{excel_row}-{col_idx}"] = cell_info['hyperlink']
+                    
+                    sys.stderr.write(f"[SCHRITT 0.5] Styles angewendet (fill+font): {styles_applied}\n")
+                    
+                    # DEBUG: Finde eine Zelle mit Formatierung in Zeile 2 nach dem Kopieren
+                    for test_col in range(1, min(ws.max_column + 1, 50)):
+                        test_cell_after = ws.cell(row=2, column=test_col)
+                        if test_cell_after.fill and test_cell_after.fill.patternType and test_cell_after.fill.patternType != 'none':
+                            sys.stderr.write(f"[DEBUG] Nach SCHRITT 0.5: Zeile 2 Spalte {test_col}: patternType={test_cell_after.fill.patternType}, fgColor={test_cell_after.fill.fgColor.rgb if test_cell_after.fill.fgColor else None}\n")
+                            break
+                    else:
+                        sys.stderr.write(f"[DEBUG] Nach SCHRITT 0.5: Keine formatierte Zelle in Zeile 2 gefunden\n")
+                    
+                    # CF-Bereiche anpassen für gelöschte Zeilen
+                    adjust_cf_for_row_changes(ws, row_mapping, original_max_row - 1)  # -1 für Header
             
             # ================================================================
             # SCHRITT 0.6: MERGED CELLS ANPASSEN (bei row_mapping)
@@ -2275,6 +2862,15 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 for col_idx, value in enumerate(row_data):
                     cell = ws.cell(row=excel_row, column=col_idx + 1)
                     apply_cell_value(cell, value)
+            
+            # DEBUG: Finde eine Zelle mit Formatierung in Zeile 2 nach SCHRITT 4
+            for test_col in range(1, min(ws.max_column + 1, 50)):
+                test_cell_after4 = ws.cell(row=2, column=test_col)
+                if test_cell_after4.fill and test_cell_after4.fill.patternType and test_cell_after4.fill.patternType != 'none':
+                    sys.stderr.write(f"[DEBUG] Nach SCHRITT 4: Zeile 2 Spalte {test_col}: patternType={test_cell_after4.fill.patternType}, fgColor={test_cell_after4.fill.fgColor.rgb if test_cell_after4.fill.fgColor else None}\n")
+                    break
+            else:
+                sys.stderr.write(f"[DEBUG] Nach SCHRITT 4: Keine formatierte Zelle in Zeile 2 gefunden\n")
             
             # ================================================================
             # SCHRITT 4.5: RICHTEXT UND HYPERLINKS WIEDERHERSTELLEN

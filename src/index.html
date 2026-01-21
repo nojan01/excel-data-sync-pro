@@ -8130,6 +8130,90 @@
             });
             explorerState.editedCells = newEditedCells;
             
+            // CellStyles anpassen (analog zu deleteExplorerColumn)
+            const newCellStyles = {};
+            for (const [key, value] of Object.entries(explorerState.cellStyles || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (row > rowIndex) {
+                    newCellStyles[`${row - 1}-${col}`] = value;
+                } else if (row < rowIndex) {
+                    newCellStyles[key] = value;
+                }
+            }
+            explorerState.cellStyles = newCellStyles;
+            
+            // CellFormulas anpassen
+            const newCellFormulas = {};
+            for (const [key, value] of Object.entries(explorerState.cellFormulas || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (row > rowIndex) {
+                    newCellFormulas[`${row - 1}-${col}`] = value;
+                } else if (row < rowIndex) {
+                    newCellFormulas[key] = value;
+                }
+            }
+            explorerState.cellFormulas = newCellFormulas;
+            
+            // CellHyperlinks anpassen
+            const newCellHyperlinks = {};
+            for (const [key, value] of Object.entries(explorerState.cellHyperlinks || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (row > rowIndex) {
+                    newCellHyperlinks[`${row - 1}-${col}`] = value;
+                } else if (row < rowIndex) {
+                    newCellHyperlinks[key] = value;
+                }
+            }
+            explorerState.cellHyperlinks = newCellHyperlinks;
+            
+            // RichTextCells anpassen
+            const newRichTextCells = {};
+            for (const [key, value] of Object.entries(explorerState.richTextCells || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (row > rowIndex) {
+                    newRichTextCells[`${row - 1}-${col}`] = value;
+                } else if (row < rowIndex) {
+                    newRichTextCells[key] = value;
+                }
+            }
+            explorerState.richTextCells = newRichTextCells;
+            
+            // HiddenRows anpassen
+            const newHiddenRows = new Set();
+            explorerState.hiddenRows.forEach(idx => {
+                if (idx > rowIndex) {
+                    newHiddenRows.add(idx - 1);
+                } else if (idx < rowIndex) {
+                    newHiddenRows.add(idx);
+                }
+            });
+            explorerState.hiddenRows = newHiddenRows;
+            
+            // rowMapping aktualisieren - trackt welche Original-Excel-Zeile an welcher Position ist
+            // Analog zu _columnDeleted bei Spalten
+            if (explorerState.rowMapping && explorerState.rowMapping.length > 0) {
+                // Bestehendes Mapping: Element an rowIndex entfernen
+                const newRowMapping = [...explorerState.rowMapping];
+                newRowMapping.splice(rowIndex, 1);
+                explorerState.rowMapping = newRowMapping;
+            } else {
+                // Neues Mapping erstellen: neue Position -> Original-Zeile (vor dem Löschen)
+                explorerState.rowMapping = [];
+                for (let i = 0; i < explorerState.data.length; i++) {
+                    // Zeilen nach der gelöschten Position referenzieren ihre Original-Position + 1
+                    const originalIdx = i >= rowIndex ? i + 1 : i;
+                    explorerState.rowMapping.push(originalIdx);
+                }
+            }
+            
             // Markierung, dass etwas gelöscht wurde (für Änderungszählung)
             explorerState.editedCells.set('_rowDeleted', true);
             
@@ -12072,23 +12156,28 @@
             // Markierung, dass etwas gelöscht wurde
             explorerState.editedCells.set('_rowDeleted', true);
             
+            // HiddenRows anpassen
+            const newHiddenRows = new Set();
+            const sortedDeletedAsc = selectedIndices.slice().sort((a, b) => a - b);
+            explorerState.hiddenRows.forEach(idx => {
+                if (deletedSet.has(idx)) return;
+                let offset = 0;
+                sortedDeletedAsc.forEach(delIdx => {
+                    if (delIdx < idx) offset++;
+                });
+                newHiddenRows.add(idx - offset);
+            });
+            explorerState.hiddenRows = newHiddenRows;
+            
             // WICHTIG: rowMapping aktualisieren nach Löschen
-            // Das Mapping zeigt welche Original-Excel-Zeile an welcher neuen Position ist
-            // Nach dem Löschen müssen die gelöschten Zeilen aus dem Mapping entfernt werden
+            // Bestehendes Mapping: Entferne die Elemente an den gelöschten Indizes
+            // selectedIndices ist absteigend sortiert, also von hinten nach vorne entfernen
             if (explorerState.rowMapping && explorerState.rowMapping.length > 0) {
-                // Aktualisiere bestehendes Mapping
-                const newRowMapping = [];
-                for (let i = 0; i < explorerState.data.length; i++) {
-                    // Finde die Original-Position für diese Datenzeile
-                    // selectedIndices sind die gelöschten Indizes (absteigend sortiert)
-                    // Wir müssen den ursprünglichen Index vor dem Löschen berechnen
-                    let originalIdx = i;
-                    // Zähle wie viele gelöschte Zeilen vor dieser Position waren
-                    selectedIndices.slice().reverse().forEach(delIdx => {
-                        if (delIdx <= originalIdx) originalIdx++;
-                    });
-                    if (originalIdx < explorerState.rowMapping.length) {
-                        newRowMapping.push(explorerState.rowMapping[originalIdx]);
+                const newRowMapping = [...explorerState.rowMapping];
+                // Von hinten nach vorne löschen (selectedIndices ist bereits absteigend sortiert)
+                for (const delIdx of selectedIndices) {
+                    if (delIdx < newRowMapping.length) {
+                        newRowMapping.splice(delIdx, 1);
                     }
                 }
                 explorerState.rowMapping = newRowMapping;
