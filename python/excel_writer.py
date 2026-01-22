@@ -1158,6 +1158,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         cleared_row_highlights = changes.get('clearedRowHighlights', [])
         affected_rows = changes.get('affectedRows', [])
         
+        # Zeilen-Operationen (analog zu Spalten-Operationen)
+        deleted_rows = changes.get('deletedRowIndices', [])
+        inserted_rows = changes.get('insertedRowInfo')
+        row_order = changes.get('rowOrder')  # [neuIdx] = altIdx
+        
         # DEBUG: Zeige alle relevanten Flags
         
         # =====================================================================
@@ -1172,16 +1177,23 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             return {'success': True, 'outputPath': output_path}
         
         # =====================================================================
-        # FALL 1.X: UNIVERSELLE PIPELINE für Spalten-Operationen
-        # Führt alle Operationen SERIELL in korrekter Reihenfolge aus:
-        # 1. Spalten löschen (von hinten nach vorne)
-        # 2. Spalten einfügen (von vorne nach hinten) 
-        # 3. Spalten verschieben/reorder
-        # 4. Zellwerte schreiben
-        # 5. Spalten/Zeilen verstecken
-        # 6. Row Highlights
-        # 7. Tables reparieren
-        # 8. Einmal speichern + restore XML
+        # FALL 1.X: UNIVERSELLE PIPELINE für Spalten- UND Zeilen-Operationen
+        # Führt alle Operationen STRIKT SEQUENTIELL aus:
+        # 1-4. Zeilen-Operationen (alle Daten zuerst speichern, dann rekonstruieren)
+        #      1. Alle Original-Zeilen speichern
+        #      2. Finale Zeilen-Reihenfolge berechnen (Löschen + Verschieben)
+        #      3. Überschüssige Zeilen entfernen
+        #      4. Zeilen in neuer Reihenfolge schreiben
+        # 5. Zeilen einfügen
+        # 6. Zeilen verstecken (NACH allen strukturellen Änderungen)
+        # 7. Spalten löschen (von hinten nach vorne)
+        # 8. Spalten einfügen (von vorne nach hinten)
+        # 9. Spalten verschieben/reorder
+        # 10. Spalten verstecken
+        # 11. Row Highlights
+        # 12. Tables reparieren
+        # 13. Einmal speichern
+        # 14. XML restore
         # =====================================================================
         
         # Prüfe ob rowMapping nur die Identität ist (keine echte Änderung)
@@ -1192,19 +1204,158 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     row_mapping_is_identity = False
                     break
         
+        # Prüfe ob wir Zeilen-Operationen haben
+        has_row_operations = deleted_rows or inserted_rows or (row_order and len(row_order) > 0)
+        
         # Prüfe ob wir den Pipeline-Pfad nutzen können
-        # (Spalten-Operationen ohne komplexe Zeilen-Änderungen)
+        # (Spalten- ODER Zeilen-Operationen)
         has_column_operations = deleted_columns or inserted_columns or (column_order and len(column_order) > 0)
-        can_use_pipeline = has_column_operations and row_mapping_is_identity and not affected_rows
+        can_use_pipeline = (has_column_operations or has_row_operations) and row_mapping_is_identity and not affected_rows
         
         if can_use_pipeline:
             from openpyxl.worksheet.table import TableColumn
             from openpyxl.utils.cell import range_boundaries
             from openpyxl.cell.cell import MergedCell
+            import sys
             
-            # ===== SCHRITT 1: Spalten LÖSCHEN (von hinten nach vorne) =====
+            sys.stderr.write(f"[PIPELINE] Starte: deleted_rows={deleted_rows}, row_order={row_order is not None}, hidden_rows={hidden_rows}, deleted_columns={deleted_columns}, inserted_columns={inserted_columns is not None}, column_order={column_order is not None}\n")
+            
+            # =====================================================================
+            # ZEILEN-OPERATIONEN: Alle Daten ZUERST speichern, dann rekonstruieren
+            # =====================================================================
+            
+            has_any_row_change = deleted_rows or (row_order and len(row_order) > 0)
+            
+            if has_any_row_change:
+                max_col = ws.max_column
+                original_max_row = ws.max_row
+                
+                # SCHRITT 1: Alle Original-Zeilen komplett speichern (vor jeder Änderung!)
+                sys.stderr.write(f"[PIPELINE] Schritt 1: Speichere alle {original_max_row - 1} Original-Zeilen\n")
+                all_rows_backup = {}
+                for excel_row in range(2, original_max_row + 1):  # Ab Zeile 2 (nach Header)
+                    row_idx = excel_row - 2  # 0-basierter Index
+                    all_rows_backup[row_idx] = {}
+                    
+                    for col in range(1, max_col + 1):
+                        cell = ws.cell(row=excel_row, column=col)
+                        if isinstance(cell, MergedCell):
+                            continue
+                        all_rows_backup[row_idx][col] = {
+                            'value': cell.value,
+                            'fill': copy(cell.fill) if cell.fill else None,
+                            'font': copy(cell.font) if cell.font else None,
+                            'alignment': copy(cell.alignment) if cell.alignment else None,
+                            'border': copy(cell.border) if cell.border else None,
+                            'number_format': cell.number_format,
+                            'hyperlink': cell.hyperlink.target if cell.hyperlink else None
+                        }
+                
+                # SCHRITT 2: Bestimme finale Zeilen-Reihenfolge
+                # row_order enthält: [neuIdx] = altIdx (nach Löschen!)
+                # deleted_rows enthält: Original-Indizes der gelöschten Zeilen
+                
+                deleted_set = set(deleted_rows) if deleted_rows else set()
+                
+                if row_order and len(row_order) > 0:
+                    # row_order gibt die neue Reihenfolge vor
+                    # Die Indizes in row_order beziehen sich auf Zeilen NACH dem Löschen
+                    # Wir müssen sie zurück auf Original-Indizes mappen
+                    
+                    # Erstelle Mapping: Index nach Löschen → Original-Index
+                    remaining_original_indices = []
+                    for orig_idx in range(len(all_rows_backup)):
+                        if orig_idx not in deleted_set:
+                            remaining_original_indices.append(orig_idx)
+                    
+                    # row_order[new_pos] = after_delete_idx → wir brauchen original_idx
+                    final_row_order = []
+                    for new_pos, after_delete_idx in enumerate(row_order):
+                        if after_delete_idx < len(remaining_original_indices):
+                            original_idx = remaining_original_indices[after_delete_idx]
+                            final_row_order.append(original_idx)
+                    
+                    sys.stderr.write(f"[PIPELINE] Schritt 2: Finale Zeilen-Reihenfolge (Original-Indizes): {final_row_order[:10]}...\n")
+                else:
+                    # Keine Verschiebung, nur Löschen - behalte Reihenfolge der nicht-gelöschten
+                    final_row_order = [idx for idx in range(len(all_rows_backup)) if idx not in deleted_set]
+                    sys.stderr.write(f"[PIPELINE] Schritt 2: Nur Löschen, behalte {len(final_row_order)} Zeilen\n")
+                
+                # SCHRITT 3: Überschüssige Zeilen löschen (von hinten)
+                target_row_count = len(final_row_order)
+                current_data_rows = original_max_row - 1  # Ohne Header
+                
+                if current_data_rows > target_row_count:
+                    rows_to_delete = current_data_rows - target_row_count
+                    sys.stderr.write(f"[PIPELINE] Schritt 3: Lösche {rows_to_delete} überschüssige Zeilen\n")
+                    for _ in range(rows_to_delete):
+                        ws.delete_rows(ws.max_row, 1)
+                
+                # SCHRITT 4: Zeilen in neuer Reihenfolge schreiben
+                sys.stderr.write(f"[PIPELINE] Schritt 4: Schreibe {len(final_row_order)} Zeilen in neuer Reihenfolge\n")
+                for new_idx, original_idx in enumerate(final_row_order):
+                    new_excel_row = new_idx + 2
+                    
+                    if original_idx not in all_rows_backup:
+                        continue
+                    
+                    for col, data_item in all_rows_backup[original_idx].items():
+                        cell = ws.cell(row=new_excel_row, column=col)
+                        if isinstance(cell, MergedCell):
+                            continue
+                        cell.value = data_item['value']
+                        if data_item['fill']:
+                            cell.fill = data_item['fill']
+                        if data_item['font']:
+                            cell.font = data_item['font']
+                        if data_item['alignment']:
+                            cell.alignment = data_item['alignment']
+                        if data_item['border']:
+                            cell.border = data_item['border']
+                        if data_item['number_format']:
+                            cell.number_format = data_item['number_format']
+                        if data_item['hyperlink']:
+                            cell.hyperlink = data_item['hyperlink']
+            
+            # ===== SCHRITT 5: Zeilen EINFÜGEN =====
+            if inserted_rows:
+                operations = inserted_rows.get('operations', [])
+                operations.sort(key=lambda x: x['position'])
+                sys.stderr.write(f"[PIPELINE] Schritt 5: Füge Zeilen ein {[op['position'] for op in operations]}\n")
+                
+                for op in operations:
+                    position = op['position']
+                    count = op.get('count', 1)
+                    excel_row = position + 2
+                    
+                    for i in range(count):
+                        ws.insert_rows(excel_row + i, 1)
+                        
+                        # Formatierung von Zeile darüber kopieren
+                        if excel_row + i > 2:
+                            source_row = excel_row + i - 1
+                            for col in range(1, ws.max_column + 1):
+                                source_cell = ws.cell(row=source_row, column=col)
+                                target_cell = ws.cell(row=excel_row + i, column=col)
+                                if source_cell.fill:
+                                    target_cell.fill = copy(source_cell.fill)
+                                if source_cell.font:
+                                    target_cell.font = copy(source_cell.font)
+                                if source_cell.alignment:
+                                    target_cell.alignment = copy(source_cell.alignment)
+                                if source_cell.border:
+                                    target_cell.border = copy(source_cell.border)
+                                if source_cell.number_format:
+                                    target_cell.number_format = source_cell.number_format
+            
+            # ===== SCHRITT 6: Zeilen VERSTECKEN (NACH allen strukturellen Änderungen) =====
+            sys.stderr.write(f"[PIPELINE] Schritt 6: Zeilen verstecken, hidden_rows={hidden_rows}\n")
+            _apply_hidden_rows(ws, hidden_rows)
+            
+            # ===== SCHRITT 7: Spalten LÖSCHEN (von hinten nach vorne) =====
             if deleted_columns:
                 sorted_deleted = sorted(deleted_columns, reverse=True)
+                sys.stderr.write(f"[PIPELINE] Schritt 7: Lösche Spalten {sorted_deleted}\n")
                 
                 for col_idx in sorted_deleted:
                     excel_col = col_idx + 1
@@ -1229,7 +1380,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     # CF anpassen
                     adjust_conditional_formatting(ws, [col_idx], None)
             
-            # ===== SCHRITT 2: Spalten EINFÜGEN (von vorne nach hinten) =====
+            # ===== SCHRITT 8: Spalten EINFÜGEN (von vorne nach hinten) =====
             if inserted_columns:
                 operations = inserted_columns.get('operations', [])
                 if not operations and inserted_columns.get('position') is not None:
@@ -1240,6 +1391,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     }]
                 
                 operations.sort(key=lambda x: x['position'])
+                sys.stderr.write(f"[PIPELINE] Schritt 8: Füge Spalten ein\n")
                 
                 for op_idx, op in enumerate(operations):
                     position = op['position']
@@ -1325,7 +1477,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                         cell = ws.cell(row=row_idx + 2, column=excel_col + i)
                                         apply_cell_value(cell, row_data[col_idx])
             
-            # ===== SCHRITT 3: Spalten VERSCHIEBEN/REORDER =====
+            # ===== SCHRITT 9: Spalten VERSCHIEBEN/REORDER =====
+            sys.stderr.write(f"[PIPELINE] Schritt 9: Spalten verschieben\n")
             if column_order and len(column_order) > 0:
                 columns_changed = False
                 for new_idx, old_idx in enumerate(column_order):
@@ -1367,15 +1520,17 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             if data_item['hyperlink']:
                                 cell.hyperlink = data_item['hyperlink']
             
-            # ===== SCHRITT 4: Versteckte Spalten/Zeilen =====
+            # ===== SCHRITT 10: Versteckte Spalten =====
+            sys.stderr.write(f"[PIPELINE] Schritt 10: Spalten verstecken\n")
             _apply_hidden_columns(ws, hidden_columns)
-            _apply_hidden_rows(ws, hidden_rows)
             
-            # ===== SCHRITT 5: Row Highlights =====
+            # ===== SCHRITT 11: Row Highlights =====
+            sys.stderr.write(f"[PIPELINE] Schritt 11: Row Highlights\n")
             if row_highlights:
                 _apply_row_highlights(ws, row_highlights, len(headers) if headers else 0)
             
-            # ===== SCHRITT 6: Tables reparieren =====
+            # ===== SCHRITT 12: Tables reparieren =====
+            sys.stderr.write(f"[PIPELINE] Schritt 12: Tables reparieren\n")
             table_changes = {}
             for table_name in ws.tables:
                 table = ws.tables[table_name]
@@ -1397,12 +1552,14 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 table.tableColumns = new_columns
                 table_changes[table_name] = {'ref': table.ref, 'columns': [col.name for col in new_columns]}
             
-            # ===== SCHRITT 7: EINMAL speichern =====
+            # ===== SCHRITT 13: EINMAL speichern =====
+            sys.stderr.write(f"[PIPELINE] Schritt 13: Speichern\n")
             wb.save(output_path)
             wb.close()
             fix_xlsx_relationships(output_path)
             
-            # ===== SCHRITT 8: XML restore =====
+            # ===== SCHRITT 14: XML restore =====
+            sys.stderr.write(f"[PIPELINE] Schritt 14: XML restore\n")
             if table_changes:
                 restore_table_xml_from_original(output_path, original_path, table_changes)
             
@@ -2008,6 +2165,13 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 current_max_row = ws.max_row
                 rows_changed = current_max_row - 1 - len(row_mapping)  # -1 für Header (positiv=gelöscht, negativ=eingefügt)
                 
+                # DEBUG: Zeige alle relevanten Variablen
+                sys.stderr.write(f"[ZIP-DEBUG] current_max_row (ws.max_row)={current_max_row}\n")
+                sys.stderr.write(f"[ZIP-DEBUG] len(row_mapping)={len(row_mapping)}\n")
+                sys.stderr.write(f"[ZIP-DEBUG] rows_changed={rows_changed}\n")
+                sys.stderr.write(f"[ZIP-DEBUG] deleted_rows aus Frontend={deleted_rows}\n")
+                sys.stderr.write(f"[ZIP-DEBUG] row_mapping[:10]={row_mapping[:10]}\n")
+                
                 # ZIP-Ansatz aktivieren wenn:
                 # - Zeilen gelöscht wurden (rows_changed > 0)
                 # - Zeilen eingefügt wurden (rows_changed < 0)
@@ -2117,43 +2281,49 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                     auto_filter.set('ref', new_af_ref)
                                     sys.stderr.write(f"[ZIP-ANSATZ] AutoFilter: {af_ref} -> {new_af_ref}\n")
                         
-                        # Aktualisiere Conditional Formatting Bereiche
-                        # row_mapping[new_idx] = orig_idx bedeutet:
-                        # - Originale Datenzeile orig_idx ist jetzt an Position new_idx
-                        # - Excel-Zeile orig_idx+2 wird zu Excel-Zeile new_idx+2
-                        # - Bei eingefügten Zeilen ist orig_idx = -1 (neue Zeile ohne Original)
+                        # ================================================================
+                        # KORREKTUR: row_mapping[new_idx] = ORIGINAL_idx (NICHT after-delete!)
+                        # Das Frontend schickt bereits die Original-Indizes:
+                        # - Beim Löschen: originalIdx = i >= rowIndex ? i + 1 : i
+                        # - Bei eingefügten Zeilen: -1
+                        # 
+                        # Kein Zurückmappen nötig!
+                        # ================================================================
                         
-                        # Erstelle Mapping: alte_zeile -> neue_zeile
+                        # Verwende deleted_rows aus dem Frontend für CF-Anpassung
+                        frontend_deleted_rows = set(deleted_rows) if deleted_rows else set()
+                        sys.stderr.write(f"[ZIP-ANSATZ] Frontend deleted_rows: {sorted(frontend_deleted_rows)[:10] if frontend_deleted_rows else 'keine'}\n")
+                        
+                        # row_mapping enthält bereits ORIGINAL-Indizes!
+                        # row_mapping[new_idx] = original_idx
                         row_shift_map = {}  # old_excel_row -> new_excel_row
-                        inserted_rows = set()  # neue Zeilen die eingefügt wurden
-                        for new_idx, orig_idx in enumerate(row_mapping):
+                        inserted_rows_set = set()  # neue Zeilen die eingefügt wurden
+                        
+                        for new_idx, original_idx in enumerate(row_mapping):
                             new_excel_row = new_idx + 2
-                            if orig_idx < 0:
-                                # Neue eingefügte Zeile (orig_idx = -1)
-                                inserted_rows.add(new_excel_row)
+                            if original_idx < 0:
+                                # Neue eingefügte Zeile (original_idx = -1)
+                                inserted_rows_set.add(new_excel_row)
                             else:
-                                old_excel_row = orig_idx + 2  # +2 für Header
+                                # original_idx ist bereits der Original-Index!
+                                old_excel_row = original_idx + 2  # +2 für Header
                                 row_shift_map[old_excel_row] = new_excel_row
                         
-                        # Finde gelöschte Zeilen (die nicht im Mapping sind)
-                        # WICHTIG: Nur orig_idx aus row_mapping prüfen, nicht alle bis current_max_row
-                        # Bei reiner Verschiebung enthält row_mapping alle Indizes 0 bis len-1
-                        expected_orig_indices = set(range(len(row_mapping)))  # 0 bis n-1
-                        actual_orig_indices = set(idx for idx in row_mapping if idx >= 0)
+                        # Finde gelöschte Zeilen als Excel-Zeilen
+                        deleted_excel_rows = set(idx + 2 for idx in frontend_deleted_rows)
                         
-                        deleted_rows = set()
-                        # Prüfe ob alle erwarteten orig_indices vorhanden sind
-                        for expected_idx in expected_orig_indices:
-                            if expected_idx not in actual_orig_indices:
-                                deleted_rows.add(expected_idx + 2)  # +2 für Excel-Zeile
+                        # Debug: Zeige die ersten Mappings
+                        sys.stderr.write(f"[ZIP-ANSATZ] row_mapping (erste 10): {row_mapping[:10]}\n")
+                        first_mappings = list(row_shift_map.items())[:5]
+                        sys.stderr.write(f"[ZIP-ANSATZ] row_shift_map (erste 5): {first_mappings}\n")
                         
                         # Bestimme ob nur Verschiebung (keine Löschung/Einfügung)
-                        is_pure_reorder = len(deleted_rows) == 0 and len(inserted_rows) == 0
+                        is_pure_reorder = len(frontend_deleted_rows) == 0 and len(inserted_rows_set) == 0
                         
-                        if deleted_rows:
-                            sys.stderr.write(f"[ZIP-ANSATZ] Gelöschte Zeilen: {sorted(deleted_rows)[:10]}...\n")
-                        if inserted_rows:
-                            sys.stderr.write(f"[ZIP-ANSATZ] Eingefügte Zeilen: {sorted(inserted_rows)[:10]}...\n")
+                        if deleted_excel_rows:
+                            sys.stderr.write(f"[ZIP-ANSATZ] Gelöschte Zeilen (Excel): {sorted(deleted_excel_rows)[:10]}...\n")
+                        if inserted_rows_set:
+                            sys.stderr.write(f"[ZIP-ANSATZ] Eingefügte Zeilen: {sorted(inserted_rows_set)[:10]}...\n")
                         if is_pure_reorder:
                             sys.stderr.write(f"[ZIP-ANSATZ] Reine Verschiebung - CF-Bereiche werden NICHT angepasst\n")
                         
@@ -2299,17 +2469,18 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                     break
                             
                             # Datenzeilen umsortieren
-                            for new_data_idx, orig_data_idx in enumerate(row_mapping):
+                            # row_mapping[new_idx] = original_idx (BEREITS Original-Index!)
+                            for new_data_idx, original_idx in enumerate(row_mapping):
                                 new_excel_row = new_data_idx + 2  # Ziel-Zeile in Excel
                                 
-                                if orig_data_idx < 0:
+                                if original_idx < 0:
                                     # NEUE EINGEFÜGTE ZEILE - muss erstellt werden
                                     if template_row is not None:
                                         import copy
                                         new_row_elem = copy.deepcopy(template_row)
                                         new_row_elem.set('r', str(new_excel_row))
                                         
-                                        # Alle Zellen umnummerieren und Werte setzen
+                                        # Alle Zellen umnummerieren und Werte leeren
                                         cells = new_row_elem.findall('main:c', ns)
                                         for cell in cells:
                                             old_ref = cell.get('r')
@@ -2329,10 +2500,17 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                         new_rows.append((new_excel_row, new_row_elem))
                                         sys.stderr.write(f"[ZIP-ANSATZ] Neue Zeile {new_excel_row} erstellt\n")
                                 else:
-                                    orig_excel_row = orig_data_idx + 2  # Quell-Zeile mit der Formatierung
+                                    # original_idx ist bereits der Original-Index!
+                                    orig_excel_row = original_idx + 2  # Original Excel-Zeile
+                                    
+                                    # Debug für erste 5 Zeilen
+                                    if new_data_idx < 5:
+                                        sys.stderr.write(f"[ZIP-ANSATZ] Mapping: neue Pos {new_data_idx} (Excel {new_excel_row}) <- original {original_idx} (Excel {orig_excel_row})\n")
                                     
                                     if orig_excel_row in row_dict:
-                                        row_elem = row_dict[orig_excel_row]
+                                        # WICHTIG: deepcopy machen, damit das Original nicht modifiziert wird!
+                                        import copy
+                                        row_elem = copy.deepcopy(row_dict[orig_excel_row])
                                         
                                         # Zeile umnummerieren
                                         row_elem.set('r', str(new_excel_row))
@@ -2342,13 +2520,14 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                         for cell in cells:
                                             old_ref = cell.get('r')
                                             if old_ref:
-                                                # Extrahiere Spalte und ersetze Zeile
                                                 col_match = re.match(r'([A-Z]+)\d+', old_ref)
                                                 if col_match:
                                                     col = col_match.group(1)
                                                     cell.set('r', f"{col}{new_excel_row}")
                                         
                                         new_rows.append((new_excel_row, row_elem))
+                                    else:
+                                        sys.stderr.write(f"[ZIP-ANSATZ] WARNUNG: Zeile {orig_excel_row} nicht gefunden für Position {new_excel_row}\n")
                             
                             # Alle alten Zeilen entfernen
                             for row_elem in list(sheet_data):
@@ -2360,6 +2539,30 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                 sheet_data.append(row_elem)
                             
                             sys.stderr.write(f"[ZIP-ANSATZ] {len(new_rows)} Zeilen neu angeordnet\n")
+                        
+                        # ===== HIDDEN ROWS: Versteckte Zeilen im XML setzen =====
+                        # hidden_rows enthält 0-basierte Indizes, Excel-Zeilen sind 1-basiert (+2 für Header)
+                        if hidden_rows:
+                            sys.stderr.write(f"[ZIP-ANSATZ] Verstecke Zeilen: {hidden_rows}\n")
+                            
+                            # Finde oder erstelle sheetFormatPr Element
+                            sheet_format_pr = sheet_tree.find('.//main:sheetFormatPr', ns)
+                            
+                            # Für jeden hidden row, setze das hidden-Attribut in der row
+                            hidden_set = set(hidden_rows)
+                            if sheet_data is not None:
+                                rows = sheet_data.findall('main:row', ns)
+                                for row_elem in rows:
+                                    row_num = int(row_elem.get('r'))
+                                    row_idx = row_num - 2  # 0-basierter Index (ohne Header)
+                                    
+                                    if row_idx in hidden_set:
+                                        row_elem.set('hidden', '1')
+                                        sys.stderr.write(f"[ZIP-ANSATZ] Zeile {row_num} (idx={row_idx}) versteckt\n")
+                                    else:
+                                        # Sicherstellen dass nicht-versteckte Zeilen hidden=0 haben
+                                        if row_elem.get('hidden') == '1':
+                                            row_elem.set('hidden', '0')
                         
                         # Speichere modifizierte Sheet-XML
                         new_sheet_xml = etree.tostring(sheet_tree, xml_declaration=True, encoding='UTF-8', standalone=True)

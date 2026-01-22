@@ -8098,6 +8098,27 @@
             // WICHTIG: Strukturelle Änderung markieren für Export (Full Rewrite nötig)
             explorerState.editedCells.set('_rowInserted', true);
             
+            // Tracke eingefügte Zeilen separat (analog zu _columnInserted)
+            const existingInsert = explorerState.editedCells.get('_insertedRowInfo');
+            if (existingInsert && existingInsert.operations) {
+                // Füge neue Operation hinzu
+                existingInsert.operations.push({
+                    position: insertIndex,  // 0-basiert
+                    count: 1
+                });
+                existingInsert.totalCount = (existingInsert.totalCount || 0) + 1;
+                explorerState.editedCells.set('_insertedRowInfo', existingInsert);
+            } else {
+                // Neue insertedRowInfo mit korrektem Format
+                explorerState.editedCells.set('_insertedRowInfo', { 
+                    operations: [{
+                        position: insertIndex,  // 0-basiert
+                        count: 1
+                    }],
+                    totalCount: 1
+                });
+            }
+            
             // UI aktualisieren
             filterExplorerData();
             showFloatingStatus(t('rowInserted'));
@@ -8221,6 +8242,32 @@
             
             // rowMapping aktualisieren - trackt welche Original-Excel-Zeile an welcher Position ist
             // Analog zu _columnDeleted bei Spalten
+            
+            // WICHTIG: Zuerst den Original-Index erfassen BEVOR wir rowMapping ändern
+            let originalRowIndex;
+            if (explorerState.rowMapping && explorerState.rowMapping.length > rowIndex) {
+                originalRowIndex = explorerState.rowMapping[rowIndex];
+            } else {
+                // Ohne Mapping ist der aktuelle Index = Original-Index
+                originalRowIndex = rowIndex;
+            }
+            
+            // Tracke gelöschte Original-Zeilen (analog zu _columnDeleted)
+            const existingDeleted = explorerState.editedCells.get('_deletedRowIndices');
+            let deletedOriginalIndices = [];
+            if (existingDeleted && Array.isArray(existingDeleted.originalIndices)) {
+                deletedOriginalIndices = existingDeleted.originalIndices.slice();
+            }
+            // -1 = eingefügte Zeile, diese gibt es nicht im Original
+            if (originalRowIndex >= 0) {
+                deletedOriginalIndices.push(originalRowIndex);
+            }
+            explorerState.editedCells.set('_deletedRowIndices', { 
+                originalIndices: deletedOriginalIndices,  // Array der ORIGINAL-Zeilen-Indices (0-basiert)
+                count: deletedOriginalIndices.length
+            });
+            
+            // rowMapping aktualisieren
             if (explorerState.rowMapping && explorerState.rowMapping.length > 0) {
                 // Bestehendes Mapping: Element an rowIndex entfernen
                 const newRowMapping = [...explorerState.rowMapping];
@@ -12178,6 +12225,35 @@
             // Markierung, dass etwas gelöscht wurde
             explorerState.editedCells.set('_rowDeleted', true);
             
+            // WICHTIG: Erfasse Original-Indizes BEVOR wir rowMapping ändern (analog zu _columnDeleted)
+            const existingDeleted = explorerState.editedCells.get('_deletedRowIndices');
+            let deletedOriginalIndices = [];
+            if (existingDeleted && Array.isArray(existingDeleted.originalIndices)) {
+                deletedOriginalIndices = existingDeleted.originalIndices.slice();
+            }
+            
+            // Erfasse Original-Indizes aller ausgewählten Zeilen
+            const currentMapping = explorerState.rowMapping && explorerState.rowMapping.length > 0 
+                ? explorerState.rowMapping 
+                : explorerState.data.map((_, i) => i); // Ohne Mapping: Index = Original
+            // WICHTIG: Wir iterieren in aufsteigender Reihenfolge für korrektes Mapping
+            const sortedAsc = [...selectedIndices].sort((a, b) => a - b);
+            for (const idx of sortedAsc) {
+                // Benutze das Mapping VOR der Löschung
+                // Beachte: Wenn bereits Zeilen früher in dieser Sitzung gelöscht wurden,
+                // könnte das Mapping bereits angepasst sein
+                const originalIdx = currentMapping[idx];
+                // -1 = eingefügte Zeile, die gibt es nicht im Original
+                if (originalIdx !== undefined && originalIdx >= 0) {
+                    deletedOriginalIndices.push(originalIdx);
+                }
+            }
+            
+            explorerState.editedCells.set('_deletedRowIndices', { 
+                originalIndices: deletedOriginalIndices,  // Array der ORIGINAL-Zeilen-Indices (0-basiert)
+                count: deletedOriginalIndices.length
+            });
+            
             // HiddenRows anpassen
             const newHiddenRows = new Set();
             const sortedDeletedAsc = selectedIndices.slice().sort((a, b) => a - b);
@@ -12674,19 +12750,29 @@
                             isFiltered;  // Filter = strukturelle Änderung (nur gefilterte Zeilen exportieren)
                         
                         // HiddenRows aus dem aktuellen State ermitteln
-                        // Bei strukturellen Änderungen: Index in filteredData (da Zeilen umgeordnet werden)
-                        // Bei Zell-Edits (ohne Filter): originalIndex (da Zeilen an Ort und Stelle bleiben)
+                        // WICHTIG: hiddenRows enthält Indizes relativ zu explorerState.data (nicht filteredData!)
+                        // filteredData enthält die versteckten Zeilen NICHT mehr, deshalb müssen wir data verwenden
                         let currentHiddenRows = [];
-                        if (hasStructuralChanges) {
-                            // Bei strukturellen Änderungen: Index relativ zu filteredData
-                            explorerState.filteredData.forEach((item, idx) => {
-                                if (explorerState.hiddenRows && explorerState.hiddenRows.has(item.originalIndex)) {
-                                    currentHiddenRows.push(idx);
-                                }
-                            });
-                        } else {
-                            // Bei Zell-Edits: Direkt die originalIndex-Werte verwenden
-                            currentHiddenRows = Array.from(explorerState.hiddenRows || []);
+                        if (explorerState.hiddenRows && explorerState.hiddenRows.size > 0) {
+                            // Bei strukturellen Änderungen: Index in der Export-Daten-Reihenfolge
+                            // Wir müssen den Index finden, den die versteckte Zeile im Export haben wird
+                            if (hasStructuralChanges) {
+                                // Bei strukturellen Änderungen exportieren wir filteredData
+                                // Aber versteckte Zeilen sind nicht in filteredData!
+                                // Wir müssen die Zeilen aus data nehmen und an der richtigen Position einfügen
+                                
+                                // Erstelle Mapping: originalIndex -> Position in Export-Daten
+                                // Die Export-Daten sind data[] ohne die gelöschten Zeilen (die sind schon weg)
+                                // Versteckte Zeilen SOLLEN im Export sein (nur hidden-Attribut setzen)
+                                explorerState.data.forEach((row, idx) => {
+                                    if (explorerState.hiddenRows.has(idx)) {
+                                        currentHiddenRows.push(idx);
+                                    }
+                                });
+                            } else {
+                                // Bei Zell-Edits: Direkt die originalIndex-Werte verwenden
+                                currentHiddenRows = Array.from(explorerState.hiddenRows);
+                            }
                         }
                         
                         // Versteckte Spalten berechnen
@@ -12697,7 +12783,9 @@
                         // STRATEGIE: Bei strukturellen Änderungen FULL REWRITE
                         if (hasStructuralChanges) {
                             // Strukturelle Änderung: FULL REWRITE
-                            let allData = explorerState.filteredData.map(item => item.row);
+                            // WICHTIG: Verwende data statt filteredData, damit versteckte Zeilen auch exportiert werden!
+                            // (filteredData enthält versteckte Zeilen nicht)
+                            let allData = explorerState.data;
                             
                             let exportHeaders = [...explorerState.headers];
                             // WICHTIG: cellStyles werden NICHT mitgesendet!
@@ -12852,6 +12940,35 @@
                                 ? [...explorerState.columnOrder]
                                 : null;
                             
+                            // ========== ZEILEN-PARAMETER (analog zu Spalten) ==========
+                            // Hole die Indizes der gelöschten Zeilen falls vorhanden
+                            const rowDeletedInfo = explorerState.editedCells.get('_deletedRowIndices');
+                            let deletedRowIndices = [];
+                            if (rowDeletedInfo && typeof rowDeletedInfo === 'object') {
+                                if ('originalIndices' in rowDeletedInfo && Array.isArray(rowDeletedInfo.originalIndices)) {
+                                    deletedRowIndices = rowDeletedInfo.originalIndices;
+                                }
+                            }
+                            
+                            // Hole Info über eingefügte Zeilen falls vorhanden
+                            const rowInsertedInfo = explorerState.editedCells.get('_insertedRowInfo');
+                            let insertedRowInfo = null;
+                            if (rowInsertedInfo && typeof rowInsertedInfo === 'object') {
+                                if (rowInsertedInfo.operations) {
+                                    insertedRowInfo = {
+                                        operations: rowInsertedInfo.operations
+                                    };
+                                }
+                            }
+                            
+                            // Prüfe ob Zeilen verschoben wurden
+                            const hasRowMoves2 = explorerState.editedCells.has('_rowsReordered');
+                            // rowOrder: nur senden wenn Zeilen verschoben wurden (nicht bei nur löschen/einfügen)
+                            let rowOrder = hasRowMoves2 && explorerState.rowMapping && explorerState.rowMapping.length > 0 
+                                ? [...explorerState.rowMapping]
+                                : null;
+                            // ========== ENDE ZEILEN-PARAMETER ==========
+                            
                             // Wenn Spalten verschoben wurden, ordne die Daten im Frontend um
                             // WICHTIG: columnOrder wird trotzdem an Python gesendet,
                             // damit Python die Formatierung in der Excel-Datei umordnen kann!
@@ -12980,16 +13097,21 @@
                                 autoFilterRange: explorerState.autoFilterRange,
                                 fullRewrite: true,
                                 structuralChange: true,  // Signalisiert dass Styles komplett zurückgesetzt werden müssen
+                                // Spalten-Operationen
                                 deletedColumnIndices: deletedColumnIndices,  // Array der gelöschten Spalten für spliceColumns
                                 insertedColumnInfo: insertedColumnInfo,  // Info über eingefügte Spalten für spliceColumns
                                 columnOrder: columnOrder,  // Neue Spaltenreihenfolge (null = keine Änderung oder bereits angewendet)
+                                // Zeilen-Operationen (NEU - analog zu Spalten)
+                                deletedRowIndices: deletedRowIndices,  // Array der gelöschten Zeilen-Original-Indizes
+                                insertedRowInfo: insertedRowInfo,  // Info über eingefügte Zeilen
+                                rowOrder: rowOrder,  // Zeilen-Reihenfolge bei Verschiebung
                                 affectedRows: affectedRowsArray,  // Betroffene Zeilen bei Row-Move für Style-Reset
-                                // rowMapping wird gesendet bei: Filter, Row-Move ODER Row-Deleted
+                                // rowMapping wird gesendet bei: Filter, Row-Move ODER Row-Deleted (Legacy)
                                 rowMapping: filterRowMapping || (explorerState.rowMapping && explorerState.rowMapping.length > 0 ? explorerState.rowMapping : null)
                             };
                             // Prüfe ob rowMapping gesendet wird
                             const hasRowMapping = !!(filterRowMapping || (explorerState.rowMapping && explorerState.rowMapping.length > 0));
-                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, insertedColumnInfo: ${JSON.stringify(insertedColumnInfo)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${hasRowMapping ? 'ja' : 'nein'}, AutoFilter: ${explorerState.autoFilterRange || 'none'})`);
+                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, insertedColumnInfo: ${JSON.stringify(insertedColumnInfo)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, deletedRowIndices: ${JSON.stringify(deletedRowIndices)}, insertedRowInfo: ${JSON.stringify(insertedRowInfo)}, rowOrder: ${rowOrder ? 'angepasst' : 'nein'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${hasRowMapping ? 'ja' : 'nein'}, AutoFilter: ${explorerState.autoFilterRange || 'none'})`);
                         } else {
                             // Nur Zell-Edits: changedCells
                             const changedCells = {};

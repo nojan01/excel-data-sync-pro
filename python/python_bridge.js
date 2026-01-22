@@ -303,7 +303,10 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                     rowHighlights: sheet.rowHighlights || {},
                     deletedColumns: sheet.deletedColumnIndices || [],
                     insertedColumns: sheet.insertedColumnInfo || null,
-                    deletedRows: sheet.deletedRowIndices || [],
+                    // Zeilen-Operationen (NEU - analog zu Spalten)
+                    deletedRowIndices: sheet.deletedRowIndices || [],
+                    insertedRowInfo: sheet.insertedRowInfo || null,
+                    rowOrder: sheet.rowOrder || null,
                     hiddenColumns: sheet.hiddenColumns || [],
                     hiddenRows: sheet.hiddenRows || [],
                     rowMapping: sheet.rowMapping || null,
