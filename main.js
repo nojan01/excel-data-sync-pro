@@ -2042,7 +2042,7 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
 // - Theme-Farben werden korrekt behandelt
 // - Identisches Verhalten wie MS Excel
 // ======================================================================
-ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, targetPath, sheets, password = null, sourcePassword = null }) => {
+ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, originalSourcePath, targetPath, sheets, password = null, sourcePassword = null }) => {
     // Sicherheitsprüfung: Pfade validieren
     if (!isValidFilePath(sourcePath) || !isValidFilePath(targetPath)) {
         return { success: false, error: 'Ungültiger Dateipfad' };
@@ -2052,7 +2052,7 @@ ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, target
         const startTime = Date.now();
         
         // Export mit Python/openpyxl durchführen
-        const result = await pythonBridge.exportMultipleSheets(sourcePath, targetPath, sheets, { password, sourcePassword });
+        const result = await pythonBridge.exportMultipleSheets(sourcePath, targetPath, sheets, { password, sourcePassword, originalSourcePath });
         
         const duration = Date.now() - startTime;
         

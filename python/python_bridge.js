@@ -270,6 +270,9 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
     let hasError = false;
     let errorMessage = '';
     
+    // Original-Datei für Style-Wiederherstellung (falls Markierungen entfernt werden)
+    const originalSourcePath = options.originalSourcePath || sourcePath;
+    
     // Zuerst: Kopiere die Original-Datei zum Ziel (falls unterschiedlich)
     // So bleiben alle Sheets, Formatierungen, etc. erhalten
     if (sourcePath !== targetPath) {
@@ -293,7 +296,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
             const config = {
                 filePath: targetPath,  // Jetzt immer vom Ziel lesen (wir haben es kopiert)
                 outputPath: targetPath,
-                originalPath: sourcePath,  // Original-Pfad für restore_table_xml
+                originalPath: originalSourcePath,  // Ursprüngliche Datei für Style-Wiederherstellung
                 sheetName: sheet.sheetName,
                 changes: {
                     headers: sheet.headers || [],

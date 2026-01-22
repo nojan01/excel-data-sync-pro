@@ -6794,6 +6794,7 @@
 
         const explorerState = {
             filePath: null,
+            originalFilePath: null,  // Ursprüngliche Datei (wird nie durch Export überschrieben)
             fileName: null,
             sheets: [],
             selectedSheet: null,
@@ -10172,6 +10173,7 @@
             explorerState.rowHighlights.clear();
             
             explorerState.filePath = filePath;
+            explorerState.originalFilePath = filePath;  // Ursprüngliche Datei merken (für Export)
             explorerState.fileName = result.fileName;
             explorerState.sheets = result.sheets;
             explorerState.hasPivotTables = result.hasPivotTables || false;
@@ -13046,39 +13048,23 @@
                             }
                             
                             // RowHighlights für Export vorbereiten
-                            // NUR NEUE Markierungen senden (die nicht in originalRowHighlights waren)
-                            // Bestehende Markierungen übernimmt xlwings automatisch aus der Datei
+                            // ALLE aktiven Markierungen senden (weil wir von der Original-Datei ausgehen)
                             const exportRowHighlights = {};
                             explorerState.rowHighlights.forEach((color, originalIndex) => {
-                                // Prüfe ob dies eine NEUE Markierung ist (nicht in originalRowHighlights)
-                                const isNewHighlight = !explorerState.originalRowHighlights.has(originalIndex);
-                                if (isNewHighlight) {
-                                    // Finde den neuen Index in filteredData
-                                    const newIdx = explorerState.filteredData.findIndex(item => item.originalIndex === originalIndex);
-                                    if (newIdx !== -1) {
-                                        exportRowHighlights[newIdx] = color;
-                                    }
+                                // Finde den neuen Index in filteredData
+                                const newIdx = explorerState.filteredData.findIndex(item => item.originalIndex === originalIndex);
+                                if (newIdx !== -1) {
+                                    exportRowHighlights[newIdx] = color;
                                 }
                             });
                             
                             if (Object.keys(exportRowHighlights).length > 0) {
-                                console.log(`[Export] ${Object.keys(exportRowHighlights).length} NEUE Zeilen-Markierungen werden gesendet`);
+                                console.log(`[Export] ${Object.keys(exportRowHighlights).length} Zeilen-Markierungen werden gesendet`);
                             }
                             
-                            // ClearedRowHighlights: Zeilen die ursprünglich markiert waren, jetzt aber nicht mehr
-                            const clearedRowHighlights = [];
-                            explorerState.originalRowHighlights.forEach((color, originalIndex) => {
-                                // Wenn diese Zeile nicht mehr in rowHighlights ist, wurde sie entfernt
-                                if (!explorerState.rowHighlights.has(originalIndex)) {
-                                    const newIdx = explorerState.filteredData.findIndex(item => item.originalIndex === originalIndex);
-                                    if (newIdx !== -1) {
-                                        clearedRowHighlights.push(newIdx);
-                                    }
-                                }
-                            });
-                            if (clearedRowHighlights.length > 0) {
-                                console.log(`[Export] ${clearedRowHighlights.length} entfernte Zeilen-Markierungen: ${clearedRowHighlights.join(', ')}`);
-                            }
+                            // ClearedRowHighlights: Nicht mehr nötig, da wir immer von der Original-Datei ausgehen
+                            // Die Original-Datei hat keine Markierungen, also werden nur aktive Markierungen angewendet
+                            const clearedRowHighlights = [];  // Immer leer lassen
                             
                             sheetData = {
                                 sheetName: sheetName,
@@ -13091,7 +13077,7 @@
                                 cellFormulas: exportCellFormulas,
                                 cellHyperlinks: exportCellHyperlinks,
                                 richTextCells: exportRichTextCells,
-                                // Nur NEUE Markierungen senden - bestehende übernimmt xlwings aus der Datei
+                                // ALLE aktiven Markierungen senden (Original-Datei hat keine)
                                 rowHighlights: exportRowHighlights,
                                 clearedRowHighlights: clearedRowHighlights,
                                 autoFilterRange: explorerState.autoFilterRange,
@@ -13214,6 +13200,7 @@
                 let result;
                 result = await window.electronAPI.pythonExportMultipleSheets({
                     sourcePath: explorerState.filePath,
+                    originalSourcePath: explorerState.originalFilePath,  // Ursprüngliche Datei für Style-Wiederherstellung
                     targetPath: savePath,
                     sheets: sheetsToExport,
                     password: exportPassword,

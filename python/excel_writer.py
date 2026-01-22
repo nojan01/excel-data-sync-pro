@@ -1158,6 +1158,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         cleared_row_highlights = changes.get('clearedRowHighlights', [])
         affected_rows = changes.get('affectedRows', [])
         
+        # DEBUG: Zeige Highlight-Status
+        sys.stderr.write(f"[DEBUG-HIGHLIGHTS] row_highlights={bool(row_highlights)}, cleared_row_highlights={cleared_row_highlights}\n")
+        
         # Zeilen-Operationen (analog zu Spalten-Operationen)
         deleted_rows = changes.get('deletedRowIndices', [])
         inserted_rows = changes.get('insertedRowInfo')
@@ -1216,7 +1219,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             from openpyxl.worksheet.table import TableColumn
             from openpyxl.utils.cell import range_boundaries
             from openpyxl.cell.cell import MergedCell
-            import sys
             
             sys.stderr.write(f"[PIPELINE] Starte: deleted_rows={deleted_rows}, row_order={row_order is not None}, hidden_rows={hidden_rows}, deleted_columns={deleted_columns}, inserted_columns={inserted_columns is not None}, column_order={column_order is not None}\n")
             
@@ -2096,7 +2098,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         # Wenn Excel installiert ist, nutzen wir xlwings für perfekten CF-Erhalt.
         # =====================================================================
         if structural_change or full_rewrite:
-            import sys
             sys.stderr.write(f"[FALL 2] structural_change={structural_change}, full_rewrite={full_rewrite}, row_mapping={'ja' if row_mapping else 'nein'}\n")
             sys.stderr.write(f"[FALL 2] file_path={file_path}\n")
             sys.stderr.write(f"[FALL 2] output_path={output_path}\n")
@@ -2159,11 +2160,20 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             # Wenn Zeilen gelöscht oder eingefügt wurden (row_mapping vorhanden), nutzen wir
             # den shutil-Ansatz: Original kopieren, dann NUR Zeilenreihenfolge ändern.
             # Das erhält ALLE Formatierungen perfekt!
+            # AUCH für row_highlights und cleared_row_highlights (um Tables nicht zu beschädigen)
             # ================================================================
-            if row_mapping and len(row_mapping) > 0:
-                identity_mapping = list(range(len(row_mapping)))
+            if (row_mapping and len(row_mapping) > 0) or row_highlights or cleared_row_highlights:
                 current_max_row = ws.max_row
-                rows_changed = current_max_row - 1 - len(row_mapping)  # -1 für Header (positiv=gelöscht, negativ=eingefügt)
+                
+                # Wenn row_mapping vorhanden, nutze es; sonst erstelle identity_mapping
+                if row_mapping and len(row_mapping) > 0:
+                    identity_mapping = list(range(len(row_mapping)))
+                    rows_changed = current_max_row - 1 - len(row_mapping)  # -1 für Header (positiv=gelöscht, negativ=eingefügt)
+                else:
+                    # Nur Highlights ohne Zeilenänderung
+                    identity_mapping = list(range(current_max_row - 1))  # -1 für Header
+                    row_mapping = identity_mapping.copy()
+                    rows_changed = 0
                 
                 # DEBUG: Zeige alle relevanten Variablen
                 sys.stderr.write(f"[ZIP-DEBUG] current_max_row (ws.max_row)={current_max_row}\n")
@@ -2171,12 +2181,15 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 sys.stderr.write(f"[ZIP-DEBUG] rows_changed={rows_changed}\n")
                 sys.stderr.write(f"[ZIP-DEBUG] deleted_rows aus Frontend={deleted_rows}\n")
                 sys.stderr.write(f"[ZIP-DEBUG] row_mapping[:10]={row_mapping[:10]}\n")
+                sys.stderr.write(f"[ZIP-DEBUG] row_highlights={bool(row_highlights)}, cleared_row_highlights={bool(cleared_row_highlights)}\n")
                 
                 # ZIP-Ansatz aktivieren wenn:
                 # - Zeilen gelöscht wurden (rows_changed > 0)
                 # - Zeilen eingefügt wurden (rows_changed < 0)
                 # - Zeilen umsortiert wurden (row_mapping != identity_mapping)
-                if row_mapping != identity_mapping or rows_changed != 0:
+                # - Row Highlights vorhanden (um Tables nicht zu beschädigen)
+                # - Cleared Row Highlights vorhanden (um Tables nicht zu beschädigen)
+                if row_mapping != identity_mapping or rows_changed != 0 or row_highlights or cleared_row_highlights:
                     import shutil
                     import tempfile
                     import zipfile
@@ -2564,6 +2577,218 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                         if row_elem.get('hidden') == '1':
                                             row_elem.set('hidden', '0')
                         
+                        # ===== ROW HIGHLIGHTS: Zeilen-Markierungen im XML setzen =====
+                        # Dies erfordert Manipulation von styles.xml UND sheet.xml
+                        modified_styles_xml = None
+                        if row_highlights and sheet_data is not None:
+                            sys.stderr.write(f"[ZIP-ANSATZ] Row Highlights: {row_highlights}\n")
+                            
+                            highlight_colors = {
+                                'green': 'FF90EE90',
+                                'yellow': 'FFFFFF00',
+                                'orange': 'FFFFA500',
+                                'red': 'FFFF6B6B',
+                                'blue': 'FF87CEEB',
+                                'purple': 'FFDDA0DD'
+                            }
+                            
+                            try:
+                                # styles.xml lesen
+                                with zipfile.ZipFile(output_path, 'r') as zf:
+                                    styles_xml = zf.read('xl/styles.xml')
+                                
+                                styles_tree = etree.fromstring(styles_xml)
+                                styles_ns = {'main': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                                
+                                # Finde fills und cellXfs Elemente
+                                fills = styles_tree.find('.//main:fills', styles_ns)
+                                cell_xfs = styles_tree.find('.//main:cellXfs', styles_ns)
+                                
+                                if fills is not None and cell_xfs is not None:
+                                    # Aktueller fills/xfs count
+                                    fill_count = int(fills.get('count', '0'))
+                                    xf_count = int(cell_xfs.get('count', '0'))
+                                    
+                                    # Cache für bereits erstellte Styles: (original_style_idx, color) -> new_style_idx
+                                    style_cache = {}
+                                    
+                                    # Mapping: Farbe -> neuer Fill-Index
+                                    color_to_fill_idx = {}
+                                    
+                                    # Erst alle benötigten Fills erstellen
+                                    for color_name in set(row_highlights.values()):
+                                        if isinstance(color_name, str) and color_name.startswith('#'):
+                                            argb = 'FF' + color_name[1:].upper()
+                                        else:
+                                            argb = highlight_colors.get(color_name, 'FFFFFF00')
+                                        
+                                        # Neuen Fill erstellen
+                                        new_fill = etree.SubElement(fills, '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}fill')
+                                        pattern_fill = etree.SubElement(new_fill, '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}patternFill')
+                                        pattern_fill.set('patternType', 'solid')
+                                        fg_color = etree.SubElement(pattern_fill, '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}fgColor')
+                                        fg_color.set('rgb', argb)
+                                        bg_color = etree.SubElement(pattern_fill, '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}bgColor')
+                                        bg_color.set('indexed', '64')
+                                        
+                                        color_to_fill_idx[color_name] = fill_count
+                                        fill_count += 1
+                                    
+                                    fills.set('count', str(fill_count))
+                                    
+                                    # Alle existierenden xf-Elemente als Liste für schnellen Zugriff
+                                    xf_list = cell_xfs.findall('main:xf', styles_ns)
+                                    
+                                    # Hilfsfunktion: Style mit neuem Fill erstellen (andere Attribute beibehalten)
+                                    def get_or_create_style_with_fill(orig_style_idx, new_fill_idx):
+                                        cache_key = (orig_style_idx, new_fill_idx)
+                                        if cache_key in style_cache:
+                                            return style_cache[cache_key]
+                                        
+                                        nonlocal xf_count
+                                        
+                                        # Original xf kopieren oder neues erstellen
+                                        if orig_style_idx is not None and 0 <= orig_style_idx < len(xf_list):
+                                            orig_xf = xf_list[orig_style_idx]
+                                            # Kopiere alle Attribute
+                                            new_xf = etree.SubElement(cell_xfs, '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}xf')
+                                            for attr, val in orig_xf.attrib.items():
+                                                new_xf.set(attr, val)
+                                            # Kopiere Kind-Elemente (alignment etc.)
+                                            for child in orig_xf:
+                                                new_xf.append(copy.deepcopy(child))
+                                        else:
+                                            # Kein Original-Style, neuen erstellen
+                                            new_xf = etree.SubElement(cell_xfs, '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}xf')
+                                            new_xf.set('numFmtId', '0')
+                                            new_xf.set('fontId', '0')
+                                            new_xf.set('borderId', '0')
+                                        
+                                        # Fill-ID ändern
+                                        new_xf.set('fillId', str(new_fill_idx))
+                                        new_xf.set('applyFill', '1')
+                                        
+                                        new_style_idx = xf_count
+                                        xf_count += 1
+                                        style_cache[cache_key] = new_style_idx
+                                        return new_style_idx
+                                    
+                                    import copy
+                                    
+                                    # Zellen mit Highlights markieren
+                                    rows = sheet_data.findall('main:row', ns)
+                                    for row_idx_str, color in row_highlights.items():
+                                        row_idx = int(row_idx_str)
+                                        excel_row = row_idx + 2  # +2 für 1-basiert und Header
+                                        new_fill_idx = color_to_fill_idx.get(color)
+                                        
+                                        if new_fill_idx is not None:
+                                            # Finde die Zeile
+                                            for row_elem in rows:
+                                                if int(row_elem.get('r')) == excel_row:
+                                                    # Alle Zellen in der Zeile markieren
+                                                    cells = row_elem.findall('main:c', ns)
+                                                    for cell in cells:
+                                                        # Existierenden Style-Index lesen
+                                                        orig_style_str = cell.get('s')
+                                                        orig_style_idx = int(orig_style_str) if orig_style_str else None
+                                                        
+                                                        # Neuen Style mit Highlight-Fill erstellen (behält andere Formatierung)
+                                                        new_style_idx = get_or_create_style_with_fill(orig_style_idx, new_fill_idx)
+                                                        cell.set('s', str(new_style_idx))
+                                                    
+                                                    sys.stderr.write(f"[ZIP-ANSATZ] Zeile {excel_row} markiert ({len(cells)} Zellen)\n")
+                                                    break
+                                    
+                                    # xf count aktualisieren
+                                    cell_xfs.set('count', str(xf_count))
+                                    
+                                    modified_styles_xml = etree.tostring(styles_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+                                    
+                            except Exception as e:
+                                sys.stderr.write(f"[ZIP-ANSATZ] Row Highlights Fehler: {e}\n")
+                                import traceback
+                                traceback.print_exc()
+                        
+                        # ===== CLEARED ROW HIGHLIGHTS: Markierungen entfernen =====
+                        # Setze die Zellen auf einen Style ohne Fill (oder den Original-Style)
+                        if cleared_row_highlights and sheet_data is not None:
+                            sys.stderr.write(f"[ZIP-ANSATZ] Entferne Markierungen für Zeilen: {cleared_row_highlights}\n")
+                            
+                            try:
+                                # Wenn wir styles.xml noch nicht geladen haben, jetzt laden
+                                if modified_styles_xml is None:
+                                    with zipfile.ZipFile(output_path, 'r') as zf:
+                                        styles_xml = zf.read('xl/styles.xml')
+                                    styles_tree = etree.fromstring(styles_xml)
+                                    styles_ns = {'main': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+                                    fills = styles_tree.find('.//main:fills', styles_ns)
+                                    cell_xfs = styles_tree.find('.//main:cellXfs', styles_ns)
+                                    xf_list = cell_xfs.findall('main:xf', styles_ns) if cell_xfs is not None else []
+                                    xf_count = int(cell_xfs.get('count', '0')) if cell_xfs is not None else 0
+                                    style_cache = {}
+                                else:
+                                    # styles_tree, cell_xfs etc. existieren noch von oben
+                                    pass
+                                
+                                if cell_xfs is not None:
+                                    import copy
+                                    xf_list = cell_xfs.findall('main:xf', styles_ns)
+                                    xf_count = int(cell_xfs.get('count', '0'))
+                                    
+                                    # Cache für Styles ohne Fill
+                                    no_fill_style_cache = {}
+                                    
+                                    def get_or_create_style_without_fill(orig_style_idx):
+                                        if orig_style_idx in no_fill_style_cache:
+                                            return no_fill_style_cache[orig_style_idx]
+                                        
+                                        nonlocal xf_count
+                                        
+                                        if orig_style_idx is not None and 0 <= orig_style_idx < len(xf_list):
+                                            orig_xf = xf_list[orig_style_idx]
+                                            # Kopiere alle Attribute
+                                            new_xf = etree.SubElement(cell_xfs, '{http://schemas.openxmlformats.org/spreadsheetml/2006/main}xf')
+                                            for attr, val in orig_xf.attrib.items():
+                                                new_xf.set(attr, val)
+                                            # Kopiere Kind-Elemente
+                                            for child in orig_xf:
+                                                new_xf.append(copy.deepcopy(child))
+                                            # Fill auf 0 (keine Füllung) setzen
+                                            new_xf.set('fillId', '0')
+                                            if new_xf.get('applyFill'):
+                                                new_xf.attrib.pop('applyFill', None)
+                                        else:
+                                            # Kein Original-Style, Standard verwenden
+                                            return 0  # Default-Style
+                                        
+                                        new_style_idx = xf_count
+                                        xf_count += 1
+                                        no_fill_style_cache[orig_style_idx] = new_style_idx
+                                        return new_style_idx
+                                    
+                                    rows = sheet_data.findall('main:row', ns)
+                                    for row_idx in cleared_row_highlights:
+                                        excel_row = row_idx + 2
+                                        for row_elem in rows:
+                                            if int(row_elem.get('r')) == excel_row:
+                                                cells = row_elem.findall('main:c', ns)
+                                                for cell in cells:
+                                                    orig_style_str = cell.get('s')
+                                                    orig_style_idx = int(orig_style_str) if orig_style_str else None
+                                                    new_style_idx = get_or_create_style_without_fill(orig_style_idx)
+                                                    cell.set('s', str(new_style_idx))
+                                                sys.stderr.write(f"[ZIP-ANSATZ] Markierung entfernt für Zeile {excel_row}\n")
+                                                break
+                                    
+                                    cell_xfs.set('count', str(xf_count))
+                                    modified_styles_xml = etree.tostring(styles_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
+                                    
+                            except Exception as e:
+                                sys.stderr.write(f"[ZIP-ANSATZ] Cleared Row Highlights Fehler: {e}\n")
+                                import traceback
+                                traceback.print_exc()
+                        
                         # Speichere modifizierte Sheet-XML
                         new_sheet_xml = etree.tostring(sheet_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
                         
@@ -2611,6 +2836,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                 for item in zin.infolist():
                                     if item.filename == sheet_xml_path:
                                         zout.writestr(item, new_sheet_xml)
+                                    elif item.filename == 'xl/styles.xml' and modified_styles_xml is not None:
+                                        zout.writestr(item, modified_styles_xml)
                                     elif item.filename in modified_tables:
                                         zout.writestr(item, modified_tables[item.filename])
                                     else:
@@ -2619,6 +2846,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         shutil.move(temp_zip, output_path)
                         
                         sys.stderr.write(f"[ZIP-ANSATZ] Erfolgreich gespeichert\n")
+                        
                         return {
                             'success': True,
                             'outputPath': output_path,
