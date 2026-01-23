@@ -3266,6 +3266,19 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 _apply_row_highlights(ws, row_highlights, len(headers))
             
             # ================================================================
+            # SCHRITT 8.5: NUMBER FORMATS UND CELL FONTS (für Data Join)
+            # ================================================================
+            number_formats = changes.get('numberFormats', {})
+            cell_fonts = changes.get('cellFonts', {})
+            imported_cell_styles = changes.get('cellStyles', {})
+            if number_formats:
+                _apply_number_formats(ws, number_formats)
+            if cell_fonts:
+                _apply_cell_fonts(ws, cell_fonts)
+            if imported_cell_styles:
+                _apply_imported_cell_styles(ws, imported_cell_styles)
+            
+            # ================================================================
             # SCHRITT 9: CLEARED ROW HIGHLIGHTS (Markierungen entfernen)
             # ================================================================
             if cleared_row_highlights:
@@ -3468,6 +3481,85 @@ def _clear_all_row_fills_except(ws, row_highlights):
     
     # Durchgehe alle Datenzeilen und entferne Fills die nicht Highlights sind
     max_row = ws.max_row
+
+
+def _apply_number_formats(ws, number_formats):
+    """Wendet Zahlenformate aus dem Frontend auf Zellen an"""
+    if not number_formats:
+        return
+    
+    for key, fmt in number_formats.items():
+        try:
+            parts = key.split('-')
+            if len(parts) != 2:
+                continue
+            row_idx = int(parts[0])
+            col_idx = int(parts[1])
+            cell = ws.cell(row=row_idx + 2, column=col_idx + 1)  # +2 für Header, +1 für 1-basiert
+            cell.number_format = fmt
+        except Exception:
+            pass
+
+
+def _apply_cell_fonts(ws, cell_fonts):
+    """Wendet Font-Formatierungen aus dem Frontend auf Zellen an"""
+    if not cell_fonts:
+        return
+    
+    for key, font_info in cell_fonts.items():
+        try:
+            parts = key.split('-')
+            if len(parts) != 2:
+                continue
+            row_idx = int(parts[0])
+            col_idx = int(parts[1])
+            cell = ws.cell(row=row_idx + 2, column=col_idx + 1)
+            
+            # Erstelle Font-Objekt aus font_info
+            font_kwargs = {}
+            if font_info.get('name'):
+                font_kwargs['name'] = font_info['name']
+            if font_info.get('size'):
+                font_kwargs['size'] = font_info['size']
+            if font_info.get('bold'):
+                font_kwargs['bold'] = font_info['bold']
+            if font_info.get('italic'):
+                font_kwargs['italic'] = font_info['italic']
+            if font_info.get('color'):
+                font_kwargs['color'] = font_info['color']
+            
+            if font_kwargs:
+                cell.font = Font(**font_kwargs)
+        except Exception:
+            pass
+
+
+def _apply_imported_cell_styles(ws, cell_styles):
+    """
+    Wendet Zell-Hintergrundfarben aus dem Frontend auf Zellen an.
+    Wird für importierte Spalten (Data Join) verwendet.
+    """
+    if not cell_styles:
+        return
+    
+    for key, color in cell_styles.items():
+        try:
+            parts = key.split('-')
+            if len(parts) != 2:
+                continue
+            row_idx = int(parts[0])
+            col_idx = int(parts[1])
+            cell = ws.cell(row=row_idx + 2, column=col_idx + 1)
+            
+            # Color kann #RRGGBB oder ARGB sein
+            if isinstance(color, str):
+                if color.startswith('#'):
+                    argb = hex_to_argb(color)
+                else:
+                    argb = color if len(color) == 8 else f'FF{color}'
+                cell.fill = PatternFill(start_color=argb, end_color=argb, fill_type='solid')
+        except Exception:
+            pass
     max_col = ws.max_column
     
     for excel_row in range(2, max_row + 1):  # Ab Zeile 2 (nach Header)

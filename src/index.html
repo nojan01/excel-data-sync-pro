@@ -6861,6 +6861,9 @@
             sourceSheets: [],
             sourceData: [],
             sourceHeaders: [],
+            sourceCellStyles: {},
+            sourceCellFonts: {},
+            sourceNumberFormats: {},
             selectedSourceSheet: null,
             targetKeyColumnIndex: null,
             sourceKeyColumnIndex: null,
@@ -6881,6 +6884,9 @@
             dataJoinState.sourceSheets = [];
             dataJoinState.sourceData = [];
             dataJoinState.sourceHeaders = [];
+            dataJoinState.sourceCellStyles = {};
+            dataJoinState.sourceCellFonts = {};
+            dataJoinState.sourceNumberFormats = {};
             dataJoinState.selectedSourceSheet = null;
             dataJoinState.targetKeyColumnIndex = null;
             dataJoinState.sourceKeyColumnIndex = null;
@@ -7008,6 +7014,9 @@
                 dataJoinState.selectedSourceSheet = sheetName;
                 dataJoinState.sourceHeaders = sheetResult.headers || [];
                 dataJoinState.sourceData = sheetResult.data || [];
+                dataJoinState.sourceCellStyles = sheetResult.cellStyles || {};
+                dataJoinState.sourceCellFonts = sheetResult.cellFonts || {};
+                dataJoinState.sourceNumberFormats = sheetResult.numberFormats || {};
                 
                 // Schlüsselspalten-Dropdown befüllen
                 const sourceKeySelect = elements.joinSourceKeyColumn;
@@ -7337,6 +7346,68 @@
                 explorerState.cellFormulas = shiftColumnIndices(explorerState.cellFormulas);
                 explorerState.cellHyperlinks = shiftColumnIndices(explorerState.cellHyperlinks);
                 explorerState.richTextCells = shiftColumnIndices(explorerState.richTextCells);
+                
+                // Source-Styles für die neuen Spalten übernehmen
+                // Wir müssen die Source-Zeilen-Indizes zu Target-Zeilen matchen
+                const sourceRowIndexMap = new Map(); // keyValue -> sourceRowIndex
+                dataJoinState.sourceData.forEach((row, srcIdx) => {
+                    const keyValue = String(row[sourceKeyIndex] || '').trim();
+                    if (keyValue && !sourceRowIndexMap.has(keyValue)) {
+                        sourceRowIndexMap.set(keyValue, srcIdx);
+                    }
+                });
+                
+                // Für jede Target-Zeile die Styles der gematchten Source-Zeile übernehmen
+                explorerState.data.forEach((row, targetRowIdx) => {
+                    const keyValue = String(row[currentKeyIndex] || '').trim();
+                    const sourceRowIdx = sourceRowIndexMap.get(keyValue);
+                    
+                    if (sourceRowIdx !== undefined) {
+                        // Für jede eingefügte Spalte
+                        sourceIndices.forEach((srcColIdx, i) => {
+                            const targetColIdx = actualInsertPos + i;
+                            // Source-Key (beachte: Source-Daten sind 0-basiert ohne Header)
+                            // +1 weil Header in Source Zeile 0 ist, Daten ab Zeile 1
+                            const srcStyleKey = `${sourceRowIdx + 1}-${srcColIdx}`;
+                            const targetStyleKey = `${targetRowIdx}-${targetColIdx}`;
+                            
+                            // CellStyles (Hintergrundfarbe)
+                            if (dataJoinState.sourceCellStyles[srcStyleKey]) {
+                                explorerState.cellStyles[targetStyleKey] = dataJoinState.sourceCellStyles[srcStyleKey];
+                            }
+                            
+                            // CellFonts (Schriftart)
+                            if (dataJoinState.sourceCellFonts[srcStyleKey]) {
+                                explorerState.cellFonts = explorerState.cellFonts || {};
+                                explorerState.cellFonts[targetStyleKey] = dataJoinState.sourceCellFonts[srcStyleKey];
+                            }
+                            
+                            // NumberFormats (Zahlenformate)
+                            if (dataJoinState.sourceNumberFormats[srcStyleKey]) {
+                                explorerState.numberFormats = explorerState.numberFormats || {};
+                                explorerState.numberFormats[targetStyleKey] = dataJoinState.sourceNumberFormats[srcStyleKey];
+                            }
+                        });
+                    }
+                });
+                
+                // Auch Header-Styles übernehmen (Zeile -1 im Source entspricht den Headers)
+                sourceIndices.forEach((srcColIdx, i) => {
+                    const targetColIdx = actualInsertPos + i;
+                    // Header ist in Source Zeile 0 (0-basiert für Style-Keys)
+                    // Aber unser headerRowIdx ist -1 weil wir die Header separat haben
+                    // In der Quelldatei ist die Header-Zeile Index 0 im Style-System
+                    // Aber da sourceData ab Zeile 2 anfängt, ist der Header-Style-Key "-1-colIdx"
+                    // Tatsächlich: die Styles haben Zeile 0 = Header
+                    const srcHeaderStyleKey = `0-${srcColIdx}`;
+                    
+                    // In explorerState sind Headers nicht in cellStyles
+                    // Wir müssen prüfen ob headerStyles existiert, sonst erstellen
+                    explorerState.headerStyles = explorerState.headerStyles || {};
+                    if (dataJoinState.sourceCellStyles[srcHeaderStyleKey]) {
+                        explorerState.headerStyles[targetColIdx] = dataJoinState.sourceCellStyles[srcHeaderStyleKey];
+                    }
+                });
                 
                 // DataValidations anpassen (Keys sind Spalten-Indizes)
                 const newValidations = {};
@@ -12813,10 +12884,16 @@
                             let allData = explorerState.data;
                             
                             let exportHeaders = [...explorerState.headers];
-                            // WICHTIG: cellStyles werden NICHT mitgesendet!
+                            // WICHTIG: cellStyles werden normalerweise NICHT mitgesendet!
                             // xlwings übernimmt Styles automatisch aus der Datei.
-                            // Das spart erheblich Daten (z.B. 146.000 Styles bei großen Dateien)
-                            let exportCellStyles = {};  // Leer - xlwings übernimmt aus Datei
+                            // AUSNAHME: Bei Data Join werden die Styles der importierten Spalten gesendet.
+                            // Prüfe ob Spalten eingefügt wurden (Data Join)
+                            const columnInsertedInfoCheck = explorerState.editedCells.get('_columnInserted');
+                            let exportCellStyles = {};
+                            if (columnInsertedInfoCheck && explorerState.cellStyles) {
+                                // Data Join - sende die Styles für die neuen Spalten
+                                exportCellStyles = { ...explorerState.cellStyles };
+                            }
                             let exportCellFormulas = { ...(explorerState.cellFormulas || {}) };
                             let exportCellHyperlinks = { ...(explorerState.cellHyperlinks || {}) };
                             let exportRichTextCells = { ...(explorerState.richTextCells || {}) };
@@ -13113,6 +13190,8 @@
                                 cellFormulas: exportCellFormulas,
                                 cellHyperlinks: exportCellHyperlinks,
                                 richTextCells: exportRichTextCells,
+                                numberFormats: explorerState.numberFormats || {},
+                                cellFonts: explorerState.cellFonts || {},
                                 // ALLE aktiven Markierungen senden (Original-Datei hat keine)
                                 rowHighlights: exportRowHighlights,
                                 clearedRowHighlights: clearedRowHighlights,

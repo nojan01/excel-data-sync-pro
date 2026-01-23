@@ -157,6 +157,7 @@ def read_sheet(file_path, sheet_name=None, options=None):
         if extract_styles:
             cell_styles = {}
             cell_fonts = {}
+            number_formats = {}
             
             for row_idx in range(1, max_row + 1):
                 for col_idx in range(1, max_col + 1):
@@ -173,9 +174,14 @@ def read_sheet(file_path, sheet_name=None, options=None):
                     font_info = get_font_info(cell, {'name': 'Arial', 'size': 10})
                     if font_info:
                         cell_fonts[key] = font_info
+                    
+                    # Number Format - nur wenn nicht Standard
+                    if cell.number_format and cell.number_format != 'General':
+                        number_formats[key] = cell.number_format
             
             result['cellStyles'] = cell_styles
             result['cellFonts'] = cell_fonts
+            result['numberFormats'] = number_formats
             # Default Font für die GUI
             result['defaultFont'] = {'name': 'Arial', 'size': 10}
         
