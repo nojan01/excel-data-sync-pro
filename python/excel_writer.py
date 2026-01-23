@@ -1177,7 +1177,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         
         # DEBUG: Zeige alle relevanten Flags
         import sys
-        sys.stderr.write(f"[WRITE_SHEET] row_highlights={bool(row_highlights)}, row_mapping={bool(row_mapping)}, structural_change={structural_change}, full_rewrite={full_rewrite}\n")
+        sys.stderr.write(f"[WRITE_SHEET] row_highlights={row_highlights}, cleared_row_highlights={cleared_row_highlights}\n")
+        sys.stderr.write(f"[WRITE_SHEET] row_mapping={bool(row_mapping)}, structural_change={structural_change}, full_rewrite={full_rewrite}\n")
         sys.stderr.write(f"[WRITE_SHEET] deleted_rows={deleted_rows}, inserted_rows={bool(inserted_rows)}, row_order={bool(row_order)}\n")
         sys.stderr.write(f"[WRITE_SHEET] deleted_columns={deleted_columns}, inserted_columns={bool(inserted_columns)}, column_order={bool(column_order)}\n")
         
@@ -1703,6 +1704,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             _apply_hidden_columns(ws, hidden_columns)
             _apply_hidden_rows(ws, hidden_rows)
             
+            # Row Highlights (FALL 1.5 - Spalten einfügen)
+            if row_highlights:
+                _apply_row_highlights(ws, row_highlights, ws.max_column)
+            
             # Tables reparieren: Am Ende EINMAL aus Header-Zellen neu aufbauen
             for table_name in ws.tables:
                 table = ws.tables[table_name]
@@ -1748,7 +1753,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         
         # =====================================================================
         # FALL 1.9: Spalten LÖSCHEN UND EINFÜGEN kombiniert
-        # Führt erst Delete (wie FALL 1.6) und dann Insert (wie FALL 1.5) aus
         # SERIELL im Speicher - so bleibt die Formatierung erhalten!
         # =====================================================================
         column_delete_and_insert = deleted_columns and inserted_columns and row_mapping_is_identity
@@ -1885,6 +1889,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             _apply_hidden_columns(ws, hidden_columns)
             _apply_hidden_rows(ws, hidden_rows)
             
+            # Row Highlights (FALL 1.9 - Spalten löschen und einfügen)
+            if row_highlights:
+                _apply_row_highlights(ws, row_highlights, ws.max_column)
+            
             # Tables reparieren: Am Ende EINMAL aus Header-Zellen neu aufbauen
             for table_name in ws.tables:
                 table = ws.tables[table_name]
@@ -1970,6 +1978,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             # Versteckte Spalten/Zeilen
             _apply_hidden_columns(ws, hidden_columns)
             _apply_hidden_rows(ws, hidden_rows)
+            
+            # Row Highlights (FALL 1.6 - Spalten löschen)
+            if row_highlights:
+                _apply_row_highlights(ws, row_highlights, ws.max_column)
             
             # Sammle Table-Infos für restore
             table_changes = {}
@@ -2634,6 +2646,32 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         
                         shutil.move(temp_zip, output_path)
                         
+                        # Row Highlights müssen NACH dem ZIP-Ansatz angewendet werden
+                        # Da ZIP nur XML manipuliert, öffnen wir die Datei erneut für Highlights
+                        if row_highlights or cleared_row_highlights:
+                            wb_hl = load_workbook(output_path, rich_text=True)
+                            ws_hl = wb_hl[sheet_name]
+                            
+                            # Markierungen anwenden
+                            if row_highlights:
+                                sys.stderr.write(f"[ZIP-ANSATZ] Wende {len(row_highlights)} Row Highlights an\n")
+                                _apply_row_highlights(ws_hl, row_highlights, ws_hl.max_column)
+                            
+                            # Markierungen entfernen
+                            if cleared_row_highlights:
+                                sys.stderr.write(f"[ZIP-ANSATZ] Entferne {len(cleared_row_highlights)} Row Highlights\n")
+                                for row_idx in cleared_row_highlights:
+                                    excel_row = row_idx + 2
+                                    for col_idx in range(1, ws_hl.max_column + 1):
+                                        cell = ws_hl.cell(row=excel_row, column=col_idx)
+                                        cell.fill = PatternFill()  # Keine Füllung
+                            
+                            wb_hl.save(output_path)
+                            wb_hl.close()
+                            fix_xlsx_relationships(output_path)
+                            restore_table_xml_from_original(output_path, original_path, table_changes=None)
+                            restore_external_links_from_original(output_path, original_path)
+                        
                         sys.stderr.write(f"[ZIP-ANSATZ] Erfolgreich gespeichert\n")
                         return {
                             'success': True,
@@ -2675,6 +2713,15 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     # Row Highlights anwenden
                     if row_highlights:
                         _apply_row_highlights(ws, row_highlights, len(headers))
+                    
+                    # Cleared Row Highlights entfernen
+                    if cleared_row_highlights:
+                        sys.stderr.write(f"[SHUTIL-ANSATZ] Entferne {len(cleared_row_highlights)} Row Highlights\n")
+                        for row_idx in cleared_row_highlights:
+                            excel_row = row_idx + 2
+                            for col_idx in range(1, len(headers) + 1):
+                                cell = ws.cell(row=excel_row, column=col_idx)
+                                cell.fill = PatternFill()  # Keine Füllung
                     
                     # AutoFilter setzen
                     if frontend_auto_filter or original_auto_filter:
@@ -3344,6 +3391,15 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         # Row Highlights
         if row_highlights:
             _apply_row_highlights(ws, row_highlights, ws.max_column)
+        
+        # Cleared Row Highlights (Markierungen entfernen)
+        if cleared_row_highlights:
+            sys.stderr.write(f"[FALL 3] Entferne {len(cleared_row_highlights)} Row Highlights\n")
+            for row_idx in cleared_row_highlights:
+                excel_row = row_idx + 2  # 0-basiert nach 1-basiert + Header
+                for col_idx in range(1, ws.max_column + 1):
+                    cell = ws.cell(row=excel_row, column=col_idx)
+                    cell.fill = PatternFill()  # Keine Füllung
         
         wb.save(output_path)
         wb.close()

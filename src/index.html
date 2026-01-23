@@ -7901,8 +7901,6 @@
             });
             
             menuHtml += '<div class="context-menu-divider"></div>';
-            menuHtml += `<div class="context-menu-item" data-action="clear" data-row="${rowIndex}">🚫 Markierung entfernen</div>`;
-            menuHtml += '<div class="context-menu-divider"></div>';
             menuHtml += `<div class="context-menu-item" data-action="insert-row-above" data-row="${rowIndex}">⬆️ Zeile oberhalb einfügen</div>`;
             menuHtml += `<div class="context-menu-item" data-action="insert-row-below" data-row="${rowIndex}">⬇️ Zeile unterhalb einfügen</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
@@ -7942,12 +7940,6 @@
                 });
             });
             
-            menuEl.querySelector('[data-action="clear"]').addEventListener('click', () => {
-                const row = parseInt(menuEl.querySelector('[data-action="clear"]').dataset.row);
-                clearRowHighlight(row);
-                menuEl.remove();
-            });
-            
             // Neue Zeilen-Aktionen
             menuEl.querySelector('[data-action="insert-row-above"]')?.addEventListener('click', () => {
                 const row = parseInt(menuEl.querySelector('[data-action="insert-row-above"]').dataset.row);
@@ -7984,6 +7976,11 @@
         }
         
         function setRowHighlight(rowIndex, color) {
+            // Toggle: Wenn dieselbe Farbe nochmal gewählt wird, Markierung entfernen
+            if (explorerState.rowHighlights.get(rowIndex) === color) {
+                clearRowHighlight(rowIndex);
+                return;
+            }
             explorerState.rowHighlights.set(rowIndex, color);
             // Strukturelle Änderung markieren für Export
             explorerState.editedCells.set('_rowHighlightChanged', true);
@@ -13063,9 +13060,22 @@
                                 console.log(`[Export] ${Object.keys(exportRowHighlights).length} Zeilen-Markierungen werden gesendet`);
                             }
                             
-                            // ClearedRowHighlights: Nicht mehr nötig, da wir immer von der Original-Datei ausgehen
-                            // Die Original-Datei hat keine Markierungen, also werden nur aktive Markierungen angewendet
-                            const clearedRowHighlights = [];  // Immer leer lassen
+                            // ClearedRowHighlights: Zeilen die ursprünglich markiert waren, aber jetzt nicht mehr
+                            const clearedRowHighlights = [];
+                            explorerState.originalRowHighlights.forEach((color, originalIndex) => {
+                                // Wenn die Zeile nicht mehr in rowHighlights ist, wurde sie entfernt
+                                if (!explorerState.rowHighlights.has(originalIndex)) {
+                                    // Finde den neuen Index in filteredData
+                                    const newIdx = explorerState.filteredData.findIndex(item => item.originalIndex === originalIndex);
+                                    if (newIdx !== -1) {
+                                        clearedRowHighlights.push(newIdx);
+                                    }
+                                }
+                            });
+                            
+                            if (clearedRowHighlights.length > 0) {
+                                console.log(`[Export] ${clearedRowHighlights.length} Zeilen-Markierungen werden entfernt`);
+                            }
                             
                             sheetData = {
                                 sheetName: sheetName,
@@ -13160,6 +13170,18 @@
                                     });
                                 }
                                 
+                                // ClearedRowHighlights: Zeilen die ursprünglich markiert waren, aber jetzt nicht mehr
+                                const clearedRowHighlights = [];
+                                explorerState.originalRowHighlights.forEach((color, originalIndex) => {
+                                    if (!explorerState.rowHighlights.has(originalIndex)) {
+                                        clearedRowHighlights.push(originalIndex);
+                                    }
+                                });
+                                
+                                if (clearedRowHighlights.length > 0) {
+                                    console.log(`[Export] ${clearedRowHighlights.length} Zeilen-Markierungen werden entfernt`);
+                                }
+                                
                                 sheetData = {
                                     sheetName: sheetName,
                                     changedCells: changedCells,
@@ -13167,10 +13189,11 @@
                                     hiddenColumns: hiddenCols,
                                     hiddenRows: currentHiddenRows,
                                     rowHighlights: exportRowHighlights,
+                                    clearedRowHighlights: clearedRowHighlights,
                                     autoFilterRange: explorerState.autoFilterRange,
                                     fullRewrite: false
                                 };
-                                console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
+                                console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, ${clearedRowHighlights.length} entfernte Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
                             }
                         }
                     } else if (cachedSheet) {
