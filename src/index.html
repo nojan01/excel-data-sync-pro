@@ -12741,6 +12741,8 @@
                         // HINWEIS: _rowVisibilityChanged ist KEINE strukturelle Änderung!
                         // Versteckte Zeilen bleiben im Excel, nur das hidden-Flag wird gesetzt.
                         // Die Styles bleiben dadurch an Ort und Stelle.
+                        // HINWEIS: _rowHighlightChanged ist auch KEINE strukturelle Änderung!
+                        // Zeilen-Highlights ändern nur die Zellfarben, nicht die Struktur.
                         const hasStructuralChanges = hasRowMoves || 
                             explorerState.editedCells.has('_columnDeleted') || 
                             explorerState.editedCells.has('_columnInserted') ||
@@ -12748,7 +12750,6 @@
                             explorerState.editedCells.has('_rowsReordered') ||
                             explorerState.editedCells.has('_rowInserted') ||  // Zeile eingefügt
                             explorerState.editedCells.has('_rowDeleted') ||   // Zeile gelöscht
-                            explorerState.editedCells.has('_rowHighlightChanged') ||   // Zeilenfarben geändert
                             isFiltered;  // Filter = strukturelle Änderung (nur gefilterte Zeilen exportieren)
                         
                         // HiddenRows aus dem aktuellen State ermitteln
@@ -13151,16 +13152,25 @@
                                     }
                                 }
                                 
+                                // RowHighlights für Zell-Edits Export vorbereiten
+                                const exportRowHighlights = {};
+                                if (explorerState.rowHighlights && explorerState.rowHighlights.size > 0) {
+                                    explorerState.rowHighlights.forEach((color, originalIndex) => {
+                                        exportRowHighlights[originalIndex] = color;
+                                    });
+                                }
+                                
                                 sheetData = {
                                     sheetName: sheetName,
                                     changedCells: changedCells,
                                     richTextCells: Object.keys(richTextForChanged).length > 0 ? richTextForChanged : undefined,
                                     hiddenColumns: hiddenCols,
                                     hiddenRows: currentHiddenRows,
+                                    rowHighlights: exportRowHighlights,
                                     autoFilterRange: explorerState.autoFilterRange,
                                     fullRewrite: false
                                 };
-                                console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
+                                console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
                             }
                         }
                     } else if (cachedSheet) {
