@@ -7238,10 +7238,18 @@
                 // Tatsächliche Einfügeposition (berücksichtige Infinity für "am Ende")
                 let actualInsertPos = insertPos === Infinity ? explorerState.headers.length : insertPos;
                 
-                // Neue Header für diese Position
-                const newHeaders = sourceIndices.map(idx => 
-                    dataJoinState.sourceHeaders[idx] || `Spalte ${getColumnLetter(idx)}`
-                );
+                // Neue Header für diese Position - mit Duplikatprüfung
+                const newHeaders = sourceIndices.map(idx => {
+                    let headerName = dataJoinState.sourceHeaders[idx] || `Spalte ${getColumnLetter(idx)}`;
+                    let finalName = headerName;
+                    let counter = 2;
+                    // Prüfe ob Name bereits existiert (in explorerState.headers oder bereits hinzugefügten newHeaders)
+                    while (explorerState.headers.includes(finalName)) {
+                        finalName = `${headerName}_${counter}`;
+                        counter++;
+                    }
+                    return finalName;
+                });
                 
                 // Header einfügen
                 explorerState.headers.splice(actualInsertPos, 0, ...newHeaders);
