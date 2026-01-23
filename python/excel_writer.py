@@ -2504,8 +2504,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                 if original_idx < 0:
                                     # NEUE EINGEFÜGTE ZEILE - muss erstellt werden
                                     if template_row is not None:
-                                        import copy
-                                        new_row_elem = copy.deepcopy(template_row)
+                                        from copy import deepcopy
+                                        new_row_elem = deepcopy(template_row)
                                         new_row_elem.set('r', str(new_excel_row))
                                         
                                         # Alle Zellen umnummerieren und Werte leeren
@@ -2537,8 +2537,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                     
                                     if orig_excel_row in row_dict:
                                         # WICHTIG: deepcopy machen, damit das Original nicht modifiziert wird!
-                                        import copy
-                                        row_elem = copy.deepcopy(row_dict[orig_excel_row])
+                                        from copy import deepcopy
+                                        row_elem = deepcopy(row_dict[orig_excel_row])
                                         
                                         # Zeile umnummerieren
                                         row_elem.set('r', str(new_excel_row))

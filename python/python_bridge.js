@@ -293,44 +293,137 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
         }
         
         try {
-            const config = {
-                filePath: targetPath,  // Jetzt immer vom Ziel lesen (wir haben es kopiert)
-                outputPath: targetPath,
-                originalPath: originalSourcePath,  // Ursprüngliche Datei für Style-Wiederherstellung
-                sheetName: sheet.sheetName,
-                changes: {
-                    headers: sheet.headers || [],
-                    data: sheet.data || [],
-                    editedCells: sheet.changedCells || {},
-                    cellStyles: sheet.cellStyles || {},
-                    rowHighlights: sheet.rowHighlights || {},
-                    deletedColumns: sheet.deletedColumnIndices || [],
-                    insertedColumns: sheet.insertedColumnInfo || null,
-                    // Zeilen-Operationen (NEU - analog zu Spalten)
-                    deletedRowIndices: sheet.deletedRowIndices || [],
-                    insertedRowInfo: sheet.insertedRowInfo || null,
-                    rowOrder: sheet.rowOrder || null,
-                    hiddenColumns: sheet.hiddenColumns || [],
-                    hiddenRows: sheet.hiddenRows || [],
-                    rowMapping: sheet.rowMapping || null,
-                    fromFile: sheet.fromFile || false,
-                    fullRewrite: sheet.fullRewrite || false,
-                    structuralChange: sheet.structuralChange || false,
-                    clearedRowHighlights: sheet.clearedRowHighlights || [],
-                    columnOrder: sheet.columnOrder || null,
-                    affectedRows: sheet.affectedRows || [],
-                    autoFilterRange: sheet.autoFilterRange || null
+            // Prüfe ob kombinierte Operationen (Zeilen UND Spalten)
+            const hasRowOps = (sheet.rowOperationsQueue && sheet.rowOperationsQueue.length > 0) ||
+                              (sheet.deletedRowIndices && sheet.deletedRowIndices.length > 0) ||
+                              sheet.insertedRowInfo || sheet.rowOrder;
+            const hasColOps = (sheet.columnOperationsQueue && sheet.columnOperationsQueue.length > 0) ||
+                              (sheet.deletedColumnIndices && sheet.deletedColumnIndices.length > 0) ||
+                              sheet.insertedColumnInfo || sheet.columnOrder;
+            
+            if (hasRowOps && hasColOps) {
+                // KOMBINIERTE OPERATIONEN: Erst Zeilen, dann Spalten (zwei separate Aufrufe)
+                console.log(`[Python] Kombinierte Ops: Erst Zeilen, dann Spalten für "${sheet.sheetName}"`);
+                
+                // SCHRITT 1: Zeilen-Operationen (OHNE Spalten-Ops, OHNE fullRewrite)
+                const rowConfig = {
+                    filePath: targetPath,
+                    outputPath: targetPath,
+                    originalPath: originalSourcePath,
+                    sheetName: sheet.sheetName,
+                    changes: {
+                        headers: sheet.headers || [],
+                        data: sheet.data || [],
+                        editedCells: {},
+                        cellStyles: {},
+                        rowHighlights: {},
+                        deletedColumns: [],  // Keine Spalten-Ops im ersten Durchlauf
+                        insertedColumns: null,
+                        deletedRowIndices: sheet.deletedRowIndices || [],
+                        insertedRowInfo: sheet.insertedRowInfo || null,
+                        rowOrder: sheet.rowOrder || null,
+                        hiddenColumns: [],
+                        hiddenRows: [],
+                        rowMapping: sheet.rowMapping || null,
+                        fromFile: false,
+                        fullRewrite: false,  // WICHTIG: Keine Daten schreiben, nur Zeilen-Ops
+                        structuralChange: true,
+                        clearedRowHighlights: [],
+                        columnOrder: null,  // Keine Spalten-Reorder im ersten Durchlauf
+                        affectedRows: sheet.affectedRows || [],
+                        autoFilterRange: null
+                    }
+                };
+                
+                const rowResult = await writeExcel(rowConfig);
+                if (!rowResult.success) {
+                    hasError = true;
+                    errorMessage = rowResult.error;
+                    console.error(`[Python] Zeilen-Ops für "${sheet.sheetName}" fehlgeschlagen:`, rowResult.error);
+                    continue;
                 }
-            };
-            
-            const result = await writeExcel(config);
-            
-            if (!result.success) {
-                hasError = true;
-                errorMessage = result.error;
-                console.error(`[Python] Sheet "${sheet.sheetName}" failed:`, result.error);
+                console.log(`[Python] Zeilen-Ops für "${sheet.sheetName}" erfolgreich`);
+                
+                // SCHRITT 2: Spalten-Operationen (mit allen Daten, fullRewrite=true)
+                const colConfig = {
+                    filePath: targetPath,
+                    outputPath: targetPath,
+                    originalPath: originalSourcePath,
+                    sheetName: sheet.sheetName,
+                    changes: {
+                        headers: sheet.headers || [],
+                        data: sheet.data || [],
+                        editedCells: sheet.changedCells || {},
+                        cellStyles: sheet.cellStyles || {},
+                        rowHighlights: sheet.rowHighlights || {},
+                        deletedColumns: sheet.deletedColumnIndices || [],
+                        insertedColumns: sheet.insertedColumnInfo || null,
+                        deletedRowIndices: [],  // Keine Zeilen-Ops mehr (schon erledigt)
+                        insertedRowInfo: null,
+                        rowOrder: null,
+                        hiddenColumns: sheet.hiddenColumns || [],
+                        hiddenRows: sheet.hiddenRows || [],
+                        rowMapping: null,  // Kein rowMapping mehr (Zeilen schon gelöscht)
+                        fromFile: false,
+                        fullRewrite: true,  // WICHTIG: Jetzt Daten schreiben
+                        structuralChange: sheet.structuralChange || false,
+                        clearedRowHighlights: sheet.clearedRowHighlights || [],
+                        columnOrder: sheet.columnOrder || null,
+                        affectedRows: [],
+                        autoFilterRange: sheet.autoFilterRange || null
+                    }
+                };
+                
+                const colResult = await writeExcel(colConfig);
+                if (!colResult.success) {
+                    hasError = true;
+                    errorMessage = colResult.error;
+                    console.error(`[Python] Spalten-Ops für "${sheet.sheetName}" fehlgeschlagen:`, colResult.error);
+                } else {
+                    results.push(sheet.sheetName);
+                    console.log(`[Python] Spalten-Ops für "${sheet.sheetName}" erfolgreich`);
+                }
+                
             } else {
-                results.push(sheet.sheetName);
+                // EINZELNE OPERATIONEN: Normaler Aufruf (bestehender Code)
+                const config = {
+                    filePath: targetPath,
+                    outputPath: targetPath,
+                    originalPath: originalSourcePath,
+                    sheetName: sheet.sheetName,
+                    changes: {
+                        headers: sheet.headers || [],
+                        data: sheet.data || [],
+                        editedCells: sheet.changedCells || {},
+                        cellStyles: sheet.cellStyles || {},
+                        rowHighlights: sheet.rowHighlights || {},
+                        deletedColumns: sheet.deletedColumnIndices || [],
+                        insertedColumns: sheet.insertedColumnInfo || null,
+                        deletedRowIndices: sheet.deletedRowIndices || [],
+                        insertedRowInfo: sheet.insertedRowInfo || null,
+                        rowOrder: sheet.rowOrder || null,
+                        hiddenColumns: sheet.hiddenColumns || [],
+                        hiddenRows: sheet.hiddenRows || [],
+                        rowMapping: sheet.rowMapping || null,
+                        fromFile: sheet.fromFile || false,
+                        fullRewrite: sheet.fullRewrite || false,
+                        structuralChange: sheet.structuralChange || false,
+                        clearedRowHighlights: sheet.clearedRowHighlights || [],
+                        columnOrder: sheet.columnOrder || null,
+                        affectedRows: sheet.affectedRows || [],
+                        autoFilterRange: sheet.autoFilterRange || null
+                    }
+                };
+                
+                const result = await writeExcel(config);
+            
+                if (!result.success) {
+                    hasError = true;
+                    errorMessage = result.error;
+                    console.error(`[Python] Sheet "${sheet.sheetName}" failed:`, result.error);
+                } else {
+                    results.push(sheet.sheetName);
+                }
             }
             
         } catch (error) {

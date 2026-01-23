@@ -6848,7 +6848,10 @@
             // Passwort für passwortgeschützte Dateien
             filePassword: null,
             // Pivot-Tabellen Warnung
-            hasPivotTables: false
+            hasPivotTables: false,
+            // Operations Queues für serielle Abarbeitung
+            columnOperationsQueue: [],  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X, headerName: ''}]
+            rowOperationsQueue: []  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X}]
         };
         
         // ==================== Data Join State & Functions ====================
@@ -7647,6 +7650,8 @@
             explorerState.mergedCells = [];
             explorerState.filePassword = null;
             explorerState.rowMapping = null;  // Mapping: neue Position -> Original Excel-Zeile
+            explorerState.columnOperationsQueue = [];  // Reset Queue
+            explorerState.rowOperationsQueue = [];  // Reset Queue
             
             // UI zurücksetzen
             if (elements.explorerSheetSelect) {
@@ -7978,7 +7983,7 @@
         function setRowHighlight(rowIndex, color) {
             // Toggle: Wenn dieselbe Farbe nochmal gewählt wird, Markierung entfernen
             if (explorerState.rowHighlights.get(rowIndex) === color) {
-                clearRowHighlight(rowIndex);
+                // Gleiche Farbe - nichts tun
                 return;
             }
             explorerState.rowHighlights.set(rowIndex, color);
@@ -8283,6 +8288,12 @@
             
             // Markierung, dass etwas gelöscht wurde (für Änderungszählung)
             explorerState.editedCells.set('_rowDeleted', true);
+            
+            // Zur Operations-Queue hinzufügen
+            explorerState.rowOperationsQueue.push({
+                type: 'delete',
+                originalIndex: originalRowIndex
+            });
             
             // UI aktualisieren
             filterExplorerData();
@@ -8827,6 +8838,12 @@
                 originalIndices: deletedOriginalIndices,  // Array der ORIGINAL-Spalten-Indices (0-basiert)
                 count: deletedOriginalIndices.length,
                 originalHeaderCount: (existingDeleted?.originalHeaderCount) || (explorerState.headers.length + 1)
+            });
+            
+            // Zur Operations-Queue hinzufügen
+            explorerState.columnOperationsQueue.push({
+                type: 'delete',
+                originalIndex: originalIndex
             });
             
             // UI aktualisieren
@@ -13104,7 +13121,10 @@
                                 rowOrder: rowOrder,  // Zeilen-Reihenfolge bei Verschiebung
                                 affectedRows: affectedRowsArray,  // Betroffene Zeilen bei Row-Move für Style-Reset
                                 // rowMapping wird gesendet bei: Filter, Row-Move ODER Row-Deleted (Legacy)
-                                rowMapping: filterRowMapping || (explorerState.rowMapping && explorerState.rowMapping.length > 0 ? explorerState.rowMapping : null)
+                                rowMapping: filterRowMapping || (explorerState.rowMapping && explorerState.rowMapping.length > 0 ? explorerState.rowMapping : null),
+                                // Operations Queues für serielle Abarbeitung
+                                columnOperationsQueue: explorerState.columnOperationsQueue,
+                                rowOperationsQueue: explorerState.rowOperationsQueue
                             };
                             // Prüfe ob rowMapping gesendet wird
                             const hasRowMapping = !!(filterRowMapping || (explorerState.rowMapping && explorerState.rowMapping.length > 0));
