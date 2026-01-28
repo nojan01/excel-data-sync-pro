@@ -223,6 +223,8 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
         full_rewrite = changes.get('fullRewrite', False)
         structural_change = changes.get('structuralChange', False)
         cleared_row_highlights = changes.get('clearedRowHighlights', [])
+        row_mapping = changes.get('rowMapping')  # Filter-Mapping: [originalIndex, ...]
+        column_order = changes.get('columnOrder')  # Spalten-Reihenfolge: [oldIdx0, oldIdx1, ...]
         
         # Kopiere Original-Datei zum Ziel (falls unterschiedlich)
         if file_path != output_path:
@@ -333,37 +335,95 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                 # Offset für nächste Operation erhöhen
                 inserted_offset += count
         
+        # SCHRITT 2b: SPALTEN VERSCHIEBEN (columnOrder)
+        # Die Daten und Headers wurden bereits im Frontend umgeordnet!
+        # Block-Write überschreibt nur Werte, nicht Formatierung (Farben, Rahmen, etc.)
+        column_order_applied = False
+        
+        if column_order and len(column_order) > 0:
+            original_order = list(range(len(column_order)))
+            if column_order != original_order:
+                print(f"[xlwings_writer] columnOrder erkannt - schreibe umgeordnete Daten", file=sys.stderr)
+                
+                # Header schreiben
+                if headers and len(headers) > 0:
+                    ws.range((1, 1), (1, len(headers))).value = [headers]
+                
+                # Daten als Block schreiben (schnell, Formatierung bleibt erhalten)
+                if data and len(data) > 0:
+                    num_rows = len(data)
+                    num_cols = len(data[0]) if data[0] else len(headers)
+                    ws.range((2, 1), (num_rows + 1, num_cols)).value = data
+                    print(f"[xlwings_writer] Daten geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
+                
+                column_order_applied = True
+        
         # SCHRITT 3: ZEILEN LÖSCHEN (von hinten nach vorne)
         if deleted_rows:
             for row_idx in sorted(deleted_rows, reverse=True):
                 excel_row = row_idx + 2  # +2 für Header (1-basiert)
                 ws.range(f'{excel_row}:{excel_row}').delete()
         
-        # SCHRITT 4: Original-Zeilenzahl ermitteln für Löschung überschüssiger Zeilen
+        # SCHRITT 4: Filter-Handling mit rowMapping
+        # rowMapping enthält die Original-Indizes der Zeilen die bleiben sollen
+        # Wir löschen die Zeilen die NICHT im Mapping sind (von hinten nach vorne)
+        # Das erhält die Formatierung der verbleibenden Zeilen!
         used_range = ws.used_range
         original_row_count = used_range.last_cell.row - 1 if used_range else 0  # Ohne Header
         new_row_count = len(data)
         
-        # Überschüssige Zeilen löschen - OPTIMIERUNG: Alle auf einmal statt einzeln!
-        if full_rewrite and new_row_count < original_row_count:
+        if row_mapping and len(row_mapping) > 0:
+            # Filter aktiv: Lösche Zeilen die nicht im Mapping sind
+            # rowMapping = [originalIndex1, originalIndex2, ...] (0-basiert)
+            rows_to_keep = set(row_mapping)
+            rows_to_delete = []
+            
+            for orig_idx in range(original_row_count):
+                if orig_idx not in rows_to_keep:
+                    rows_to_delete.append(orig_idx)
+            
+            if rows_to_delete:
+                print(f"[xlwings_writer] Filter: Lösche {len(rows_to_delete)} Zeilen (behalte {len(rows_to_keep)})", file=sys.stderr)
+                # OPTIMIERUNG: Finde zusammenhängende Bereiche und lösche diese auf einmal
+                # Sortiere absteigend damit Indizes beim Löschen stimmen
+                sorted_rows = sorted(rows_to_delete, reverse=True)
+                
+                # Finde zusammenhängende Bereiche
+                ranges_to_delete = []
+                if sorted_rows:
+                    range_end = sorted_rows[0]
+                    range_start = sorted_rows[0]
+                    
+                    for i in range(1, len(sorted_rows)):
+                        if sorted_rows[i] == range_start - 1:
+                            # Zusammenhängend
+                            range_start = sorted_rows[i]
+                        else:
+                            # Lücke - speichere aktuellen Bereich
+                            ranges_to_delete.append((range_start, range_end))
+                            range_end = sorted_rows[i]
+                            range_start = sorted_rows[i]
+                    
+                    # Letzten Bereich hinzufügen
+                    ranges_to_delete.append((range_start, range_end))
+                
+                print(f"[xlwings_writer] Lösche {len(ranges_to_delete)} zusammenhängende Bereiche", file=sys.stderr)
+                
+                # Lösche Bereiche (bereits absteigend sortiert)
+                for range_start, range_end in ranges_to_delete:
+                    excel_start = range_start + 2  # +2 für Header und 1-basiert
+                    excel_end = range_end + 2
+                    ws.range(f'{excel_start}:{excel_end}').delete()
+            
+            # KEINE Daten neu schreiben - die Zeilen sind schon korrekt!
+            
+        elif full_rewrite and new_row_count < original_row_count:
+            # Kein rowMapping aber weniger Zeilen - einfach am Ende löschen
             rows_to_delete = original_row_count - new_row_count
-            # Lösche alle überschüssigen Zeilen in einem Bereich (VIEL schneller!)
             first_row_to_delete = new_row_count + 2  # +2 für Header (1-basiert)
             last_row_to_delete = original_row_count + 1  # +1 für Header (1-basiert)
             print(f"[xlwings_writer] Lösche Zeilen {first_row_to_delete} bis {last_row_to_delete} ({rows_to_delete} Zeilen)", file=sys.stderr)
             ws.range(f'{first_row_to_delete}:{last_row_to_delete}').delete()
-            
-            # WICHTIG: Bei Filter werden nicht nur Zeilen gelöscht, sondern die
-            # verbleibenden Zeilen enthalten andere Daten (gefilterte Zeilen).
-            # Wir müssen alle Daten komplett neu schreiben!
-            print(f"[xlwings_writer] Filter aktiv - schreibe {new_row_count} Zeilen neu", file=sys.stderr)
-            if data and len(data) > 0 and len(data[0]) > 0:
-                num_cols = len(data[0])
-                # Schreibe alle Daten als Block (Zeile 2 bis new_row_count+1)
-                start_cell = ws.range((2, 1))  # Zeile 2, Spalte A (nach Header)
-                end_cell = ws.range((new_row_count + 1, num_cols))
-                ws.range(start_cell, end_cell).value = data
-                print(f"[xlwings_writer] Alle Daten geschrieben: {new_row_count} x {num_cols}", file=sys.stderr)
         
         # SCHRITT 5: ZELL-EDITS (geänderte Zellen)
         # NUR bei editedCells ohne Filter-Rewrite

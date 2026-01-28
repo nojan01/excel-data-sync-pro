@@ -584,6 +584,15 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
     // Original-Datei für Style-Wiederherstellung (falls Markierungen entfernt werden)
     const originalSourcePath = options.originalSourcePath || sourcePath;
     
+    // Prüfe ob Quelldatei existiert
+    if (!fs.existsSync(sourcePath)) {
+        safeError(`[Python] Quelldatei nicht gefunden:`, sourcePath);
+        return { 
+            success: false, 
+            error: `Quelldatei nicht gefunden: "${sourcePath}"\n\nDie Datei wurde möglicherweise verschoben, umbenannt oder gelöscht. Bitte öffnen Sie die Datei erneut.` 
+        };
+    }
+    
     // Zuerst: Kopiere die Original-Datei zum Ziel (falls unterschiedlich)
     // So bleiben alle Sheets, Formatierungen, etc. erhalten
     if (sourcePath !== targetPath) {

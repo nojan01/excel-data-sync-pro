@@ -13173,7 +13173,9 @@
                             // Wenn Spalten verschoben wurden, ordne die Daten im Frontend um
                             // WICHTIG: columnOrder wird trotzdem an Python gesendet,
                             // damit Python die Formatierung in der Excel-Datei umordnen kann!
-                            if (columnOrder && deletedColumnIndices.length === 0) {
+                            // HINWEIS: Bei gelöschten Spalten ist columnOrder bereits angepasst
+                            // (enthält nur noch die verbleibenden Spalten-Indizes)
+                            if (columnOrder) {
                                 console.log('[Export] Ordne Daten gemäß columnOrder um...');
                                 
                                 // Headers umordnen
