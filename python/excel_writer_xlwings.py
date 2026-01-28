@@ -304,19 +304,12 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                     'sourceColumn': inserted_columns.get('sourceColumn')
                 }]
             
-            # Berücksichtige bereits gelöschte Spalten beim Offset
-            deleted_before = len(deleted_columns) if deleted_columns else 0
-            
-            # Akkumulierter Offset für bereits eingefügte Spalten
-            inserted_offset = 0
-            
+            # Die Positionen vom Frontend sind FINALE Positionen (bereits korrigiert)
             for op in sorted(operations, key=lambda x: x['position']):
-                pos = op['position'] - deleted_before + inserted_offset
+                pos = op['position']
                 count = op.get('count', 1)
                 op_headers = op.get('headers', [])
-                source_column = op.get('sourceColumn')  # Referenzspalte für Formatierung
                 excel_col = pos + 1  # 1-basiert
-                col_letter = _get_column_letter(excel_col)
                 
                 for i in range(count):
                     insert_letter = _get_column_letter(excel_col + i)
@@ -324,18 +317,10 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                     # Insert-Befehl: Fügt vor der angegebenen Spalte ein
                     # shift='right' verschiebt existierende Zellen nach rechts
                     ws.range(f'{insert_letter}:{insert_letter}').insert(shift='right')
-                    
-                    # HINWEIS: Wir kopieren KEINE Formatierung von einer Quellspalte,
-                    # da das copy() auch Werte mitkopiert und zu falschen Daten führt.
-                    # Die neue Spalte erhält Standard-Formatierung.
-                    # Die Daten werden später über editedCells geschrieben.
                 
                 # Header setzen
                 for i, header in enumerate(op_headers):
                     ws.range((1, excel_col + i)).value = header
-                
-                # Offset für nächste Operation erhöhen
-                inserted_offset += count
         
         # SCHRITT 2b: SPALTEN VERSCHIEBEN (columnOrder)
         # WICHTIG: Wir müssen Spalten WIRKLICH in Excel verschieben, damit Formatierung erhalten bleibt!
@@ -378,6 +363,9 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                         # Methode: Cut und Insert
                         source_range = ws.range(f'{source_letter}:{source_letter}')
                         
+                        # Ermittle die letzte verwendete Zeile für begrenzte Bereiche (macOS-Kompatibilität)
+                        last_row = ws.used_range.last_cell.row if ws.used_range else 1000
+                        
                         if current_pos > target_pos:
                             # Nach links verschieben
                             # 1. Insert leere Spalte bei Ziel
@@ -385,8 +373,14 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                             # Dadurch verschiebt sich source um 1 nach rechts
                             new_source_col = source_col_excel + 1
                             new_source_letter = _get_column_letter(new_source_col)
-                            # 2. Kopiere Quell-Spalte zur Ziel-Spalte
-                            ws.range(f'{new_source_letter}:{new_source_letter}').copy(ws.range(f'{target_letter}:{target_letter}'))
+                            # 2. Kopiere Quell-Spalte zur Ziel-Spalte (nur verwendeten Bereich)
+                            source_rng = ws.range(f'{new_source_letter}1:{new_source_letter}{last_row}')
+                            dest_rng = ws.range(f'{target_letter}1')
+                            if platform.system() == 'Windows':
+                                source_rng.api.Copy(Destination=dest_rng.api)
+                            else:
+                                # macOS: appscript - kopiere in Zelle, nicht ganze Spalte
+                                source_rng.api.copy_range(destination=dest_rng.api)
                             # 3. Lösche die alte Spalte
                             ws.range(f'{new_source_letter}:{new_source_letter}').delete()
                         else:
@@ -394,8 +388,14 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                             # 1. Insert leere Spalte NACH dem Ziel (target+1)
                             after_target_letter = _get_column_letter(target_col_excel + 1)
                             ws.range(f'{after_target_letter}:{after_target_letter}').insert(shift='right')
-                            # 2. Kopiere Quell-Spalte zur neuen Position
-                            ws.range(f'{source_letter}:{source_letter}').copy(ws.range(f'{after_target_letter}:{after_target_letter}'))
+                            # 2. Kopiere Quell-Spalte zur neuen Position (nur verwendeten Bereich)
+                            source_rng = ws.range(f'{source_letter}1:{source_letter}{last_row}')
+                            dest_rng = ws.range(f'{after_target_letter}1')
+                            if platform.system() == 'Windows':
+                                source_rng.api.Copy(Destination=dest_rng.api)
+                            else:
+                                # macOS: appscript - kopiere in Zelle, nicht ganze Spalte
+                                source_rng.api.copy_range(destination=dest_rng.api)
                             # 3. Lösche die alte Spalte
                             ws.range(f'{source_letter}:{source_letter}').delete()
                         
