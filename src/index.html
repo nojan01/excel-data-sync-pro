@@ -7302,6 +7302,53 @@
                     }
                 }
                 
+                // WICHTIG: ZUERST cellStyles etc. verschieben, BEVOR wir neue Daten einfügen!
+                // Sonst werden die gerade eingefügten editedCells auch verschoben.
+                const shiftColumnIndices = (obj) => {
+                    const newObj = {};
+                    for (const [key, value] of Object.entries(obj)) {
+                        const [rowStr, colStr] = key.split('-');
+                        const colIdx = parseInt(colStr);
+                        if (colIdx >= actualInsertPos) {
+                            newObj[`${rowStr}-${colIdx + newHeaders.length}`] = value;
+                        } else {
+                            newObj[key] = value;
+                        }
+                    }
+                    return newObj;
+                };
+                
+                explorerState.cellStyles = shiftColumnIndices(explorerState.cellStyles);
+                explorerState.cellFormulas = shiftColumnIndices(explorerState.cellFormulas);
+                explorerState.cellHyperlinks = shiftColumnIndices(explorerState.cellHyperlinks);
+                explorerState.richTextCells = shiftColumnIndices(explorerState.richTextCells);
+                
+                // EditedCells: Nur bestehende Keys verschieben (die von vorherigen Einfügungen)
+                // Muss VOR dem Setzen neuer Werte passieren!
+                const newEditedCells = new Map();
+                explorerState.editedCells.forEach((value, key) => {
+                    if (key.startsWith('_')) {
+                        newEditedCells.set(key, value);
+                        return;
+                    }
+                    const parts = key.split('-');
+                    if (parts.length !== 2) {
+                        newEditedCells.set(key, value);
+                        return;
+                    }
+                    const colIdx = parseInt(parts[1]);
+                    if (isNaN(colIdx)) {
+                        newEditedCells.set(key, value);
+                        return;
+                    }
+                    if (colIdx >= actualInsertPos) {
+                        newEditedCells.set(`${parts[0]}-${colIdx + newHeaders.length}`, value);
+                    } else {
+                        newEditedCells.set(key, value);
+                    }
+                });
+                explorerState.editedCells = newEditedCells;
+                
                 // Daten für jede Zeile hinzufügen
                 // WICHTIG: currentKeyIndex verwenden, da sich der Index nach jeder Einfügung verschieben kann
                 explorerState.data.forEach((row, rowIndex) => {
@@ -7318,7 +7365,7 @@
                     
                     row.splice(actualInsertPos, 0, ...newValues);
                     
-                    // Als bearbeitet markieren
+                    // Als bearbeitet markieren - Keys sind jetzt korrekt weil Verschiebung schon passiert ist
                     newValues.forEach((val, i) => {
                         const cellKey = `${rowIndex}-${actualInsertPos + i}`;
                         explorerState.editedCells.set(cellKey, val);
@@ -7336,27 +7383,6 @@
                     
                     row.splice(actualInsertPos, 0, ...newValues);
                 });
-                
-                // CellStyles, Formulas, Hyperlinks, RichText anpassen (Spalten-Indizes verschieben)
-                const shiftColumnIndices = (obj) => {
-                    const newObj = {};
-                    for (const [key, value] of Object.entries(obj)) {
-                        const [rowStr, colStr] = key.split('-');
-                        const colIdx = parseInt(colStr);
-                        if (colIdx >= actualInsertPos) {
-                            // Spalte verschieben
-                            newObj[`${rowStr}-${colIdx + newHeaders.length}`] = value;
-                        } else {
-                            newObj[key] = value;
-                        }
-                    }
-                    return newObj;
-                };
-                
-                explorerState.cellStyles = shiftColumnIndices(explorerState.cellStyles);
-                explorerState.cellFormulas = shiftColumnIndices(explorerState.cellFormulas);
-                explorerState.cellHyperlinks = shiftColumnIndices(explorerState.cellHyperlinks);
-                explorerState.richTextCells = shiftColumnIndices(explorerState.richTextCells);
                 
                 // Source-Styles für die neuen Spalten übernehmen
                 // Wir müssen die Source-Zeilen-Indizes zu Target-Zeilen matchen
@@ -7380,7 +7406,8 @@
                             // Source-Key (beachte: Source-Daten sind 0-basiert ohne Header)
                             // +1 weil Header in Source Zeile 0 ist, Daten ab Zeile 1
                             const srcStyleKey = `${sourceRowIdx + 1}-${srcColIdx}`;
-                            const targetStyleKey = `${targetRowIdx}-${targetColIdx}`;
+                            // Target-Key: +1 weil Rendering mit rowIndex+1 arbeitet (1-basiert)
+                            const targetStyleKey = `${targetRowIdx + 1}-${targetColIdx}`;
                             
                             // CellStyles (Hintergrundfarbe)
                             if (dataJoinState.sourceCellStyles[srcStyleKey]) {
@@ -8766,16 +8793,69 @@
             });
             explorerState.editedCells = newEditedCells;
             
+            // CellStyles anpassen (Spalten-Indizes verschieben)
+            const newCellStyles = {};
+            for (const [key, style] of Object.entries(explorerState.cellStyles || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (col >= insertIndex) {
+                    newCellStyles[`${row}-${col + 1}`] = style;
+                } else {
+                    newCellStyles[key] = style;
+                }
+            }
+            explorerState.cellStyles = newCellStyles;
+            
+            // CellFormulas anpassen
+            const newCellFormulas = {};
+            for (const [key, formula] of Object.entries(explorerState.cellFormulas || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (col >= insertIndex) {
+                    newCellFormulas[`${row}-${col + 1}`] = formula;
+                } else {
+                    newCellFormulas[key] = formula;
+                }
+            }
+            explorerState.cellFormulas = newCellFormulas;
+            
+            // CellHyperlinks anpassen
+            const newCellHyperlinks = {};
+            for (const [key, link] of Object.entries(explorerState.cellHyperlinks || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (col >= insertIndex) {
+                    newCellHyperlinks[`${row}-${col + 1}`] = link;
+                } else {
+                    newCellHyperlinks[key] = link;
+                }
+            }
+            explorerState.cellHyperlinks = newCellHyperlinks;
+            
             // Markierung dass Spalte hinzugefügt wurde
             // Prüfe ob bereits eine insertedColumns-Info existiert (z.B. von Data Join)
             const existingInsert = explorerState.editedCells.get('_columnInserted');
             if (existingInsert && existingInsert.operations) {
+                // Aktualisiere bestehende Operationen: Wenn die neue Spalte VOR einer bestehenden 
+                // eingefügt wird, müssen deren position und sourceColumn erhöht werden
+                existingInsert.operations.forEach(op => {
+                    if (op.position >= insertIndex) {
+                        op.position += 1;
+                    }
+                    if (op.sourceColumn >= insertIndex) {
+                        op.sourceColumn += 1;
+                    }
+                });
+                
                 // Füge neue Operation hinzu
                 existingInsert.operations.push({
                     position: insertIndex,
                     count: 1,
                     headers: [uniqueHeaderName],
-                    sourceColumn: colIndex  // Referenzspalte für Formatierung
+                    sourceColumn: colIndex >= insertIndex ? colIndex + 1 : colIndex  // Referenzspalte für Formatierung (angepasst)
                 });
                 existingInsert.totalCount = (existingInsert.totalCount || 0) + 1;
                 explorerState.editedCells.set('_columnInserted', existingInsert);

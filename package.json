@@ -28,10 +28,12 @@
       "exceljs-writer.js",
       "src/**/*",
       "python/**/*",
+      "python-embed/**/*",
       "node_modules/**/*"
     ],
     "asarUnpack": [
-      "python/**"
+      "python/**",
+      "python-embed/**"
     ],
     "mac": {
       "target": [
@@ -45,9 +47,7 @@
       ],
       "icon": "assets/icon.icns",
       "category": "public.app-category.productivity",
-      "identity": null,
-      "hardenedRuntime": false,
-      "gatekeeperAssess": false
+      "identity": null
     },
     "dmg": {
       "contents": [

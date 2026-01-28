@@ -15,6 +15,25 @@ import os
 import platform
 import subprocess
 from datetime import datetime, date
+
+# Für embedded Python auf Windows: pywin32 DLLs finden
+if platform.system() == 'Windows':
+    # pywin32_system32 DLLs
+    pywin32_dll = os.path.join(sys.prefix, 'Lib', 'site-packages', 'pywin32_system32')
+    if os.path.exists(pywin32_dll):
+        os.environ['PATH'] = pywin32_dll + os.pathsep + os.environ.get('PATH', '')
+    # DLLs im Python-Verzeichnis (embedded)
+    python_dir = os.path.dirname(sys.executable)
+    if os.path.exists(os.path.join(python_dir, 'pythoncom311.dll')):
+        os.environ['PATH'] = python_dir + os.pathsep + os.environ.get('PATH', '')
+    # win32 Module
+    win32_dir = os.path.join(sys.prefix, 'Lib', 'site-packages', 'win32')
+    if os.path.exists(win32_dir):
+        sys.path.insert(0, win32_dir)
+    win32_lib = os.path.join(sys.prefix, 'Lib', 'site-packages', 'win32', 'lib')
+    if os.path.exists(win32_lib):
+        sys.path.insert(0, win32_lib)
+
 import xlwings as xw
 from openpyxl import load_workbook
 from openpyxl.utils import get_column_letter
@@ -426,6 +445,12 @@ def list_sheets_xlwings(file_path):
 
 def main():
     """Hauptfunktion - liest Befehle von Argumenten"""
+    # Auf Windows: Stelle sicher dass stdin/stdout UTF-8 verwenden
+    import io
+    if sys.platform == 'win32':
+        sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    
     if len(sys.argv) < 2:
         print(json.dumps({'success': False, 'error': 'Kein Befehl angegeben'}))
         sys.exit(1)

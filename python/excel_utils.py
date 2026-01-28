@@ -12,6 +12,28 @@ import os
 import json
 import platform
 
+# Für embedded Python auf Windows: pywin32 DLLs finden
+if platform.system() == 'Windows':
+    # Methode 1: pywin32_system32 im site-packages
+    pywin32_dll = os.path.join(sys.prefix, 'Lib', 'site-packages', 'pywin32_system32')
+    if os.path.exists(pywin32_dll):
+        os.environ['PATH'] = pywin32_dll + os.pathsep + os.environ.get('PATH', '')
+    
+    # Methode 2: DLLs im Python-Verzeichnis selbst (embedded Python)
+    python_dir = os.path.dirname(sys.executable)
+    if os.path.exists(os.path.join(python_dir, 'pythoncom311.dll')):
+        os.environ['PATH'] = python_dir + os.pathsep + os.environ.get('PATH', '')
+    
+    # Methode 3: win32 Verzeichnis hinzufügen (für pywintypes)
+    win32_dir = os.path.join(sys.prefix, 'Lib', 'site-packages', 'win32')
+    if os.path.exists(win32_dir):
+        sys.path.insert(0, win32_dir)
+    
+    # Methode 4: win32/lib Verzeichnis (für win32con etc.)
+    win32_lib = os.path.join(sys.prefix, 'Lib', 'site-packages', 'win32', 'lib')
+    if os.path.exists(win32_lib):
+        sys.path.insert(0, win32_lib)
+
 # Cache für Excel-Verfügbarkeit
 _excel_available = None
 
@@ -30,11 +52,30 @@ def is_excel_installed():
     if _excel_available is not None:
         return _excel_available
     
+    # Auf Windows: Prüfe zuerst ob pywin32 funktioniert
+    if platform.system() == 'Windows':
+        try:
+            import win32com.client
+            print(f"[excel_utils] pywin32 (win32com) geladen", file=sys.stderr)
+        except ImportError as e:
+            print(f"[excel_utils] pywin32 nicht verfügbar: {e}", file=sys.stderr)
+            _excel_available = False
+            return False
+        except Exception as e:
+            print(f"[excel_utils] pywin32 Fehler: {e}", file=sys.stderr)
+            _excel_available = False
+            return False
+    
     # Prüfe zuerst ob xlwings überhaupt importiert werden kann
     try:
         import xlwings as xw
+        print(f"[excel_utils] xlwings importiert", file=sys.stderr)
     except ImportError as e:
         print(f"[excel_utils] xlwings nicht installiert: {e}", file=sys.stderr)
+        _excel_available = False
+        return False
+    except Exception as e:
+        print(f"[excel_utils] xlwings Import-Fehler: {e}", file=sys.stderr)
         _excel_available = False
         return False
     
@@ -48,7 +89,7 @@ def is_excel_installed():
         print(f"[excel_utils] Microsoft Excel verfügbar", file=sys.stderr)
     except Exception as e:
         # Debug-Ausgabe für Fehlerbehebung
-        print(f"[excel_utils] Excel nicht verfügbar: {e}", file=sys.stderr)
+        print(f"[excel_utils] Excel nicht verfügbar: {type(e).__name__}: {e}", file=sys.stderr)
         _excel_available = False
     
     return _excel_available
@@ -320,6 +361,11 @@ def get_excel_status():
 
 
 if __name__ == '__main__':
+    # Auf Windows: Stelle sicher dass stdout UTF-8 verwendet
+    import io
+    if sys.platform == 'win32':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    
     # Kommandozeilen-Interface für Excel-Check
     if len(sys.argv) > 1 and sys.argv[1] == 'check_excel':
         status = get_excel_status()

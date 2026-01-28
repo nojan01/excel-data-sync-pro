@@ -16,7 +16,36 @@ import shutil
 import platform
 import subprocess
 from datetime import datetime, date
-import xlwings as xw
+
+# Für embedded Python auf Windows: pywin32 DLLs finden
+if platform.system() == 'Windows':
+    # pywin32_system32 DLLs
+    pywin32_dll = os.path.join(sys.prefix, 'Lib', 'site-packages', 'pywin32_system32')
+    if os.path.exists(pywin32_dll):
+        os.environ['PATH'] = pywin32_dll + os.pathsep + os.environ.get('PATH', '')
+    # DLLs im Python-Verzeichnis (embedded)
+    python_dir = os.path.dirname(sys.executable)
+    if os.path.exists(os.path.join(python_dir, 'pythoncom311.dll')):
+        os.environ['PATH'] = python_dir + os.pathsep + os.environ.get('PATH', '')
+    # win32 Module
+    win32_dir = os.path.join(sys.prefix, 'Lib', 'site-packages', 'win32')
+    if os.path.exists(win32_dir):
+        sys.path.insert(0, win32_dir)
+    win32_lib = os.path.join(sys.prefix, 'Lib', 'site-packages', 'win32', 'lib')
+    if os.path.exists(win32_lib):
+        sys.path.insert(0, win32_lib)
+
+# Import xlwings mit detaillierter Fehlerbehandlung
+try:
+    import xlwings as xw
+except ImportError as e:
+    print(f"xlwings import failed: {e}", file=sys.stderr)
+    print(json.dumps({"success": False, "error": f"xlwings import failed: {e}"}))
+    sys.exit(1)
+except Exception as e:
+    print(f"xlwings import error: {e}", file=sys.stderr)
+    print(json.dumps({"success": False, "error": f"xlwings import error: {e}"}))
+    sys.exit(1)
 
 
 def kill_excel_instances():
@@ -169,6 +198,16 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
     Returns:
         Dict mit success und ggf. error
     """
+    print(f"[xlwings_writer] write_sheet_xlwings aufgerufen", file=sys.stderr)
+    print(f"[xlwings_writer] file_path: {file_path}", file=sys.stderr)
+    print(f"[xlwings_writer] sheet_name: {sheet_name}", file=sys.stderr)
+    print(f"[xlwings_writer] fromFile: {changes.get('fromFile', False)}", file=sys.stderr)
+    print(f"[xlwings_writer] fullRewrite: {changes.get('fullRewrite', False)}", file=sys.stderr)
+    print(f"[xlwings_writer] structuralChange: {changes.get('structuralChange', False)}", file=sys.stderr)
+    print(f"[xlwings_writer] headers count: {len(changes.get('headers', []))}", file=sys.stderr)
+    print(f"[xlwings_writer] data count: {len(changes.get('data', []))}", file=sys.stderr)
+    print(f"[xlwings_writer] editedCells count: {len(changes.get('editedCells', {}))}", file=sys.stderr)
+    
     try:
         # Parameter extrahieren
         headers = changes.get('headers', [])
@@ -193,19 +232,24 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
         
         # WICHTIG: Beende zuerst alle laufenden Excel-Instanzen
         # um Dialog-Probleme zu vermeiden ("Änderungen speichern?")
+        print("[xlwings_writer] Beende Excel-Instanzen...", file=sys.stderr)
         kill_excel_instances()
         time.sleep(0.3)  # Kurz warten bis Excel wirklich beendet ist
         
         # Excel-App starten (ohne with-Kontext, um Cleanup-Probleme zu vermeiden)
+        print("[xlwings_writer] Starte Excel-App...", file=sys.stderr)
         app = xw.App(visible=False, add_book=False)
+        print("[xlwings_writer] Excel-App gestartet!", file=sys.stderr)
         app.display_alerts = False
         app.screen_updating = False
         
-        # Verstecke Excel sofort
+        # Excel verstecken
         hide_excel()
         
         # Workbook öffnen
+        print(f"[xlwings_writer] Öffne Workbook: {output_path}", file=sys.stderr)
         wb = app.books.open(output_path)
+        print(f"[xlwings_writer] Workbook geöffnet!", file=sys.stderr)
         
         # Sheet finden
         sheet_names = [s.name for s in wb.sheets]
@@ -321,35 +365,15 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                 last_row = ws.used_range.last_cell.row
                 ws.range(f'{last_row}:{last_row}').delete()
         
-        # SCHRITT 5: HEADER SCHREIBEN (Bulk für Performance)
-        if headers and (full_rewrite or structural_change):
-            # Alle Header auf einmal schreiben (viel schneller als einzeln!)
-            ws.range((1, 1), (1, len(headers))).value = [headers]
+        # WICHTIG: Bei xlwings KEINE Bulk-Daten schreiben!
+        # Das überschreibt die Formatierungen.
+        # Die Daten sind bereits in der kopierten Datei.
+        # xlwings soll nur strukturelle Änderungen machen (Zeilen/Spalten einfügen/löschen)
+        # und einzelne geänderte Zellen aktualisieren.
         
-        # SCHRITT 6: DATEN SCHREIBEN
-        if data and (full_rewrite or structural_change):
-            # Batch-Write für Performance
-            if data:
-                # Alle Daten auf einmal schreiben (viel schneller!)
-                start_row = 2
-                end_row = start_row + len(data) - 1
-                num_cols = len(headers) if headers else (len(data[0]) if data else 0)
-                
-                if num_cols > 0:
-                    # Daten in 2D-Array konvertieren
-                    data_array = []
-                    for row_data in data:
-                        # Stelle sicher, dass jede Zeile die richtige Länge hat
-                        row = list(row_data) if row_data else []
-                        while len(row) < num_cols:
-                            row.append(None)
-                        data_array.append(row[:num_cols])
-                    
-                    # Bulk-Write
-                    ws.range((start_row, 1), (end_row, num_cols)).value = data_array
-        
-        # SCHRITT 7: EINZELNE ZELL-EDITS (wenn keine fullRewrite)
-        if edited_cells and not full_rewrite:
+        # SCHRITT 5: NUR EINZELNE ZELL-EDITS (geänderte Zellen)
+        if edited_cells:
+            print(f"[xlwings_writer] Schreibe {len(edited_cells)} geänderte Zellen...", file=sys.stderr)
             edit_count = 0
             for key, value in edited_cells.items():
                 if key.startswith('_'):
@@ -510,6 +534,18 @@ def check_excel_available():
 
 def main():
     """Hauptfunktion - liest Befehle von stdin oder Argumenten"""
+    # Debug: Script gestartet
+    print("[xlwings_writer] Script gestartet", file=sys.stderr)
+    print(f"[xlwings_writer] Python: {sys.executable}", file=sys.stderr)
+    print(f"[xlwings_writer] Platform: {platform.system()}", file=sys.stderr)
+    print(f"[xlwings_writer] Args: {sys.argv}", file=sys.stderr)
+    
+    # Auf Windows: Stelle sicher dass stdin/stdout UTF-8 verwenden
+    import io
+    if sys.platform == 'win32':
+        sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+        print("[xlwings_writer] UTF-8 wrapper applied", file=sys.stderr)
     
     if len(sys.argv) < 2:
         print(json.dumps({'success': False, 'error': 'Kein Befehl angegeben'}))

@@ -10,32 +10,135 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-// Python-Pfad ermitteln (venv oder system)
+// Sichere Log-Funktion (verhindert EIO-Fehler wenn keine Konsole vorhanden)
+function safeLog(...args) {
+    try {
+        if (process.stdout && process.stdout.writable) {
+            safeLog(...args);
+        }
+    } catch (e) {
+        // Ignoriere Konsolenfehler
+    }
+}
+
+function safeError(...args) {
+    try {
+        if (process.stderr && process.stderr.writable) {
+            safeError(...args);
+        }
+    } catch (e) {
+        // Ignoriere Konsolenfehler
+    }
+}
+
+// Python-Pfad ermitteln (embedded oder system)
 function getPythonPath() {
-    const venvPath = path.join(getPythonBasePath(), '..', '.venv');
+    const basePath = getPythonBasePath();
+    const isPackaged = basePath.includes('app.asar.unpacked');
     
-    // Prüfe ob venv existiert
-    if (fs.existsSync(venvPath)) {
-        if (process.platform === 'win32') {
-            return path.join(venvPath, 'Scripts', 'python.exe');
-        } else {
-            return path.join(venvPath, 'bin', 'python3');
+    // Im gepackten Modus: Eingebettetes Python verwenden
+    if (isPackaged) {
+        const resourcesPath = process.resourcesPath;
+        
+        if (process.platform === 'darwin') {
+            // macOS: Eingebettetes Python in python-embed/mac-arm64/python-venv
+            const embeddedPython = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'mac-arm64', 'python-venv', 'bin', 'python3');
+            if (fs.existsSync(embeddedPython)) {
+                safeLog(`[Python] Eingebettetes Python gefunden: ${embeddedPython}`);
+                return embeddedPython;
+            }
+            // Fallback Intel Mac
+            const embeddedPythonX64 = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'mac-x64', 'python-venv', 'bin', 'python3');
+            if (fs.existsSync(embeddedPythonX64)) {
+                safeLog(`[Python] Eingebettetes Python (x64) gefunden: ${embeddedPythonX64}`);
+                return embeddedPythonX64;
+            }
+        } else if (process.platform === 'win32') {
+            // Windows: Eingebettetes Python in python-embed/win-x64
+            const embeddedPython = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'win-x64', 'python.exe');
+            if (fs.existsSync(embeddedPython)) {
+                safeLog(`[Python] Eingebettetes Python gefunden: ${embeddedPython}`);
+                return embeddedPython;
+            }
+        }
+        
+        safeLog('[Python] WARNUNG: Eingebettetes Python nicht gefunden, versuche System-Python');
+    }
+    
+    // Dev-Modus: Prüfe ob venv existiert
+    if (!isPackaged) {
+        const venvPath = path.join(basePath, '..', '.venv');
+        if (fs.existsSync(venvPath)) {
+            if (process.platform === 'win32') {
+                return path.join(venvPath, 'Scripts', 'python.exe');
+            } else {
+                return path.join(venvPath, 'bin', 'python3');
+            }
         }
     }
     
-    // Fallback auf System-Python
-    return process.platform === 'win32' ? 'python' : 'python3';
+    // Fallback: System-Python suchen
+    if (process.platform === 'darwin') {
+        const macPythonPaths = [
+            '/opt/homebrew/bin/python3',        // Homebrew Apple Silicon
+            '/usr/local/bin/python3',           // Homebrew Intel
+            '/usr/bin/python3',                 // System Python
+            '/Library/Frameworks/Python.framework/Versions/Current/bin/python3'
+        ];
+        
+        for (const pyPath of macPythonPaths) {
+            if (fs.existsSync(pyPath)) {
+                safeLog(`[Python] System-Python gefunden: ${pyPath}`);
+                return pyPath;
+            }
+        }
+    }
+    
+    if (process.platform === 'win32') {
+        const winPythonPaths = [
+            'C:\\Python312\\python.exe',
+            'C:\\Python311\\python.exe',
+            'C:\\Python310\\python.exe',
+            'C:\\Python39\\python.exe',
+            (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python312\\python.exe',
+            (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python311\\python.exe',
+            (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python310\\python.exe'
+        ];
+        
+        for (const pyPath of winPythonPaths) {
+            if (fs.existsSync(pyPath)) {
+                safeLog(`[Python] System-Python gefunden: ${pyPath}`);
+                return pyPath;
+            }
+        }
+    }
+    
+    // Letzter Fallback
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    safeLog(`[Python] Fallback auf PATH-Python: ${pythonCmd}`);
+    return pythonCmd;
 }
-
 
 // Liefert den Basis-Pfad für Python-Skripte (entpackt im Produktionsmodus)
 function getPythonBasePath() {
-    // Im Produktionsmodus (gepackt): __dirname zeigt auf app.asar, python ist entpackt in resourcesPath/python
-    if (process.mainModule && process.mainModule.filename.includes('app.asar')) {
+    // Prüfe ob wir in einer gepackten App laufen
+    // process.mainModule ist deprecated, nutze require.main oder app.isPackaged
+    const isPackaged = process.mainModule 
+        ? process.mainModule.filename.includes('app.asar')
+        : (require.main && require.main.filename.includes('app.asar'));
+    
+    // Alternative: Prüfe ob resourcesPath auf app.asar zeigt
+    const hasAsar = process.resourcesPath && fs.existsSync(path.join(process.resourcesPath, 'app.asar'));
+    
+    if (isPackaged || hasAsar) {
         // In Electron production build: Python-Skripte liegen in app.asar.unpacked/python
-        return path.join(process.resourcesPath, 'app.asar.unpacked', 'python');
+        const unpackedPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'python');
+        safeLog(`[Python] Gepackter Modus - Python-Pfad: ${unpackedPath}`);
+        safeLog(`[Python] Existiert: ${fs.existsSync(unpackedPath)}`);
+        return unpackedPath;
     }
     // Im Dev-Modus: wie gehabt
+    safeLog(`[Python] Dev-Modus - Python-Pfad: ${__dirname}`);
     return __dirname;
 }
 
@@ -54,7 +157,7 @@ function setExcelEngine(engine) {
     const validEngines = ['auto', 'xlwings', 'openpyxl'];
     if (validEngines.includes(engine)) {
         _configuredEngine = engine;
-        console.log(`[Python] Excel-Engine gesetzt auf: ${engine}`);
+        safeLog(`[Python] Excel-Engine gesetzt auf: ${engine}`);
         // Cache zurücksetzen wenn Engine geändert wird
         resetExcelCache();
     } else {
@@ -73,9 +176,22 @@ function getExcelEngine() {
 
 // Prüfe ob xlwings-Scripts existieren
 function hasXlwingsSupport() {
-    const readerPath = path.join(getPythonBasePath(), 'excel_reader_xlwings.py');
-    const writerPath = path.join(getPythonBasePath(), 'excel_writer_xlwings.py');
-    return fs.existsSync(readerPath) && fs.existsSync(writerPath);
+    const basePath = getPythonBasePath();
+    const readerPath = path.join(basePath, 'excel_reader_xlwings.py');
+    const writerPath = path.join(basePath, 'excel_writer_xlwings.py');
+    const utilsPath = path.join(basePath, 'excel_utils.py');
+    
+    const readerExists = fs.existsSync(readerPath);
+    const writerExists = fs.existsSync(writerPath);
+    const utilsExists = fs.existsSync(utilsPath);
+    
+    safeLog(`[Python] hasXlwingsSupport Check:`);
+    safeLog(`[Python]   basePath: ${basePath}`);
+    safeLog(`[Python]   excel_reader_xlwings.py: ${readerExists}`);
+    safeLog(`[Python]   excel_writer_xlwings.py: ${writerExists}`);
+    safeLog(`[Python]   excel_utils.py: ${utilsExists}`);
+    
+    return readerExists && writerExists;
 }
 
 /**
@@ -87,7 +203,7 @@ function hasXlwingsSupport() {
 async function isExcelAvailable() {
     // Wenn Engine auf 'openpyxl' gesetzt, immer false zurückgeben
     if (_configuredEngine === 'openpyxl') {
-        console.log('[Python] Engine auf openpyxl gesetzt - xlwings deaktiviert');
+        safeLog('[Python] Engine auf openpyxl gesetzt - xlwings deaktiviert');
         return false;
     }
     
@@ -139,10 +255,10 @@ async function isExcelAvailable() {
         try {
             const result = await callPython('excel_utils.py', ['check_excel']);
             _excelAvailableCache = result.available === true;
-            console.log(`[Python] Excel-Verfügbarkeit: ${_excelAvailableCache ? 'JA' : 'NEIN'}`);
+            safeLog(`[Python] Excel-Verfügbarkeit: ${_excelAvailableCache ? 'JA' : 'NEIN'}`);
             return _excelAvailableCache;
         } catch (error) {
-            console.log('[Python] Excel-Check fehlgeschlagen:', error.message);
+            safeLog('[Python] Excel-Check fehlgeschlagen:', error.message);
             _excelAvailableCache = false;
             return false;
         }
@@ -166,7 +282,13 @@ function resetExcelCache() {
  */
 async function callPython(scriptName, args = []) {
     const pythonPath = getPythonPath();
-    const scriptPath = path.join(getPythonBasePath(), scriptName);
+    const basePath = getPythonBasePath();
+    const scriptPath = path.join(basePath, scriptName);
+    
+    safeLog(`[Python] callPython: ${scriptName} ${args.join(' ')}`);
+    safeLog(`[Python]   pythonPath: ${pythonPath}`);
+    safeLog(`[Python]   scriptPath: ${scriptPath}`);
+    safeLog(`[Python]   scriptExists: ${fs.existsSync(scriptPath)}`);
     
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
@@ -185,9 +307,14 @@ async function callPython(scriptName, args = []) {
         
         proc.on('close', (code) => {
             const duration = Date.now() - startTime;
+            safeLog(`[Python] Script beendet in ${duration}ms, code=${code}`);
+            
+            if (stderr) {
+                safeLog(`[Python] stderr: ${stderr.substring(0, 500)}`);
+            }
             
             if (code !== 0) {
-                console.error(`[Python] Error:`, stderr);
+                safeError(`[Python] Error:`, stderr);
                 reject(new Error(stderr || `Python script exited with code ${code}`));
                 return;
             }
@@ -196,14 +323,14 @@ async function callPython(scriptName, args = []) {
                 const result = JSON.parse(stdout);
                 resolve(result);
             } catch (parseError) {
-                console.error(`[Python] JSON parse error:`, parseError.message);
-                console.error(`[Python] stdout:`, stdout.substring(0, 500));
+                safeError(`[Python] JSON parse error:`, parseError.message);
+                safeError(`[Python] stdout:`, stdout.substring(0, 500));
                 reject(new Error(`Failed to parse Python output: ${parseError.message}`));
             }
         });
         
         proc.on('error', (error) => {
-            console.error(`[Python] Spawn error:`, error.message);
+            safeError(`[Python] Spawn error:`, error.message);
             reject(error);
         });
     });
@@ -238,7 +365,7 @@ async function readSheet(filePath, sheetName) {
             result = await callPython('excel_reader_xlwings.py', ['read_sheet', filePath, sheetName]);
             method = 'xlwings';
         } catch (xlwingsError) {
-            console.log(`[Python] xlwings-Lesen fehlgeschlagen, Fallback auf openpyxl: ${xlwingsError.message}`);
+            safeLog(`[Python] xlwings-Lesen fehlgeschlagen, Fallback auf openpyxl: ${xlwingsError.message}`);
             // Fallback auf openpyxl
             result = await callPython('excel_reader.py', ['read_sheet', filePath, sheetName]);
             method = 'openpyxl (fallback)';
@@ -305,14 +432,23 @@ async function writeExcel(config) {
     if (excelAvailable) {
         scriptPath = path.join(getPythonBasePath(), 'excel_writer_xlwings.py');
         useXlwings = true;
-        console.log('[Python] Verwende xlwings für Schreiboperation (Excel verfügbar)');
+        safeLog(`[Python] Verwende xlwings für Schreiboperation`);
+        safeLog(`[Python] Script: ${scriptPath}`);
+        safeLog(`[Python] Python: ${pythonPath}`);
     } else {
         scriptPath = path.join(getPythonBasePath(), 'excel_writer.py');
-        console.log('[Python] Verwende openpyxl für Schreiboperation (kein Excel verfügbar)');
+        safeLog('[Python] Verwende openpyxl für Schreiboperation (kein Excel verfügbar)');
+    }
+    
+    // Prüfe ob Script existiert
+    if (!fs.existsSync(scriptPath)) {
+        safeError(`[Python] Script nicht gefunden: ${scriptPath}`);
+        return { success: false, error: `Script nicht gefunden: ${scriptPath}`, method: 'error' };
     }
     
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
+        safeLog(`[Python] Starte: ${pythonPath} ${scriptPath} write_sheet`);
         const pythonProcess = spawn(pythonPath, [scriptPath, 'write_sheet']);
         
         let stdout = '';
@@ -329,14 +465,36 @@ async function writeExcel(config) {
             process.stdout.write(chunk);
         });
         
-        pythonProcess.on('close', (code) => {
+        pythonProcess.on('close', async (code) => {
             const duration = Date.now() - startTime;
             
             if (code !== 0) {
-                console.error(`[Python] Write Error:`, stderr);
+                safeError(`[Python] Write Error (code ${code}):`, stderr);
                 
-                // WICHTIG: Kein Fallback mehr - wir wollen den echten Fehler sehen!
-                // Der openpyxl Fallback verursacht doppeltes Excel-Öffnen und hängt.
+                // Bei xlwings-Fehlern automatisch auf openpyxl wechseln
+                if (useXlwings) {
+                    const isMacPermission = stderr.includes('OSERROR: -1743');
+                    const isEpipe = stderr.includes('EPIPE') || stderr.includes('Broken pipe');
+                    const isWin32Error = stderr.includes('win32com') || stderr.includes('pywintypes') || stderr.includes('pythoncom');
+                    
+                    if (isMacPermission || isEpipe || isWin32Error || code !== 0) {
+                        const reason = isMacPermission ? 'Berechtigung' : 
+                                      isEpipe ? 'EPIPE' : 
+                                      isWin32Error ? 'win32com' : 'Unbekannt';
+                        safeLog(`[Python] xlwings fehlgeschlagen (${reason}) - wechsle zu openpyxl...`);
+                        try {
+                            const openpyxlResult = await writeExcelOpenpyxl(config);
+                            openpyxlResult.method = 'openpyxl (fallback)';
+                            openpyxlResult.warning = `xlwings nicht verfügbar (${reason}). openpyxl verwendet.`;
+                            resolve(openpyxlResult);
+                            return;
+                        } catch (fallbackError) {
+                            reject(new Error(`xlwings fehlgeschlagen (${reason}), openpyxl auch: ${fallbackError.message}`));
+                            return;
+                        }
+                    }
+                }
+                
                 reject(new Error(stderr || `Python writer exited with code ${code}`));
                 return;
             }
@@ -346,15 +504,21 @@ async function writeExcel(config) {
                 result.method = useXlwings ? 'xlwings' : 'openpyxl';
                 resolve(result);
             } catch (parseError) {
-                console.error(`[Python] JSON parse error:`, parseError.message);
-                console.error(`[Python] stdout:`, stdout.substring(0, 500));
+                safeError(`[Python] JSON parse error:`, parseError.message);
+                safeError(`[Python] stdout:`, stdout.substring(0, 500));
                 reject(new Error(`Failed to parse Python output: ${parseError.message}`));
             }
         });
 
         pythonProcess.on('error', (error) => {
-            console.error(`[Python] Spawn error:`, error.message);
+            safeError(`[Python] Spawn error:`, error.message);
             reject(error);
+        });
+
+        // Fehlerhandler für stdin (verhindert EPIPE crashes)
+        pythonProcess.stdin.on('error', (error) => {
+            safeError(`[Python] stdin error:`, error.message);
+            // Nicht reject - warte auf close event für vollständige Fehlermeldung
         });
 
         // Sende Daten über stdin (für große Datenmengen)
@@ -415,6 +579,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
     const results = [];
     let hasError = false;
     let errorMessage = '';
+    let actualMethod = null; // Track the ACTUAL method used, not what was planned
     
     // Original-Datei für Style-Wiederherstellung (falls Markierungen entfernt werden)
     const originalSourcePath = options.originalSourcePath || sourcePath;
@@ -425,7 +590,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
         try {
             fs.copyFileSync(sourcePath, targetPath);
         } catch (copyError) {
-            console.error(`[Python] Fehler beim Kopieren:`, copyError.message);
+            safeError(`[Python] Fehler beim Kopieren:`, copyError.message);
             return { success: false, error: `Fehler beim Kopieren: ${copyError.message}` };
         }
     }
@@ -449,7 +614,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
             
             if (hasRowOps && hasColOps) {
                 // KOMBINIERTE OPERATIONEN: Erst Zeilen, dann Spalten (zwei separate Aufrufe)
-                console.log(`[Python] Kombinierte Ops: Erst Zeilen, dann Spalten für "${sheet.sheetName}"`);
+                safeLog(`[Python] Kombinierte Ops: Erst Zeilen, dann Spalten für "${sheet.sheetName}"`);
                 
                 // SCHRITT 1: Zeilen-Operationen (OHNE Spalten-Ops, OHNE fullRewrite)
                 const rowConfig = {
@@ -485,10 +650,12 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                 if (!rowResult.success) {
                     hasError = true;
                     errorMessage = rowResult.error;
-                    console.error(`[Python] Zeilen-Ops für "${sheet.sheetName}" fehlgeschlagen:`, rowResult.error);
+                    safeError(`[Python] Zeilen-Ops für "${sheet.sheetName}" fehlgeschlagen:`, rowResult.error);
                     continue;
                 }
-                console.log(`[Python] Zeilen-Ops für "${sheet.sheetName}" erfolgreich`);
+                // Track actual method used (might be fallback)
+                if (rowResult.method) actualMethod = rowResult.method;
+                safeLog(`[Python] Zeilen-Ops für "${sheet.sheetName}" erfolgreich (${rowResult.method})`);
                 
                 // SCHRITT 2: Spalten-Operationen (mit allen Daten, fullRewrite=true)
                 const colConfig = {
@@ -524,10 +691,12 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                 if (!colResult.success) {
                     hasError = true;
                     errorMessage = colResult.error;
-                    console.error(`[Python] Spalten-Ops für "${sheet.sheetName}" fehlgeschlagen:`, colResult.error);
+                    safeError(`[Python] Spalten-Ops für "${sheet.sheetName}" fehlgeschlagen:`, colResult.error);
                 } else {
                     results.push(sheet.sheetName);
-                    console.log(`[Python] Spalten-Ops für "${sheet.sheetName}" erfolgreich`);
+                    // Track actual method used
+                    if (colResult.method) actualMethod = colResult.method;
+                    safeLog(`[Python] Spalten-Ops für "${sheet.sheetName}" erfolgreich (${colResult.method})`);
                 }
                 
             } else {
@@ -566,16 +735,19 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                 if (!result.success) {
                     hasError = true;
                     errorMessage = result.error;
-                    console.error(`[Python] Sheet "${sheet.sheetName}" failed:`, result.error);
+                    safeError(`[Python] Sheet "${sheet.sheetName}" failed:`, result.error);
                 } else {
                     results.push(sheet.sheetName);
+                    // Track actual method used
+                    if (result.method) actualMethod = result.method;
+                    safeLog(`[Python] Sheet "${sheet.sheetName}" erfolgreich (${result.method})`);
                 }
             }
             
         } catch (error) {
             hasError = true;
             errorMessage = error.message;
-            console.error(`[Python] Sheet "${sheet.sheetName}" exception:`, error.message);
+            safeError(`[Python] Sheet "${sheet.sheetName}" exception:`, error.message);
         }
     }
     
@@ -591,15 +763,19 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
             const pwWorkbook = await XlsxPopulate.fromFileAsync(targetPath);
             await pwWorkbook.toFileAsync(targetPath, { password: options.password });
         } catch (pwError) {
-            console.error('[Python] Fehler beim Passwortschutz:', pwError.message);
+            safeError('[Python] Fehler beim Passwortschutz:', pwError.message);
             // Datei wurde bereits gespeichert, nur ohne Passwort
         }
     }
     
+    // Ermittle verwendete Methode - nutze tatsächliche Methode falls verfügbar
+    const finalMethod = actualMethod || (await isExcelAvailable() ? 'xlwings' : 'openpyxl');
+    
     return {
         success: true,
         message: `${results.length} Sheet(s) exportiert`,
-        sheetsExported: results
+        sheetsExported: results,
+        method: finalMethod
     };
 }
 

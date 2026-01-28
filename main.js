@@ -1331,6 +1331,20 @@ function createWindow() {
                 { role: 'paste', accelerator: 'CmdOrCtrl+V' },
                 { role: 'selectAll', accelerator: 'CmdOrCtrl+A' }
             ]
+        },
+        {
+            label: 'View',
+            submenu: [
+                { role: 'reload', accelerator: 'CmdOrCtrl+R' },
+                { role: 'forceReload', accelerator: 'CmdOrCtrl+Shift+R' },
+                { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Shift+I' },
+                { type: 'separator' },
+                { role: 'resetZoom' },
+                { role: 'zoomIn' },
+                { role: 'zoomOut' },
+                { type: 'separator' },
+                { role: 'togglefullscreen' }
+            ]
         }
     ];
 
@@ -2097,7 +2111,7 @@ ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, origin
             sourceFile: path.basename(sourcePath),
             targetFile: path.basename(targetPath),
             sheetsExported: result.sheetsExported,
-            method: 'openpyxl',
+            method: result.method || 'openpyxl',
             timeMs: duration
         });
 

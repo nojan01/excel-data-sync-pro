@@ -253,6 +253,12 @@ def list_sheets(file_path):
 
 def main():
     """Hauptfunktion - liest Befehle von stdin"""
+    # Auf Windows: Stelle sicher dass stdin/stdout UTF-8 verwenden
+    import io
+    if sys.platform == 'win32':
+        sys.stdin = io.TextIOWrapper(sys.stdin.buffer, encoding='utf-8')
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    
     if len(sys.argv) < 2:
         print(json.dumps({'success': False, 'error': 'Kein Befehl angegeben'}))
         sys.exit(1)
