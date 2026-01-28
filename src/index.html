@@ -12970,9 +12970,17 @@
                         // STRATEGIE: Bei strukturellen Änderungen FULL REWRITE
                         if (hasStructuralChanges) {
                             // Strukturelle Änderung: FULL REWRITE
-                            // WICHTIG: Verwende data statt filteredData, damit versteckte Zeilen auch exportiert werden!
-                            // (filteredData enthält versteckte Zeilen nicht)
-                            let allData = explorerState.data;
+                            // Bei Filter: Nur gefilterte Zeilen exportieren
+                            // Bei versteckten Zeilen (ohne Filter): Alle Zeilen exportieren
+                            let allData;
+                            if (isFiltered) {
+                                // Filter aktiv: Nur die sichtbaren/gefilterten Zeilen exportieren
+                                allData = explorerState.filteredData.map(item => item.row);
+                                console.log(`[Export] Filter aktiv: Exportiere ${allData.length} von ${explorerState.data.length} Zeilen`);
+                            } else {
+                                // Kein Filter: Alle Zeilen (inkl. versteckte)
+                                allData = explorerState.data;
+                            }
                             
                             let exportHeaders = [...explorerState.headers];
                             // WICHTIG: cellStyles werden normalerweise NICHT mitgesendet!
@@ -13274,15 +13282,40 @@
                             // Bei Data Join sind die eingefügten Daten NUR in editedCells, nicht in der Datei.
                             // xlwings schreibt keine Bulk-Daten, also müssen wir die editedCells mitsenden.
                             const changedCellsForStructural = {};
+                            
+                            // Bei Filter: Mapping von originalIndex zu newIndex in filteredData erstellen
+                            let filterIndexMap = null;
+                            if (isFiltered) {
+                                filterIndexMap = new Map();
+                                explorerState.filteredData.forEach((item, newIdx) => {
+                                    filterIndexMap.set(item.originalIndex, newIdx);
+                                });
+                            }
+                            
                             for (const cellKey of explorerState.editedCells.keys()) {
                                 // Überspringe spezielle Marker-Keys
                                 if (cellKey.startsWith('_')) continue;
                                 
                                 const [rowStr, colStr] = cellKey.split('-');
-                                const rowIdx = parseInt(rowStr);
+                                const originalRowIdx = parseInt(rowStr);
                                 const colIdx = parseInt(colStr);
-                                if (rowIdx >= 0 && colIdx >= 0 && explorerState.data[rowIdx]) {
-                                    changedCellsForStructural[cellKey] = explorerState.data[rowIdx][colIdx];
+                                
+                                if (isFiltered) {
+                                    // Bei Filter: Index umrechnen und prüfen ob Zeile sichtbar ist
+                                    const newRowIdx = filterIndexMap.get(originalRowIdx);
+                                    if (newRowIdx !== undefined && colIdx >= 0) {
+                                        // Hole Wert aus filteredData mit neuem Index
+                                        const row = explorerState.filteredData[newRowIdx]?.row;
+                                        if (row) {
+                                            changedCellsForStructural[`${newRowIdx}-${colIdx}`] = row[colIdx];
+                                        }
+                                    }
+                                    // Zeile nicht sichtbar = nicht exportieren
+                                } else {
+                                    // Ohne Filter: Original-Indizes verwenden
+                                    if (originalRowIdx >= 0 && colIdx >= 0 && explorerState.data[originalRowIdx]) {
+                                        changedCellsForStructural[cellKey] = explorerState.data[originalRowIdx][colIdx];
+                                    }
                                 }
                             }
                             

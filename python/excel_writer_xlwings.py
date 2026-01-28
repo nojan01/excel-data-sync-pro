@@ -344,21 +344,29 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
         original_row_count = used_range.last_cell.row - 1 if used_range else 0  # Ohne Header
         new_row_count = len(data)
         
-        # Überschüssige Zeilen löschen
+        # Überschüssige Zeilen löschen - OPTIMIERUNG: Alle auf einmal statt einzeln!
         if full_rewrite and new_row_count < original_row_count:
             rows_to_delete = original_row_count - new_row_count
-            # Lösche von unten nach oben - verwende plattformübergreifende Syntax
-            for i in range(rows_to_delete):
-                last_row = ws.used_range.last_cell.row
-                ws.range(f'{last_row}:{last_row}').delete()
-        
-        # WICHTIG: Bei xlwings KEINE Bulk-Daten schreiben!
-        # Das überschreibt die Formatierungen.
-        # Die Daten sind bereits in der kopierten Datei.
-        # xlwings soll nur strukturelle Änderungen machen (Zeilen/Spalten einfügen/löschen)
-        # und einzelne geänderte Zellen aktualisieren.
+            # Lösche alle überschüssigen Zeilen in einem Bereich (VIEL schneller!)
+            first_row_to_delete = new_row_count + 2  # +2 für Header (1-basiert)
+            last_row_to_delete = original_row_count + 1  # +1 für Header (1-basiert)
+            print(f"[xlwings_writer] Lösche Zeilen {first_row_to_delete} bis {last_row_to_delete} ({rows_to_delete} Zeilen)", file=sys.stderr)
+            ws.range(f'{first_row_to_delete}:{last_row_to_delete}').delete()
+            
+            # WICHTIG: Bei Filter werden nicht nur Zeilen gelöscht, sondern die
+            # verbleibenden Zeilen enthalten andere Daten (gefilterte Zeilen).
+            # Wir müssen alle Daten komplett neu schreiben!
+            print(f"[xlwings_writer] Filter aktiv - schreibe {new_row_count} Zeilen neu", file=sys.stderr)
+            if data and len(data) > 0 and len(data[0]) > 0:
+                num_cols = len(data[0])
+                # Schreibe alle Daten als Block (Zeile 2 bis new_row_count+1)
+                start_cell = ws.range((2, 1))  # Zeile 2, Spalte A (nach Header)
+                end_cell = ws.range((new_row_count + 1, num_cols))
+                ws.range(start_cell, end_cell).value = data
+                print(f"[xlwings_writer] Alle Daten geschrieben: {new_row_count} x {num_cols}", file=sys.stderr)
         
         # SCHRITT 5: ZELL-EDITS (geänderte Zellen)
+        # NUR bei editedCells ohne Filter-Rewrite
         # OPTIMIERUNG: Gruppiere nach Spalten und schreibe spaltenweise statt zellweise
         if edited_cells:
             print(f"[xlwings_writer] Schreibe {len(edited_cells)} geänderte Zellen...", file=sys.stderr)
