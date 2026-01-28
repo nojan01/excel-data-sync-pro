@@ -1,3 +1,10 @@
+# Prüfe, ob openpyxl installiert ist, und gib eine verständliche Fehlermeldung aus
+try:
+    import openpyxl
+except ImportError:
+    import sys
+    print("[Fehler] Das Python-Modul 'openpyxl' ist nicht installiert. Bitte führe im python-Verzeichnis 'pip3 install -r requirements.txt' aus.", file=sys.stderr)
+    sys.exit(1)
 #!/usr/bin/env python3
 """
 Excel Writer für Excel Data Sync Pro
@@ -2774,43 +2781,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 identity_mapping = list(range(len(row_mapping)))
                 needs_reorder = row_mapping != identity_mapping
                 
-                sys.stderr.write(f"[SCHRITT 0.5] row_mapping Länge: {len(row_mapping)}\n")
-                sys.stderr.write(f"[SCHRITT 0.5] identity_mapping erste 5: {identity_mapping[:5]}\n")
-                sys.stderr.write(f"[SCHRITT 0.5] row_mapping erste 5: {row_mapping[:5]}\n")
-                sys.stderr.write(f"[SCHRITT 0.5] needs_reorder: {needs_reorder}\n")
-                
-                # DEBUG: Prüfe CF-Regeln
-                cf_count = len(list(ws.conditional_formatting._cf_rules.items()))
-                sys.stderr.write(f"[DEBUG] Conditional Formatting Regeln: {cf_count}\n")
-                
-                # DEBUG: Prüfe Tables (Zebra-Muster könnte Table Style sein)
-                if hasattr(ws, '_tables'):
-                    sys.stderr.write(f"[DEBUG] Tables im Worksheet: {len(ws._tables)}\n")
-                    for table in ws._tables:
-                        try:
-                            if hasattr(table, 'name'):
-                                sys.stderr.write(f"[DEBUG] Table: {table.name}, Bereich: {table.ref}, Style: {table.tableStyleInfo.name if table.tableStyleInfo else 'keiner'}\n")
-                            else:
-                                sys.stderr.write(f"[DEBUG] Table (string): {table}\n")
-                        except Exception as e:
-                            sys.stderr.write(f"[DEBUG] Table error: {e}\n")
-                
-                # Zeige nur große Bereiche (Zebra-Muster)
-                for cf_obj, rules in list(ws.conditional_formatting._cf_rules.items()):
-                    sqref_str = str(cf_obj.sqref)
-                    # Prüfe ob es ein großer Bereich ist (mehr als 100 Zeilen)
-                    if ':' in sqref_str:
-                        parts = sqref_str.split(':')
-                        if len(parts) == 2:
-                            import re
-                            match1 = re.search(r'\d+', parts[0])
-                            match2 = re.search(r'\d+', parts[1])
-                            if match1 and match2:
-                                row1 = int(match1.group())
-                                row2 = int(match2.group())
-                                if row2 - row1 > 100:
-                                    sys.stderr.write(f"[DEBUG] Großer CF Bereich: {sqref_str}, Regeln: {len(rules)}, Typ: {rules[0].type if rules else 'unbekannt'}\n")
-                
                 if needs_reorder:
                     # Speichere alle benötigten Zeilen mit Formatierung
                     # Key = Original-Daten-Index (0-basiert), Value = Zellen-Info
@@ -2866,9 +2836,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             }
                         row_data_with_styles[orig_data_idx] = row_info
                     
-                    sys.stderr.write(f"[SCHRITT 0.5] Zellen mit Formatierung gefunden: {styles_found}\n")
-                    sys.stderr.write(f"[SCHRITT 0.5] row_data_with_styles Anzahl: {len(row_data_with_styles)}\n")
-                    
                     # Schreibe die Zeilen in neuer Reihenfolge
                     # Speichere RichText und Hyperlinks für später (werden nach SCHRITT 4 angewendet)
                     rich_text_cells_to_restore = {}  # Key: "excel_row-col_idx", Value: CellRichText
@@ -2904,17 +2871,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                 # Hyperlink für später speichern
                                 if cell_info.get('hyperlink'):
                                     hyperlinks_to_restore[f"{excel_row}-{col_idx}"] = cell_info['hyperlink']
-                    
-                    sys.stderr.write(f"[SCHRITT 0.5] Styles angewendet (fill+font): {styles_applied}\n")
-                    
-                    # DEBUG: Finde eine Zelle mit Formatierung in Zeile 2 nach dem Kopieren
-                    for test_col in range(1, min(ws.max_column + 1, 50)):
-                        test_cell_after = ws.cell(row=2, column=test_col)
-                        if test_cell_after.fill and test_cell_after.fill.patternType and test_cell_after.fill.patternType != 'none':
-                            sys.stderr.write(f"[DEBUG] Nach SCHRITT 0.5: Zeile 2 Spalte {test_col}: patternType={test_cell_after.fill.patternType}, fgColor={test_cell_after.fill.fgColor.rgb if test_cell_after.fill.fgColor else None}\n")
-                            break
-                    else:
-                        sys.stderr.write(f"[DEBUG] Nach SCHRITT 0.5: Keine formatierte Zelle in Zeile 2 gefunden\n")
                     
                     # CF-Bereiche anpassen für gelöschte Zeilen
                     adjust_cf_for_row_changes(ws, row_mapping, original_max_row - 1)  # -1 für Header
@@ -3192,15 +3148,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 for col_idx, value in enumerate(row_data):
                     cell = ws.cell(row=excel_row, column=col_idx + 1)
                     apply_cell_value(cell, value)
-            
-            # DEBUG: Finde eine Zelle mit Formatierung in Zeile 2 nach SCHRITT 4
-            for test_col in range(1, min(ws.max_column + 1, 50)):
-                test_cell_after4 = ws.cell(row=2, column=test_col)
-                if test_cell_after4.fill and test_cell_after4.fill.patternType and test_cell_after4.fill.patternType != 'none':
-                    sys.stderr.write(f"[DEBUG] Nach SCHRITT 4: Zeile 2 Spalte {test_col}: patternType={test_cell_after4.fill.patternType}, fgColor={test_cell_after4.fill.fgColor.rgb if test_cell_after4.fill.fgColor else None}\n")
-                    break
-            else:
-                sys.stderr.write(f"[DEBUG] Nach SCHRITT 4: Keine formatierte Zelle in Zeile 2 gefunden\n")
             
             # ================================================================
             # SCHRITT 4.5: RICHTEXT UND HYPERLINKS WIEDERHERSTELLEN

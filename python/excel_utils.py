@@ -9,6 +9,8 @@ Prüft zur Laufzeit welche Excel-Methode verfügbar ist:
 
 import sys
 import os
+import json
+import platform
 
 # Cache für Excel-Verfügbarkeit
 _excel_available = None
@@ -17,23 +19,45 @@ def is_excel_installed():
     """
     Prüft ob Microsoft Excel installiert und per xlwings erreichbar ist.
     Das Ergebnis wird gecached.
+    
+    Gibt False zurück wenn:
+    - xlwings nicht installiert ist
+    - Excel nicht installiert ist
+    - Excel nicht gestartet werden kann
     """
     global _excel_available
     
     if _excel_available is not None:
         return _excel_available
     
+    # Prüfe zuerst ob xlwings überhaupt importiert werden kann
     try:
         import xlwings as xw
+    except ImportError as e:
+        print(f"[excel_utils] xlwings nicht installiert: {e}", file=sys.stderr)
+        _excel_available = False
+        return False
+    
+    # xlwings ist da, jetzt Excel testen
+    try:
         # Versuche Excel App zu starten (unsichtbar)
         app = xw.App(visible=False, add_book=False)
         # Wenn das funktioniert, ist Excel verfügbar
         app.quit()
         _excel_available = True
-    except Exception:
+        print(f"[excel_utils] Microsoft Excel verfügbar", file=sys.stderr)
+    except Exception as e:
+        # Debug-Ausgabe für Fehlerbehebung
+        print(f"[excel_utils] Excel nicht verfügbar: {e}", file=sys.stderr)
         _excel_available = False
     
     return _excel_available
+
+
+def reset_excel_cache():
+    """Setzt den Excel-Cache zurück (für Tests oder nach Neuinstallation)"""
+    global _excel_available
+    _excel_available = None
 
 
 def delete_columns_with_xlwings(file_path, output_path, sheet_name, column_indices):
@@ -284,17 +308,23 @@ def get_excel_status():
     if available:
         return {
             'available': True,
-            'message': 'Microsoft Excel verfügbar - strukturelle Änderungen mit CF-Erhalt möglich'
+            'method': 'xlwings',
+            'message': 'Microsoft Excel verfügbar - xlwings wird für optimale Formaterhaltung verwendet'
         }
     else:
         return {
             'available': False,
-            'message': 'Microsoft Excel nicht verfügbar - strukturelle Änderungen können CF beeinträchtigen'
+            'method': 'openpyxl',
+            'message': 'Microsoft Excel nicht verfügbar - openpyxl wird als Fallback verwendet'
         }
 
 
 if __name__ == '__main__':
-    import json
-    # Test: Excel-Status ausgeben
-    status = get_excel_status()
-    print(json.dumps(status, indent=2))
+    # Kommandozeilen-Interface für Excel-Check
+    if len(sys.argv) > 1 and sys.argv[1] == 'check_excel':
+        status = get_excel_status()
+        print(json.dumps(status))
+    else:
+        # Standard: Status ausgeben
+        status = get_excel_status()
+        print(json.dumps(status, indent=2))

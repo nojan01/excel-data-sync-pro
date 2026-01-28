@@ -1,6 +1,6 @@
 {
   "name": "excel-data-sync-pro",
-  "version": "1.1.0",
+  "version": "1.1.02",
   "description": "Excel Data Sync Pro - Daten zwischen Excel-Dateien synchronisieren",
   "main": "main.js",
   "license": "MIT",
@@ -27,7 +27,11 @@
       "exceljs-reader.js",
       "exceljs-writer.js",
       "src/**/*",
+      "python/**/*",
       "node_modules/**/*"
+    ],
+    "asarUnpack": [
+      "python/**"
     ],
     "mac": {
       "target": [

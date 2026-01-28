@@ -39,6 +39,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Python/openpyxl Writer (behält CF und Formatierungen)
     pythonExportMultipleSheets: (params) => ipcRenderer.invoke('python:exportMultipleSheets', params),
     
+    // Excel-Engine Steuerung
+    checkExcelAvailable: () => ipcRenderer.invoke('excel:checkAvailable'),
+    setExcelEngine: (engine) => ipcRenderer.invoke('excel:setEngine', engine),
+    getExcelEngine: () => ipcRenderer.invoke('excel:getEngine'),
+    
     // Sheet-Verwaltung
     addSheet: (params) => ipcRenderer.invoke('excel:addSheet', params),
     deleteSheet: (params) => ipcRenderer.invoke('excel:deleteSheet', params),

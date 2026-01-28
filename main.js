@@ -1100,7 +1100,8 @@ const configSchema = {
         'startColumn', 'checkColumn', 'flagColumn', 'commentColumn',
         'sourceColumns', 'enableFlag', 'enableComment', 'workingDir',
         'theme', 'language', 'file1SheetName', 'file2SheetName', 'mapping',
-        'exportDate', 'extraColumns', 'file1Name', 'file2Name', 'templateName'
+        'exportDate', 'extraColumns', 'file1Name', 'file2Name', 'templateName',
+        'excelEngine'  // 'auto', 'xlwings' oder 'openpyxl'
     ],
 
     /**
@@ -1152,13 +1153,15 @@ const configSchema = {
             extraColumns: 'object',
             file1Name: 'string',
             file2Name: 'string',
-            templateName: 'string'
+            templateName: 'string',
+            excelEngine: 'string'  // 'auto', 'xlwings' oder 'openpyxl'
         };
 
         // Erlaubte Werte für bestimmte Felder
         const allowedValues = {
             theme: ['dark', 'light'],
-            language: ['de', 'en']
+            language: ['de', 'en'],
+            excelEngine: ['auto', 'xlwings', 'openpyxl']
         };
 
         // Prüfe jeden bekannten Schlüssel
@@ -1415,13 +1418,38 @@ function createWindow() {
     });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
     // Security-Logger initialisieren (für Datei-basiertes Logging)
     securityLog.init();
     securityLog.log('INFO', 'APP_STARTED', { version: app.getVersion() });
 
     // Network-Logger initialisieren (für Netzlaufwerk-Protokollierung)
     networkLog.init();
+
+    // Excel-Verfügbarkeit prüfen und loggen
+    try {
+        const excelStatus = await pythonBridge.checkExcelAvailable();
+        const engine = pythonBridge.getExcelEngine();
+        
+        if (excelStatus.excelAvailable) {
+            console.log(`[App] ✓ Microsoft Excel erkannt - xlwings wird verwendet (Engine: ${engine})`);
+            securityLog.log('INFO', 'EXCEL_DETECTED', { 
+                method: 'xlwings', 
+                configuredEngine: engine,
+                message: excelStatus.message 
+            });
+        } else {
+            console.log(`[App] ✗ Microsoft Excel nicht verfügbar - openpyxl wird verwendet (Engine: ${engine})`);
+            securityLog.log('INFO', 'EXCEL_NOT_DETECTED', { 
+                method: 'openpyxl', 
+                configuredEngine: engine,
+                message: excelStatus.message 
+            });
+        }
+    } catch (error) {
+        console.log('[App] ⚠ Excel-Prüfung fehlgeschlagen:', error.message);
+        securityLog.log('WARN', 'EXCEL_CHECK_FAILED', { error: error.message });
+    }
 
     createWindow();
 });
@@ -2099,6 +2127,39 @@ ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, origin
             targetFile: path.basename(targetPath),
             error: error.message
         });
+        return { success: false, error: error.message };
+    }
+});
+
+// ======================================================================
+// EXCEL ENGINE STEUERUNG
+// Ermöglicht das Umschalten zwischen xlwings und openpyxl
+// ======================================================================
+ipcMain.handle('excel:checkAvailable', async () => {
+    try {
+        return await pythonBridge.checkExcelAvailable();
+    } catch (error) {
+        return { success: false, excelAvailable: false, error: error.message };
+    }
+});
+
+ipcMain.handle('excel:setEngine', async (event, engine) => {
+    try {
+        pythonBridge.setExcelEngine(engine);
+        console.log(`[App] Excel-Engine auf "${engine}" gesetzt`);
+        securityLog.log('INFO', 'EXCEL_ENGINE_CHANGED', { engine });
+        
+        // Status nach Änderung zurückgeben
+        return await pythonBridge.checkExcelAvailable();
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('excel:getEngine', async () => {
+    try {
+        return { success: true, engine: pythonBridge.getExcelEngine() };
+    } catch (error) {
         return { success: false, error: error.message };
     }
 });
@@ -3967,6 +4028,12 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
                         hasComputerSection: hasComputerSection,
                         isLegacyFormat: isLegacyFormat
                     });
+
+                    // Excel-Engine aus Config setzen (falls vorhanden)
+                    if (mergedConfig.excelEngine) {
+                        pythonBridge.setExcelEngine(mergedConfig.excelEngine);
+                        console.log(`[Config] Excel-Engine aus config.json: ${mergedConfig.excelEngine}`);
+                    }
 
                     return {
                         success: true,

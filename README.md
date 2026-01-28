@@ -4,7 +4,7 @@ Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen E
 
 ## Version
 
-**v1.0.15** - © Norbert Jander 2025
+**v1.1.02** - © Norbert Jander 2025
 
 ## Hauptfunktionen
 

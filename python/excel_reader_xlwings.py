@@ -21,20 +21,21 @@ from openpyxl.utils import get_column_letter
 
 
 def kill_excel_instances():
-    """Beendet alle laufenden Excel-Instanzen auf macOS - sehr aggressiv"""
-    if platform.system() == 'Darwin':
-        import time
-        
-        # Methode 1: xlwings Apps beenden
-        try:
-            for app in xw.apps:
-                try:
-                    app.quit()
-                except:
-                    pass
-        except:
-            pass
-        
+    """Beendet alle laufenden Excel-Instanzen - plattformübergreifend"""
+    import time
+    system = platform.system()
+    
+    # Methode 1: xlwings Apps beenden (funktioniert auf allen Plattformen)
+    try:
+        for app in xw.apps:
+            try:
+                app.quit()
+            except:
+                pass
+    except:
+        pass
+    
+    if system == 'Darwin':  # macOS
         # Methode 2: AppleScript quit (ohne waiting)
         try:
             subprocess.run(['osascript', '-e', 
@@ -67,15 +68,39 @@ def kill_excel_instances():
                                capture_output=True, timeout=2)
         except:
             pass
+    
+    elif system == 'Windows':  # Windows
+        time.sleep(0.2)
+        
+        # Methode 2: Mit taskkill Excel beenden
+        try:
+            subprocess.run(['taskkill', '/F', '/IM', 'EXCEL.EXE'], 
+                          capture_output=True, timeout=5)
+            time.sleep(0.3)
+        except:
+            pass
 
 
 def hide_excel():
-    """Versteckt Excel auf macOS"""
-    if platform.system() == 'Darwin':
+    """Versteckt Excel - plattformübergreifend"""
+    system = platform.system()
+    
+    if system == 'Darwin':  # macOS
         try:
             subprocess.run(['osascript', '-e', 
                 'tell application "System Events" to set visible of process "Microsoft Excel" to false'], 
                 capture_output=True, timeout=2)
+        except:
+            pass
+    
+    elif system == 'Windows':  # Windows
+        # Auf Windows: Excel-Fenster verstecken via xlwings
+        try:
+            for app in xw.apps:
+                try:
+                    app.visible = False
+                except:
+                    pass
         except:
             pass
 

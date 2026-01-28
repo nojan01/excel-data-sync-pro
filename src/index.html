@@ -1597,6 +1597,17 @@
                             </select>
                         </div>
                     </div>
+                    <div class="config-group" style="margin-top: 10px;">
+                        <label class="config-label" data-i18n="excelEngine">Excel-Engine</label>
+                        <select class="config-select" id="selectExcelEngine" style="width: 100%;">
+                            <option value="auto">🔄 Auto (xlwings wenn Excel vorhanden)</option>
+                            <option value="xlwings">⚡ xlwings (erfordert Excel)</option>
+                            <option value="openpyxl">📦 openpyxl (ohne Excel)</option>
+                        </select>
+                        <div id="excelEngineInfo" style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
+                            Engine wird beim Start erkannt
+                        </div>
+                    </div>
                     <div style="margin-top: 15px;">
                         <button class="btn btn-secondary" id="btnLicense" style="width: 100%;">
                             📜 <span data-i18n="license">Lizenz</span>
@@ -1769,7 +1780,7 @@
     
     <!-- Footer -->
     <footer style="background: var(--bg-medium); border-top: 1px solid var(--border); padding: 8px 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
-        © Norbert Jander 2025 · v1.0.15
+        © Norbert Jander 2025 · v1.1.02
     </footer>
     
     <!-- Mapping Modal -->
@@ -2934,7 +2945,7 @@
                             "Am Ende einfügen" fügt die Spalte ans Ende der Tabelle.
                         </div>
                         <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
-                            <input type="checkbox" id="joinMarkNotFound" class="green-checkbox" checked>
+                            <input type="checkbox" id="joinMarkNotFound" class="green-checkbox">
                             <span data-i18n="joinMarkNotFoundLabel">Nicht gefundene Zeilen markieren (gelb)</span>
                         </label>
                     </div>
@@ -3213,7 +3224,7 @@
                 createAndLoad: '📅 Erstellen & Laden',
                 
                 // Footer
-                copyright: '© Norbert Jander 2025 · v1.0.15',
+                copyright: '© Norbert Jander 2025 · v1.1.02',
                 
                 // Extra Columns
                 extraColumns: 'Extra-Spalten',
@@ -3465,7 +3476,7 @@
                 createAndLoad: '📅 Create & Load',
                 
                 // Footer
-                copyright: '© Norbert Jander 2025 · v1.0.15',
+                copyright: '© Norbert Jander 2025 · v1.1.02',
                 
                 // Extra Columns
                 extraColumns: 'Extra Columns',
@@ -14127,6 +14138,50 @@
             document.getElementById('selectTheme').value = currentTheme;
             document.getElementById('selectLanguage').onchange = (e) => setLanguage(e.target.value);
             document.getElementById('selectTheme').onchange = (e) => setTheme(e.target.value);
+            
+            // Excel Engine Selector initialisieren
+            const engineSelect = document.getElementById('selectExcelEngine');
+            const engineInfo = document.getElementById('excelEngineInfo');
+            
+            // Gespeicherte Engine laden
+            const savedEngine = localStorage.getItem('excelSyncEngine') || 'auto';
+            engineSelect.value = savedEngine;
+            
+            // Engine-Status vom Backend abfragen
+            async function updateEngineStatus() {
+                try {
+                    const status = await window.electronAPI.checkExcelAvailable();
+                    const engine = engineSelect.value;
+                    
+                    if (status.excelAvailable) {
+                        engineInfo.innerHTML = `✓ <span style="color: var(--success);">xlwings aktiv</span> (Excel erkannt)`;
+                    } else if (engine === 'xlwings') {
+                        engineInfo.innerHTML = `⚠️ <span style="color: var(--warning);">xlwings nicht verfügbar</span> - Excel nicht installiert`;
+                    } else {
+                        engineInfo.innerHTML = `📦 <span style="color: var(--info);">openpyxl aktiv</span> (kein Excel)`;
+                    }
+                } catch (error) {
+                    engineInfo.innerHTML = `⚠️ Status unbekannt`;
+                }
+            }
+            
+            // Engine-Änderung verarbeiten
+            engineSelect.onchange = async (e) => {
+                const newEngine = e.target.value;
+                localStorage.setItem('excelSyncEngine', newEngine);
+                
+                // Engine im Backend setzen
+                try {
+                    await window.electronAPI.setExcelEngine(newEngine);
+                    await updateEngineStatus();
+                    showNotification(`Excel-Engine auf "${newEngine}" gesetzt`, 'info');
+                } catch (error) {
+                    showNotification(`Fehler beim Setzen der Engine: ${error.message}`, 'error');
+                }
+            };
+            
+            // Initial Engine-Status laden
+            updateEngineStatus();
             
             // Flag/Comment Column Options
             const flagCheckbox = document.getElementById('enableFlagColumn');

@@ -20,27 +20,28 @@ import xlwings as xw
 
 
 def kill_excel_instances():
-    """Beendet alle laufenden Excel-Instanzen auf macOS - sehr aggressiv"""
-    if platform.system() == 'Darwin':
-        import time
-        
-        # Methode 1: xlwings Apps beenden (ohne zu speichern!)
-        try:
-            for app in xw.apps:
-                try:
-                    for book in app.books:
-                        try:
-                            book.close()
-                        except:
-                            pass
-                    app.quit()
-                except:
-                    pass
-        except Exception:
-            pass
-        
-        time.sleep(0.2)
-        
+    """Beendet alle laufenden Excel-Instanzen - plattformübergreifend"""
+    import time
+    system = platform.system()
+    
+    # Methode 1: xlwings Apps beenden (funktioniert auf allen Plattformen)
+    try:
+        for app in xw.apps:
+            try:
+                for book in app.books:
+                    try:
+                        book.close()
+                    except:
+                        pass
+                app.quit()
+            except:
+                pass
+    except Exception:
+        pass
+    
+    time.sleep(0.2)
+    
+    if system == 'Darwin':  # macOS
         # Methode 2: Mit pkill -9 SOFORT beenden (keine Dialoge!)
         try:
             result = subprocess.run(['pgrep', '-x', 'Microsoft Excel'], 
@@ -62,15 +63,38 @@ def kill_excel_instances():
                 time.sleep(0.3)
         except:
             pass
+    
+    elif system == 'Windows':  # Windows
+        # Methode 2: Mit taskkill Excel beenden
+        try:
+            subprocess.run(['taskkill', '/F', '/IM', 'EXCEL.EXE'], 
+                          capture_output=True, timeout=5)
+            time.sleep(0.3)
+        except:
+            pass
 
 
 def hide_excel():
-    """Versteckt Excel auf macOS"""
-    if platform.system() == 'Darwin':
+    """Versteckt Excel - plattformübergreifend"""
+    system = platform.system()
+    
+    if system == 'Darwin':  # macOS
         try:
             subprocess.run(['osascript', '-e', 
                 'tell application "System Events" to set visible of process "Microsoft Excel" to false'], 
                 capture_output=True, timeout=2)
+        except:
+            pass
+    
+    elif system == 'Windows':  # Windows
+        # Auf Windows: Excel-Fenster minimieren via xlwings
+        try:
+            for app in xw.apps:
+                try:
+                    # visible=False versteckt das Fenster komplett
+                    app.visible = False
+                except:
+                    pass
         except:
             pass
 
@@ -222,7 +246,6 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
         # damit Excel die Formatierungen (CF, Fills, etc.) automatisch verschiebt!
         # Danach schreiben wir die Daten (die bereits die neue Spalte enthalten).
         if inserted_columns:
-            print(f"[DEBUG xlwings] inserted_columns empfangen: {inserted_columns}", flush=True)
             operations = inserted_columns.get('operations', [])
             if not operations and inserted_columns.get('position') is not None:
                 # Altes Format
@@ -247,8 +270,6 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                 excel_col = pos + 1  # 1-basiert
                 col_letter = _get_column_letter(excel_col)
                 
-                print(f"[DEBUG xlwings] Insert Spalte: pos={pos}, excel_col={excel_col}, sourceColumn={source_column}", flush=True)
-                
                 for i in range(count):
                     insert_letter = _get_column_letter(excel_col + i)
                     
@@ -258,7 +279,6 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                         # Quellspalte (vor Einfügen) - offset anpassen
                         source_excel_col = source_column + 1 + inserted_offset  # 1-basiert
                         source_letter = _get_column_letter(source_excel_col)
-                        print(f"[DEBUG xlwings] Kopiere Format von Spalte {source_letter} (excel_col={source_excel_col})", flush=True)
                         
                         # KOPIERE GESAMTE REFERENZSPALTE (inkl. Formatierung)
                         # xlwings: copy() kopiert Werte UND Formate
@@ -274,7 +294,6 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                         new_col_range = ws.range(f'{insert_letter}:{insert_letter}')
                         # paste: special='formats' fügt nur Formatierung ein, nicht Werte
                         new_col_range.paste(paste='formats')
-                        print(f"[DEBUG xlwings] Format eingefügt in Spalte {insert_letter}", flush=True)
                 
                 # Header setzen
                 for i, header in enumerate(op_headers):
@@ -472,16 +491,20 @@ def check_excel_available():
         app.quit()
         return {
             'success': True,
+            'available': True,
             'excelAvailable': True,
             'xlwingsAvailable': True,
-            'message': 'Excel verfügbar - alle Operationen mit perfektem CF-Erhalt'
+            'method': 'xlwings',
+            'message': 'Microsoft Excel verfügbar - xlwings wird für optimale Formaterhaltung verwendet'
         }
     except Exception as e:
         return {
             'success': True,
+            'available': False,
             'excelAvailable': False,
             'xlwingsAvailable': True,
-            'message': f'Excel nicht verfügbar: {e}'
+            'method': 'openpyxl',
+            'message': f'Microsoft Excel nicht verfügbar: {e} - openpyxl wird als Fallback verwendet'
         }
 
 

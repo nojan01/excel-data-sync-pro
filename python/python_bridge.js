@@ -12,7 +12,7 @@ const fs = require('fs');
 
 // Python-Pfad ermitteln (venv oder system)
 function getPythonPath() {
-    const venvPath = path.join(__dirname, '..', '.venv');
+    const venvPath = path.join(getPythonBasePath(), '..', '.venv');
     
     // Prüfe ob venv existiert
     if (fs.existsSync(venvPath)) {
@@ -27,13 +27,138 @@ function getPythonPath() {
     return process.platform === 'win32' ? 'python' : 'python3';
 }
 
+
+// Liefert den Basis-Pfad für Python-Skripte (entpackt im Produktionsmodus)
+function getPythonBasePath() {
+    // Im Produktionsmodus (gepackt): __dirname zeigt auf app.asar, python ist entpackt in resourcesPath/python
+    if (process.mainModule && process.mainModule.filename.includes('app.asar')) {
+        // In Electron production build: Python-Skripte liegen in app.asar.unpacked/python
+        return path.join(process.resourcesPath, 'app.asar.unpacked', 'python');
+    }
+    // Im Dev-Modus: wie gehabt
+    return __dirname;
+}
+
+// Cache für Excel-Verfügbarkeit
+let _excelAvailableCache = null;
+let _excelCheckPromise = null;
+
+// Konfigurierte Engine ('auto', 'xlwings', 'openpyxl')
+let _configuredEngine = 'auto';
+
+/**
+ * Setzt die zu verwendende Excel-Engine
+ * @param {string} engine - 'auto', 'xlwings' oder 'openpyxl'
+ */
+function setExcelEngine(engine) {
+    const validEngines = ['auto', 'xlwings', 'openpyxl'];
+    if (validEngines.includes(engine)) {
+        _configuredEngine = engine;
+        console.log(`[Python] Excel-Engine gesetzt auf: ${engine}`);
+        // Cache zurücksetzen wenn Engine geändert wird
+        resetExcelCache();
+    } else {
+        console.warn(`[Python] Ungültige Engine '${engine}', verwende 'auto'`);
+        _configuredEngine = 'auto';
+    }
+}
+
+/**
+ * Gibt die aktuell konfigurierte Engine zurück
+ * @returns {string} 'auto', 'xlwings' oder 'openpyxl'
+ */
+function getExcelEngine() {
+    return _configuredEngine;
+}
+
 // Prüfe ob xlwings-Scripts existieren
 function hasXlwingsSupport() {
-    // TEMPORÄR DEAKTIVIERT FÜR FALLBACK-TEST - wieder aktivieren mit: return fs.existsSync(readerPath) && fs.existsSync(writerPath);
-    return false;
-    const readerPath = path.join(__dirname, 'excel_reader_xlwings.py');
-    const writerPath = path.join(__dirname, 'excel_writer_xlwings.py');
+    const readerPath = path.join(getPythonBasePath(), 'excel_reader_xlwings.py');
+    const writerPath = path.join(getPythonBasePath(), 'excel_writer_xlwings.py');
     return fs.existsSync(readerPath) && fs.existsSync(writerPath);
+}
+
+/**
+ * Prüft asynchron ob Microsoft Excel installiert und verfügbar ist.
+ * Berücksichtigt die konfigurierte Engine.
+ * Das Ergebnis wird gecached für schnelle wiederholte Abfragen.
+ * @returns {Promise<boolean>} true wenn Excel/xlwings verwendet werden soll
+ */
+async function isExcelAvailable() {
+    // Wenn Engine auf 'openpyxl' gesetzt, immer false zurückgeben
+    if (_configuredEngine === 'openpyxl') {
+        console.log('[Python] Engine auf openpyxl gesetzt - xlwings deaktiviert');
+        return false;
+    }
+    
+    // Wenn Engine auf 'xlwings' gesetzt, prüfen ob verfügbar
+    if (_configuredEngine === 'xlwings') {
+        // Cache zurückgeben wenn vorhanden
+        if (_excelAvailableCache !== null) {
+            return _excelAvailableCache;
+        }
+        
+        if (!hasXlwingsSupport()) {
+            console.warn('[Python] xlwings erzwungen aber Scripts nicht gefunden!');
+            _excelAvailableCache = false;
+            return false;
+        }
+        
+        try {
+            const result = await callPython('excel_utils.py', ['check_excel']);
+            _excelAvailableCache = result.available === true;
+            if (!_excelAvailableCache) {
+                console.warn('[Python] xlwings erzwungen aber Excel nicht verfügbar!');
+            }
+            return _excelAvailableCache;
+        } catch (error) {
+            console.warn('[Python] xlwings erzwungen aber Check fehlgeschlagen:', error.message);
+            _excelAvailableCache = false;
+            return false;
+        }
+    }
+    
+    // Auto-Modus: Cache zurückgeben wenn vorhanden
+    if (_excelAvailableCache !== null) {
+        return _excelAvailableCache;
+    }
+    
+    // Wenn bereits ein Check läuft, darauf warten
+    if (_excelCheckPromise) {
+        return _excelCheckPromise;
+    }
+    
+    // Neuen Check starten
+    _excelCheckPromise = (async () => {
+        // Ohne xlwings-Scripts kein Excel-Support möglich
+        if (!hasXlwingsSupport()) {
+            _excelAvailableCache = false;
+            return false;
+        }
+        
+        try {
+            const result = await callPython('excel_utils.py', ['check_excel']);
+            _excelAvailableCache = result.available === true;
+            console.log(`[Python] Excel-Verfügbarkeit: ${_excelAvailableCache ? 'JA' : 'NEIN'}`);
+            return _excelAvailableCache;
+        } catch (error) {
+            console.log('[Python] Excel-Check fehlgeschlagen:', error.message);
+            _excelAvailableCache = false;
+            return false;
+        }
+    })();
+    
+    const result = await _excelCheckPromise;
+    _excelCheckPromise = null;
+    return result;
+}
+
+/**
+ * Setzt den Excel-Cache zurück (für Tests oder nach Neuinstallation)
+ */
+function resetExcelCache() {
+    _excelAvailableCache = null;
+    _excelCheckPromise = null;
 }
 
 /**
@@ -41,7 +166,7 @@ function hasXlwingsSupport() {
  */
 async function callPython(scriptName, args = []) {
     const pythonPath = getPythonPath();
-    const scriptPath = path.join(__dirname, scriptName);
+    const scriptPath = path.join(getPythonBasePath(), scriptName);
     
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
@@ -86,31 +211,48 @@ async function callPython(scriptName, args = []) {
 
 /**
  * Liste alle Sheets in einer Excel-Datei
+ * Verwendet openpyxl (schneller zum Lesen der Metadaten)
  */
 async function listSheets(filePath) {
-    // openpyxl ist schneller zum Lesen
     return await callPython('excel_reader.py', ['list_sheets', filePath]);
 }
 
 /**
  * Liest ein Sheet mit allen Styles
+ * Verwendet primär xlwings wenn Excel verfügbar, sonst openpyxl als Fallback
+ * 
  * @param {string} filePath - Pfad zur Excel-Datei
  * @param {string} sheetName - Name des Sheets
  * @returns {Promise<Object>} Sheet-Daten im Format für die GUI
  */
 async function readSheet(filePath, sheetName) {
     let result;
+    let method = 'openpyxl';
     
-    // xlwings ist auf macOS zu langsam zum Lesen (AppleScript Overhead)
-    // Verwende openpyxl zum Lesen - xlwings nur zum Schreiben (für CF-Erhaltung)
-    result = await callPython('excel_reader.py', ['read_sheet', filePath, sheetName]);
-    if (result.success) {
-        result.method = 'openpyxl';
+    // Prüfe ob Excel verfügbar ist
+    const excelAvailable = await isExcelAvailable();
+    
+    if (excelAvailable) {
+        // Primär: xlwings verwenden (native Excel-Integration)
+        try {
+            result = await callPython('excel_reader_xlwings.py', ['read_sheet', filePath, sheetName]);
+            method = 'xlwings';
+        } catch (xlwingsError) {
+            console.log(`[Python] xlwings-Lesen fehlgeschlagen, Fallback auf openpyxl: ${xlwingsError.message}`);
+            // Fallback auf openpyxl
+            result = await callPython('excel_reader.py', ['read_sheet', filePath, sheetName]);
+            method = 'openpyxl (fallback)';
+        }
+    } else {
+        // Kein Excel: openpyxl verwenden
+        result = await callPython('excel_reader.py', ['read_sheet', filePath, sheetName]);
     }
     
     if (!result.success) {
         return result;
     }
+    
+    result.method = method;
     
     // Konvertiere zum Frontend-Format (0-basierte Indizes, kompatibel mit ExcelJS Format)
     return {
@@ -149,20 +291,24 @@ async function readSheet(filePath, sheetName) {
 
 /**
  * Schreibt Daten in eine Excel-Datei mit vollständiger Style-Erhaltung
- * Verwendet primär xlwings für perfekte CF-Erhaltung
+ * Verwendet primär xlwings für perfekte CF-Erhaltung, Fallback auf openpyxl
  */
 async function writeExcel(config) {
     const pythonPath = getPythonPath();
     
-    // Versuche zuerst xlwings für CF-Erhalt
+    // Prüfe ob Excel verfügbar ist
+    const excelAvailable = await isExcelAvailable();
+    
     let scriptPath;
     let useXlwings = false;
     
-    if (hasXlwingsSupport()) {
-        scriptPath = path.join(__dirname, 'excel_writer_xlwings.py');
+    if (excelAvailable) {
+        scriptPath = path.join(getPythonBasePath(), 'excel_writer_xlwings.py');
         useXlwings = true;
+        console.log('[Python] Verwende xlwings für Schreiboperation (Excel verfügbar)');
     } else {
-        scriptPath = path.join(__dirname, 'excel_writer.py');
+        scriptPath = path.join(getPythonBasePath(), 'excel_writer.py');
+        console.log('[Python] Verwende openpyxl für Schreiboperation (kein Excel verfügbar)');
     }
     
     return new Promise((resolve, reject) => {
@@ -223,7 +369,7 @@ async function writeExcel(config) {
  */
 async function writeExcelOpenpyxl(config) {
     const pythonPath = getPythonPath();
-    const scriptPath = path.join(__dirname, 'excel_writer.py');
+    const scriptPath = path.join(getPythonBasePath(), 'excel_writer.py');
     
     return new Promise((resolve, reject) => {
         const pythonProcess = spawn(pythonPath, [scriptPath, 'write_sheet']);
@@ -459,69 +605,21 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
 
 /**
  * Prüft ob Microsoft Excel installiert und verfügbar ist
- * Wenn ja, werden strukturelle Änderungen mit xlwings durchgeführt
- * für perfekten CF-Erhalt
+ * Verwendet den zentralen isExcelAvailable() Check mit Caching
  */
 async function checkExcelAvailable() {
-    // Versuche zuerst xlwings
-    if (hasXlwingsSupport()) {
-        try {
-            return await callPython('excel_writer_xlwings.py', ['check_excel']);
-        } catch (error) {
-            console.log('[Python] xlwings check failed:', error.message);
-        }
-    }
+    const available = await isExcelAvailable();
+    const engine = getExcelEngine();
     
-    // Fallback auf openpyxl check
-    const pythonPath = getPythonPath();
-    const scriptPath = path.join(__dirname, 'excel_writer.py');
-    
-    return new Promise((resolve, reject) => {
-        const pythonProcess = spawn(pythonPath, [scriptPath, 'check_excel']);
-        
-        let stdout = '';
-        let stderr = '';
-        
-        pythonProcess.stdout.on('data', (data) => {
-            stdout += data.toString();
-        });
-        
-        pythonProcess.stderr.on('data', (data) => {
-            stderr += data.toString();
-        });
-        
-        pythonProcess.on('close', (code) => {
-            if (code !== 0) {
-                console.log(`[Python] Excel check failed:`, stderr);
-                resolve({ 
-                    success: true, 
-                    excelAvailable: false,
-                    message: 'Excel-Prüfung fehlgeschlagen'
-                });
-                return;
-            }
-            
-            try {
-                const result = JSON.parse(stdout);
-                console.log(`[Python] Excel status:`, result);
-                resolve(result);
-            } catch (parseError) {
-                resolve({ 
-                    success: true, 
-                    excelAvailable: false,
-                    message: 'Excel-Status konnte nicht ermittelt werden'
-                });
-            }
-        });
-        
-        pythonProcess.on('error', (error) => {
-            resolve({ 
-                success: true, 
-                excelAvailable: false,
-                message: error.message
-            });
-        });
-    });
+    return {
+        success: true,
+        excelAvailable: available,
+        configuredEngine: engine,
+        method: available ? 'xlwings' : 'openpyxl',
+        message: available 
+            ? `Microsoft Excel verfügbar - xlwings wird verwendet (Engine: ${engine})`
+            : `Microsoft Excel nicht verfügbar - openpyxl wird verwendet (Engine: ${engine})`
+    };
 }
 
 module.exports = {
@@ -533,5 +631,9 @@ module.exports = {
     writeExcelOpenpyxl,
     exportMultipleSheets,
     checkExcelAvailable,
-    hasXlwingsSupport
+    hasXlwingsSupport,
+    isExcelAvailable,
+    resetExcelCache,
+    setExcelEngine,
+    getExcelEngine
 };
