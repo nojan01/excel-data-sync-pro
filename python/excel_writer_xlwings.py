@@ -278,9 +278,90 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
         # =====================================================================
         # FALL 2: Strukturelle Änderungen
         # xlwings/Excel macht das PERFEKT - CF wird automatisch angepasst!
+        # 
+        # REIHENFOLGE (wie manueller Test):
+        # ZEILEN: löschen → verschieben → ausblenden → einfügen → markieren → speichern
+        # SPALTEN: löschen → verschieben → einfügen → ausblenden
         # =====================================================================
         
-        # SCHRITT 1: SPALTEN LÖSCHEN (von hinten nach vorne)
+        # =====================================================================
+        # ZEILEN-OPERATIONEN ZUERST
+        # =====================================================================
+        
+        # SCHRITT 1: ZEILEN LÖSCHEN (von hinten nach vorne)
+        if deleted_rows:
+            for row_idx in sorted(deleted_rows, reverse=True):
+                excel_row = row_idx + 2  # +2 für Header (1-basiert)
+                ws.range(f'{excel_row}:{excel_row}').delete()
+        
+        # SCHRITT 2: ZEILEN VERSCHIEBEN (rowOrder)
+        # Die Daten wurden bereits im Frontend umgeordnet - schreibe als Block
+        rows_reordered = False
+        if row_order and len(row_order) > 0:
+            print(f"[xlwings_writer] rowOrder erkannt - schreibe umgeordnete Daten", file=sys.stderr)
+            
+            # Alle Daten als Block schreiben (schnell!)
+            if data and len(data) > 0:
+                num_rows = len(data)
+                num_cols = len(data[0]) if data[0] else len(headers)
+                ws.range((2, 1), (num_rows + 1, num_cols)).value = data
+                print(f"[xlwings_writer] Daten nach Zeilen-Verschiebung geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
+            
+            rows_reordered = True
+        
+        # SCHRITT 3: ZEILEN AUSBLENDEN
+        _apply_hidden_rows_xlwings(ws, hidden_rows, len(data) if data else None)
+        
+        # SCHRITT 4: ZEILEN EINFÜGEN
+        # Muss VOR dem Schreiben der Daten passieren, damit Excel genug Zeilen hat!
+        # Nach dem Einfügen: Alle Daten als Block schreiben (schnell!)
+        rows_inserted = False
+        if inserted_rows:
+            operations = inserted_rows.get('operations', [])
+            if operations:
+                # Sortiere nach Position aufsteigend
+                inserted_offset = 0
+                for op in sorted(operations, key=lambda x: x['position']):
+                    pos = op['position'] + inserted_offset
+                    count = op.get('count', 1)
+                    excel_row_start = pos + 2  # +2 für Header und 1-basiert
+                    excel_row_end = excel_row_start + count - 1
+                    
+                    print(f"[xlwings_writer] Füge {count} Zeile(n) bei Zeile {excel_row_start} ein", file=sys.stderr)
+                    ws.range(f'{excel_row_start}:{excel_row_end}').insert(shift='down')
+                    inserted_offset += count
+                
+                rows_inserted = True
+                
+                # Nach Einfügung: ALLE Daten als Block schreiben (schnell!)
+                if data and len(data) > 0:
+                    num_rows = len(data)
+                    num_cols = len(data[0]) if data[0] else len(headers)
+                    ws.range((2, 1), (num_rows + 1, num_cols)).value = data
+                    print(f"[xlwings_writer] Daten nach Zeilen-Einfügung geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
+        
+        # SCHRITT 5: ZEILEN MARKIEREN (ROW HIGHLIGHTS)
+        if row_highlights and len(row_highlights) > 0:
+            _apply_row_highlights_xlwings(ws, row_highlights, len(headers) if headers else ws.used_range.last_cell.column)
+        
+        # SCHRITT 5b: CLEARED ROW HIGHLIGHTS
+        if cleared_row_highlights and len(cleared_row_highlights) > 0:
+            for row_idx in cleared_row_highlights:
+                excel_row = row_idx + 2
+                num_cols = len(headers) if headers else ws.used_range.last_cell.column
+                for col_idx in range(1, num_cols + 1):
+                    cell = ws.range((excel_row, col_idx))
+                    cell.color = None  # Farbe entfernen
+        
+        # SCHRITT 6: ZWISCHENSPEICHERN nach Zeilen-Operationen
+        print(f"[xlwings_writer] Zwischenspeichern nach Zeilen-Operationen...", file=sys.stderr)
+        wb.save()
+        
+        # =====================================================================
+        # SPALTEN-OPERATIONEN DANACH
+        # =====================================================================
+        
+        # SCHRITT 7: SPALTEN LÖSCHEN (von hinten nach vorne)
         # Verwende xlwings native Syntax (funktioniert auf macOS und Windows)
         if deleted_columns:
             for col_idx in sorted(deleted_columns, reverse=True):
@@ -289,40 +370,7 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                 # Verwende Spalten-Range mit delete() - funktioniert plattformübergreifend
                 ws.range(f'{col_letter}:{col_letter}').delete()
         
-        # SCHRITT 2: SPALTEN EINFÜGEN
-        # WICHTIG: Bei xlwings MUSS die Spalte IMMER in Excel eingefügt werden,
-        # damit Excel die Formatierungen (CF, Fills, etc.) automatisch verschiebt!
-        # Danach schreiben wir die Daten (die bereits die neue Spalte enthalten).
-        if inserted_columns:
-            operations = inserted_columns.get('operations', [])
-            if not operations and inserted_columns.get('position') is not None:
-                # Altes Format
-                operations = [{
-                    'position': inserted_columns['position'],
-                    'count': inserted_columns.get('count', 1),
-                    'headers': inserted_columns.get('headers', []),
-                    'sourceColumn': inserted_columns.get('sourceColumn')
-                }]
-            
-            # Die Positionen vom Frontend sind FINALE Positionen (bereits korrigiert)
-            for op in sorted(operations, key=lambda x: x['position']):
-                pos = op['position']
-                count = op.get('count', 1)
-                op_headers = op.get('headers', [])
-                excel_col = pos + 1  # 1-basiert
-                
-                for i in range(count):
-                    insert_letter = _get_column_letter(excel_col + i)
-                    
-                    # Insert-Befehl: Fügt vor der angegebenen Spalte ein
-                    # shift='right' verschiebt existierende Zellen nach rechts
-                    ws.range(f'{insert_letter}:{insert_letter}').insert(shift='right')
-                
-                # Header setzen
-                for i, header in enumerate(op_headers):
-                    ws.range((1, excel_col + i)).value = header
-        
-        # SCHRITT 2b: SPALTEN VERSCHIEBEN (columnOrder)
+        # SCHRITT 8: SPALTEN VERSCHIEBEN (columnOrder)
         # WICHTIG: Wir müssen Spalten WIRKLICH in Excel verschieben, damit Formatierung erhalten bleibt!
         # columnOrder = [alt_idx_für_neue_pos_0, alt_idx_für_neue_pos_1, ...]
         # Beispiel: [2, 0, 1] bedeutet: Spalte C -> A, Spalte A -> B, Spalte B -> C
@@ -406,56 +454,47 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                 column_order_applied = True
                 print(f"[xlwings_writer] Spalten-Verschiebung abgeschlossen", file=sys.stderr)
         
-        # SCHRITT 2c: ZEILEN VERSCHIEBEN (rowOrder)
-        # Die Daten wurden bereits im Frontend umgeordnet - schreibe als Block
-        rows_reordered = False
-        if row_order and len(row_order) > 0 and not column_order_applied:
-            print(f"[xlwings_writer] rowOrder erkannt - schreibe umgeordnete Daten", file=sys.stderr)
+        # SCHRITT 9: SPALTEN EINFÜGEN
+        # WICHTIG: Bei xlwings MUSS die Spalte IMMER in Excel eingefügt werden,
+        # damit Excel die Formatierungen (CF, Fills, etc.) automatisch verschiebt!
+        # Danach schreiben wir die Daten (die bereits die neue Spalte enthalten).
+        if inserted_columns:
+            operations = inserted_columns.get('operations', [])
+            if not operations and inserted_columns.get('position') is not None:
+                # Altes Format
+                operations = [{
+                    'position': inserted_columns['position'],
+                    'count': inserted_columns.get('count', 1),
+                    'headers': inserted_columns.get('headers', []),
+                    'sourceColumn': inserted_columns.get('sourceColumn')
+                }]
             
-            # Alle Daten als Block schreiben (schnell!)
-            if data and len(data) > 0:
-                num_rows = len(data)
-                num_cols = len(data[0]) if data[0] else len(headers)
-                ws.range((2, 1), (num_rows + 1, num_cols)).value = data
-                print(f"[xlwings_writer] Daten nach Zeilen-Verschiebung geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
-            
-            rows_reordered = True
-        
-        # SCHRITT 3: ZEILEN LÖSCHEN (von hinten nach vorne)
-        if deleted_rows:
-            for row_idx in sorted(deleted_rows, reverse=True):
-                excel_row = row_idx + 2  # +2 für Header (1-basiert)
-                ws.range(f'{excel_row}:{excel_row}').delete()
-        
-        # SCHRITT 3b: ZEILEN EINFÜGEN
-        # Muss VOR dem Schreiben der Daten passieren, damit Excel genug Zeilen hat!
-        # Nach dem Einfügen: Alle Daten als Block schreiben (schnell!)
-        rows_inserted = False
-        if inserted_rows:
-            operations = inserted_rows.get('operations', [])
-            if operations:
-                # Sortiere nach Position aufsteigend
-                inserted_offset = 0
-                for op in sorted(operations, key=lambda x: x['position']):
-                    pos = op['position'] + inserted_offset
-                    count = op.get('count', 1)
-                    excel_row_start = pos + 2  # +2 für Header und 1-basiert
-                    excel_row_end = excel_row_start + count - 1
+            # Die Positionen vom Frontend sind FINALE Positionen (bereits korrigiert)
+            for op in sorted(operations, key=lambda x: x['position']):
+                pos = op['position']
+                count = op.get('count', 1)
+                op_headers = op.get('headers', [])
+                excel_col = pos + 1  # 1-basiert
+                
+                for i in range(count):
+                    insert_letter = _get_column_letter(excel_col + i)
                     
-                    print(f"[xlwings_writer] Füge {count} Zeile(n) bei Zeile {excel_row_start} ein", file=sys.stderr)
-                    ws.range(f'{excel_row_start}:{excel_row_end}').insert(shift='down')
-                    inserted_offset += count
+                    # Insert-Befehl: Fügt vor der angegebenen Spalte ein
+                    # shift='right' verschiebt existierende Zellen nach rechts
+                    ws.range(f'{insert_letter}:{insert_letter}').insert(shift='right')
                 
-                rows_inserted = True
-                
-                # Nach Einfügung: ALLE Daten als Block schreiben (schnell!)
-                if data and len(data) > 0:
-                    num_rows = len(data)
-                    num_cols = len(data[0]) if data[0] else len(headers)
-                    ws.range((2, 1), (num_rows + 1, num_cols)).value = data
-                    print(f"[xlwings_writer] Daten nach Zeilen-Einfügung geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
+                # Header setzen
+                for i, header in enumerate(op_headers):
+                    ws.range((1, excel_col + i)).value = header
         
-        # SCHRITT 4: Filter-Handling mit rowMapping
+        # SCHRITT 10: SPALTEN AUSBLENDEN
+        _apply_hidden_columns_xlwings(ws, hidden_columns, len(headers) if headers else None)
+        
+        # =====================================================================
+        # WEITERE OPERATIONEN
+        # =====================================================================
+        
+        # SCHRITT 11: Filter-Handling mit rowMapping
         # NUR bei Filter (nicht bei Zeilen-Verschiebung!) - rowMapping enthält die Original-Indizes
         # Wir löschen die Zeilen die NICHT im Mapping sind (von hinten nach vorne)
         # Das erhält die Formatierung der verbleibenden Zeilen!
@@ -517,7 +556,7 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
             print(f"[xlwings_writer] Lösche Zeilen {first_row_to_delete} bis {last_row_to_delete} ({rows_to_delete} Zeilen)", file=sys.stderr)
             ws.range(f'{first_row_to_delete}:{last_row_to_delete}').delete()
         
-        # SCHRITT 5: ZELL-EDITS (geänderte Zellen)
+        # SCHRITT 12: ZELL-EDITS (geänderte Zellen)
         # NUR wenn nicht bereits durch Block-Write geschrieben (columnOrder, rowsInserted, rowsReordered)
         # OPTIMIERUNG: Gruppiere nach Spalten und schreibe spaltenweise statt zellweise
         if edited_cells and not column_order_applied and not rows_inserted and not rows_reordered:
@@ -559,25 +598,6 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                         cell = ws.range((row_idx + 2, col_idx + 1))
                         apply_cell_value(cell, value)
                     print(f"[xlwings_writer] Spalte {col_idx}: {len(cells)} einzelne Zellen", file=sys.stderr)
-        
-        # SCHRITT 8: VERSTECKTE SPALTEN
-        _apply_hidden_columns_xlwings(ws, hidden_columns, len(headers) if headers else None)
-        
-        # SCHRITT 9: VERSTECKTE ZEILEN
-        _apply_hidden_rows_xlwings(ws, hidden_rows, len(data) if data else None)
-        
-        # SCHRITT 10: ROW HIGHLIGHTS
-        if row_highlights and len(row_highlights) > 0:
-            _apply_row_highlights_xlwings(ws, row_highlights, len(headers) if headers else ws.used_range.last_cell.column)
-        
-        # SCHRITT 11: CLEARED ROW HIGHLIGHTS
-        if cleared_row_highlights and len(cleared_row_highlights) > 0:
-            for row_idx in cleared_row_highlights:
-                excel_row = row_idx + 2
-                num_cols = len(headers) if headers else ws.used_range.last_cell.column
-                for col_idx in range(1, num_cols + 1):
-                    cell = ws.range((excel_row, col_idx))
-                    cell.color = None  # Farbe entfernen
         
         # Speichern und schließen
         wb.save()
