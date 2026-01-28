@@ -317,27 +317,14 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                 for i in range(count):
                     insert_letter = _get_column_letter(excel_col + i)
                     
-                    # Quellspalte für Formatierung (mit Offset für bereits eingefügte Spalten)
-                    source_excel_col = None
-                    if source_column is not None:
-                        # Quellspalte (vor Einfügen) - offset anpassen
-                        source_excel_col = source_column + 1 + inserted_offset  # 1-basiert
-                        source_letter = _get_column_letter(source_excel_col)
-                        
-                        # KOPIERE GESAMTE REFERENZSPALTE (inkl. Formatierung)
-                        # xlwings: copy() kopiert Werte UND Formate
-                        source_range = ws.range(f'{source_letter}:{source_letter}')
-                        source_range.copy()
-                    
                     # Insert-Befehl: Fügt vor der angegebenen Spalte ein
                     # shift='right' verschiebt existierende Zellen nach rechts
                     ws.range(f'{insert_letter}:{insert_letter}').insert(shift='right')
                     
-                    # Wenn Quelle kopiert wurde: Einfügen mit Formatierung
-                    if source_excel_col is not None:
-                        new_col_range = ws.range(f'{insert_letter}:{insert_letter}')
-                        # paste: special='formats' fügt nur Formatierung ein, nicht Werte
-                        new_col_range.paste(paste='formats')
+                    # HINWEIS: Wir kopieren KEINE Formatierung von einer Quellspalte,
+                    # da das copy() auch Werte mitkopiert und zu falschen Daten führt.
+                    # Die neue Spalte erhält Standard-Formatierung.
+                    # Die Daten werden später über editedCells geschrieben.
                 
                 # Header setzen
                 for i, header in enumerate(op_headers):
@@ -371,10 +358,13 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
         # xlwings soll nur strukturelle Änderungen machen (Zeilen/Spalten einfügen/löschen)
         # und einzelne geänderte Zellen aktualisieren.
         
-        # SCHRITT 5: NUR EINZELNE ZELL-EDITS (geänderte Zellen)
+        # SCHRITT 5: ZELL-EDITS (geänderte Zellen)
+        # OPTIMIERUNG: Gruppiere nach Spalten und schreibe spaltenweise statt zellweise
         if edited_cells:
             print(f"[xlwings_writer] Schreibe {len(edited_cells)} geänderte Zellen...", file=sys.stderr)
-            edit_count = 0
+            
+            # Gruppiere Zellen nach Spaltenindex
+            columns_data = {}  # col_idx -> [(row_idx, value), ...]
             for key, value in edited_cells.items():
                 if key.startswith('_'):
                     continue
@@ -383,9 +373,32 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                     continue
                 row_idx = int(parts[0])
                 col_idx = int(parts[1])
-                cell = ws.range((row_idx + 2, col_idx + 1))  # +2 für Header, +1 für 1-basiert
-                apply_cell_value(cell, value)
-                edit_count += 1
+                if col_idx not in columns_data:
+                    columns_data[col_idx] = []
+                columns_data[col_idx].append((row_idx, value))
+            
+            # Schreibe jede Spalte als Block (viel schneller!)
+            for col_idx, cells in columns_data.items():
+                # Sortiere nach Zeile
+                cells.sort(key=lambda x: x[0])
+                
+                # Prüfe ob es ein zusammenhängender Block ist
+                min_row = cells[0][0]
+                max_row = cells[-1][0]
+                
+                if len(cells) == (max_row - min_row + 1):
+                    # Zusammenhängender Block - schreibe als Range
+                    values = [[c[1]] for c in cells]  # 2D-Array für xlwings
+                    start_cell = ws.range((min_row + 2, col_idx + 1))
+                    end_cell = ws.range((max_row + 2, col_idx + 1))
+                    ws.range(start_cell, end_cell).value = values
+                    print(f"[xlwings_writer] Spalte {col_idx}: Block {min_row}-{max_row} ({len(cells)} Zellen)", file=sys.stderr)
+                else:
+                    # Nicht zusammenhängend - einzeln schreiben
+                    for row_idx, value in cells:
+                        cell = ws.range((row_idx + 2, col_idx + 1))
+                        apply_cell_value(cell, value)
+                    print(f"[xlwings_writer] Spalte {col_idx}: {len(cells)} einzelne Zellen", file=sys.stderr)
         
         # SCHRITT 8: VERSTECKTE SPALTEN
         _apply_hidden_columns_xlwings(ws, hidden_columns, len(headers) if headers else None)

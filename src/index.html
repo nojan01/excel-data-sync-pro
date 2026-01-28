@@ -13270,10 +13270,31 @@
                                 console.log(`[Export] ${clearedRowHighlights.length} Zeilen-Markierungen werden entfernt`);
                             }
                             
+                            // WICHTIG: changedCells auch bei strukturellen Änderungen senden!
+                            // Bei Data Join sind die eingefügten Daten NUR in editedCells, nicht in der Datei.
+                            // xlwings schreibt keine Bulk-Daten, also müssen wir die editedCells mitsenden.
+                            const changedCellsForStructural = {};
+                            for (const cellKey of explorerState.editedCells.keys()) {
+                                // Überspringe spezielle Marker-Keys
+                                if (cellKey.startsWith('_')) continue;
+                                
+                                const [rowStr, colStr] = cellKey.split('-');
+                                const rowIdx = parseInt(rowStr);
+                                const colIdx = parseInt(colStr);
+                                if (rowIdx >= 0 && colIdx >= 0 && explorerState.data[rowIdx]) {
+                                    changedCellsForStructural[cellKey] = explorerState.data[rowIdx][colIdx];
+                                }
+                            }
+                            
+                            if (Object.keys(changedCellsForStructural).length > 0) {
+                                console.log(`[Export] ${Object.keys(changedCellsForStructural).length} geänderte Zellen bei struktureller Änderung`);
+                            }
+                            
                             sheetData = {
                                 sheetName: sheetName,
                                 headers: exportHeaders,
                                 data: allData,
+                                changedCells: changedCellsForStructural,  // WICHTIG: editedCells für xlwings
                                 visibleColumns: exportVisibleColumns,
                                 hiddenRows: currentHiddenRows,
                                 hiddenColumns: exportHiddenCols,
