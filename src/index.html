@@ -8196,20 +8196,21 @@
             // rowMapping aktualisieren - trackt welche Original-Excel-Zeile an welcher Position ist
             // Bei neuen Zeilen wird -1 als Marker verwendet (keine Original-Zeile)
             if (explorerState.rowMapping && explorerState.rowMapping.length > 0) {
-                // Bestehendes Mapping: -1 an insertIndex einfügen, alle folgenden Einträge bleiben
-                const newRowMapping = [...explorerState.rowMapping];
-                newRowMapping.splice(insertIndex, 0, -1);  // -1 = neue Zeile
-                explorerState.rowMapping = newRowMapping;
+                // Bestehendes Mapping: -1 an insertIndex einfügen
+                // Die bestehenden Mappings bleiben unverändert (sie referenzieren immer noch ihre Original-Zeilen)
+                explorerState.rowMapping.splice(insertIndex, 0, -1);  // -1 = neue Zeile
             } else {
-                // Neues Mapping erstellen
+                // Neues Mapping erstellen - jeder Index mappt auf sich selbst (Original-Position)
                 explorerState.rowMapping = [];
-                for (let i = 0; i < explorerState.data.length; i++) {
+                const originalDataLength = explorerState.data.length;
+                for (let i = 0; i < originalDataLength; i++) {
                     if (i === insertIndex) {
                         explorerState.rowMapping.push(-1);  // -1 = neue Zeile
                     } else if (i < insertIndex) {
-                        explorerState.rowMapping.push(i);
+                        explorerState.rowMapping.push(i);  // Original-Index
                     } else {
-                        // Zeilen nach der eingefügten Position referenzieren ihre Original-Position - 1
+                        // Zeilen nach der eingefügten Position: Original-Index ist i-1
+                        // (weil die Original-Datei diese Zeile nicht hatte)
                         explorerState.rowMapping.push(i - 1);
                     }
                 }

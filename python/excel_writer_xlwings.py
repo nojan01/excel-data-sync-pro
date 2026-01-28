@@ -219,6 +219,8 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
         hidden_columns = changes.get('hiddenColumns', [])
         hidden_rows = changes.get('hiddenRows', [])
         deleted_rows = changes.get('deletedRows', [])
+        inserted_rows = changes.get('insertedRowInfo')  # Info über eingefügte Zeilen
+        row_order = changes.get('rowOrder')  # Zeilen-Reihenfolge bei Verschiebung
         from_file = changes.get('fromFile', False)
         full_rewrite = changes.get('fullRewrite', False)
         structural_change = changes.get('structuralChange', False)
@@ -336,27 +338,88 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                 inserted_offset += count
         
         # SCHRITT 2b: SPALTEN VERSCHIEBEN (columnOrder)
-        # Die Daten und Headers wurden bereits im Frontend umgeordnet!
-        # Block-Write überschreibt nur Werte, nicht Formatierung (Farben, Rahmen, etc.)
+        # WICHTIG: Wir müssen Spalten WIRKLICH in Excel verschieben, damit Formatierung erhalten bleibt!
+        # columnOrder = [alt_idx_für_neue_pos_0, alt_idx_für_neue_pos_1, ...]
+        # Beispiel: [2, 0, 1] bedeutet: Spalte C -> A, Spalte A -> B, Spalte B -> C
         column_order_applied = False
-        
         if column_order and len(column_order) > 0:
             original_order = list(range(len(column_order)))
             if column_order != original_order:
-                print(f"[xlwings_writer] columnOrder erkannt - schreibe umgeordnete Daten", file=sys.stderr)
+                print(f"[xlwings_writer] columnOrder erkannt: {column_order}", file=sys.stderr)
                 
-                # Header schreiben
-                if headers and len(headers) > 0:
-                    ws.range((1, 1), (1, len(headers))).value = [headers]
+                # Finde die Spalten-Paare die getauscht werden müssen
+                # Wir müssen von der aktuellen Position zur Ziel-Position
+                num_cols = len(column_order)
                 
-                # Daten als Block schreiben (schnell, Formatierung bleibt erhalten)
-                if data and len(data) > 0:
-                    num_rows = len(data)
-                    num_cols = len(data[0]) if data[0] else len(headers)
-                    ws.range((2, 1), (num_rows + 1, num_cols)).value = data
-                    print(f"[xlwings_writer] Daten geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
+                # Berechne welche Verschiebungen nötig sind
+                # columnOrder[i] = j bedeutet: Spalte j (0-basiert) soll an Position i
+                # Wir müssen also Spalte j nach Position i verschieben
+                
+                # Erstelle inverse Mapping: wo ist jede Original-Spalte jetzt?
+                current_order = list(range(num_cols))  # Am Anfang: [0, 1, 2, ...]
+                
+                for target_pos in range(num_cols):
+                    source_original_idx = column_order[target_pos]
+                    
+                    # Wo ist diese Spalte aktuell?
+                    current_pos = current_order.index(source_original_idx)
+                    
+                    if current_pos != target_pos:
+                        # Muss verschoben werden
+                        # Excel 1-basiert
+                        source_col_excel = current_pos + 1
+                        target_col_excel = target_pos + 1
+                        
+                        source_letter = _get_column_letter(source_col_excel)
+                        target_letter = _get_column_letter(target_col_excel)
+                        
+                        print(f"[xlwings_writer] Verschiebe Spalte {source_letter} (Original {source_original_idx}) nach Position {target_letter}", file=sys.stderr)
+                        
+                        # Methode: Cut und Insert
+                        source_range = ws.range(f'{source_letter}:{source_letter}')
+                        
+                        if current_pos > target_pos:
+                            # Nach links verschieben
+                            # 1. Insert leere Spalte bei Ziel
+                            ws.range(f'{target_letter}:{target_letter}').insert(shift='right')
+                            # Dadurch verschiebt sich source um 1 nach rechts
+                            new_source_col = source_col_excel + 1
+                            new_source_letter = _get_column_letter(new_source_col)
+                            # 2. Kopiere Quell-Spalte zur Ziel-Spalte
+                            ws.range(f'{new_source_letter}:{new_source_letter}').copy(ws.range(f'{target_letter}:{target_letter}'))
+                            # 3. Lösche die alte Spalte
+                            ws.range(f'{new_source_letter}:{new_source_letter}').delete()
+                        else:
+                            # Nach rechts verschieben
+                            # 1. Insert leere Spalte NACH dem Ziel (target+1)
+                            after_target_letter = _get_column_letter(target_col_excel + 1)
+                            ws.range(f'{after_target_letter}:{after_target_letter}').insert(shift='right')
+                            # 2. Kopiere Quell-Spalte zur neuen Position
+                            ws.range(f'{source_letter}:{source_letter}').copy(ws.range(f'{after_target_letter}:{after_target_letter}'))
+                            # 3. Lösche die alte Spalte
+                            ws.range(f'{source_letter}:{source_letter}').delete()
+                        
+                        # Update current_order
+                        val = current_order.pop(current_pos)
+                        current_order.insert(target_pos, val)
                 
                 column_order_applied = True
+                print(f"[xlwings_writer] Spalten-Verschiebung abgeschlossen", file=sys.stderr)
+        
+        # SCHRITT 2c: ZEILEN VERSCHIEBEN (rowOrder)
+        # Die Daten wurden bereits im Frontend umgeordnet - schreibe als Block
+        rows_reordered = False
+        if row_order and len(row_order) > 0 and not column_order_applied:
+            print(f"[xlwings_writer] rowOrder erkannt - schreibe umgeordnete Daten", file=sys.stderr)
+            
+            # Alle Daten als Block schreiben (schnell!)
+            if data and len(data) > 0:
+                num_rows = len(data)
+                num_cols = len(data[0]) if data[0] else len(headers)
+                ws.range((2, 1), (num_rows + 1, num_cols)).value = data
+                print(f"[xlwings_writer] Daten nach Zeilen-Verschiebung geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
+            
+            rows_reordered = True
         
         # SCHRITT 3: ZEILEN LÖSCHEN (von hinten nach vorne)
         if deleted_rows:
@@ -364,15 +427,44 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                 excel_row = row_idx + 2  # +2 für Header (1-basiert)
                 ws.range(f'{excel_row}:{excel_row}').delete()
         
+        # SCHRITT 3b: ZEILEN EINFÜGEN
+        # Muss VOR dem Schreiben der Daten passieren, damit Excel genug Zeilen hat!
+        # Nach dem Einfügen: Alle Daten als Block schreiben (schnell!)
+        rows_inserted = False
+        if inserted_rows:
+            operations = inserted_rows.get('operations', [])
+            if operations:
+                # Sortiere nach Position aufsteigend
+                inserted_offset = 0
+                for op in sorted(operations, key=lambda x: x['position']):
+                    pos = op['position'] + inserted_offset
+                    count = op.get('count', 1)
+                    excel_row_start = pos + 2  # +2 für Header und 1-basiert
+                    excel_row_end = excel_row_start + count - 1
+                    
+                    print(f"[xlwings_writer] Füge {count} Zeile(n) bei Zeile {excel_row_start} ein", file=sys.stderr)
+                    ws.range(f'{excel_row_start}:{excel_row_end}').insert(shift='down')
+                    inserted_offset += count
+                
+                rows_inserted = True
+                
+                # Nach Einfügung: ALLE Daten als Block schreiben (schnell!)
+                if data and len(data) > 0:
+                    num_rows = len(data)
+                    num_cols = len(data[0]) if data[0] else len(headers)
+                    ws.range((2, 1), (num_rows + 1, num_cols)).value = data
+                    print(f"[xlwings_writer] Daten nach Zeilen-Einfügung geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
+        
         # SCHRITT 4: Filter-Handling mit rowMapping
-        # rowMapping enthält die Original-Indizes der Zeilen die bleiben sollen
+        # NUR bei Filter (nicht bei Zeilen-Verschiebung!) - rowMapping enthält die Original-Indizes
         # Wir löschen die Zeilen die NICHT im Mapping sind (von hinten nach vorne)
         # Das erhält die Formatierung der verbleibenden Zeilen!
+        # WICHTIG: Überspringe wenn bereits rows_reordered oder rows_inserted (Daten schon geschrieben)
         used_range = ws.used_range
         original_row_count = used_range.last_cell.row - 1 if used_range else 0  # Ohne Header
         new_row_count = len(data)
         
-        if row_mapping and len(row_mapping) > 0:
+        if row_mapping and len(row_mapping) > 0 and not rows_reordered and not rows_inserted and not column_order_applied:
             # Filter aktiv: Lösche Zeilen die nicht im Mapping sind
             # rowMapping = [originalIndex1, originalIndex2, ...] (0-basiert)
             rows_to_keep = set(row_mapping)
@@ -426,9 +518,9 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
             ws.range(f'{first_row_to_delete}:{last_row_to_delete}').delete()
         
         # SCHRITT 5: ZELL-EDITS (geänderte Zellen)
-        # NUR bei editedCells ohne Filter-Rewrite
+        # NUR wenn nicht bereits durch Block-Write geschrieben (columnOrder, rowsInserted, rowsReordered)
         # OPTIMIERUNG: Gruppiere nach Spalten und schreibe spaltenweise statt zellweise
-        if edited_cells:
+        if edited_cells and not column_order_applied and not rows_inserted and not rows_reordered:
             print(f"[xlwings_writer] Schreibe {len(edited_cells)} geänderte Zellen...", file=sys.stderr)
             
             # Gruppiere Zellen nach Spaltenindex
