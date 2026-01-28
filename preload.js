@@ -79,5 +79,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     // Event-Listener für App-Schließen
     onBeforeClose: (callback) => ipcRenderer.on('app:beforeClose', callback),
-    confirmClose: (canClose) => ipcRenderer.send('app:confirmClose', canClose)
+    confirmClose: (canClose) => ipcRenderer.send('app:confirmClose', canClose),
+    
+    // ==========================================================================
+    // LIVE SESSION API - Excel bleibt offen für sofortige Operationen
+    // ==========================================================================
+    
+    // Session-Management
+    liveSessionStart: () => ipcRenderer.invoke('liveSession:start'),
+    liveSessionOpenFile: (filePath, sheetName) => ipcRenderer.invoke('liveSession:openFile', filePath, sheetName),
+    liveSessionSaveFile: (outputPath) => ipcRenderer.invoke('liveSession:saveFile', outputPath),
+    liveSessionClose: () => ipcRenderer.invoke('liveSession:close'),
+    liveSessionGetData: () => ipcRenderer.invoke('liveSession:getData'),
+    
+    // Zeilen-Operationen (werden SOFORT in Excel ausgeführt!)
+    liveSessionDeleteRow: (rowIndex) => ipcRenderer.invoke('liveSession:deleteRow', rowIndex),
+    liveSessionInsertRow: (rowIndex, count) => ipcRenderer.invoke('liveSession:insertRow', rowIndex, count || 1),
+    liveSessionMoveRow: (fromIndex, toIndex) => ipcRenderer.invoke('liveSession:moveRow', fromIndex, toIndex),
+    liveSessionHideRow: (rowIndex, hidden) => ipcRenderer.invoke('liveSession:hideRow', rowIndex, hidden !== false),
+    liveSessionHighlightRow: (rowIndex, color) => ipcRenderer.invoke('liveSession:highlightRow', rowIndex, color),
+    
+    // Spalten-Operationen (werden SOFORT in Excel ausgeführt!)
+    liveSessionDeleteColumn: (colIndex) => ipcRenderer.invoke('liveSession:deleteColumn', colIndex),
+    liveSessionInsertColumn: (colIndex, count, headers) => ipcRenderer.invoke('liveSession:insertColumn', colIndex, count || 1, headers),
+    liveSessionMoveColumn: (fromIndex, toIndex) => ipcRenderer.invoke('liveSession:moveColumn', fromIndex, toIndex),
+    liveSessionHideColumn: (colIndex, hidden) => ipcRenderer.invoke('liveSession:hideColumn', colIndex, hidden !== false),
+    
+    // Zell-Operationen
+    liveSessionSetCellValue: (rowIndex, colIndex, value) => ipcRenderer.invoke('liveSession:setCellValue', rowIndex, colIndex, value)
 });

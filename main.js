@@ -4379,3 +4379,172 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
         return { success: false, error: error.message };
     }
 });
+
+// =============================================================================
+// LIVE SESSION - Excel bleibt offen für sofortige Operationen
+// =============================================================================
+
+const { getLiveSession } = require('./python/excel_live_bridge');
+
+// Live-Session starten
+ipcMain.handle('liveSession:start', async () => {
+    console.log('[LiveSession] IPC: start');
+    try {
+        const session = getLiveSession();
+        return await session.start();
+    } catch (error) {
+        console.error('[LiveSession] start error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Datei öffnen
+ipcMain.handle('liveSession:openFile', async (event, filePath, sheetName) => {
+    console.log('[LiveSession] IPC: openFile', filePath, sheetName);
+    try {
+        const session = getLiveSession();
+        return await session.openFile(filePath, sheetName);
+    } catch (error) {
+        console.error('[LiveSession] openFile error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Datei speichern
+ipcMain.handle('liveSession:saveFile', async (event, outputPath) => {
+    console.log('[LiveSession] IPC: saveFile', outputPath);
+    try {
+        const session = getLiveSession();
+        return await session.saveFile(outputPath);
+    } catch (error) {
+        console.error('[LiveSession] saveFile error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Session schließen
+ipcMain.handle('liveSession:close', async () => {
+    console.log('[LiveSession] IPC: close');
+    try {
+        const session = getLiveSession();
+        return await session.close();
+    } catch (error) {
+        console.error('[LiveSession] close error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Daten lesen
+ipcMain.handle('liveSession:getData', async () => {
+    try {
+        const session = getLiveSession();
+        return await session.getData();
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// === ZEILEN-OPERATIONEN ===
+
+ipcMain.handle('liveSession:deleteRow', async (event, rowIndex) => {
+    console.log('[LiveSession] IPC: deleteRow', rowIndex);
+    try {
+        const session = getLiveSession();
+        return await session.deleteRow(rowIndex);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:insertRow', async (event, rowIndex, count = 1) => {
+    console.log('[LiveSession] IPC: insertRow', rowIndex, count);
+    try {
+        const session = getLiveSession();
+        return await session.insertRow(rowIndex, count);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:moveRow', async (event, fromIndex, toIndex) => {
+    console.log('[LiveSession] IPC: moveRow', fromIndex, '->', toIndex);
+    try {
+        const session = getLiveSession();
+        return await session.moveRow(fromIndex, toIndex);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:hideRow', async (event, rowIndex, hidden = true) => {
+    console.log('[LiveSession] IPC: hideRow', rowIndex, hidden);
+    try {
+        const session = getLiveSession();
+        return await session.hideRow(rowIndex, hidden);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:highlightRow', async (event, rowIndex, color) => {
+    console.log('[LiveSession] IPC: highlightRow', rowIndex, color);
+    try {
+        const session = getLiveSession();
+        return await session.highlightRow(rowIndex, color);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// === SPALTEN-OPERATIONEN ===
+
+ipcMain.handle('liveSession:deleteColumn', async (event, colIndex) => {
+    console.log('[LiveSession] IPC: deleteColumn', colIndex);
+    try {
+        const session = getLiveSession();
+        return await session.deleteColumn(colIndex);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:insertColumn', async (event, colIndex, count = 1, headers = null) => {
+    console.log('[LiveSession] IPC: insertColumn', colIndex, count);
+    try {
+        const session = getLiveSession();
+        return await session.insertColumn(colIndex, count, headers);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:moveColumn', async (event, fromIndex, toIndex) => {
+    console.log('[LiveSession] IPC: moveColumn', fromIndex, '->', toIndex);
+    try {
+        const session = getLiveSession();
+        return await session.moveColumn(fromIndex, toIndex);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:hideColumn', async (event, colIndex, hidden = true) => {
+    console.log('[LiveSession] IPC: hideColumn', colIndex, hidden);
+    try {
+        const session = getLiveSession();
+        return await session.hideColumn(colIndex, hidden);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// === ZELL-OPERATIONEN ===
+
+ipcMain.handle('liveSession:setCellValue', async (event, rowIndex, colIndex, value) => {
+    try {
+        const session = getLiveSession();
+        return await session.setCellValue(rowIndex, colIndex, value);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
