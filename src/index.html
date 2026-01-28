@@ -2628,6 +2628,11 @@
                     <button class="btn btn-success" id="btnExplorerExport" title="Änderungen speichern oder als neue Datei exportieren">
                         💾 Speichern
                     </button>
+                    <!-- Live Session Toggle -->
+                    <div style="display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--bg-lighter); border-radius: 4px; cursor: pointer;" id="liveSessionToggle" title="Live-Session: Excel bleibt im Hintergrund offen und Änderungen werden sofort ausgeführt">
+                        <input type="checkbox" id="chkLiveSession" class="green-checkbox" style="cursor: pointer;">
+                        <label for="chkLiveSession" style="cursor: pointer; font-size: 12px; white-space: nowrap;">🔴 Live</label>
+                    </div>
                 </div>
                 
                 <!-- Filter Controls -->
@@ -6802,6 +6807,143 @@
         
         // Zwischenspeicher für kopierte Zellen mit Formatierung
         let copiedCellsWithFormat = null;  // { cells: [{row, col, value, style, formula, hyperlink}], minRow, minCol }
+        
+        // ==================== Live Session Helper Functions ====================
+        // Live Session = Excel bleibt im Hintergrund offen, Operationen werden SOFORT ausgeführt
+        
+        /**
+         * Startet die Live-Session und öffnet die Datei in Excel
+         * @returns {Promise<boolean>} true wenn erfolgreich
+         */
+        async function startLiveSession() {
+            if (!explorerState.filePath || !explorerState.selectedSheet) {
+                console.log('[LiveSession] Keine Datei/Sheet geladen');
+                return false;
+            }
+            
+            try {
+                console.log('[LiveSession] Starte Session...');
+                
+                // Session starten
+                const startResult = await window.electronAPI.liveSessionStart();
+                if (!startResult.success) {
+                    console.error('[LiveSession] Start fehlgeschlagen:', startResult.error);
+                    return false;
+                }
+                
+                // Datei öffnen
+                const openResult = await window.electronAPI.liveSessionOpenFile(
+                    explorerState.filePath, 
+                    explorerState.selectedSheet
+                );
+                
+                if (!openResult.success) {
+                    console.error('[LiveSession] Datei öffnen fehlgeschlagen:', openResult.error);
+                    return false;
+                }
+                
+                explorerState.liveSessionActive = true;
+                explorerState.liveSessionReady = true;
+                console.log('[LiveSession] ✓ Session aktiv');
+                showFloatingStatus('🔴 Live-Session aktiv', 'success');
+                
+                return true;
+            } catch (error) {
+                console.error('[LiveSession] Fehler:', error);
+                explorerState.liveSessionActive = false;
+                explorerState.liveSessionReady = false;
+                return false;
+            }
+        }
+        
+        /**
+         * Beendet die Live-Session
+         */
+        async function stopLiveSession() {
+            if (!explorerState.liveSessionActive) return;
+            
+            try {
+                await window.electronAPI.liveSessionClose();
+                explorerState.liveSessionActive = false;
+                explorerState.liveSessionReady = false;
+                console.log('[LiveSession] Session beendet');
+            } catch (error) {
+                console.error('[LiveSession] Fehler beim Beenden:', error);
+            }
+        }
+        
+        /**
+         * Führt eine Operation in der Live-Session aus (wenn aktiv)
+         * @param {string} operation - Name der Operation (z.B. 'deleteRow')
+         * @param {Array} args - Argumente für die Operation
+         * @returns {Promise<object|null>} Ergebnis oder null wenn nicht aktiv
+         */
+        async function liveSessionExecute(operation, ...args) {
+            if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) {
+                return null;
+            }
+            
+            try {
+                const methodName = `liveSession${operation.charAt(0).toUpperCase() + operation.slice(1)}`;
+                if (typeof window.electronAPI[methodName] === 'function') {
+                    const result = await window.electronAPI[methodName](...args);
+                    if (!result.success) {
+                        console.warn(`[LiveSession] ${operation} fehlgeschlagen:`, result.error);
+                    }
+                    return result;
+                } else {
+                    console.warn(`[LiveSession] Unbekannte Operation: ${operation}`);
+                    return null;
+                }
+            } catch (error) {
+                console.error(`[LiveSession] ${operation} Fehler:`, error);
+                return null;
+            }
+        }
+        
+        /**
+         * Speichert die Live-Session als neue Datei (Export)
+         * @param {string} outputPath - Pfad für die Export-Datei
+         * @returns {Promise<object>} Ergebnis
+         */
+        async function liveSessionExport(outputPath) {
+            if (!explorerState.liveSessionActive) {
+                return { success: false, error: 'Live-Session nicht aktiv' };
+            }
+            
+            try {
+                const result = await window.electronAPI.liveSessionSaveFile(outputPath);
+                if (result.success) {
+                    showFloatingStatus(`✓ Export via Live-Session: ${outputPath.split('/').pop()}`, 'success');
+                }
+                return result;
+            } catch (error) {
+                console.error('[LiveSession] Export Fehler:', error);
+                return { success: false, error: error.message };
+            }
+        }
+        
+        /**
+         * Aktualisiert die UI-Anzeige des Live-Session-Status
+         */
+        function updateLiveSessionIndicator() {
+            const chkLiveSession = document.getElementById('chkLiveSession');
+            const liveSessionToggle = document.getElementById('liveSessionToggle');
+            
+            if (chkLiveSession) {
+                chkLiveSession.checked = explorerState.liveSessionActive;
+            }
+            
+            if (liveSessionToggle) {
+                if (explorerState.liveSessionActive) {
+                    liveSessionToggle.style.background = 'rgba(76, 175, 80, 0.3)';
+                    liveSessionToggle.style.border = '1px solid #4CAF50';
+                } else {
+                    liveSessionToggle.style.background = 'var(--bg-lighter)';
+                    liveSessionToggle.style.border = 'none';
+                }
+            }
+        }
 
         const explorerState = {
             filePath: null,
@@ -6862,7 +7004,10 @@
             hasPivotTables: false,
             // Operations Queues für serielle Abarbeitung
             columnOperationsQueue: [],  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X, headerName: ''}]
-            rowOperationsQueue: []  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X}]
+            rowOperationsQueue: [],  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X}]
+            // LIVE SESSION MODE - Operationen werden sofort in Excel ausgeführt
+            liveSessionActive: false,  // true wenn Live-Session aktiv ist
+            liveSessionReady: false    // true wenn Session bereit für Operationen
         };
         
         // ==================== Data Join State & Functions ====================
@@ -8103,6 +8248,12 @@
                 // Gleiche Farbe - nichts tun
                 return;
             }
+            
+            // LIVE SESSION: Markiere Zeile sofort in Excel
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                liveSessionExecute('highlightRow', rowIndex, color);
+            }
+            
             explorerState.rowHighlights.set(rowIndex, color);
             // Strukturelle Änderung markieren für Export
             explorerState.editedCells.set('_rowHighlightChanged', true);
@@ -8110,6 +8261,11 @@
         }
         
         function clearRowHighlight(rowIndex) {
+            // LIVE SESSION: Entferne Markierung sofort in Excel
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                liveSessionExecute('highlightRow', rowIndex, null);
+            }
+            
             explorerState.rowHighlights.delete(rowIndex);
             // Strukturelle Änderung markieren für Export
             explorerState.editedCells.set('_rowHighlightChanged', true);
@@ -8892,6 +9048,12 @@
             );
             
             if (!confirmed) return;
+            
+            // LIVE SESSION: Lösche Spalte sofort in Excel
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                await liveSessionExecute('deleteColumn', colIndex);
+                console.log(`[LiveSession] Spalte ${colIndex} in Excel gelöscht`);
+            }
             
             // Header entfernen
             explorerState.headers.splice(colIndex, 1);
@@ -10126,6 +10288,12 @@
                 }
             }
             
+            // Live-Session beenden wenn aktiv
+            if (explorerState.liveSessionActive) {
+                await stopLiveSession();
+                updateLiveSessionIndicator();
+            }
+            
             // State komplett zurücksetzen
             resetExplorerState();
             
@@ -11215,6 +11383,14 @@
             
             if (fromPos === -1 || toPos === -1) return;
             
+            // LIVE SESSION: Verschiebe Spalte sofort in Excel
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                // Async ausführen ohne await (Spalten-Drag sollte schnell sein)
+                liveSessionExecute('moveColumn', fromColIndex, toColIndex).then(() => {
+                    console.log(`[LiveSession] Spalte ${fromColIndex} nach ${toColIndex} verschoben`);
+                });
+            }
+            
             // Entferne die Spalte von der alten Position
             explorerState.columnOrder.splice(fromPos, 1);
             
@@ -12039,6 +12215,28 @@
                 return;
             }
             
+            // LIVE SESSION: Verschiebe Zeilen sofort in Excel
+            // WICHTIG: Bei mehreren Zeilen müssen wir die Reihenfolge beachten!
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                // Berechne Zielposition
+                let liveTargetIndex = movePosition === 'before' ? targetIndex : targetIndex + 1;
+                
+                // Bei Verschiebung nach oben: von oben nach unten verschieben
+                // Bei Verschiebung nach unten: von unten nach oben verschieben
+                const sortedForMove = selectedIndices[0] > liveTargetIndex 
+                    ? [...selectedIndices]  // Nach oben: von oben nach unten
+                    : [...selectedIndices].reverse();  // Nach unten: von unten nach oben
+                
+                for (const fromIdx of sortedForMove) {
+                    await liveSessionExecute('moveRow', fromIdx, liveTargetIndex);
+                    // Nach jeder Verschiebung ändert sich die Zielposition
+                    if (fromIdx > liveTargetIndex) {
+                        liveTargetIndex++;  // Ziel rutscht eins runter
+                    }
+                }
+                console.log(`[LiveSession] ${selectedIndices.length} Zeilen verschoben`);
+            }
+            
             // Speichere den aktuellen Zustand für Undo - EFFIZIENT: nur betroffene Zeilen
             // Wir speichern nur die Indizes und lassen den State unverändert im Undo-System
             const previousDataOrder = explorerState.data.map((_, i) => i);
@@ -12278,6 +12476,15 @@
             );
             
             if (!confirmed) return;
+            
+            // LIVE SESSION: Lösche Zeilen sofort in Excel (von hinten nach vorne)
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                const sortedForLive = Array.from(explorerState.selectedRows).sort((a, b) => b - a);
+                for (const idx of sortedForLive) {
+                    await liveSessionExecute('deleteRow', idx);
+                }
+                console.log(`[LiveSession] ${sortedForLive.length} Zeilen in Excel gelöscht`);
+            }
             
             // Speichere den aktuellen Zustand für Undo
             const previousData = JSON.parse(JSON.stringify(explorerState.data));
@@ -12584,6 +12791,15 @@
             if (selectedCount === 0) {
                 showNotification(currentLanguage === 'en' ? 'No rows selected' : 'Keine Zeilen ausgewählt', 'warning');
                 return;
+            }
+            
+            // LIVE SESSION: Verstecke Zeilen sofort in Excel
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                const indicesToHide = Array.from(explorerState.selectedRows);
+                for (const idx of indicesToHide) {
+                    liveSessionExecute('hideRow', idx, true);
+                }
+                console.log(`[LiveSession] ${indicesToHide.length} Zeilen in Excel versteckt`);
             }
             
             // Füge alle ausgewählten Zeilen zu den ausgeblendeten Zeilen hinzu
@@ -14613,6 +14829,31 @@
             elements.btnAddExplorerFilter.onclick = addExplorerFilter;
             elements.btnClearExplorerFilters.onclick = clearExplorerFilters;
             elements.btnExplorerExport.onclick = exportExplorerData;
+            
+            // Live Session Toggle
+            const chkLiveSession = document.getElementById('chkLiveSession');
+            if (chkLiveSession) {
+                chkLiveSession.onchange = async (e) => {
+                    if (e.target.checked) {
+                        // Live-Session aktivieren
+                        if (!explorerState.filePath) {
+                            showNotification('Bitte zuerst eine Datei laden', 'warning');
+                            e.target.checked = false;
+                            return;
+                        }
+                        const success = await startLiveSession();
+                        if (!success) {
+                            e.target.checked = false;
+                            showNotification('Live-Session konnte nicht gestartet werden', 'error');
+                        }
+                    } else {
+                        // Live-Session deaktivieren
+                        await stopLiveSession();
+                        showFloatingStatus('Live-Session beendet');
+                    }
+                    updateLiveSessionIndicator();
+                };
+            }
             
             // Data Join Event Listeners
             elements.btnDataJoin.onclick = openDataJoinModal;
