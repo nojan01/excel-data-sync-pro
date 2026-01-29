@@ -1647,15 +1647,16 @@
                     <div id="searchPagination" style="display: none; align-items: center; gap: 8px;">
                         <button class="btn btn-secondary btn-sm" id="btnSearchFirstPage" title="Erste Seite">⏮</button>
                         <button class="btn btn-secondary btn-sm" id="btnSearchPrevPage" title="Vorherige Seite">◀</button>
-                        <span id="searchPageInfo" style="color: var(--text-muted); font-size: 13px; min-width: 120px; text-align: center;">Seite 1 von 1</span>
+                        <span id="searchPageInfo" style="color: var(--text-muted); font-size: 13px; min-width: 120px; text-align: center;"></span>
                         <button class="btn btn-secondary btn-sm" id="btnSearchNextPage" title="Nächste Seite">▶</button>
                         <button class="btn btn-secondary btn-sm" id="btnSearchLastPage" title="Letzte Seite">⏭</button>
-                        <select id="searchPageSize" style="padding: 4px 8px; border-radius: 4px; background: var(--bg-light); border: 1px solid var(--border); color: var(--text-primary);">
-                            <option value="50">50 / Seite</option>
-                            <option value="100" selected>100 / Seite</option>
-                            <option value="250">250 / Seite</option>
-                            <option value="500">500 / Seite</option>
+                        <select id="searchPageSize" class="per-page-select" style="padding: 4px 8px; border-radius: 4px; background: var(--bg-light); border: 1px solid var(--border); color: var(--text-primary);">
+                            <option value="50">50</option>
+                            <option value="100" selected>100</option>
+                            <option value="250">250</option>
+                            <option value="500">500</option>
                         </select>
+                        <span class="per-page-label" data-i18n="perPage">/ Seite</span>
                     </div>
                 </div>
             </div>
@@ -1945,10 +1946,12 @@
     <div class="modal-overlay hidden" id="helpModal">
         <div class="modal" style="max-width: 800px;">
             <div class="modal-header">
-                <div class="modal-title">❓ Hilfe - Excel Data Sync Pro</div>
+                <div class="modal-title" id="helpModalTitle">❓ Hilfe - Excel Data Sync Pro</div>
                 <button class="modal-close" id="btnCloseHelpModal">&times;</button>
             </div>
             <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
+                <!-- German Help Content -->
+                <div id="helpContentDe">
                 <h3 style="margin-bottom: 10px;">🚀 Schnellstart</h3>
                 <ol style="line-height: 2; padding-left: 20px; margin-bottom: 20px;">
                     <li><strong>Quelldatei laden:</strong> Klicken Sie auf "📂 Quelldatei laden" und wählen Sie die Excel-Datei, aus der Zeilen kopiert werden sollen.</li>
@@ -2289,6 +2292,297 @@
                     Pivot-Tabellen werden <strong>nicht unterstützt</strong> und können beim Speichern beschädigt werden.<br>
                     Bei Dateien mit Pivot-Tabellen erscheint eine Warnung vor dem Speichern.
                 </p>
+                </div>
+                
+                <!-- English Help Content -->
+                <div id="helpContentEn" style="display: none;">
+                <h3 style="margin-bottom: 10px;">🚀 Quick Start</h3>
+                <ol style="line-height: 2; padding-left: 20px; margin-bottom: 20px;">
+                    <li><strong>Load source file:</strong> Click "📂 Load Source File" and select the Excel file from which rows should be copied.</li>
+                    <li><strong>Load target file:</strong> Load the Excel file where the rows should be inserted.</li>
+                    <li><strong>Configure columns:</strong> Define which columns should be copied.</li>
+                    <li><strong>Search & Transfer:</strong> Search for rows and transfer them to the target file.</li>
+                </ol>
+                
+                <h3 style="margin-bottom: 10px;">📂 Loading Files</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    <strong>Source file (File 1):</strong> The Excel file from which you want to copy data.<br>
+                    <strong>Target file (File 2):</strong> The Excel file where the data will be inserted.<br>
+                    After loading, you can select the desired worksheet.
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">🔗 Column Mapping</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Click "⚙️ Configure Columns" to define:<br>
+                    • <strong>Start column:</strong> From which column the data will be inserted in File 2 (Column 1+2 = Flag & Comment)<br>
+                    • <strong>Duplicate check:</strong> Which column is used for duplicate detection<br>
+                    • <strong>Columns to copy:</strong> Which columns from File 1 will be transferred
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">🔍 Search</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Enter a search term and press Enter or click "🔍 Search".<br>
+                    The search scans all columns of the source file. The last 15 searches are saved.
+                </p>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin-bottom: 10px;">
+                    <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">*</code>
+                    <span>Any number of characters (e.g., <code>ABC*</code>, <code>*123*</code>)</span>
+                    <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">?</code>
+                    <span>Exactly one character (e.g., <code>A?C</code> finds ABC, ADC, ...)</span>
+                </div>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Advanced search with AND/OR:</strong>
+                </p>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin-bottom: 20px;">
+                    <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">A AND B</code>
+                    <span>Finds rows containing both A and B</span>
+                    <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">A OR B</code>
+                    <span>Finds rows containing A or B (or both)</span>
+                    <code style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Project AND 2025</code>
+                    <span>Example: Project entries from 2025</span>
+                </div>
+                
+                <h3 style="margin-bottom: 10px;">✏️ Editing Search Results</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Cells in the search results are <strong>directly editable</strong>!<br>
+                    Click in a cell and change the value. Edited cells are highlighted in yellow.<br>
+                    Changes will be applied when transferring to the target file.
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📤 Transfer</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    <strong>Flag:</strong> A (Add), D (Delete), C (Change) or empty<br>
+                    <strong>Comment:</strong> Optional text for column 2<br>
+                    <strong>To Queue:</strong> Collects multiple rows for batch transfer<br>
+                    <strong>Transfer Directly:</strong> Immediately adds rows to queue and transfers
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📋 Queue</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    The queue shows all rows marked for transfer.<br>
+                    <strong>👁️ Preview:</strong> Shows a diff view with all changes before transfer<br>
+                    <strong>✅ Transfer Directly:</strong> Writes all rows directly to the Excel target file<br>
+                    <strong>🗑️ Clear:</strong> Removes all rows from the queue
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">➕ Create New Row Manually</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    With "➕ New Row" you can enter rows manually without searching in the source file.<br>
+                    Ideal for empty rows or data not present in the source file.
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📊 Data Explorer</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    The Data Explorer is a powerful tool for opening, browsing, editing and filtering Excel files.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📂 Open File</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    • Click "📊 Data Explorer" then "📂 Open File"<br>
+                    • Select the desired worksheet from the dropdown
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">🔍 Search & Filter</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Full-text search:</strong> Searches all columns with wildcard support (* and ?)<br>
+                    <strong>Column filters:</strong> Click "+ Add Filter" for targeted filtering:<br>
+                </p>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 15px; margin: 0 0 10px 15px; font-size: 13px;">
+                    <code>contains / not contains</code><span>Substring search</span>
+                    <code>equals / not equals</code><span>Exact match</span>
+                    <code>starts with / ends with</code><span>Position in text</span>
+                    <code>is empty / is not empty</code><span>Find empty cells</span>
+                    <code>&gt; / &lt; / &gt;= / &lt;=</code><span>Numeric comparisons</span>
+                </div>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📋 Manage Columns</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Show/hide columns:</strong> Via "Columns" → toggle checkboxes<br>
+                    <strong>Sorting:</strong> Right-click on column header opens context menu with sort options:<br>
+                </p>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 15px; margin: 0 0 10px 15px; font-size: 13px;">
+                    <code>A→Z / Z→A</code><span>Alphabetical sorting</span>
+                    <code>0→9 / 9→0</code><span>Numeric sorting</span>
+                    <code>Date ↑ / Date ↓</code><span>Date sorting</span>
+                </div>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Drag & Drop:</strong> Rearrange columns via drag & drop
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">✏️ Edit Cells</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    All cells are <strong>directly editable</strong>! Click in a cell and change the value.<br>
+                    Edited cells are <span style="background: rgba(255, 193, 7, 0.3); padding: 2px 6px; border-radius: 3px;">highlighted in yellow</span>.<br>
+                    <strong>Ctrl+Z / Ctrl+Y:</strong> Undo / redo changes
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">🎨 Highlight Rows</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Right-click on row:</strong> Opens context menu for color highlighting<br>
+                    Available colors: 🟢 Green, 🟡 Yellow, 🟠 Orange, 🔴 Red, 🔵 Blue, 🟣 Purple<br>
+                    Highlights help with visual organization and remain when filtering.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">➕ Add/Delete Rows & Columns</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Row operations (right-click on row):</strong><br>
+                    • ⬆️ Insert row above<br>
+                    • ⬇️ Insert row below<br>
+                    • 🗑️ Delete row (with confirmation dialog)<br><br>
+                    <strong>Column operations (right-click on column header):</strong><br>
+                    • ⬅️ Insert column left (with name input)<br>
+                    • ➡️ Insert column right (with name input)<br>
+                    • 🗑️ Delete column (with data loss warning)<br>
+                    • 👁️ Hide column
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📤 Save & Export</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>💾 Save / Export:</strong> Saves changes to the file<br>
+                    • Overwrites original file or saves as new file<br>
+                    • Shows confirmation dialog with number of changes<br>
+                    • All formatting from the original file is preserved<br>
+                    • Choice of which worksheets to export
+                </p>
+                
+                <h3 style="margin-bottom: 10px; margin-top: 25px; padding-top: 15px; border-top: 1px solid var(--border);">🔴 Live Mode (Windows)</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Live Mode</strong> enables direct editing of Excel files while Excel remains open.<br>
+                    All changes are <strong>immediately displayed in Excel</strong> – ideal for review and control.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">🚀 Starting Live Mode</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    • In the Data Explorer, the Live Mode activates automatically when Excel is available<br>
+                    • The file opens in Excel and remains visible during editing<br>
+                    • A red bar appears at the top with "🔴 Live Session Active"<br>
+                    • <strong>Note:</strong> Only available on Windows (requires Microsoft Excel)
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">✏️ Editing in Live Mode</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Change cell contents:</strong> Click in a cell and edit the value – the change appears immediately in Excel<br><br>
+                    <strong>Row operations (right-click on row):</strong><br>
+                    • ⬆️ Move row up<br>
+                    • ⬇️ Move row down<br>
+                    • 🗑️ Delete row<br>
+                    • 🎨 Highlight row with color (6 colors available)<br>
+                    • ✖️ Clear highlight<br><br>
+                    <strong>Column operations (right-click on column header):</strong><br>
+                    • ⬅️ Move column left<br>
+                    • ➡️ Move column right<br>
+                    • 🗑️ Delete column<br>
+                    • 👁️ Hide column
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">🔍 Filters in Live Mode</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    You can set AutoFilters in Excel via the toolbar:<br>
+                    • Select the column and filter value<br>
+                    • The filter is activated in Excel and shows only matching rows<br>
+                    • With "Reset Filter" all rows are shown again<br>
+                    • Filters are preserved on export
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">💾 Save & Close</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong style="color: var(--success);">💾 Export:</strong> Saves all changes permanently to the Excel file<br>
+                    <strong style="color: var(--error);">❌ End Live Session:</strong> Closes Excel <strong>without saving</strong> – all changes are discarded<br><br>
+                    <strong>Important:</strong> Changes like row highlights are only visible in Excel, but are only saved on export.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">🛡️ Safety</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    • A backup copy is automatically created when opening<br>
+                    • All changes are logged in a journal<br>
+                    • Excel auto-saves every 2 minutes in the background<br>
+                    • In case of crash, the last state can be recovered
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📄 Template Functions</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Templates serve as blueprints for new monthly files. All formatting is preserved.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📂 Load Template</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Loads an existing Excel file as a template for new monthly files.
+                </p>
+                
+                <h4 style="margin: 15px 0 8px 0; color: var(--primary);">📅 Create New Monthly File</h4>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Creates a copy of the template with a new name (e.g., for a new month).<br>
+                    The new file is automatically loaded as target file (File 2).
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📁 Working Directory</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    Set a working directory that is used as the default location for all file dialogs.<br>
+                    The config.json is first searched in the working directory, then in the program folder.
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">💾 Configuration</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    <strong>Load config.json:</strong> Loads a saved configuration (column mapping, file paths)<br>
+                    <strong>Save config.json:</strong> Saves the current configuration for later access<br>
+                    💡 Ideal for teams: One config.json on the network drive for all users!
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">⌨️ Keyboard Shortcuts</h3>
+                <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px 20px; margin-bottom: 20px;">
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Ctrl+F</kbd>
+                    <span>Focus on search field</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Ctrl+S</kbd>
+                    <span>Export queue / Save data</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Ctrl+Enter</kbd>
+                    <span>Transfer selected rows directly</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Ctrl+Z</kbd>
+                    <span>Undo last edit</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Ctrl+Y</kbd>
+                    <span>Redo undone edit</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">F5</kbd>
+                    <span>Refresh search / Reload data</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">F1</kbd>
+                    <span>Open/close this help</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Enter</kbd>
+                    <span>Start search (in search field) / Next row (in table)</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Esc</kbd>
+                    <span>Close dialog / Cancel editing</span>
+                    <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Tab</kbd>
+                    <span>To next cell in search results</span>
+                </div>
+                
+                <h3 style="margin-bottom: 10px;">⚠️ Important Notes</h3>
+                <p style="color: var(--text-muted); line-height: 1.6;">
+                    • <strong>Standard mode:</strong> Target file (File 2) must be <strong>closed</strong> in Excel<br>
+                    • <strong>Live mode:</strong> File opens automatically in Excel and stays open<br>
+                    • Duplicates are automatically detected and shown as warnings<br>
+                    • Changes are written directly to the Excel file (no separate export needed)<br>
+                    • The sidebar can be collapsed with the ◀ button
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">📋 Excel Features: What is Supported?</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong style="color: var(--success);">✅ Fully supported:</strong><br>
+                    • Cell values, formatting (font, colors, alignment)<br>
+                    • Formulas, hyperlinks, rich text<br>
+                    • Merged cells<br>
+                    • Dropdown lists (Data Validation)<br>
+                    • Password-protected files<br>
+                    • Hidden rows and columns<br>
+                    • AutoFilter (preserved on save)
+                </p>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong style="color: var(--warning);">⚠️ Conditional Formatting:</strong><br>
+                    Conditional formatting <strong>cannot be displayed or edited</strong> in the app.<br>
+                    However, it is <strong>fully preserved</strong> when loading and saving.
+                </p>
+                <p style="color: var(--text-muted); line-height: 1.6;">
+                    <strong style="color: var(--error);">❌ Pivot Tables:</strong><br>
+                    Pivot tables are <strong>not supported</strong> and may be corrupted when saving.<br>
+                    A warning appears before saving files with pivot tables.
+                </p>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="btn btn-primary" id="btnCloseHelp">Schließen</button>
@@ -2767,28 +3061,28 @@
                 <!-- Find & Replace Panel (initially hidden) -->
                 <div id="findReplacePanel" style="display: none; flex-direction: column; gap: 12px; padding: 15px; background: linear-gradient(135deg, #2d2d30 0%, #252526 100%); border-radius: 6px; border: 1px solid var(--border); border-left: 4px solid #9c27b0; flex-shrink: 0;">
                     <div style="display: flex; align-items: center; gap: 10px;">
-                        <span style="font-weight: 600; color: #9c27b0;">🔄 Suchen & Ersetzen</span>
+                        <span style="font-weight: 600; color: #9c27b0;">🔄 <span data-i18n="searchAndReplace">Suchen & Ersetzen</span></span>
                         <span id="findMatchCounter" style="color: var(--text-muted); font-size: 12px; font-weight: 500;"></span>
                         <span id="findReplaceInfo" style="color: var(--text-muted); font-size: 12px;"></span>
                         <button class="btn btn-secondary btn-sm" id="btnCloseFindReplace" style="margin-left: auto;">✕</button>
                     </div>
                     <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end;">
                         <div class="transfer-field" style="flex: 1; min-width: 200px;">
-                            <label style="font-size: 12px;">Suchen nach:</label>
-                            <input type="text" id="findText" class="config-input" placeholder="Text zum Suchen...">
+                            <label style="font-size: 12px;" data-i18n="searchFor">Suchen nach:</label>
+                            <input type="text" id="findText" class="config-input" data-i18n="textToSearch" placeholder="Text zum Suchen...">
                         </div>
                         <div class="transfer-field" style="flex: 1; min-width: 200px;">
-                            <label style="font-size: 12px;">Ersetzen durch:</label>
-                            <input type="text" id="replaceText" class="config-input" placeholder="Ersatztext...">
+                            <label style="font-size: 12px;" data-i18n="replaceWith">Ersetzen durch:</label>
+                            <input type="text" id="replaceText" class="config-input" data-i18n="replacementText" placeholder="Ersatztext...">
                         </div>
                         <div style="display: flex; gap: 8px; align-items: center;">
                             <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;">
                                 <input type="checkbox" id="findCaseSensitive" class="green-checkbox">
-                                <span>Groß/Klein</span>
+                                <span data-i18n="caseSensitive">Groß/Klein</span>
                             </label>
                             <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;">
                                 <input type="checkbox" id="findWholeWord" class="green-checkbox">
-                                <span>Ganzes Wort</span>
+                                <span data-i18n="wholeWord">Ganzes Wort</span>
                             </label>
                             <label style="display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer;">
                                 <input type="checkbox" id="findRegex" class="green-checkbox">
@@ -2796,10 +3090,10 @@
                             </label>
                         </div>
                         <div style="display: flex; gap: 8px;">
-                            <button class="btn btn-primary btn-sm" id="btnFindNext" title="Nächsten Treffer finden (F3)">🔍 Weiter</button>
-                            <button class="btn btn-warning btn-sm" id="btnReplaceOne" title="Aktuelle Auswahl ersetzen">Ersetzen</button>
-                            <button class="btn btn-info btn-sm" id="btnReplaceAll" title="Alle Vorkommen ersetzen">Alle ersetzen</button>
-                            <button class="btn btn-secondary btn-sm" id="btnFindReplaceUndo" title="Letzte Ersetzung rückgängig machen (Strg+Z)">↩️ Rückgängig</button>
+                            <button class="btn btn-primary btn-sm" id="btnFindNext">🔍 <span data-i18n="findNext">Weiter</span></button>
+                            <button class="btn btn-warning btn-sm" id="btnReplaceOne" data-i18n="replaceOne">Ersetzen</button>
+                            <button class="btn btn-info btn-sm" id="btnReplaceAll" data-i18n="replaceAll">Alle ersetzen</button>
+                            <button class="btn btn-secondary btn-sm" id="btnFindReplaceUndo">↩️ <span data-i18n="undo">Rückgängig</span></button>
                         </div>
                     </div>
                 </div>
@@ -2807,8 +3101,8 @@
                 <!-- Column Visibility Panel (initially hidden) -->
                 <div id="columnTogglePanel" style="display: none; flex-direction: column; gap: 10px; padding: 15px; background: var(--bg-light); border-radius: 6px; margin-bottom: 10px; border: 1px solid var(--border); flex-shrink: 0;">
                     <div style="display: flex; gap: 10px; margin-bottom: 5px;">
-                        <button class="btn btn-secondary btn-sm" id="btnShowAllColumns">Alle anzeigen</button>
-                        <button class="btn btn-secondary btn-sm" id="btnHideAllColumns">Alle ausblenden</button>
+                        <button class="btn btn-secondary btn-sm" id="btnShowAllColumns" data-i18n="showAllColumns">Alle anzeigen</button>
+                        <button class="btn btn-secondary btn-sm" id="btnHideAllColumns" data-i18n="hideAllColumns">Alle ausblenden</button>
                     </div>
                     <div id="columnToggles" style="display: flex; flex-wrap: wrap; gap: 8px; max-height: 200px; overflow-y: auto;"></div>
                 </div>
@@ -2839,16 +3133,17 @@
                     <div id="explorerPagination" style="display: none; align-items: center; gap: 8px;">
                         <button class="btn btn-secondary btn-sm" id="btnExplorerFirstPage" title="Erste Seite">⏮</button>
                         <button class="btn btn-secondary btn-sm" id="btnExplorerPrevPage" title="Vorherige Seite">◀</button>
-                        <span id="explorerPageInfo" style="color: var(--text-muted); font-size: 13px; min-width: 120px; text-align: center;">Seite 1 von 1</span>
+                        <span id="explorerPageInfo" style="color: var(--text-muted); font-size: 13px; min-width: 120px; text-align: center;"></span>
                         <button class="btn btn-secondary btn-sm" id="btnExplorerNextPage" title="Nächste Seite">▶</button>
                         <button class="btn btn-secondary btn-sm" id="btnExplorerLastPage" title="Letzte Seite">⏭</button>
-                        <select id="explorerPageSize" style="padding: 4px 8px; border-radius: 4px; background: var(--bg-light); border: 1px solid var(--border); color: var(--text-primary);">
-                            <option value="50">50 / Seite</option>
-                            <option value="100" selected>100 / Seite</option>
-                            <option value="250">250 / Seite</option>
-                            <option value="500">500 / Seite</option>
-                            <option value="1000">1000 / Seite</option>
+                        <select id="explorerPageSize" class="per-page-select" style="padding: 4px 8px; border-radius: 4px; background: var(--bg-light); border: 1px solid var(--border); color: var(--text-primary);">
+                            <option value="50">50</option>
+                            <option value="100" selected>100</option>
+                            <option value="250">250</option>
+                            <option value="500">500</option>
+                            <option value="1000">1000</option>
                         </select>
+                        <span class="per-page-label" data-i18n="perPage">/ Seite</span>
                     </div>
                     
                     <span id="explorerStatus" style="color: #ff9800; font-size: 12px;"></span>
@@ -2859,8 +3154,8 @@
                     <!-- Large Drop Zone (visible when no file loaded) -->
                     <div id="explorerDropZone" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; cursor: pointer; transition: all 0.2s ease; z-index: 10;">
                         <div style="font-size: 48px; opacity: 0.5;">📥</div>
-                        <div style="font-size: 16px; color: var(--text-muted); font-weight: 500;">Excel-Datei hier ablegen</div>
-                        <div style="font-size: 12px; color: var(--text-muted); opacity: 0.7;">oder klicken zum Öffnen</div>
+                        <div id="dropZoneText" style="font-size: 16px; color: var(--text-muted); font-weight: 500;" data-i18n="dropZoneText">Excel-Datei hier ablegen</div>
+                        <div id="dropZoneHint" style="font-size: 12px; color: var(--text-muted); opacity: 0.7;" data-i18n="dropZoneHint">oder klicken zum Öffnen</div>
                         <div style="margin-top: 5px; padding: 5px 14px; border: 1px dashed var(--border); border-radius: 6px; color: var(--text-muted); font-size: 11px;">
                             .xlsx, .xls
                         </div>
@@ -2873,7 +3168,7 @@
                 </div>
             </div>
             <div class="modal-footer">
-                <button class="btn btn-secondary" id="btnCloseExplorerFooter">Schließen</button>
+                <button class="btn btn-secondary" id="btnCloseExplorerFooter" data-i18n="closeButton">Schließen</button>
             </div>
         </div>
     </div>
@@ -3381,7 +3676,83 @@
                 file: 'Datei',
                 details: 'Details',
                 noNetworkLogs: 'Keine Netzwerk-Logs vorhanden',
-                networkLogsNote: 'Das Netzwerk-Protokoll wird nur für Dateien auf Netzlaufwerken geführt. Es zeigt welcher Rechner wann welche Aktion durchgeführt hat (DSGVO-konform, keine persönlichen Daten).'
+                networkLogsNote: 'Das Netzwerk-Protokoll wird nur für Dateien auf Netzlaufwerken geführt. Es zeigt welcher Rechner wann welche Aktion durchgeführt hat (DSGVO-konform, keine persönlichen Daten).',
+                
+                // Live Mode
+                liveMode: 'Live-Modus',
+                liveModeWindows: 'Live-Modus (Windows)',
+                liveOpen: '🔴 Live öffnen',
+                liveSessionActive: '🔴 Live-Session aktiv',
+                liveSessionEnded: 'Live-Session beendet',
+                liveOffline: 'Offline',
+                liveReady: 'Bereit',
+                liveConnecting: 'Verbinde...',
+                endLiveSession: '❌ Live-Session beenden',
+                toggleExcel: '👁️ Excel',
+                sendToExcel: '▶ An Excel',
+                resetFilter: 'Filter zurücksetzen',
+                moveRowUp: 'Zeile nach oben',
+                moveRowDown: 'Zeile nach unten',
+                moveColumnLeft: 'Spalte nach links',
+                moveColumnRight: 'Spalte nach rechts',
+                highlightRow: 'Zeile markieren',
+                clearHighlight: 'Markierung entfernen',
+                highlightGreen: '🟢 Grün',
+                highlightYellow: '🟡 Gelb',
+                highlightOrange: '🟠 Orange',
+                highlightRed: '🔴 Rot',
+                highlightBlue: '🔵 Blau',
+                highlightPurple: '🟣 Lila',
+                
+                // Data Explorer additional
+                saveChanges: '💾 Speichern',
+                previewChanges: '👁️ Vorschau',
+                worksheetLabel: 'Arbeitsblatt:',
+                loadFileFirst2: '-- Datei laden --',
+                filterSection: '🔍 Filter',
+                searchFor: 'Suchen nach:',
+                replaceWith: 'Ersetzen durch:',
+                textToSearch: 'Text zum Suchen...',
+                replacementText: 'Ersatztext...',
+                caseSensitive: 'Groß-/Kleinschreibung',
+                wholeWord: 'Ganzes Wort',
+                findNext: '▼ Nächster',
+                replaceOne: 'Ersetzen',
+                replaceAll: 'Alle ersetzen',
+                undo: 'Rückgängig',
+                manageSheets: 'Arbeitsblätter verwalten',
+                
+                // Find & Replace Panel
+                searchAndReplace: 'Suchen & Ersetzen',
+                
+                // Pagination & Status
+                showingRows: 'Zeige',
+                ofRows: 'von',
+                rowsLabel: 'Zeilen',
+                totalLabel: 'gesamt',
+                editedLabel: 'bearbeitet',
+                pageLabel: 'Seite',
+                ofLabel: 'von',
+                perPage: '/ Seite',
+                rowsLoaded: 'Zeilen geladen',
+                paginationActive: 'Pagination aktiv',
+                loadingFile: 'Lade Datei...',
+                loadingData: 'Lade Daten...',
+                noFileLoaded: 'Keine Datei geladen',
+                errorLabel: 'Fehler',
+                cellsEdited: 'Zelle(n) bearbeitet',
+                loadedFromCache: 'Aus Cache geladen',
+                changes: 'Änderungen',
+                editingsRestored: 'Bearbeitungen wiederhergestellt',
+                
+                // Column panel
+                showAllColumns: 'Alle anzeigen',
+                hideAllColumns: 'Alle ausblenden',
+                
+                // Drop Zone
+                dropZoneText: 'Excel-Datei hier ablegen',
+                dropZoneHint: 'oder klicken zum Öffnen',
+                closeButton: 'Schließen'
             },
             en: {
                 // Header
@@ -3633,7 +4004,83 @@
                 file: 'File',
                 details: 'Details',
                 noNetworkLogs: 'No network logs available',
-                networkLogsNote: 'The network log is only kept for files on network drives. It shows which computer performed which action and when (GDPR compliant, no personal data).'
+                networkLogsNote: 'The network log is only kept for files on network drives. It shows which computer performed which action and when (GDPR compliant, no personal data).',
+                
+                // Live Mode
+                liveMode: 'Live Mode',
+                liveModeWindows: 'Live Mode (Windows)',
+                liveOpen: '🔴 Live Open',
+                liveSessionActive: '🔴 Live Session Active',
+                liveSessionEnded: 'Live session ended',
+                liveOffline: 'Offline',
+                liveReady: 'Ready',
+                liveConnecting: 'Connecting...',
+                endLiveSession: '❌ End Live Session',
+                toggleExcel: '👁️ Excel',
+                sendToExcel: '▶ To Excel',
+                resetFilter: 'Reset Filter',
+                moveRowUp: 'Move row up',
+                moveRowDown: 'Move row down',
+                moveColumnLeft: 'Move column left',
+                moveColumnRight: 'Move column right',
+                highlightRow: 'Highlight row',
+                clearHighlight: 'Clear highlight',
+                highlightGreen: '🟢 Green',
+                highlightYellow: '🟡 Yellow',
+                highlightOrange: '🟠 Orange',
+                highlightRed: '🔴 Red',
+                highlightBlue: '🔵 Blue',
+                highlightPurple: '🟣 Purple',
+                
+                // Data Explorer additional
+                saveChanges: '💾 Save',
+                previewChanges: '👁️ Preview',
+                worksheetLabel: 'Worksheet:',
+                loadFileFirst2: '-- Load file --',
+                filterSection: '🔍 Filter',
+                searchFor: 'Search for:',
+                replaceWith: 'Replace with:',
+                textToSearch: 'Text to search...',
+                replacementText: 'Replacement text...',
+                caseSensitive: 'Case sensitive',
+                wholeWord: 'Whole word',
+                findNext: '▼ Next',
+                replaceOne: 'Replace',
+                replaceAll: 'Replace All',
+                undo: 'Undo',
+                manageSheets: 'Manage worksheets',
+                
+                // Find & Replace Panel
+                searchAndReplace: 'Search & Replace',
+                
+                // Pagination & Status
+                showingRows: 'Showing',
+                ofRows: 'of',
+                rowsLabel: 'rows',
+                totalLabel: 'total',
+                editedLabel: 'edited',
+                pageLabel: 'Page',
+                ofLabel: 'of',
+                perPage: '/ Page',
+                rowsLoaded: 'rows loaded',
+                paginationActive: 'Pagination active',
+                loadingFile: 'Loading file...',
+                loadingData: 'Loading data...',
+                noFileLoaded: 'No file loaded',
+                errorLabel: 'Error',
+                cellsEdited: 'cell(s) edited',
+                loadedFromCache: 'Loaded from cache',
+                changes: 'changes',
+                editingsRestored: 'edits restored',
+                
+                // Column panel
+                showAllColumns: 'Show all',
+                hideAllColumns: 'Hide all',
+                
+                // Drop Zone
+                dropZoneText: 'Drop Excel file here',
+                dropZoneHint: 'or click to open',
+                closeButton: 'Close'
             }
         };
         
@@ -3873,6 +4320,56 @@
             }
             if (btnCancelNewMonth) btnCancelNewMonth.textContent = t('cancel');
             if (btnConfirmNewMonth) btnConfirmNewMonth.innerHTML = t('createAndLoad');
+            
+            // Help Modal - switch content based on language
+            const helpContentDe = document.getElementById('helpContentDe');
+            const helpContentEn = document.getElementById('helpContentEn');
+            const helpModalTitle = document.getElementById('helpModalTitle');
+            const btnCloseHelp = document.getElementById('btnCloseHelp');
+            
+            if (helpContentDe && helpContentEn) {
+                if (currentLanguage === 'en') {
+                    helpContentDe.style.display = 'none';
+                    helpContentEn.style.display = 'block';
+                } else {
+                    helpContentDe.style.display = 'block';
+                    helpContentEn.style.display = 'none';
+                }
+            }
+            if (helpModalTitle) {
+                helpModalTitle.textContent = currentLanguage === 'en' ? '❓ Help - Excel Data Sync Pro' : '❓ Hilfe - Excel Data Sync Pro';
+            }
+            if (btnCloseHelp) {
+                btnCloseHelp.textContent = currentLanguage === 'en' ? 'Close' : 'Schließen';
+            }
+            
+            // Column Context Menu - translate items
+            const columnContextMenu = document.getElementById('columnContextMenu');
+            if (columnContextMenu) {
+                const menuItems = columnContextMenu.querySelectorAll('.context-menu-item');
+                menuItems.forEach(item => {
+                    const action = item.dataset.action;
+                    if (action === 'sort-alpha-asc') item.innerHTML = `<span>🔤</span> ${currentLanguage === 'en' ? 'Alphabetical A → Z' : 'Alphabetisch A → Z'}`;
+                    if (action === 'sort-alpha-desc') item.innerHTML = `<span>🔤</span> ${currentLanguage === 'en' ? 'Alphabetical Z → A' : 'Alphabetisch Z → A'}`;
+                    if (action === 'sort-num-asc') item.innerHTML = `<span>🔢</span> ${currentLanguage === 'en' ? 'Numeric 1 → 9' : 'Numerisch 1 → 9'}`;
+                    if (action === 'sort-num-desc') item.innerHTML = `<span>🔢</span> ${currentLanguage === 'en' ? 'Numeric 9 → 1' : 'Numerisch 9 → 1'}`;
+                    if (action === 'sort-date-asc') item.innerHTML = `<span>📅</span> ${currentLanguage === 'en' ? 'Date Old → New' : 'Datum Alt → Neu'}`;
+                    if (action === 'sort-date-desc') item.innerHTML = `<span>📅</span> ${currentLanguage === 'en' ? 'Date New → Old' : 'Datum Neu → Alt'}`;
+                    if (action === 'hide-column') item.innerHTML = `<span>👁️‍🗨️</span> ${t('hideColumn')}`;
+                    if (action === 'delete-column') item.innerHTML = `<span>🗑️</span> ${t('deleteColumn')}`;
+                    if (action === 'insert-column-before') item.innerHTML = `<span>⬅️</span> ${t('insertColumnBefore')}`;
+                    if (action === 'insert-column-after') item.innerHTML = `<span>➡️</span> ${t('insertColumnAfter')}`;
+                });
+                // Update header
+                const header = columnContextMenu.querySelector('.context-menu-header');
+                if (header) {
+                    const colName = document.getElementById('contextMenuColumnName');
+                    header.innerHTML = `${currentLanguage === 'en' ? 'Column' : 'Spalte'}: <span id="contextMenuColumnName">${colName ? colName.textContent : '-'}</span>`;
+                }
+            }
+            
+            // Update Live Mode indicator if visible
+            updateLiveModeIndicator();
         }
         
         // ==================== JSDoc Type Definitions ====================
@@ -5775,7 +6272,7 @@
             // Pagination nur anzeigen wenn mehr als eine Seite
             if (state.searchResults.length > state.searchPagination.pageSize) {
                 paginationEl.style.display = 'flex';
-                pageInfoEl.textContent = `Seite ${state.searchPagination.currentPage} von ${totalPages}`;
+                pageInfoEl.textContent = `${t('pageLabel')} ${state.searchPagination.currentPage} ${t('ofLabel')} ${totalPages}`;
                 
                 // Buttons aktivieren/deaktivieren
                 firstBtn.disabled = state.searchPagination.currentPage === 1;
@@ -7116,12 +7613,12 @@
                 // Grüner Punkt = Live aktiv
                 indicator.style.background = 'rgba(76, 175, 80, 0.2)';
                 indicator.style.border = '1px solid #4CAF50';
-                indicator.innerHTML = `<span style="color: #4CAF50;">🟢</span> <span style="color: #4CAF50;">Live aktiv</span>`;
+                indicator.innerHTML = `<span style="color: #4CAF50;">🟢</span> <span style="color: #4CAF50;">${t('liveReady')}</span>`;
             } else {
                 // Grauer Punkt = Offline/openpyxl
                 indicator.style.background = 'var(--bg-lighter)';
                 indicator.style.border = '1px solid var(--border)';
-                indicator.innerHTML = `<span style="color: var(--text-muted);">⚫</span> <span style="color: var(--text-muted);">Offline</span>`;
+                indicator.innerHTML = `<span style="color: var(--text-muted);">⚫</span> <span style="color: var(--text-muted);">${t('liveOffline')}</span>`;
             }
             
             // Sync-Filters-Button aktualisieren
@@ -7164,7 +7661,7 @@
                 explorerState.liveSessionReady = true;
                 explorerState.excelVisible = false;  // Excel startet versteckt
                 console.log('[LiveSession] ✓ Session aktiv (Excel versteckt)');
-                showFloatingStatus('🔴 Live-Session aktiv', 'success');
+                showFloatingStatus(t('liveSessionActive'), 'success');
                 
                 // Live-Mode-Indikator und Excel-Button aktualisieren
                 updateLiveModeIndicator();
@@ -8410,7 +8907,7 @@
             }
             const explorerFileName = document.getElementById('explorerFileName');
             if (explorerFileName) {
-                explorerFileName.textContent = currentLanguage === 'en' ? 'No file loaded' : 'Keine Datei geladen';
+                explorerFileName.textContent = t('noFileLoaded');
             }
             // Nur thead und tbody leeren, nicht die gesamte Tabelle (sonst werden die Element-Referenzen ungültig)
             if (elements.explorerTableHead) {
@@ -8643,15 +9140,16 @@
             const currentColor = explorerState.rowHighlights.get(rowIndex);
             
             let menuHtml = '<div class="context-menu row-context-menu">';
-            menuHtml += '<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">🎨 Zeile markieren</div>';
+            menuHtml += `<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">🎨 ${t('highlightRow')}</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
             
             highlightColors.forEach(color => {
                 const selected = currentColor === color.value ? ' ✓' : '';
+                const colorKey = 'highlight' + color.value.charAt(0).toUpperCase() + color.value.slice(1);
                 menuHtml += `
                     <div class="context-menu-item" data-action="highlight" data-color="${color.value}" data-row="${rowIndex}">
                         <span class="color-dot" style="background: ${color.hex};"></span>
-                        <span>${color.name}${selected}</span>
+                        <span>${t(colorKey)}${selected}</span>
                     </div>
                 `;
             });
@@ -8659,15 +9157,15 @@
             // Markierung entfernen Option (nur anzeigen wenn Zeile markiert ist)
             if (currentColor) {
                 menuHtml += '<div class="context-menu-divider"></div>';
-                menuHtml += `<div class="context-menu-item" data-action="clear-highlight" data-row="${rowIndex}" style="color: var(--text-muted);">✖️ Markierung entfernen</div>`;
+                menuHtml += `<div class="context-menu-item" data-action="clear-highlight" data-row="${rowIndex}" style="color: var(--text-muted);">✖️ ${t('clearHighlight')}</div>`;
             }
             
             menuHtml += '<div class="context-menu-divider"></div>';
-            menuHtml += `<div class="context-menu-item" data-action="insert-row-above" data-row="${rowIndex}">⬆️ Zeile oberhalb einfügen</div>`;
-            menuHtml += `<div class="context-menu-item" data-action="insert-row-below" data-row="${rowIndex}">⬇️ Zeile unterhalb einfügen</div>`;
+            menuHtml += `<div class="context-menu-item" data-action="insert-row-above" data-row="${rowIndex}">⬆️ ${t('insertRowAbove')}</div>`;
+            menuHtml += `<div class="context-menu-item" data-action="insert-row-below" data-row="${rowIndex}">⬇️ ${t('insertRowBelow')}</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
-            menuHtml += `<div class="context-menu-item" data-action="hide-row" data-row="${rowIndex}">👁️‍🗨️ Zeile ausblenden</div>`;
-            menuHtml += `<div class="context-menu-item" data-action="delete-row" data-row="${rowIndex}" style="color: #F44336;">🗑️ Zeile löschen</div>`;
+            menuHtml += `<div class="context-menu-item" data-action="hide-row" data-row="${rowIndex}">👁️‍🗨️ ${t('hideRow')}</div>`;
+            menuHtml += `<div class="context-menu-item" data-action="delete-row" data-row="${rowIndex}" style="color: #F44336;">🗑️ ${t('deleteRow')}</div>`;
             menuHtml += '</div>';
             
             const menu = document.createElement('div');
@@ -11290,7 +11788,7 @@
             // State komplett zurücksetzen bevor neue Datei geladen wird
             resetExplorerState();
             
-            elements.explorerStatus.textContent = 'Lade Datei...';
+            elements.explorerStatus.textContent = t('loadingFile');
             
             // Versuche Datei zu öffnen
             let result = await window.electronAPI.readExcelFile(filePath);
@@ -11524,7 +12022,7 @@
             }
             
             // Loading-Status anzeigen
-            elements.explorerStatus.textContent = 'Lade Daten...';
+            elements.explorerStatus.textContent = t('loadingData');
             
             // Prüfe ob dieses Sheet bereits im Cache ist
             const cachedSheet = explorerState.sheetDataCache.get(sheetName);
@@ -11558,7 +12056,7 @@
                 
                 const editCount = explorerState.editedCells.size;
                 if (editCount > 0) {
-                    elements.explorerStatus.textContent = `Aus Cache geladen (${editCount} Änderungen)`;
+                    elements.explorerStatus.textContent = `${t('loadedFromCache')} (${editCount} ${t('changes')})`;
                 } else {
                     elements.explorerStatus.textContent = '';
                 }
@@ -11656,7 +12154,7 @@
                 });
                 
                 if (restoredCount > 0) {
-                    showUndoRedoFeedback(`${restoredCount} Bearbeitungen wiederhergestellt`);
+                    showUndoRedoFeedback(`${restoredCount} ${t('editingsRestored')}`);
                 }
                 
                 delete window._pendingExplorerRestore;
@@ -11664,7 +12162,7 @@
             
             // Status-Meldung für große Dateien
             if (explorerState.data.length > 1000) {
-                elements.explorerStatus.textContent = `${explorerState.data.length} Zeilen geladen (Pagination aktiv)`;
+                elements.explorerStatus.textContent = `${explorerState.data.length} ${t('rowsLoaded')} (${t('paginationActive')})`;
             } else {
                 elements.explorerStatus.textContent = '';
             }
@@ -13095,10 +13593,10 @@
             // Ergebnis-Info mit Pagination
             if (totalRows > 0) {
                 const editedCount = explorerState.editedCells.size;
-                const editedInfo = editedCount > 0 ? ` (${editedCount} bearbeitet)` : '';
-                elements.explorerResultCount.textContent = `Zeige ${startIndex + 1}-${endIndex} von ${totalRows} Zeilen (gesamt: ${explorerState.data.length})${editedInfo}`;
+                const editedInfo = editedCount > 0 ? ` (${editedCount} ${t('editedLabel')})` : '';
+                elements.explorerResultCount.textContent = `${t('showingRows')} ${startIndex + 1}-${endIndex} ${t('ofRows')} ${totalRows} ${t('rowsLabel')} (${t('totalLabel')}: ${explorerState.data.length})${editedInfo}`;
             } else {
-                elements.explorerResultCount.textContent = `0 von ${explorerState.data.length} Zeilen`;
+                elements.explorerResultCount.textContent = `0 ${t('ofRows')} ${explorerState.data.length} ${t('rowsLabel')}`;
             }
             
             // Pagination UI aktualisieren
@@ -13823,7 +14321,7 @@
             const resultCount = elements.explorerResultCount.textContent;
             // Aktualisiere die Anzeige wenn sich die Anzahl geänderter Zellen ändert
             if (editedCount > 0) {
-                elements.explorerStatus.textContent = `${editedCount} Zelle(n) bearbeitet`;
+                elements.explorerStatus.textContent = `${editedCount} ${t('cellsEdited')}`;
                 elements.explorerStatus.style.color = 'var(--warning-color)';
             } else {
                 elements.explorerStatus.textContent = '';
@@ -13841,7 +14339,7 @@
             // Pagination nur anzeigen wenn mehr als eine Seite
             if (explorerState.filteredData.length > explorerState.pageSize) {
                 paginationEl.style.display = 'flex';
-                pageInfoEl.textContent = `Seite ${explorerState.currentPage} von ${totalPages}`;
+                pageInfoEl.textContent = `${t('pageLabel')} ${explorerState.currentPage} ${t('ofLabel')} ${totalPages}`;
                 
                 // Buttons aktivieren/deaktivieren
                 firstBtn.disabled = explorerState.currentPage === 1;
@@ -14133,7 +14631,7 @@
         
         async function exportExplorerData() {
             if (!explorerState.filePath) {
-                elements.explorerStatus.textContent = 'Keine Datei geladen';
+                elements.explorerStatus.textContent = t('noFileLoaded');
                 return;
             }
             
@@ -14962,7 +15460,7 @@
         // Interne Funktion: Lädt eine Datei ohne "ungespeicherte Änderungen"-Prüfung
         // Wird nach dem Speichern verwendet um den State zu synchronisieren
         async function reloadExplorerFile(filePath, password = null) {
-            elements.explorerStatus.textContent = 'Lade Datei...';
+            elements.explorerStatus.textContent = t('loadingFile');
             
             let result = await window.electronAPI.readExcelFile(filePath, password);
             
