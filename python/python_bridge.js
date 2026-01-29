@@ -31,6 +31,9 @@ function safeError(...args) {
     }
 }
 
+// Globale Variable für PYTHONPATH (wird von getPythonPath gesetzt)
+let _pythonEnvPath = null;
+
 // Python-Pfad ermitteln (embedded oder system)
 function getPythonPath() {
     const basePath = getPythonBasePath();
@@ -58,10 +61,10 @@ function getPythonPath() {
             for (const pyPath of macPythonPaths) {
                 if (fs.existsSync(pyPath)) {
                     safeLog(`[Python] macOS: System-Python gefunden: ${pyPath}`);
-                    // Site-packages als Umgebungsvariable setzen
+                    // Site-packages für späteren Gebrauch speichern
                     if (fs.existsSync(sitePackages)) {
-                        process.env.PYTHONPATH = sitePackages + (process.env.PYTHONPATH ? path.delimiter + process.env.PYTHONPATH : '');
-                        safeLog(`[Python] macOS: PYTHONPATH erweitert um: ${sitePackages}`);
+                        _pythonEnvPath = sitePackages;
+                        safeLog(`[Python] macOS: PYTHONPATH wird gesetzt auf: ${sitePackages}`);
                     }
                     return pyPath;
                 }
@@ -132,6 +135,24 @@ function getPythonPath() {
     const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
     safeLog(`[Python] Fallback auf PATH-Python: ${pythonCmd}`);
     return pythonCmd;
+}
+
+/**
+ * Gibt die Umgebungsvariablen für Python-Prozesse zurück
+ */
+function getPythonEnv() {
+    const env = { ...process.env };
+    if (_pythonEnvPath) {
+        // Für macOS: aeosa.pth wird nicht verarbeitet, daher aeosa-Verzeichnis explizit hinzufügen
+        // damit 'from appscript import ...' funktioniert (benötigt von xlwings)
+        const aeosaPath = path.join(_pythonEnvPath, 'aeosa');
+        let pythonPath = _pythonEnvPath;
+        if (fs.existsSync(aeosaPath)) {
+            pythonPath = _pythonEnvPath + path.delimiter + aeosaPath;
+        }
+        env.PYTHONPATH = pythonPath + (env.PYTHONPATH ? path.delimiter + env.PYTHONPATH : '');
+    }
+    return env;
 }
 
 // Liefert den Basis-Pfad für Python-Skripte (entpackt im Produktionsmodus)
@@ -299,15 +320,17 @@ async function callPython(scriptName, args = []) {
     const pythonPath = getPythonPath();
     const basePath = getPythonBasePath();
     const scriptPath = path.join(basePath, scriptName);
+    const env = getPythonEnv();
     
     safeLog(`[Python] callPython: ${scriptName} ${args.join(' ')}`);
     safeLog(`[Python]   pythonPath: ${pythonPath}`);
     safeLog(`[Python]   scriptPath: ${scriptPath}`);
     safeLog(`[Python]   scriptExists: ${fs.existsSync(scriptPath)}`);
+    safeLog(`[Python]   PYTHONPATH: ${env.PYTHONPATH || '(nicht gesetzt)'}`);
     
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
-        const proc = spawn(pythonPath, [scriptPath, ...args]);
+        const proc = spawn(pythonPath, [scriptPath, ...args], { env });
         
         let stdout = '';
         let stderr = '';
@@ -461,10 +484,14 @@ async function writeExcel(config) {
         return { success: false, error: `Script nicht gefunden: ${scriptPath}`, method: 'error' };
     }
     
+    // Umgebungsvariablen für Python
+    const env = getPythonEnv();
+    
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
         safeLog(`[Python] Starte: ${pythonPath} ${scriptPath} write_sheet`);
-        const pythonProcess = spawn(pythonPath, [scriptPath, 'write_sheet']);
+        safeLog(`[Python] PYTHONPATH: ${env.PYTHONPATH || '(nicht gesetzt)'}`);
+        const pythonProcess = spawn(pythonPath, [scriptPath, 'write_sheet'], { env });
         
         let stdout = '';
         let stderr = '';
@@ -549,9 +576,10 @@ async function writeExcel(config) {
 async function writeExcelOpenpyxl(config) {
     const pythonPath = getPythonPath();
     const scriptPath = path.join(getPythonBasePath(), 'excel_writer.py');
+    const env = getPythonEnv();
     
     return new Promise((resolve, reject) => {
-        const pythonProcess = spawn(pythonPath, [scriptPath, 'write_sheet']);
+        const pythonProcess = spawn(pythonPath, [scriptPath, 'write_sheet'], { env });
         
         let stdout = '';
         let stderr = '';

@@ -36,6 +36,9 @@ function getPythonBasePath() {
     return __dirname;
 }
 
+// Globale Variable für PYTHONPATH (wird von getPythonPath gesetzt)
+let _pythonEnvPath = null;
+
 function getPythonPath() {
     const basePath = getPythonBasePath();
     const isPackaged = basePath.includes('app.asar.unpacked');
@@ -61,10 +64,10 @@ function getPythonPath() {
             for (const pyPath of macPythonPaths) {
                 if (fs.existsSync(pyPath)) {
                     console.log(`[LiveSession] macOS: System-Python gefunden: ${pyPath}`);
-                    // Site-packages als Umgebungsvariable setzen
+                    // Site-packages für späteren Gebrauch speichern
                     if (fs.existsSync(sitePackages)) {
-                        process.env.PYTHONPATH = sitePackages + (process.env.PYTHONPATH ? path.delimiter + process.env.PYTHONPATH : '');
-                        console.log(`[LiveSession] macOS: PYTHONPATH erweitert um: ${sitePackages}`);
+                        _pythonEnvPath = sitePackages;
+                        console.log(`[LiveSession] macOS: PYTHONPATH wird gesetzt auf: ${sitePackages}`);
                     }
                     return pyPath;
                 }
@@ -104,6 +107,24 @@ function getPythonPath() {
     return process.platform === 'win32' ? 'python' : 'python3';
 }
 
+/**
+ * Gibt die Umgebungsvariablen für Python-Prozesse zurück
+ */
+function getPythonEnv() {
+    const env = { ...process.env };
+    if (_pythonEnvPath) {
+        // Für macOS: aeosa.pth wird nicht verarbeitet, daher aeosa-Verzeichnis explizit hinzufügen
+        // damit 'from appscript import ...' funktioniert
+        const aeosaPath = path.join(_pythonEnvPath, 'aeosa');
+        let pythonPath = _pythonEnvPath;
+        if (fs.existsSync(aeosaPath)) {
+            pythonPath = _pythonEnvPath + path.delimiter + aeosaPath;
+        }
+        env.PYTHONPATH = pythonPath + (env.PYTHONPATH ? path.delimiter + env.PYTHONPATH : '');
+    }
+    return env;
+}
+
 class ExcelLiveSession {
     constructor() {
         this.pythonProcess = null;
@@ -130,13 +151,18 @@ class ExcelLiveSession {
             
             // cwd muss auf unpacked-Verzeichnis zeigen, nicht auf __dirname (das wäre im asar)
             const cwd = getPythonBasePath();
+            
+            // Umgebungsvariablen für Python (inkl. PYTHONPATH)
+            const env = getPythonEnv();
 
             console.log('[LiveSession] Starte Python-Prozess:', pythonPath, pythonScript);
             console.log('[LiveSession] CWD:', cwd);
+            console.log('[LiveSession] PYTHONPATH:', env.PYTHONPATH || '(nicht gesetzt)');
             
             this.pythonProcess = spawn(pythonPath, [pythonScript], {
                 stdio: ['pipe', 'pipe', 'pipe'],
-                cwd: cwd
+                cwd: cwd,
+                env: env
             });
 
             // Flag um zu verhindern, dass nach close noch geloggt wird
