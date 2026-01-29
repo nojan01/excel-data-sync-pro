@@ -105,12 +105,16 @@ class ExcelLiveSession {
         return new Promise((resolve, reject) => {
             const pythonScript = path.join(getPythonBasePath(), 'excel_live_session.py');
             const pythonPath = getPythonPath();
+            
+            // cwd muss auf unpacked-Verzeichnis zeigen, nicht auf __dirname (das wäre im asar)
+            const cwd = getPythonBasePath();
 
             console.log('[LiveSession] Starte Python-Prozess:', pythonPath, pythonScript);
+            console.log('[LiveSession] CWD:', cwd);
             
             this.pythonProcess = spawn(pythonPath, [pythonScript], {
                 stdio: ['pipe', 'pipe', 'pipe'],
-                cwd: __dirname
+                cwd: cwd
             });
 
             // Flag um zu verhindern, dass nach close noch geloggt wird
