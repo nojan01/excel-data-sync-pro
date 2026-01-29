@@ -568,12 +568,18 @@ class ExcelLiveSession:
                     if save:
                         self.workbook.save()
                         self._log("Datei gespeichert vor dem Schließen")
-                    # Explizit OHNE Speichern schließen (verhindert "Speichern?"-Dialog)
-                    self.app.api.display_alerts = False  # Verhindert Dialog
-                    self.workbook.close()
-                    self.app.api.display_alerts = True
-                except:
-                    pass
+                    
+                    # Schließen ohne Speichern - plattformspezifisch
+                    if platform.system() == 'Windows':
+                        # Windows: Nutze native Excel API mit SaveChanges=False
+                        self.workbook.api.Close(SaveChanges=False)
+                        self._log("Windows: Workbook geschlossen ohne Speichern")
+                    else:
+                        # macOS: Nutze xlwings close() - speichert nicht automatisch
+                        self.workbook.close()
+                        self._log("macOS: Workbook geschlossen")
+                except Exception as e:
+                    self._log(f"Fehler beim Schließen des Workbooks: {e}")
                 self.workbook = None
             
             if self.app:
