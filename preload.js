@@ -83,16 +83,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     liveSessionSetPassword: (password) => ipcRenderer.invoke('liveSession:setPassword', password),
     
     // Zeilen-Operationen (werden SOFORT in Excel ausgeführt!)
+    liveSessionDeleteRow: (rowIndex) => ipcRenderer.invoke('liveSession:deleteRow', rowIndex),
     liveSessionInsertRow: (rowIndex, count) => ipcRenderer.invoke('liveSession:insertRow', rowIndex, count || 1),
+    liveSessionMoveRow: (fromIndex, toIndex) => ipcRenderer.invoke('liveSession:moveRow', fromIndex, toIndex),
     liveSessionHideRow: (rowIndex, hidden) => ipcRenderer.invoke('liveSession:hideRow', rowIndex, hidden !== false),
     liveSessionHideRowsBatch: (rowIndices, hidden) => ipcRenderer.invoke('liveSession:hideRowsBatch', rowIndices, hidden !== false),
     liveSessionHighlightRow: (rowIndex, color) => ipcRenderer.invoke('liveSession:highlightRow', rowIndex, color),
     
     // Spalten-Operationen (werden SOFORT in Excel ausgeführt!)
+    liveSessionDeleteColumn: (colIndex) => ipcRenderer.invoke('liveSession:deleteColumn', colIndex),
     liveSessionInsertColumn: (colIndex, count, headers) => ipcRenderer.invoke('liveSession:insertColumn', colIndex, count || 1, headers),
+    liveSessionMoveColumn: (fromIndex, toIndex) => ipcRenderer.invoke('liveSession:moveColumn', fromIndex, toIndex),
     liveSessionHideColumn: (colIndex, hidden) => ipcRenderer.invoke('liveSession:hideColumn', colIndex, hidden !== false),
     
     // Zell-Operationen
+    liveSessionSetCellValue: (rowIndex, colIndex, value) => ipcRenderer.invoke('liveSession:setCellValue', rowIndex, colIndex, value),
     liveSessionSetColumnValues: (colIndex, values, startRow) => ipcRenderer.invoke('liveSession:setColumnValues', colIndex, values, startRow || 0),
     liveSessionSetCellsBatch: (cells) => ipcRenderer.invoke('liveSession:setCellsBatch', cells),
     liveSessionFindReplace: (searchText, replaceText, matchCase, wholeWord) => 
