@@ -44,11 +44,33 @@ function getPythonPath() {
         const resourcesPath = process.resourcesPath;
         
         if (process.platform === 'darwin') {
-            const embeddedPython = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'mac-arm64', 'python-venv', 'bin', 'python3');
-            if (fs.existsSync(embeddedPython)) return embeddedPython;
+            // macOS: System-Python verwenden da venv nur Symlinks enthält
+            // Das venv kann auf anderen Macs nicht funktionieren
+            // Aber wir brauchen das venv für die Python-Pakete (xlwings, openpyxl)
+            const venvPath = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'mac-arm64', 'python-venv');
+            const sitePackages = path.join(venvPath, 'lib', 'python3.14', 'site-packages');
             
-            const embeddedPythonX64 = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'mac-x64', 'python-venv', 'bin', 'python3');
-            if (fs.existsSync(embeddedPythonX64)) return embeddedPythonX64;
+            // System-Python mit venv site-packages verwenden
+            const macPythonPaths = [
+                '/opt/homebrew/bin/python3',        // Homebrew Apple Silicon
+                '/usr/local/bin/python3',           // Homebrew Intel
+                '/usr/bin/python3',                 // System Python
+                '/Library/Frameworks/Python.framework/Versions/Current/bin/python3'
+            ];
+            
+            for (const pyPath of macPythonPaths) {
+                if (fs.existsSync(pyPath)) {
+                    console.log(`[LiveSession] macOS: System-Python gefunden: ${pyPath}`);
+                    // Site-packages als Umgebungsvariable setzen
+                    if (fs.existsSync(sitePackages)) {
+                        process.env.PYTHONPATH = sitePackages + (process.env.PYTHONPATH ? path.delimiter + process.env.PYTHONPATH : '');
+                        console.log(`[LiveSession] macOS: PYTHONPATH erweitert um: ${sitePackages}`);
+                    }
+                    return pyPath;
+                }
+            }
+            
+            console.log('[LiveSession] WARNUNG: Kein Python auf macOS gefunden');
         } else if (process.platform === 'win32') {
             const embeddedPython = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'win-x64', 'python.exe');
             if (fs.existsSync(embeddedPython)) return embeddedPython;
