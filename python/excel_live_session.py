@@ -25,18 +25,34 @@ from typing import Optional, Dict, Any, List
 
 # Für embedded Python auf Windows: pywin32 DLLs finden
 if platform.system() == 'Windows':
-    pywin32_dll = os.path.join(sys.prefix, 'Lib', 'site-packages', 'pywin32_system32')
+    # Bei embedded Python: sys.prefix kann falsch sein, daher vom executable ausgehen
+    python_dir = os.path.dirname(sys.executable)
+    
+    # pywin32_system32 DLLs (im site-packages)
+    pywin32_dll = os.path.join(python_dir, 'Lib', 'site-packages', 'pywin32_system32')
     if os.path.exists(pywin32_dll):
         os.environ['PATH'] = pywin32_dll + os.pathsep + os.environ.get('PATH', '')
-    python_dir = os.path.dirname(sys.executable)
+    # Fallback: über sys.prefix
+    pywin32_dll_alt = os.path.join(sys.prefix, 'Lib', 'site-packages', 'pywin32_system32')
+    if os.path.exists(pywin32_dll_alt) and pywin32_dll_alt != pywin32_dll:
+        os.environ['PATH'] = pywin32_dll_alt + os.pathsep + os.environ.get('PATH', '')
+    
+    # DLLs direkt im Python-Verzeichnis (pythoncom311.dll, pywintypes311.dll)
     if os.path.exists(os.path.join(python_dir, 'pythoncom311.dll')):
         os.environ['PATH'] = python_dir + os.pathsep + os.environ.get('PATH', '')
-    win32_dir = os.path.join(sys.prefix, 'Lib', 'site-packages', 'win32')
+    
+    # win32 Module zum sys.path hinzufügen
+    win32_dir = os.path.join(python_dir, 'Lib', 'site-packages', 'win32')
     if os.path.exists(win32_dir):
         sys.path.insert(0, win32_dir)
-    win32_lib = os.path.join(sys.prefix, 'Lib', 'site-packages', 'win32', 'lib')
+    win32_lib = os.path.join(python_dir, 'Lib', 'site-packages', 'win32', 'lib')
     if os.path.exists(win32_lib):
         sys.path.insert(0, win32_lib)
+    
+    # Site-packages zum sys.path (für embedded Python)
+    site_packages = os.path.join(python_dir, 'Lib', 'site-packages')
+    if os.path.exists(site_packages) and site_packages not in sys.path:
+        sys.path.insert(0, site_packages)
 
 try:
     import xlwings as xw
