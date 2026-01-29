@@ -1107,24 +1107,47 @@ class ExcelLiveSession:
                 
                 # Excel's native Replace-Funktion über API aufrufen
                 if platform.system() == 'Darwin':
-                    # macOS: AppleScript über xlwings
+                    # macOS: AppleScript direkt aufrufen (umgeht xlwings Name-Probleme mit Sonderzeichen)
                     ws = self.worksheet
-                    used_range = ws.used_range
                     
-                    # xlwings auf Mac unterstützt Replace über api
-                    # match_case: 1=True, 2=False (Excel-Konstanten)
-                    # LookAt: 1=xlWhole, 2=xlPart
+                    # Worksheet aktivieren um sicherzustellen dass es das aktive Sheet ist
+                    ws.activate()
+                    
+                    # AppleScript direkt ausführen - verwendet "active sheet" statt Workbook/Sheet-Namen
+                    # Das vermeidet Probleme mit Sonderzeichen wie & im Namen
+                    import subprocess
+                    
+                    # AppleScript Replace-Befehl
+                    # look_at: 1=whole, 2=part
                     look_at = 1 if whole_word else 2
-                    match_case_val = 1 if match_case else 2
+                    match_case_val = "true" if match_case else "false"
                     
-                    # Replace über die Excel-API
-                    replaced = used_range.api.replace(
-                        what=search_text,
-                        replacement=replace_text,
-                        look_at=look_at,
-                        match_case=match_case
+                    # Escape für AppleScript
+                    search_escaped = search_text.replace('\\', '\\\\').replace('"', '\\"')
+                    replace_escaped = replace_text.replace('\\', '\\\\').replace('"', '\\"')
+                    
+                    script = f'''
+                    tell application "Microsoft Excel"
+                        tell active sheet
+                            set usedRng to used range
+                            replace usedRng what "{search_escaped}" replacement "{replace_escaped}" look at {look_at} match case {match_case_val}
+                        end tell
+                    end tell
+                    '''
+                    
+                    result = subprocess.run(
+                        ['osascript', '-e', script],
+                        capture_output=True,
+                        text=True,
+                        timeout=30
                     )
                     
+                    if result.returncode != 0:
+                        self._log(f"AppleScript Replace stderr: {result.stderr}")
+                        # Bei Fehler: Fallback auf einzelne Zellen
+                        raise Exception(f"AppleScript Replace fehlgeschlagen: {result.stderr}")
+                    
+                    replaced = True
                     count = -1  # Excel gibt nicht die Anzahl zurück
                 else:
                     # Windows: COM-API
