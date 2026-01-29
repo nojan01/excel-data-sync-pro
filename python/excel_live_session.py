@@ -554,14 +554,24 @@ class ExcelLiveSession:
             'passwordKnown': self.file_password is not None
         }
     
-    def close_session(self) -> Dict[str, Any]:
-        """Schließt die Session"""
+    def close_session(self, save: bool = False) -> Dict[str, Any]:
+        """Schließt die Session
+        
+        Args:
+            save: Wenn True, wird vor dem Schließen gespeichert. Standard: False (ohne Speichern schließen)
+        """
         try:
-            self._log("Schließe Session...")
+            self._log(f"Schließe Session... (save={save})")
             
             if self.workbook:
                 try:
+                    if save:
+                        self.workbook.save()
+                        self._log("Datei gespeichert vor dem Schließen")
+                    # Explizit OHNE Speichern schließen (verhindert "Speichern?"-Dialog)
+                    self.app.api.display_alerts = False  # Verhindert Dialog
                     self.workbook.close()
+                    self.app.api.display_alerts = True
                 except:
                     pass
                 self.workbook = None
@@ -1294,9 +1304,20 @@ class ExcelLiveSession:
                     # ===== AutoFilter entfernen / Alle Zeilen einblenden =====
                     if is_windows:
                         try:
+                            # Methode 1: ShowAllData - zeigt alle Daten wieder an
                             if self.worksheet.api.AutoFilterMode:
-                                self.worksheet.api.AutoFilterMode = False
-                                self._log("Windows: AutoFilter entfernt")
+                                try:
+                                    # ShowAllData entfernt die Filter-Kriterien, behält aber AutoFilter
+                                    if self.worksheet.api.AutoFilter.FilterMode:
+                                        self.worksheet.api.AutoFilter.ShowAllData()
+                                        self._log("Windows: ShowAllData ausgeführt - alle Zeilen sichtbar")
+                                except Exception as e:
+                                    self._log(f"Windows: ShowAllData Fehler: {e}")
+                                    # Fallback: AutoFilterMode komplett entfernen
+                                    self.worksheet.api.AutoFilterMode = False
+                                    self._log("Windows: AutoFilter komplett entfernt (Fallback)")
+                            else:
+                                self._log("Windows: Kein AutoFilter aktiv")
                         except Exception as e:
                             self._log(f"Windows: Fehler beim Entfernen: {e}")
                     else:
@@ -1371,7 +1392,7 @@ class ExcelLiveSession:
         handlers = {
             'open': lambda: self.open_file(cmd.get('filePath'), cmd.get('sheetName'), cmd.get('password')),
             'save': lambda: self.save_file(cmd.get('outputPath'), cmd.get('password')),
-            'close': lambda: self.close_session(),
+            'close': lambda: self.close_session(save=cmd.get('save', False)),
             'getData': lambda: self.get_data(),
             
             # Passwort
