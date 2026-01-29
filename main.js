@@ -1,9 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
-const XlsxPopulate = require('xlsx-populate'); // LEGACY: Nur noch für Backup/Fallback
-const { readSheetWithExcelJS } = require('./exceljs-reader'); // PRIMÄR: ExcelJS Reader
-const { exportSheetWithExcelJS } = require('./exceljs-writer'); // PRIMÄR: ExcelJS Writer
-const pythonBridge = require('./python/python_bridge'); // NEU: Python/openpyxl für bessere Kompatibilität
+const XlsxPopulate = require('xlsx-populate'); // Für Passwort-Verschlüsselung
+const { readSheetWithExcelJS } = require('./exceljs-reader'); // ExcelJS Reader für Datenexplorer
+const pythonBridge = require('./python/python_bridge'); // Python/openpyxl Fallback-Export
 const fs = require('fs');
 const os = require('os');
 
@@ -1980,58 +1979,7 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
     }
 });
 
-// A/B TEST: ExcelJS vs xlsx-populate
-ipcMain.handle('excel:readSheetTest', async (event, filePath, sheetName, password = null) => {
-    if (!isValidFilePath(filePath)) {
-        return { success: false, error: 'Ungültiger Dateipfad' };
-    }
-
-    try {
-        console.log('\n========== PERFORMANCE-VERGLEICH ==========');
-        
-        // Test 1: xlsx-populate (aktuell)
-        const populateStart = Date.now();
-        const workbook = await XlsxPopulate.fromFileAsync(filePath, password ? { password } : {});
-        const populateLoadTime = Date.now() - populateStart;
-        
-        const worksheet = workbook.sheet(sheetName);
-        const usedRange = worksheet?.usedRange();
-        const populateRows = usedRange ? (usedRange.endCell().rowNumber() - 1) : 0;
-        
-        console.log(`[xlsx-populate] ${populateLoadTime}ms für ${populateRows} Zeilen`);
-        
-        // Test 2: ExcelJS (neu)
-        const exceljsStart = Date.now();
-        const exceljsResult = await readSheetWithExcelJS(filePath, sheetName, password);
-        const exceljsLoadTime = Date.now() - exceljsStart;
-        
-        if (exceljsResult.success) {
-            console.log(`[ExcelJS] ${exceljsLoadTime}ms für ${exceljsResult.data.length} Zeilen`);
-            
-            const speedup = ((populateLoadTime - exceljsLoadTime) / populateLoadTime * 100).toFixed(1);
-            console.log(`[Vergleich] ExcelJS ist ${speedup}% ${speedup > 0 ? 'schneller' : 'langsamer'}`);
-            console.log('==========================================\n');
-            
-            return {
-                success: true,
-                comparison: {
-                    populate: { time: populateLoadTime, rows: populateRows },
-                    exceljs: { time: exceljsLoadTime, rows: exceljsResult.data.length },
-                    speedupPercent: parseFloat(speedup)
-                },
-                data: exceljsResult
-            };
-        } else {
-            return { success: false, error: exceljsResult.error };
-        }
-        
-    } catch (error) {
-        console.error('[Test] Fehler:', error);
-        return { success: false, error: error.message };
-    }
-});
-
-// Sheet-Daten lesen - NEU MIT EXCELJS (50% schneller, besser gewartet)
+// Sheet-Daten lesen mit ExcelJS
 ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = null, quickLoad = false) => {
     // Sicherheitsprüfung: Pfad validieren
     if (!isValidFilePath(filePath)) {
@@ -2154,27 +2102,6 @@ ipcMain.handle('excel:checkAvailable', async () => {
         return await pythonBridge.checkExcelAvailable();
     } catch (error) {
         return { success: false, excelAvailable: false, error: error.message };
-    }
-});
-
-ipcMain.handle('excel:setEngine', async (event, engine) => {
-    try {
-        pythonBridge.setExcelEngine(engine);
-        console.log(`[App] Excel-Engine auf "${engine}" gesetzt`);
-        securityLog.log('INFO', 'EXCEL_ENGINE_CHANGED', { engine });
-        
-        // Status nach Änderung zurückgeben
-        return await pythonBridge.checkExcelAvailable();
-    } catch (error) {
-        return { success: false, error: error.message };
-    }
-});
-
-ipcMain.handle('excel:getEngine', async () => {
-    try {
-        return { success: true, engine: pythonBridge.getExcelEngine() };
-    } catch (error) {
-        return { success: false, error: error.message };
     }
 });
 
@@ -3374,115 +3301,6 @@ ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetNa
     }
 });
 
-// Daten exportieren (fuer Datenexplorer) - nur ein Sheet
-ipcMain.handle('excel:exportData', async (event, { filePath, headers, data }) => {
-    // Sicherheitsprüfung: Pfad validieren
-    if (!isValidFilePath(filePath)) {
-        return { success: false, error: 'Ungültiger Dateipfad' };
-    }
-
-    try {
-        // Neue leere Workbook erstellen
-        const workbook = await XlsxPopulate.fromBlankAsync();
-
-        // Erstes Sheet umbenennen
-        const worksheet = workbook.sheet(0);
-        worksheet.name('Export');
-
-        // Header-Zeile
-        headers.forEach((header, colIndex) => {
-            worksheet.cell(1, colIndex + 1).value(header);
-        });
-
-        // Daten-Zeilen (data ist ein Array von Arrays)
-        data.forEach((row, rowIndex) => {
-            row.forEach((value, colIndex) => {
-                worksheet.cell(rowIndex + 2, colIndex + 1).value(value || '');
-            });
-        });
-
-        await saveWorkbookOptimized(workbook, filePath, {});
-
-        return { success: true, message: `Export erstellt: ${filePath}` };
-    } catch (error) {
-        return { success: false, error: error.message };
-    }
-});
-
-// Daten exportieren MIT allen Sheets (fuer Datenexplorer - Vollexport)
-ipcMain.handle('excel:exportWithAllSheets', async (event, { sourcePath, targetPath, sheetName, headers, data, visibleColumns }) => {
-    // Sicherheitsprüfung: Pfade validieren
-    if (!isValidFilePath(sourcePath) || !isValidFilePath(targetPath)) {
-        return { success: false, error: 'Ungültiger Dateipfad' };
-    }
-
-    try {
-        // Originaldatei laden (mit allen Sheets und Formatierung)
-        const workbook = await XlsxPopulate.fromFileAsync(sourcePath);
-        const allSheets = workbook.sheets().map(s => s.name());
-
-        // Das aktive Sheet finden
-        const worksheet = workbook.sheet(sheetName);
-        if (!worksheet) {
-            return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
-        }
-
-        // Ursprüngliche Zeilenanzahl ermitteln
-        const usedRange = worksheet.usedRange();
-        let originalRowCount = 0;
-        if (usedRange) {
-            originalRowCount = usedRange.endCell().rowNumber() - 1; // -1 für Header
-            usedRange.clear();
-        }
-
-        // ALLE Spalten exportieren (auch ausgeblendete) und Hidden-Attribute setzen
-        // Header-Zeile
-        headers.forEach((header, colIndex) => {
-            worksheet.cell(1, colIndex + 1).value(header);
-        });
-
-        // Daten-Zeilen
-        data.forEach((row, rowIndex) => {
-            row.forEach((value, colIndex) => {
-                worksheet.cell(rowIndex + 2, colIndex + 1).value(value || '');
-            });
-        });
-
-        // Hidden-Attribute für ausgeblendete Spalten setzen
-        if (visibleColumns && visibleColumns.length > 0 && visibleColumns.length < headers.length) {
-            // Set mit sichtbaren Spalten-Indizes erstellen
-            const visibleSet = new Set(visibleColumns);
-
-            // Alle Spalten durchgehen und hidden setzen wo nötig
-            for (let colIdx = 0; colIdx < headers.length; colIdx++) {
-                const column = worksheet.column(colIdx + 1);
-                if (!visibleSet.has(colIdx)) {
-                    column.hidden(true);
-                } else {
-                    column.hidden(false);
-                }
-            }
-        }
-
-        // Hidden-Attribute für ausgeblendete Zeilen setzen (aus hiddenRows)
-        // Die hiddenRows werden vom Frontend mitgeschickt
-
-        // Nicht verwendete Zeilen als hidden markieren (wenn weniger Zeilen als ursprünglich)
-        if (data.length < originalRowCount) {
-            for (let rowIdx = data.length + 2; rowIdx <= originalRowCount + 1; rowIdx++) {
-                worksheet.row(rowIdx).hidden(true);
-            }
-        }
-
-        // Speichern (alle anderen Sheets bleiben unverändert)
-        await saveWorkbookOptimized(workbook, targetPath, {}, sourcePath);
-
-        return { success: true, message: `Export erstellt: ${targetPath}`, sheets: allSheets };
-    } catch (error) {
-        return { success: false, error: error.message };
-    }
-});
-
 // Export mit Auswahl der Arbeitsblätter (für Datenexplorer) - behält Formatierung bei
 // ============================================================================
 // UNIFIED EXCELJS EXPORT - Ersetzt xlsx-populate komplett
@@ -3546,78 +3364,6 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
         securityLog.log('ERROR', 'EXCEL_EXPORT_FAILED', {
             sourceFile: path.basename(sourcePath),
             targetFile: path.basename(targetPath),
-            error: error.message
-        });
-        return { success: false, error: error.message };
-    }
-});
-
-// Änderungen direkt in die Originaldatei speichern (für Datenexplorer)
-// ============================================================================
-// SAVE FILE - Speichert Änderungen direkt in die Quelldatei
-// ============================================================================
-ipcMain.handle('excel:saveFile', async (event, { filePath, sheets, password = null, sourcePassword = null }) => {
-    // Sicherheitsprüfung: Pfad validieren
-    if (!isValidFilePath(filePath)) {
-        return { success: false, error: 'Ungültiger Dateipfad' };
-    }
-
-    try {
-        console.log('[Save] Starte Speichern mit ExcelJS...');
-        console.log(`[Save] Datei: ${filePath}`);
-        console.log(`[Save] Sheets: ${sheets.length}`);
-        
-        // Zeige was gesendet wurde
-        for (const sheet of sheets) {
-            if (sheet.changedCells) {
-                console.log(`[Save] Sheet "${sheet.sheetName}": ${Object.keys(sheet.changedCells).length} geänderte Zellen`);
-            } else if (sheet.fullRewrite) {
-                console.log(`[Save] Sheet "${sheet.sheetName}": Full Rewrite (${sheet.data?.length || 0} Zeilen)`);
-            }
-        }
-        
-        // Speichern = Exportieren in dieselbe Datei
-        // Nutze exportMultipleSheetsWithExcelJS mit targetPath = sourcePath
-        const { exportMultipleSheetsWithExcelJS } = require('./exceljs-writer');
-        
-        const result = await exportMultipleSheetsWithExcelJS(filePath, filePath, sheets, { 
-            password, 
-            sourcePassword: sourcePassword || password 
-        });
-        
-        if (!result.success) {
-            console.error('[Save] Fehler:', result.error);
-            securityLog.log('ERROR', 'EXCEL_SAVE_FAILED', {
-                file: path.basename(filePath),
-                error: result.error
-            });
-            return { success: false, error: result.error };
-        }
-        
-        console.log(`[Save] Erfolgreich in ${result.stats?.totalTimeMs || 0}ms`);
-        
-        securityLog.log('INFO', 'EXCEL_SAVE_COMPLETED', {
-            file: path.basename(filePath),
-            sheetsModified: result.sheetsExported,
-            method: 'exceljs',
-            timeMs: result.stats?.totalTimeMs
-        });
-
-        // Netzwerk-Log für Datei (falls auf Netzlaufwerk)
-        await networkLog.log(filePath, 'EXCEL_SAVE', {
-            sheetsModified: result.sheetsExported
-        });
-
-        return {
-            success: true,
-            message: result.message,
-            sheetsModified: result.sheetsExported,
-            passwordProtected: !!password
-        };
-    } catch (error) {
-        console.error('[Save] Exception:', error);
-        securityLog.log('ERROR', 'EXCEL_SAVE_EXCEPTION', {
-            file: path.basename(filePath),
             error: error.message
         });
         return { success: false, error: error.message };
@@ -3792,19 +3538,6 @@ ipcMain.handle('config:load', async (event, filePath) => {
     }
 });
 
-// App-Pfad ermitteln (fuer Config im Programmordner)
-ipcMain.handle('app:getPath', async (event) => {
-    const exePath = app.getPath('exe');
-    const exeDir = path.dirname(exePath);
-
-    return {
-        appPath: app.getAppPath(),
-        userData: app.getPath('userData'),
-        exe: exePath,
-        exeDir: exeDir
-    };
-});
-
 // Security-Logs abrufen
 ipcMain.handle('security:getLogs', async (event, { fromFile = true, limit = 500 } = {}) => {
     try {
@@ -3847,16 +3580,6 @@ ipcMain.handle('security:clearLogs', async (event) => {
     } catch (error) {
         return { success: false, error: error.message };
     }
-});
-
-// Computername abrufen (für Computer-spezifische Config)
-ipcMain.handle('system:getComputerName', async (event) => {
-    return {
-        computerName: getComputerName(),
-        hostname: os.hostname(),
-        platform: os.platform(),
-        username: os.userInfo().username
-    };
 });
 
 // Prüfen ob ein Pfad auf einem Netzlaufwerk liegt

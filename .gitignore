@@ -27,6 +27,9 @@ npm-debug.log*
 *.tmp
 *.temp
 
+# Development files (tests, debug, analyze)
+_dev/
+
 # Package lock
 package-lock.json
 .env

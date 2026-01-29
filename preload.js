@@ -30,10 +30,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readExcelSheet: (filePath, sheetName, password) => ipcRenderer.invoke('excel:readSheet', filePath, sheetName, password),
     insertExcelRows: (params) => ipcRenderer.invoke('excel:insertRows', params),
     copyExcelFile: (params) => ipcRenderer.invoke('excel:copyFile', params),
-    exportData: (params) => ipcRenderer.invoke('excel:exportData', params),
-    exportWithAllSheets: (params) => ipcRenderer.invoke('excel:exportWithAllSheets', params),
-    exportMultipleSheets: (params) => ipcRenderer.invoke('excel:exportMultipleSheets', params),
-    saveExcelFile: (params) => ipcRenderer.invoke('excel:saveFile', params),
     createTemplateFromSource: (params) => ipcRenderer.invoke('excel:createTemplateFromSource', params),
     
     // Python/openpyxl Writer (behält CF und Formatierungen)
@@ -41,8 +37,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     // Excel-Engine Steuerung
     checkExcelAvailable: () => ipcRenderer.invoke('excel:checkAvailable'),
-    setExcelEngine: (engine) => ipcRenderer.invoke('excel:setEngine', engine),
-    getExcelEngine: () => ipcRenderer.invoke('excel:getEngine'),
     
     // Sheet-Verwaltung
     addSheet: (params) => ipcRenderer.invoke('excel:addSheet', params),
@@ -55,12 +49,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveConfig: (filePath, config) => ipcRenderer.invoke('config:save', { filePath, config }),
     loadConfig: (filePath) => ipcRenderer.invoke('config:load', filePath),
     loadConfigFromAppDir: (workingDir) => ipcRenderer.invoke('config:loadFromAppDir', workingDir),
-    
-    // App-Infos
-    getAppPath: () => ipcRenderer.invoke('app:getPath'),
-    
-    // System-Infos (für Computer-spezifische Config)
-    getComputerName: () => ipcRenderer.invoke('system:getComputerName'),
     
     // Externe URLs öffnen
     openExternal: (url) => ipcRenderer.invoke('shell:openExternal', url),
@@ -90,28 +78,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     liveSessionOpenFile: (filePath, sheetName, password) => ipcRenderer.invoke('liveSession:openFile', filePath, sheetName, password),
     liveSessionSaveFile: (outputPath, password) => ipcRenderer.invoke('liveSession:saveFile', outputPath, password),
     liveSessionClose: () => ipcRenderer.invoke('liveSession:close'),
-    liveSessionGetData: () => ipcRenderer.invoke('liveSession:getData'),
     
     // Passwort-Funktionen
     liveSessionSetPassword: (password) => ipcRenderer.invoke('liveSession:setPassword', password),
-    liveSessionGetPasswordStatus: () => ipcRenderer.invoke('liveSession:getPasswordStatus'),
     
     // Zeilen-Operationen (werden SOFORT in Excel ausgeführt!)
-    liveSessionDeleteRow: (rowIndex) => ipcRenderer.invoke('liveSession:deleteRow', rowIndex),
     liveSessionInsertRow: (rowIndex, count) => ipcRenderer.invoke('liveSession:insertRow', rowIndex, count || 1),
-    liveSessionMoveRow: (fromIndex, toIndex) => ipcRenderer.invoke('liveSession:moveRow', fromIndex, toIndex),
     liveSessionHideRow: (rowIndex, hidden) => ipcRenderer.invoke('liveSession:hideRow', rowIndex, hidden !== false),
     liveSessionHideRowsBatch: (rowIndices, hidden) => ipcRenderer.invoke('liveSession:hideRowsBatch', rowIndices, hidden !== false),
     liveSessionHighlightRow: (rowIndex, color) => ipcRenderer.invoke('liveSession:highlightRow', rowIndex, color),
     
     // Spalten-Operationen (werden SOFORT in Excel ausgeführt!)
-    liveSessionDeleteColumn: (colIndex) => ipcRenderer.invoke('liveSession:deleteColumn', colIndex),
     liveSessionInsertColumn: (colIndex, count, headers) => ipcRenderer.invoke('liveSession:insertColumn', colIndex, count || 1, headers),
-    liveSessionMoveColumn: (fromIndex, toIndex) => ipcRenderer.invoke('liveSession:moveColumn', fromIndex, toIndex),
     liveSessionHideColumn: (colIndex, hidden) => ipcRenderer.invoke('liveSession:hideColumn', colIndex, hidden !== false),
     
     // Zell-Operationen
-    liveSessionSetCellValue: (rowIndex, colIndex, value) => ipcRenderer.invoke('liveSession:setCellValue', rowIndex, colIndex, value),
     liveSessionSetColumnValues: (colIndex, values, startRow) => ipcRenderer.invoke('liveSession:setColumnValues', colIndex, values, startRow || 0),
     
     // Filter-Operationen
@@ -124,6 +105,5 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     // Recovery
     liveSessionGetRecoveryFiles: () => ipcRenderer.invoke('liveSession:getRecoveryFiles'),
-    liveSessionDeleteRecoveryFile: (filePath) => ipcRenderer.invoke('liveSession:deleteRecoveryFile', filePath),
     liveSessionOpenRecoveryFolder: () => ipcRenderer.invoke('liveSession:openRecoveryFolder')
 });
