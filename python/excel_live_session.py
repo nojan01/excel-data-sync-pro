@@ -431,11 +431,20 @@ class ExcelLiveSession:
             # Debug: Zeige was wir bekommen haben
             self._log(f"save_file aufgerufen: output_path={output_path}")
             
-            # Passwort-Logik: None = bestehendes Passwort beibehalten
-            # password: 'KEEP' = altes Passwort beibehalten (nicht entschlüsseln), 
-            #           None = entschlüsseln für neues Passwort/kein Passwort,
-            #           'xxx' = (wird in JS behandelt)
+            # Passwort-Logik: 
+            # 'KEEP' = altes Passwort beibehalten
+            # None = kein neues Passwort
+            # '' = Passwort entfernen
+            # 'xxx' = neues Passwort setzen
             keep_password = (password == 'KEEP')
+            
+            # Effektives Passwort bestimmen
+            if keep_password:
+                effective_password = self.file_password
+            elif password:
+                effective_password = password
+            else:
+                effective_password = None
             
             if output_path and output_path != self.file_path:
                 self._log(f"Speichere unter: {output_path}")
@@ -973,6 +982,154 @@ class ExcelLiveSession:
             self._log(f"Fehler beim Setzen der Spaltenwerte: {e}")
             return {'success': False, 'error': str(e)}
     
+    def set_cells_batch(self, cells: list) -> Dict[str, Any]:
+        """Setzt mehrere Zellen auf einmal (für Suchen & Ersetzen)
+        
+        LEGACY: Wird nur noch für Einzelzellen verwendet.
+        Für Bulk-Ersetzungen: find_replace() nutzen.
+        """
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            if not cells or len(cells) == 0:
+                return {'success': True, 'count': 0}
+            
+            self._log(f"set_cells_batch: Setze {len(cells)} Zellen")
+            
+            # Performance-Optimierung: Screen-Updating und Calculation pausieren
+            app = self.app
+            original_screen_updating = app.screen_updating
+            original_calculation = app.calculation
+            
+            try:
+                app.screen_updating = False
+                app.calculation = 'manual'
+                
+                updated_count = 0
+                for cell in cells:
+                    row_index = cell.get('row')
+                    col_index = cell.get('col')
+                    value = cell.get('value')
+                    
+                    if row_index is None or col_index is None:
+                        continue
+                    
+                    excel_row = row_index + 2  # +2 für Header
+                    excel_col = col_index + 1
+                    
+                    self.worksheet.range((excel_row, excel_col)).value = value
+                    updated_count += 1
+                
+                # Am Ende: Formeln neu berechnen
+                app.calculate()
+                
+            finally:
+                # Ursprüngliche Einstellungen wiederherstellen
+                app.screen_updating = original_screen_updating
+                app.calculation = original_calculation
+            
+            # Änderungen im Journal protokollieren (vereinfacht)
+            self._journal_add('setCellsBatch', {
+                'count': updated_count
+            })
+            
+            # Prüfen ob Auto-Save fällig ist
+            self._check_auto_save()
+            
+            return {'success': True, 'count': updated_count}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Batch-Setzen der Zellwerte: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def find_replace(self, search_text: str, replace_text: str, 
+                     match_case: bool = False, whole_word: bool = False) -> Dict[str, Any]:
+        """Nutzt Excel's native Suchen & Ersetzen Funktion - extrem schnell!
+        
+        Args:
+            search_text: Text der gesucht werden soll
+            replace_text: Ersetzungstext
+            match_case: Groß-/Kleinschreibung beachten
+            whole_word: Nur ganze Wörter ersetzen
+        
+        Returns:
+            Dict mit success und count der ersetzten Vorkommen
+        """
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            if not search_text:
+                return {'success': False, 'error': 'Suchtext fehlt'}
+            
+            self._log(f"find_replace: '{search_text}' -> '{replace_text}' (case={match_case}, whole={whole_word})")
+            
+            import platform
+            
+            app = self.app
+            original_screen_updating = app.screen_updating
+            
+            try:
+                app.screen_updating = False
+                
+                # Excel's native Replace-Funktion über API aufrufen
+                if platform.system() == 'Darwin':
+                    # macOS: AppleScript über xlwings
+                    ws = self.worksheet
+                    used_range = ws.used_range
+                    
+                    # xlwings auf Mac unterstützt Replace über api
+                    # match_case: 1=True, 2=False (Excel-Konstanten)
+                    # LookAt: 1=xlWhole, 2=xlPart
+                    look_at = 1 if whole_word else 2
+                    match_case_val = 1 if match_case else 2
+                    
+                    # Replace über die Excel-API
+                    replaced = used_range.api.replace(
+                        what=search_text,
+                        replacement=replace_text,
+                        look_at=look_at,
+                        match_case=match_case
+                    )
+                    
+                    count = -1  # Excel gibt nicht die Anzahl zurück
+                else:
+                    # Windows: COM-API
+                    ws = self.worksheet
+                    used_range = ws.used_range
+                    
+                    # xlReplace-Konstanten
+                    xlPart = 2
+                    xlWhole = 1
+                    look_at = xlWhole if whole_word else xlPart
+                    
+                    replaced = used_range.api.Replace(
+                        What=search_text,
+                        Replacement=replace_text,
+                        LookAt=look_at,
+                        MatchCase=match_case
+                    )
+                    
+                    count = -1  # Excel gibt nicht die Anzahl zurück
+                
+            finally:
+                app.screen_updating = original_screen_updating
+            
+            # Journal-Eintrag
+            self._journal_add('findReplace', {
+                'search': search_text,
+                'replace': replace_text
+            })
+            
+            self._check_auto_save()
+            
+            return {'success': True, 'replaced': True}
+            
+        except Exception as e:
+            self._log(f"Fehler bei find_replace: {e}")
+            return {'success': False, 'error': str(e)}
+    
     # =========================================================================
     # FILTER-OPERATIONEN
     # =========================================================================
@@ -1222,6 +1379,13 @@ class ExcelLiveSession:
             # Zellen
             'setCellValue': lambda: self.set_cell_value(cmd.get('rowIndex'), cmd.get('colIndex'), cmd.get('value')),
             'setColumnValues': lambda: self.set_column_values(cmd.get('colIndex'), cmd.get('values', []), cmd.get('startRow', 0)),
+            'setCellsBatch': lambda: self.set_cells_batch(cmd.get('cells', [])),
+            'findReplace': lambda: self.find_replace(
+                cmd.get('searchText', ''),
+                cmd.get('replaceText', ''),
+                cmd.get('matchCase', False),
+                cmd.get('wholeWord', False)
+            ),
             
             # Filter
             'setAutoFilter': lambda: self.set_autofilter(cmd.get('filters')),

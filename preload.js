@@ -94,6 +94,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     // Zell-Operationen
     liveSessionSetColumnValues: (colIndex, values, startRow) => ipcRenderer.invoke('liveSession:setColumnValues', colIndex, values, startRow || 0),
+    liveSessionSetCellsBatch: (cells) => ipcRenderer.invoke('liveSession:setCellsBatch', cells),
+    liveSessionFindReplace: (searchText, replaceText, matchCase, wholeWord) => 
+        ipcRenderer.invoke('liveSession:findReplace', searchText, replaceText, matchCase, wholeWord),
     
     // Filter-Operationen
     liveSessionSetAutoFilter: (filters) => ipcRenderer.invoke('liveSession:setAutoFilter', filters),

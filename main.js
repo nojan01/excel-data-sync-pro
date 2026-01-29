@@ -4351,6 +4351,25 @@ ipcMain.handle('liveSession:setColumnValues', async (event, colIndex, values, st
     }
 });
 
+ipcMain.handle('liveSession:setCellsBatch', async (event, cells) => {
+    try {
+        const session = getLiveSession();
+        return await session.setCellsBatch(cells);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:findReplace', async (event, searchText, replaceText, matchCase, wholeWord) => {
+    console.log('[LiveSession] IPC: findReplace', searchText, '->', replaceText);
+    try {
+        const session = getLiveSession();
+        return await session.findReplace(searchText, replaceText, matchCase, wholeWord);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 // === FILTER-OPERATIONEN ===
 
 ipcMain.handle('liveSession:setAutoFilter', async (event, filters) => {

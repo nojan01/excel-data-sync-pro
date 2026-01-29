@@ -3890,7 +3890,7 @@
             return true;
         }
         
-        function undoExplorer() {
+        async function undoExplorer() {
             if (undoRedoState.explorerUndoStack.length === 0) return false;
             
             const action = undoRedoState.explorerUndoStack.pop();
@@ -3903,11 +3903,21 @@
                 return false;
             }
             
+            const liveActive = explorerState.liveSessionActive && explorerState.liveSessionReady;
+            
             // Prüfe auf Multi-Aktion (mehrere Zellen gleichzeitig)
             if (action.type === 'multi') {
+                const cellsToSync = [];
+                
                 action.actions.forEach(subAction => {
                     const { rowIndex, colIndex, oldValue, originalValue } = subAction;
                     explorerState.data[rowIndex][colIndex] = oldValue;
+                    
+                    // Auch filteredData aktualisieren
+                    const filteredItem = explorerState.filteredData.find(item => item.originalIndex === rowIndex);
+                    if (filteredItem && filteredItem.row) {
+                        filteredItem.row[colIndex] = oldValue;
+                    }
                     
                     const cellKey = `${rowIndex}-${colIndex}`;
                     if (oldValue === originalValue) {
@@ -3915,6 +3925,9 @@
                     } else {
                         explorerState.editedCells.set(cellKey, oldValue);
                     }
+                    
+                    // Für Live-Session sammeln
+                    cellsToSync.push({ row: rowIndex, col: colIndex, value: oldValue });
                     
                     // UI aktualisieren
                     const cell = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
@@ -3924,7 +3937,38 @@
                         cell.classList.toggle('edited', oldValue !== cell.dataset.original);
                     }
                 });
+                
+                // Live-Session Sync
+                if (liveActive && cellsToSync.length > 0) {
+                    // Prüfe ob es ein einfaches Suchen/Ersetzen war (alle actions haben gleichen newValue/oldValue Unterschied)
+                    // Falls ja, nutze native findReplace in umgekehrter Richtung
+                    const firstAction = action.actions[0];
+                    const canUseNativeReplace = action.searchText && action.replaceText;
+                    
+                    if (canUseNativeReplace) {
+                        // Umgekehrtes Suchen & Ersetzen
+                        try {
+                            await window.electronAPI.liveSessionFindReplace(
+                                action.replaceText,  // Was wir jetzt suchen
+                                action.searchText,   // Was wir zurücksetzen
+                                action.matchCase || false,
+                                action.wholeWord || false
+                            );
+                        } catch (error) {
+                            console.error('[Undo] Native Replace fehlgeschlagen:', error);
+                        }
+                    } else {
+                        // Fallback: Zellen einzeln setzen
+                        try {
+                            await window.electronAPI.liveSessionSetCellsBatch(cellsToSync);
+                        } catch (error) {
+                            console.error('[Undo] Batch-Sync fehlgeschlagen:', error);
+                        }
+                    }
+                }
+                
                 updateExplorerEditStatus();
+                renderExplorerTable();
                 showNotification(`${action.actions.length} Zelle(n) wiederhergestellt`, 'info');
                 return true;
             }
@@ -3933,11 +3977,28 @@
             const { rowIndex, colIndex, oldValue, newValue } = action;
             explorerState.data[rowIndex][colIndex] = oldValue;
             
+            // Auch filteredData aktualisieren
+            const filteredItem = explorerState.filteredData.find(item => item.originalIndex === rowIndex);
+            if (filteredItem && filteredItem.row) {
+                filteredItem.row[colIndex] = oldValue;
+            }
+            
             const cellKey = `${rowIndex}-${colIndex}`;
             if (oldValue === action.originalValue) {
                 explorerState.editedCells.delete(cellKey);
             } else {
                 explorerState.editedCells.set(cellKey, oldValue);
+            }
+            
+            // Live-Session Sync
+            if (liveActive) {
+                try {
+                    await window.electronAPI.liveSessionSetCellsBatch([
+                        { row: rowIndex, col: colIndex, value: oldValue }
+                    ]);
+                } catch (error) {
+                    console.error('[Undo] Live-Sync fehlgeschlagen:', error);
+                }
             }
             
             // UI aktualisieren
@@ -3950,7 +4011,7 @@
             return true;
         }
         
-        function redoExplorer() {
+        async function redoExplorer() {
             if (undoRedoState.explorerRedoStack.length === 0) return false;
             
             const action = undoRedoState.explorerRedoStack.pop();
@@ -3963,11 +4024,21 @@
                 return false;
             }
             
+            const liveActive = explorerState.liveSessionActive && explorerState.liveSessionReady;
+            
             // Prüfe auf Multi-Aktion (mehrere Zellen gleichzeitig)
             if (action.type === 'multi') {
+                const cellsToSync = [];
+                
                 action.actions.forEach(subAction => {
                     const { rowIndex, colIndex, newValue, originalValue } = subAction;
                     explorerState.data[rowIndex][colIndex] = newValue;
+                    
+                    // Auch filteredData aktualisieren
+                    const filteredItem = explorerState.filteredData.find(item => item.originalIndex === rowIndex);
+                    if (filteredItem && filteredItem.row) {
+                        filteredItem.row[colIndex] = newValue;
+                    }
                     
                     const cellKey = `${rowIndex}-${colIndex}`;
                     if (newValue === originalValue) {
@@ -3975,6 +4046,9 @@
                     } else {
                         explorerState.editedCells.set(cellKey, newValue);
                     }
+                    
+                    // Für Live-Session sammeln
+                    cellsToSync.push({ row: rowIndex, col: colIndex, value: newValue });
                     
                     // UI aktualisieren
                     const cell = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
@@ -3984,8 +4058,34 @@
                         cell.classList.toggle('edited', newValue !== cell.dataset.original);
                     }
                 });
+                
+                // Live-Session Sync
+                if (liveActive && cellsToSync.length > 0) {
+                    const canUseNativeReplace = action.searchText && action.replaceText;
+                    
+                    if (canUseNativeReplace) {
+                        try {
+                            await window.electronAPI.liveSessionFindReplace(
+                                action.searchText,
+                                action.replaceText,
+                                action.matchCase || false,
+                                action.wholeWord || false
+                            );
+                        } catch (error) {
+                            console.error('[Redo] Native Replace fehlgeschlagen:', error);
+                        }
+                    } else {
+                        try {
+                            await window.electronAPI.liveSessionSetCellsBatch(cellsToSync);
+                        } catch (error) {
+                            console.error('[Redo] Batch-Sync fehlgeschlagen:', error);
+                        }
+                    }
+                }
+                
                 updateExplorerEditStatus();
-                showNotification(`${action.actions.length} Zelle(n) gelöscht`, 'info');
+                renderExplorerTable();
+                showNotification(`${action.actions.length} Zelle(n) wiederhergestellt`, 'info');
                 return true;
             }
             
@@ -3993,11 +4093,28 @@
             const { rowIndex, colIndex, oldValue, newValue, originalValue } = action;
             explorerState.data[rowIndex][colIndex] = newValue;
             
+            // Auch filteredData aktualisieren
+            const filteredItem = explorerState.filteredData.find(item => item.originalIndex === rowIndex);
+            if (filteredItem && filteredItem.row) {
+                filteredItem.row[colIndex] = newValue;
+            }
+            
             const cellKey = `${rowIndex}-${colIndex}`;
             if (newValue === originalValue) {
                 explorerState.editedCells.delete(cellKey);
             } else {
                 explorerState.editedCells.set(cellKey, newValue);
+            }
+            
+            // Live-Session Sync
+            if (liveActive) {
+                try {
+                    await window.electronAPI.liveSessionSetCellsBatch([
+                        { row: rowIndex, col: colIndex, value: newValue }
+                    ]);
+                } catch (error) {
+                    console.error('[Redo] Live-Sync fehlgeschlagen:', error);
+                }
             }
             
             // UI aktualisieren
@@ -6942,9 +7059,6 @@
                 console.log('[LiveSession] ✓ Session aktiv (Excel versteckt)');
                 showFloatingStatus('🔴 Live-Session aktiv', 'success');
                 
-                // Heartbeat starten um Excel-Schließung zu erkennen
-                startLiveSessionHeartbeat();
-                
                 // Live-Mode-Indikator und Excel-Button aktualisieren
                 updateLiveModeIndicator();
                 updateExcelToggleButton();
@@ -6964,9 +7078,6 @@
         async function stopLiveSession() {
             if (!explorerState.liveSessionActive) return;
             
-            // Heartbeat stoppen
-            stopLiveSessionHeartbeat();
-            
             try {
                 await window.electronAPI.liveSessionClose();
                 explorerState.liveSessionActive = false;
@@ -6980,90 +7091,6 @@
             } catch (error) {
                 console.error('[LiveSession] Fehler beim Beenden:', error);
             }
-        }
-        
-        /**
-         * Startet den Heartbeat-Check für die Live-Session
-         * Prüft alle 3 Sekunden ob Excel noch läuft
-         */
-        let heartbeatFailCount = 0;
-        const MAX_HEARTBEAT_FAILS = 2; // Nach 2 aufeinanderfolgenden Fehlern als offline betrachten
-        
-        function startLiveSessionHeartbeat() {
-            stopLiveSessionHeartbeat(); // Vorherigen stoppen falls vorhanden
-            heartbeatFailCount = 0;
-            
-            explorerState.heartbeatInterval = setInterval(async () => {
-                if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) {
-                    stopLiveSessionHeartbeat();
-                    return;
-                }
-                
-                // Wenn pausiert, diesen Check überspringen
-                if (explorerState.heartbeatPaused) {
-                    return;
-                }
-                
-                try {
-                    const result = await window.electronAPI.liveSessionCheckAlive();
-                    
-                    if (result && !result.alive) {
-                        heartbeatFailCount++;
-                        console.warn(`[LiveSession] Heartbeat fail ${heartbeatFailCount}/${MAX_HEARTBEAT_FAILS}, Reason:`, result.reason);
-                        
-                        if (heartbeatFailCount >= MAX_HEARTBEAT_FAILS) {
-                            console.error('[LiveSession] Excel wurde geschlossen!');
-                            stopLiveSessionHeartbeat();
-                            
-                            // Session-State zurücksetzen
-                            explorerState.liveSessionActive = false;
-                            explorerState.liveSessionReady = false;
-                            explorerState.excelVisible = false;
-                            
-                            // UI aktualisieren
-                            updateLiveModeIndicator();
-                            updateExcelToggleButton();
-                            
-                            // Benutzer warnen und fragen ob Session neu gestartet werden soll
-                            showExcelClosedWarning();
-                        }
-                    } else {
-                        // Erfolgreicher Check - Zähler zurücksetzen
-                        heartbeatFailCount = 0;
-                    }
-                } catch (error) {
-                    // Bei Timeout/Error nicht sofort aufgeben - könnte beschäftigt sein
-                    heartbeatFailCount++;
-                    console.warn(`[LiveSession] Heartbeat error ${heartbeatFailCount}/${MAX_HEARTBEAT_FAILS}:`, error.message);
-                }
-            }, 3000); // Alle 3 Sekunden prüfen
-        }
-        
-        /**
-         * Stoppt den Heartbeat-Check
-         */
-        function stopLiveSessionHeartbeat() {
-            if (explorerState.heartbeatInterval) {
-                clearInterval(explorerState.heartbeatInterval);
-                explorerState.heartbeatInterval = null;
-            }
-            explorerState.heartbeatPaused = false;
-        }
-        
-        /**
-         * Pausiert den Heartbeat temporär (für lange Operationen)
-         */
-        function pauseLiveSessionHeartbeat() {
-            explorerState.heartbeatPaused = true;
-            heartbeatFailCount = 0; // Zähler zurücksetzen
-        }
-        
-        /**
-         * Setzt den Heartbeat nach Pause fort
-         */
-        function resumeLiveSessionHeartbeat() {
-            explorerState.heartbeatPaused = false;
-            heartbeatFailCount = 0; // Zähler zurücksetzen
         }
         
         /**
@@ -7288,9 +7315,7 @@
             // LIVE SESSION MODE - Operationen werden sofort in Excel ausgeführt
             liveSessionActive: false,  // true wenn Live-Session aktiv ist
             liveSessionReady: false,   // true wenn Session bereit für Operationen
-            excelVisible: false,       // true wenn Excel-Fenster sichtbar ist
-            heartbeatInterval: null,   // Interval-ID für Heartbeat-Check
-            heartbeatPaused: false     // true wenn Heartbeat pausiert ist (während langer Operationen)
+            excelVisible: false        // true wenn Excel-Fenster sichtbar ist
         };
         
         // ==================== Data Join State & Functions ====================
@@ -7911,9 +7936,6 @@
             
             // Live-Session: Spalten in Excel einfügen und Werte setzen
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                // Heartbeat pausieren während der Operation
-                pauseLiveSessionHeartbeat();
-                
                 try {
                     console.log('[LiveSession] DataJoin - Füge Spalten in Excel ein...');
                     
@@ -7966,9 +7988,6 @@
                 } catch (error) {
                     console.error('[LiveSession] DataJoin error:', error);
                     showFloatingStatus('⚠️ Fehler beim Synchronisieren mit Excel', 'warning');
-                } finally {
-                    // Heartbeat wieder aktivieren
-                    resumeLiveSessionHeartbeat();
                 }
             }
             
@@ -7986,8 +8005,6 @@
                 
                 // Live-Session: Nicht gefundene Zeilen in Excel markieren
                 if (explorerState.liveSessionActive && explorerState.liveSessionReady && notFoundRows.length > 0) {
-                    // Heartbeat pausieren während der Operation
-                    pauseLiveSessionHeartbeat();
                     try {
                         console.log(`[LiveSession] DataJoin - Markiere ${notFoundRows.length} nicht gefundene Zeilen`);
                         for (const rowIndex of notFoundRows) {
@@ -7995,9 +8012,6 @@
                         }
                     } catch (error) {
                         console.error('[LiveSession] DataJoin highlightRow error:', error);
-                    } finally {
-                        // Heartbeat wieder aktivieren
-                        resumeLiveSessionHeartbeat();
                     }
                 }
             }
@@ -8340,6 +8354,9 @@
             
             // Auto-Save Intervall stoppen
             stopExplorerAutoSave();
+            
+            // Suchen & Ersetzen zurücksetzen
+            resetFindReplaceState();
         }
         
         // Auto-Save für Crash-Recovery starten
@@ -10354,6 +10371,36 @@
             isOpen: false
         };
         
+        // Find & Replace State komplett zurücksetzen
+        function resetFindReplaceState() {
+            findReplaceState.matches = [];
+            findReplaceState.currentMatchIndex = -1;
+            findReplaceState.lastSearchTerm = '';
+            findReplaceState.isOpen = false;
+            
+            // Panel verstecken
+            const panel = document.getElementById('findReplacePanel');
+            if (panel) panel.style.display = 'none';
+            
+            // Input-Felder leeren
+            const findText = document.getElementById('findText');
+            if (findText) findText.value = '';
+            const replaceText = document.getElementById('replaceText');
+            if (replaceText) replaceText.value = '';
+            
+            // Checkboxen zurücksetzen
+            const findCaseSensitive = document.getElementById('findCaseSensitive');
+            if (findCaseSensitive) findCaseSensitive.checked = false;
+            const findWholeWord = document.getElementById('findWholeWord');
+            if (findWholeWord) findWholeWord.checked = false;
+            const findRegex = document.getElementById('findRegex');
+            if (findRegex) findRegex.checked = false;
+            
+            // Counter zurücksetzen
+            const counter = document.getElementById('findMatchCounter');
+            if (counter) counter.textContent = '0/0';
+        }
+        
         // Toggle Find & Replace Panel
         function toggleFindReplacePanel() {
             const panel = document.getElementById('findReplacePanel');
@@ -10520,7 +10567,7 @@
         }
         
         // Einzelne Ersetzung
-        function replaceOne() {
+        async function replaceOne() {
             if (findReplaceState.matches.length === 0 || findReplaceState.currentMatchIndex < 0) {
                 findNext();
                 return;
@@ -10530,7 +10577,7 @@
             const match = findReplaceState.matches[findReplaceState.currentMatchIndex];
             
             // Zelle ersetzen
-            replaceCellContent(match.rowIndex, match.colIndex, replaceText);
+            await replaceCellContent(match.rowIndex, match.colIndex, replaceText);
             
             // Treffer aus Liste entfernen
             findReplaceState.matches.splice(findReplaceState.currentMatchIndex, 1);
@@ -10549,7 +10596,7 @@
         }
         
         // Alle ersetzen
-        function replaceAll() {
+        async function replaceAll() {
             const searchTerm = document.getElementById('findText').value;
             if (!searchTerm) return;
             
@@ -10581,6 +10628,7 @@
             }
             
             const undoActions = [];
+            const cellsToSync = [];  // Für Live Session Sync
             let replacedCount = 0;
             
             // Alle Treffer ersetzen (arbeitet über Daten, nicht DOM)
@@ -10600,22 +10648,80 @@
                         originalValue: originalValue
                     });
                     
-                    // Daten aktualisieren
+                    // Für Live Session Sync merken
+                    cellsToSync.push({
+                        row: match.rowIndex,
+                        col: match.colIndex,
+                        value: newValue
+                    });
+                    
+                    // Daten aktualisieren (explorerState.data)
                     if (explorerState.data[match.rowIndex]) {
                         explorerState.data[match.rowIndex][match.colIndex] = newValue;
                     }
+                    
+                    // Auch filteredData aktualisieren (für Anzeige)
+                    const filteredItem = explorerState.filteredData.find(item => item.originalIndex === match.rowIndex);
+                    if (filteredItem && filteredItem.row) {
+                        filteredItem.row[match.colIndex] = newValue;
+                    }
+                    
                     explorerState.editedCells.set(`${match.rowIndex}-${match.colIndex}`, newValue);
                     
                     replacedCount++;
                 }
             });
             
-            // Undo-Aktion speichern
+            // Undo-Aktion speichern (mit Suchparametern für native Undo/Redo)
             if (undoActions.length > 0) {
                 pushExplorerUndo({
                     type: 'multi',
-                    actions: undoActions
+                    actions: undoActions,
+                    // Suchparameter für native Excel Find/Replace bei Undo
+                    searchText: useRegex ? null : searchTerm,
+                    replaceText: useRegex ? null : replaceText,
+                    matchCase: caseSensitive,
+                    wholeWord: wholeWord
                 });
+            }
+            
+            console.log('[ReplaceAll] Ersetzt:', replacedCount, 'Zellen');
+            console.log('[ReplaceAll] undoActions:', undoActions.length);
+            console.log('[ReplaceAll] cellsToSync:', cellsToSync.length);
+            
+            const liveActive = explorerState.liveSessionActive && explorerState.liveSessionReady;
+            console.log('[ReplaceAll] Live aktiv:', liveActive);
+            
+            // Live Session Sync (wenn aktiv)
+            if (liveActive && replacedCount > 0) {
+                try {
+                    // Für einfache Suchen (kein Regex): Excel's native Replace nutzen - SCHNELL!
+                    if (!useRegex) {
+                        console.log(`[ReplaceAll] Nutze Excel native Replace`);
+                        const result = await window.electronAPI.liveSessionFindReplace(
+                            searchTerm, 
+                            replaceText, 
+                            caseSensitive, 
+                            wholeWord
+                        );
+                        if (result.success) {
+                            console.log('[ReplaceAll] Excel Replace erfolgreich');
+                        } else {
+                            console.error('[ReplaceAll] Excel Replace fehlgeschlagen:', result.error);
+                        }
+                    } else {
+                        // Bei Regex: Fallback auf Zellenweise (langsam, aber korrekt)
+                        console.log(`[ReplaceAll] Regex-Modus: Sync ${cellsToSync.length} Zellen einzeln`);
+                        const result = await window.electronAPI.liveSessionSetCellsBatch(cellsToSync);
+                        if (result.success) {
+                            console.log(`[ReplaceAll] Batch-Sync: ${result.count} Zellen`);
+                        } else {
+                            console.error('[ReplaceAll] Batch-Sync fehlgeschlagen:', result.error);
+                        }
+                    }
+                } catch (error) {
+                    console.error('[ReplaceAll] Live-Sync Fehler:', error);
+                }
             }
             
             // Tabelle neu rendern und Status aktualisieren
@@ -10627,7 +10733,7 @@
         }
         
         // Zelleninhalt mit Regex ersetzen
-        function replaceCellContent(rowIndex, colIndex, replaceText) {
+        async function replaceCellContent(rowIndex, colIndex, replaceText) {
             const searchTerm = document.getElementById('findText').value;
             const caseSensitive = document.getElementById('findCaseSensitive').checked;
             const wholeWord = document.getElementById('findWholeWord').checked;
@@ -10663,6 +10769,19 @@
             // Daten aktualisieren
             explorerState.data[rowIndex][colIndex] = newValue;
             explorerState.editedCells.set(cellKey, newValue);
+            
+            // Live Session Sync (wenn aktiv)
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                try {
+                    await window.electronAPI.liveSessionSetCellsBatch([{
+                        row: rowIndex,
+                        col: colIndex,
+                        value: newValue
+                    }]);
+                } catch (error) {
+                    console.error('[Ersetzen] Live-Sync Fehler:', error);
+                }
+            }
             
             // Falls Zelle sichtbar ist, UI aktualisieren
             const td = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
@@ -14568,9 +14687,6 @@
                 if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                     console.log('[Export] Live-Session aktiv - verwende Excel direkt zum Speichern...');
                     
-                    // Heartbeat pausieren während des Speicherns
-                    pauseLiveSessionHeartbeat();
-                    
                     try {
                         // Im Live-Modus sind alle Änderungen bereits in Excel
                         // Wir müssen nur noch speichern (mit optionalem Passwort)
@@ -14599,9 +14715,6 @@
                     } catch (error) {
                         console.error('[Export] Live-Session save error:', error);
                         result = { success: false, error: error.message };
-                    } finally {
-                        // Heartbeat wieder aktivieren
-                        resumeLiveSessionHeartbeat();
                     }
                 } else {
                     // FALLBACK MODUS: xlwings/Python für Export verwenden (CF-Erhaltung)

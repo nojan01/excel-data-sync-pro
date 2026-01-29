@@ -198,8 +198,10 @@ class ExcelLiveSession {
 
     /**
      * Sendet einen Befehl an Python und wartet auf Antwort
+     * @param {Object} command - Der Befehl
+     * @param {number} timeout - Timeout in ms (default: 30000)
      */
-    _sendCommand(command) {
+    _sendCommand(command, timeout = 30000) {
         return new Promise((resolve, reject) => {
             if (!this.pythonProcess) {
                 reject(new Error('Python-Prozess nicht gestartet'));
@@ -228,7 +230,7 @@ class ExcelLiveSession {
                     this.currentResolve = null;
                     this.currentReject = null;
                 }
-            }, 30000);
+            }, timeout);
         });
     }
 
@@ -495,6 +497,36 @@ class ExcelLiveSession {
             colIndex: colIndex,
             values: values,
             startRow: startRow
+        });
+    }
+    
+    /**
+     * Setzt mehrere Zellen auf einmal (für einzelne Zellen)
+     * @param {Array} cells - Array von {row, col, value}
+     */
+    async setCellsBatch(cells) {
+        // Längerer Timeout für Bulk-Operationen (2 Minuten)
+        const timeout = Math.max(60000, cells.length * 30); // Min 60s, +30ms pro Zelle
+        return this._sendCommand({
+            action: 'setCellsBatch',
+            cells: cells
+        }, timeout);
+    }
+    
+    /**
+     * Nutzt Excel's native Suchen & Ersetzen - extrem schnell!
+     * @param {string} searchText - Suchtext
+     * @param {string} replaceText - Ersetzungstext
+     * @param {boolean} matchCase - Groß-/Kleinschreibung
+     * @param {boolean} wholeWord - Nur ganze Wörter
+     */
+    async findReplace(searchText, replaceText, matchCase = false, wholeWord = false) {
+        return this._sendCommand({
+            action: 'findReplace',
+            searchText: searchText,
+            replaceText: replaceText,
+            matchCase: matchCase,
+            wholeWord: wholeWord
         });
     }
     
