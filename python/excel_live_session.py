@@ -19,7 +19,9 @@ import sys
 import os
 import platform
 import time
-from typing import Optional, Dict, Any
+import shutil
+from datetime import datetime
+from typing import Optional, Dict, Any, List
 
 # Für embedded Python auf Windows: pywin32 DLLs finden
 if platform.system() == 'Windows':
@@ -52,7 +54,15 @@ class ExcelLiveSession:
         self.worksheet: Optional[xw.Sheet] = None
         self.file_path: Optional[str] = None
         self.sheet_name: Optional[str] = None
+        self.file_password: Optional[str] = None  # Passwort für geschützte Dateien
         self._is_running = True
+        
+        # Recovery-System
+        self.backup_path: Optional[str] = None
+        self.journal_path: Optional[str] = None
+        self.journal_entries: List[Dict] = []
+        self.last_auto_save: float = 0
+        self.auto_save_interval: int = 120  # 2 Minuten
     
     def _log(self, message: str):
         """Logging zu stderr (nicht stdout, das ist für JSON)"""
@@ -62,6 +72,199 @@ class ExcelLiveSession:
         """Sendet JSON-Antwort an stdout"""
         print(json.dumps(data), flush=True)
     
+    # =========================================================================
+    # RECOVERY-SYSTEM
+    # =========================================================================
+    
+    def _get_recovery_dir(self) -> str:
+        """Gibt das Recovery-Verzeichnis zurück"""
+        if platform.system() == 'Darwin':
+            base = os.path.expanduser('~/Library/Application Support/ExcelDataSyncPro')
+        elif platform.system() == 'Windows':
+            base = os.path.join(os.environ.get('APPDATA', ''), 'ExcelDataSyncPro')
+        else:
+            base = os.path.expanduser('~/.exceldatasyncpro')
+        
+        recovery_dir = os.path.join(base, 'recovery')
+        os.makedirs(recovery_dir, exist_ok=True)
+        return recovery_dir
+    
+    def _create_backup(self, file_path: str) -> Optional[str]:
+        """Erstellt eine Backup-Kopie der Originaldatei"""
+        try:
+            recovery_dir = self._get_recovery_dir()
+            file_name = os.path.basename(file_path)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            backup_name = f"{os.path.splitext(file_name)[0]}_{timestamp}.bak.xlsx"
+            backup_path = os.path.join(recovery_dir, backup_name)
+            
+            shutil.copy2(file_path, backup_path)
+            self._log(f"Backup erstellt: {backup_path}")
+            return backup_path
+        except Exception as e:
+            self._log(f"Backup-Fehler: {e}")
+            return None
+    
+    def _init_journal(self, file_path: str) -> Optional[str]:
+        """Initialisiert das Änderungs-Journal"""
+        try:
+            recovery_dir = self._get_recovery_dir()
+            file_name = os.path.basename(file_path)
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            journal_name = f"{os.path.splitext(file_name)[0]}_{timestamp}.journal.json"
+            journal_path = os.path.join(recovery_dir, journal_name)
+            
+            # Journal-Header schreiben
+            journal_data = {
+                'version': '1.0',
+                'originalFile': file_path,
+                'created': datetime.now().isoformat(),
+                'entries': []
+            }
+            with open(journal_path, 'w', encoding='utf-8') as f:
+                json.dump(journal_data, f, ensure_ascii=False)
+            
+            self._log(f"Journal initialisiert: {journal_path}")
+            return journal_path
+        except Exception as e:
+            self._log(f"Journal-Init-Fehler: {e}")
+            return None
+    
+    def _journal_add(self, operation: str, details: Dict[str, Any]):
+        """Fügt einen Eintrag zum Journal hinzu (schnell, append-only)"""
+        if not self.journal_path:
+            return
+        
+        try:
+            entry = {
+                'timestamp': datetime.now().isoformat(),
+                'operation': operation,
+                'sheet': self.sheet_name,
+                **details
+            }
+            self.journal_entries.append(entry)
+            
+            # Alle 10 Einträge: Journal auf Disk schreiben
+            if len(self.journal_entries) >= 10:
+                self._flush_journal()
+        except Exception as e:
+            self._log(f"Journal-Add-Fehler: {e}")
+    
+    def _flush_journal(self):
+        """Schreibt ausstehende Journal-Einträge auf Disk"""
+        if not self.journal_path or not self.journal_entries:
+            return
+        
+        try:
+            # Journal lesen, Einträge anhängen, speichern
+            with open(self.journal_path, 'r', encoding='utf-8') as f:
+                journal_data = json.load(f)
+            
+            journal_data['entries'].extend(self.journal_entries)
+            journal_data['lastModified'] = datetime.now().isoformat()
+            
+            with open(self.journal_path, 'w', encoding='utf-8') as f:
+                json.dump(journal_data, f, ensure_ascii=False, indent=2)
+            
+            self.journal_entries.clear()
+        except Exception as e:
+            self._log(f"Journal-Flush-Fehler: {e}")
+    
+    def _check_auto_save(self):
+        """Prüft ob Auto-Save fällig ist"""
+        if not self.workbook:
+            return
+        
+        now = time.time()
+        if now - self.last_auto_save >= self.auto_save_interval:
+            try:
+                self._log("Auto-Save...")
+                self.workbook.save()
+                self.last_auto_save = now
+                self._flush_journal()  # Journal auch speichern
+                self._log("Auto-Save erfolgreich")
+            except Exception as e:
+                self._log(f"Auto-Save-Fehler: {e}")
+    
+    def _cleanup_recovery(self, success: bool = True):
+        """Bereinigt Recovery-Dateien nach erfolgreichem Speichern"""
+        if success:
+            # Bei Erfolg: Backup und Journal löschen
+            try:
+                if self.backup_path and os.path.exists(self.backup_path):
+                    os.remove(self.backup_path)
+                    self._log(f"Backup gelöscht: {self.backup_path}")
+                if self.journal_path and os.path.exists(self.journal_path):
+                    os.remove(self.journal_path)
+                    self._log(f"Journal gelöscht: {self.journal_path}")
+            except Exception as e:
+                self._log(f"Recovery-Cleanup-Fehler: {e}")
+        
+        self.backup_path = None
+        self.journal_path = None
+        self.journal_entries.clear()
+    
+    def get_recovery_files(self) -> Dict[str, Any]:
+        """Gibt verfügbare Recovery-Dateien zurück"""
+        try:
+            recovery_dir = self._get_recovery_dir()
+            files = []
+            
+            for f in os.listdir(recovery_dir):
+                full_path = os.path.join(recovery_dir, f)
+                stat = os.stat(full_path)
+                age_hours = (time.time() - stat.st_mtime) / 3600
+                
+                if f.endswith('.bak.xlsx'):
+                    files.append({
+                        'type': 'backup',
+                        'path': full_path,
+                        'name': f,
+                        'size': stat.st_size,
+                        'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        'ageHours': round(age_hours, 1)
+                    })
+                elif f.endswith('.journal.json'):
+                    # Journal-Details lesen
+                    with open(full_path, 'r', encoding='utf-8') as jf:
+                        journal_data = json.load(jf)
+                    files.append({
+                        'type': 'journal',
+                        'path': full_path,
+                        'name': f,
+                        'originalFile': journal_data.get('originalFile'),
+                        'entryCount': len(journal_data.get('entries', [])),
+                        'modified': datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                        'ageHours': round(age_hours, 1)
+                    })
+            
+            # Nach Alter sortieren (neueste zuerst)
+            files.sort(key=lambda x: x['ageHours'])
+            
+            # Alte Dateien (>24h) automatisch löschen
+            for f in files[:]:
+                if f['ageHours'] > 24:
+                    try:
+                        os.remove(f['path'])
+                        files.remove(f)
+                        self._log(f"Alte Recovery-Datei gelöscht: {f['name']}")
+                    except:
+                        pass
+            
+            return {'success': True, 'files': files}
+        except Exception as e:
+            return {'success': False, 'error': str(e), 'files': []}
+    
+    def delete_recovery_file(self, file_path: str) -> Dict[str, Any]:
+        """Löscht eine Recovery-Datei"""
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                return {'success': True}
+            return {'success': False, 'error': 'Datei nicht gefunden'}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
     def _get_column_letter(self, col_idx: int) -> str:
         """Konvertiert Spalten-Index (1-basiert) zu Buchstaben"""
         result = ""
@@ -71,7 +274,9 @@ class ExcelLiveSession:
         return result
     
     def _hide_excel(self):
-        """Versteckt Excel"""
+        """Versteckt Excel - DEAKTIVIERT für Debugging"""
+        # DEBUGGING: Excel sichtbar lassen um Operationen zu beobachten
+        return
         import subprocess
         if platform.system() == 'Darwin':
             try:
@@ -86,14 +291,90 @@ class ExcelLiveSession:
             except:
                 pass
     
+    def set_visible(self, visible: bool = True) -> Dict[str, Any]:
+        """Zeigt oder versteckt das Excel-Fenster"""
+        try:
+            if not self.app:
+                self._log("Keine Excel-App aktiv")
+                return {'success': False, 'error': 'Keine Excel-App aktiv'}
+            
+            # xlwings visible-Eigenschaft verwenden (funktioniert auf Mac und Windows)
+            self.app.visible = visible
+            self._log(f"Excel Sichtbarkeit gesetzt: {visible}")
+            
+            # Auf macOS: Falls visible=True, Excel in den Vordergrund bringen
+            if visible and platform.system() == 'Darwin':
+                try:
+                    import subprocess
+                    subprocess.run(['osascript', '-e', 'tell application "Microsoft Excel" to activate'], 
+                                   capture_output=True, timeout=2)
+                except:
+                    pass
+            
+            return {'success': True, 'visible': visible}
+        except Exception as e:
+            self._log(f"Fehler bei set_visible: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _force_screen_refresh(self):
+        """Erzwingt einen Screen-Refresh in Excel"""
+        try:
+            if not self.app:
+                return
+            
+            # Toggle screen_updating um Refresh zu erzwingen
+            self.app.screen_updating = False
+            self.app.screen_updating = True
+            
+            # Auf macOS: Zusätzlich calculate aufrufen für besseren Refresh
+            if platform.system() == 'Darwin' and self.app:
+                try:
+                    self.app.api.calculate()
+                except:
+                    pass
+        except Exception as e:
+            self._log(f"Fehler bei screen refresh: {e}")
+    
+    def check_alive(self) -> Dict[str, Any]:
+        """Prüft ob Excel und das Workbook noch aktiv sind"""
+        try:
+            # Prüfe ob App noch existiert
+            if not self.app:
+                return {'success': True, 'alive': False, 'reason': 'no_app'}
+            
+            # Prüfe ob Workbook noch offen ist
+            if not self.workbook:
+                return {'success': True, 'alive': False, 'reason': 'no_workbook'}
+            
+            # Versuche auf das Workbook zuzugreifen (wirft Exception wenn geschlossen)
+            try:
+                _ = self.workbook.name
+                _ = self.app.visible  # Teste auch App-Zugriff
+            except Exception:
+                return {'success': True, 'alive': False, 'reason': 'workbook_closed'}
+            
+            return {'success': True, 'alive': True}
+        except Exception as e:
+            self._log(f"Fehler bei check_alive: {e}")
+            return {'success': True, 'alive': False, 'reason': str(e)}
+    
     # =========================================================================
     # SESSION-MANAGEMENT
     # =========================================================================
     
-    def open_file(self, file_path: str, sheet_name: str) -> Dict[str, Any]:
-        """Öffnet eine Excel-Datei und hält sie offen"""
+    def open_file(self, file_path: str, sheet_name: str, password: Optional[str] = None) -> Dict[str, Any]:
+        """Öffnet eine Excel-Datei und hält sie offen
+        
+        Args:
+            file_path: Pfad zur Excel-Datei
+            sheet_name: Name des zu öffnenden Sheets
+            password: Optionales Passwort für geschützte Dateien
+        """
         try:
-            self._log(f"Öffne Datei: {file_path}, Sheet: {sheet_name}")
+            self._log(f"Öffne Datei: {file_path}, Sheet: {sheet_name}, Password: {'***' if password else 'None'}")
+            
+            # Passwort speichern für spätere Verwendung
+            self.file_password = password
             
             # Falls bereits eine Datei offen ist, schließen
             if self.workbook:
@@ -105,14 +386,15 @@ class ExcelLiveSession:
             # Neue Excel-App starten falls nötig
             if not self.app:
                 self._log("Starte Excel-App...")
-                self.app = xw.App(visible=False, add_book=False)
+                self.app = xw.App(visible=False, add_book=False)  # visible=False - Excel startet versteckt
                 self.app.display_alerts = False
-                self.app.screen_updating = False
+                self.app.screen_updating = True
             
-            self._hide_excel()
-            
-            # Workbook öffnen
-            self.workbook = self.app.books.open(file_path)
+            # Workbook öffnen (mit optionalem Passwort)
+            if password:
+                self.workbook = self.app.books.open(file_path, password=password)
+            else:
+                self.workbook = self.app.books.open(file_path)
             self.file_path = file_path
             
             # Sheet finden
@@ -123,32 +405,129 @@ class ExcelLiveSession:
             self.worksheet = self.workbook.sheets[sheet_name]
             self.sheet_name = sheet_name
             
+            # Recovery-System initialisieren
+            self.backup_path = self._create_backup(file_path)
+            self.journal_path = self._init_journal(file_path)
+            self.last_auto_save = time.time()
+            
             self._log(f"Datei geöffnet, Sheet: {sheet_name}")
-            return {'success': True, 'sheets': sheet_names}
+            return {'success': True, 'sheets': sheet_names, 'backupPath': self.backup_path}
             
         except Exception as e:
             self._log(f"Fehler beim Öffnen: {e}")
             return {'success': False, 'error': str(e)}
     
-    def save_file(self, output_path: Optional[str] = None) -> Dict[str, Any]:
-        """Speichert die Datei (optional unter neuem Namen)"""
+    def save_file(self, output_path: Optional[str] = None, password: Optional[str] = None) -> Dict[str, Any]:
+        """Speichert die Datei (optional unter neuem Namen und/oder mit Passwort)
+        
+        Args:
+            output_path: Optionaler neuer Dateipfad
+            password: Optionales Passwort (None = kein Passwort, '' = Passwort entfernen, 'xxx' = neues Passwort)
+        """
         try:
             if not self.workbook:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
             
+            # Debug: Zeige was wir bekommen haben
+            self._log(f"save_file aufgerufen: output_path={output_path}")
+            
+            # Passwort-Logik: None = bestehendes Passwort beibehalten
+            # password: 'KEEP' = altes Passwort beibehalten (nicht entschlüsseln), 
+            #           None = entschlüsseln für neues Passwort/kein Passwort,
+            #           'xxx' = (wird in JS behandelt)
+            keep_password = (password == 'KEEP')
+            
             if output_path and output_path != self.file_path:
                 self._log(f"Speichere unter: {output_path}")
-                self.workbook.save(output_path)
-                self.file_path = output_path
+                
+                # Auf macOS: SaveAs über Speichern + Kopieren
+                if platform.system() == 'Darwin':
+                    # Erst aktuelle Änderungen speichern
+                    self.workbook.save()
+                    self._log(f"Original gespeichert")
+                    
+                    # Datei kopieren
+                    shutil.copy2(self.file_path, output_path)
+                    self._log(f"Kopiert nach: {output_path}")
+                    
+                    # Wenn Quelldatei verschlüsselt war UND wir das Passwort NICHT behalten wollen,
+                    # müssen wir die Kopie entschlüsseln damit xlsx-populate sie öffnen kann
+                    if self.file_password and not keep_password:
+                        try:
+                            import msoffcrypto
+                            import tempfile
+                            
+                            with open(output_path, 'rb') as f:
+                                file = msoffcrypto.OfficeFile(f)
+                                file.load_key(password=self.file_password)
+                                
+                                temp_fd, temp_path = tempfile.mkstemp(suffix='.xlsx')
+                                with os.fdopen(temp_fd, 'wb') as temp_f:
+                                    file.decrypt(temp_f)
+                            
+                            shutil.move(temp_path, output_path)
+                        except Exception as decrypt_err:
+                            self._log(f"Fehler beim Entschlüsseln: {decrypt_err}")
+                else:
+                    # Windows: Normales save(path) funktioniert als SaveAs
+                    if effective_password:
+                        self.workbook.save(output_path, password=effective_password)
+                    else:
+                        self.workbook.save(output_path)
+                    self.file_path = output_path
             else:
-                self._log("Speichere...")
-                self.workbook.save()
+                self._log(f"Speichere... Password: {'***' if effective_password else 'None'}")
+                if effective_password:
+                    self.workbook.save(password=effective_password)
+                else:
+                    self.workbook.save()
             
-            return {'success': True, 'outputPath': self.file_path}
+            # Passwort aktualisieren
+            if password is not None:
+                self.file_password = password if password else None
+            
+            # Recovery-Dateien aufräumen nach erfolgreichem Speichern
+            self._cleanup_recovery(success=True)
+            
+            return {'success': True, 'outputPath': output_path or self.file_path, 'hasPassword': bool(self.file_password)}
             
         except Exception as e:
             self._log(f"Fehler beim Speichern: {e}")
             return {'success': False, 'error': str(e)}
+    
+    def set_password(self, password: Optional[str]) -> Dict[str, Any]:
+        """Setzt oder entfernt das Passwort für die Datei
+        
+        Args:
+            password: Neues Passwort (None oder '' zum Entfernen)
+        """
+        try:
+            if not self.workbook:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            if password:
+                self._log("Setze Passwort...")
+                self.workbook.save(password=password)
+                self.file_password = password
+            else:
+                self._log("Entferne Passwort...")
+                # Speichern ohne Passwort entfernt das Passwort
+                self.workbook.save()
+                self.file_password = None
+            
+            return {'success': True, 'hasPassword': bool(self.file_password)}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Setzen des Passworts: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def get_password_status(self) -> Dict[str, Any]:
+        """Gibt zurück ob die Datei ein Passwort hat"""
+        return {
+            'success': True,
+            'hasPassword': bool(self.file_password),
+            'passwordKnown': self.file_password is not None
+        }
     
     def close_session(self) -> Dict[str, Any]:
         """Schließt die Session"""
@@ -193,6 +572,10 @@ class ExcelLiveSession:
             self._log(f"Lösche Zeile {excel_row}")
             self.worksheet.range(f'{excel_row}:{excel_row}').delete()
             
+            # Journal-Eintrag
+            self._journal_add('deleteRow', {'rowIndex': row_index})
+            self._check_auto_save()
+            
             return {'success': True, 'deletedRow': row_index}
             
         except Exception as e:
@@ -211,6 +594,10 @@ class ExcelLiveSession:
             self._log(f"Füge {count} Zeile(n) bei {excel_row_start} ein")
             self.worksheet.range(f'{excel_row_start}:{excel_row_end}').insert(shift='down')
             
+            # Journal-Eintrag
+            self._journal_add('insertRow', {'rowIndex': row_index, 'count': count})
+            self._check_auto_save()
+            
             return {'success': True, 'insertedAt': row_index, 'count': count}
             
         except Exception as e:
@@ -223,43 +610,51 @@ class ExcelLiveSession:
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
             
+            # Excel-Zeilen sind 1-basiert, Header ist Zeile 1, Daten beginnen bei Zeile 2
             excel_from = from_index + 2
             excel_to = to_index + 2
             
             self._log(f"Verschiebe Zeile {excel_from} nach {excel_to}")
             
-            # Ermittle Spaltenanzahl
-            last_col = self.worksheet.used_range.last_cell.column if self.worksheet.used_range else 10
-            last_col_letter = self._get_column_letter(last_col)
-            
             if from_index > to_index:
                 # Nach oben verschieben
-                # 1. Insert leere Zeile bei Ziel
-                self.worksheet.range(f'{excel_to}:{excel_to}').insert(shift='down')
-                # 2. Kopiere Quell-Zeile (jetzt +1) zur Ziel-Zeile
-                new_from = excel_from + 1
-                source_rng = self.worksheet.range(f'A{new_from}:{last_col_letter}{new_from}')
-                dest_rng = self.worksheet.range(f'A{excel_to}')
+                source_row = self.worksheet.range(f'{excel_from}:{excel_from}')
+                target_row = self.worksheet.range(f'{excel_to}:{excel_to}')
+                
                 if platform.system() == 'Windows':
-                    source_rng.api.Copy(Destination=dest_rng.api)
+                    source_row.api.Cut()
+                    target_row.api.Insert(Shift=-4121)  # xlShiftDown
                 else:
-                    source_rng.api.copy_range(destination=dest_rng.api)
-                # 3. Lösche alte Zeile
-                self.worksheet.range(f'{new_from}:{new_from}').delete()
+                    # macOS: Verwende xlwings copy() mit destination
+                    # 1. Insert leere Zeile bei Ziel
+                    target_row.insert(shift='down')
+                    # 2. Quellzeile ist jetzt +1 gerutscht
+                    new_from = excel_from + 1
+                    source_row_new = self.worksheet.range(f'{new_from}:{new_from}')
+                    target_row_new = self.worksheet.range(f'{excel_to}:{excel_to}')
+                    # 3. Kopiere ganze Zeile mit xlwings copy()
+                    source_row_new.copy(destination=target_row_new)
+                    # 4. Lösche alte Zeile
+                    source_row_new.delete(shift='up')
             else:
                 # Nach unten verschieben
-                # 1. Insert leere Zeile nach Ziel
-                after_target = excel_to + 1
-                self.worksheet.range(f'{after_target}:{after_target}').insert(shift='down')
-                # 2. Kopiere Quell-Zeile zur neuen Position
-                source_rng = self.worksheet.range(f'A{excel_from}:{last_col_letter}{excel_from}')
-                dest_rng = self.worksheet.range(f'A{after_target}')
+                insert_at = excel_to + 1
+                source_row = self.worksheet.range(f'{excel_from}:{excel_from}')
+                insert_row = self.worksheet.range(f'{insert_at}:{insert_at}')
+                
                 if platform.system() == 'Windows':
-                    source_rng.api.Copy(Destination=dest_rng.api)
+                    source_row.api.Cut()
+                    insert_row.api.Insert(Shift=-4121)  # xlShiftDown
                 else:
-                    source_rng.api.copy_range(destination=dest_rng.api)
-                # 3. Lösche alte Zeile
-                self.worksheet.range(f'{excel_from}:{excel_from}').delete()
+                    # macOS: Verwende xlwings copy() mit destination
+                    # 1. Insert leere Zeile nach Ziel
+                    insert_row.insert(shift='down')
+                    # 2. Kopiere Quellzeile zur neuen Position
+                    source_row_copy = self.worksheet.range(f'{excel_from}:{excel_from}')
+                    dest_row = self.worksheet.range(f'{insert_at}:{insert_at}')
+                    source_row_copy.copy(destination=dest_row)
+                    # 3. Lösche alte Zeile
+                    self.worksheet.range(f'{excel_from}:{excel_from}').delete(shift='up')
             
             return {'success': True, 'movedFrom': from_index, 'movedTo': to_index}
             
@@ -286,6 +681,58 @@ class ExcelLiveSession:
             
         except Exception as e:
             self._log(f"Fehler beim Verstecken der Zeile: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def hide_rows_batch(self, row_indices: list, hidden: bool = True) -> Dict[str, Any]:
+        """Versteckt oder zeigt mehrere Zeilen auf einmal (Performance-optimiert)"""
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            if not row_indices:
+                return {'success': True, 'count': 0}
+            
+            # Konvertiere zu Excel-Zeilen (0-basiert -> 1-basiert + Header)
+            excel_rows = [idx + 2 for idx in row_indices]
+            
+            self._log(f"Batch {'verstecke' if hidden else 'zeige'} {len(excel_rows)} Zeilen")
+            
+            # Gruppiere aufeinanderfolgende Zeilen für effizientere Ranges
+            # z.B. [2,3,4,7,8,10] -> ["2:4", "7:8", "10:10"]
+            excel_rows.sort()
+            ranges = []
+            start = excel_rows[0]
+            end = excel_rows[0]
+            
+            for row in excel_rows[1:]:
+                if row == end + 1:
+                    end = row
+                else:
+                    ranges.append(f'{start}:{end}')
+                    start = row
+                    end = row
+            ranges.append(f'{start}:{end}')
+            
+            # Screen-Updating deaktivieren für Performance
+            app = self.workbook.app
+            screen_updating = app.screen_updating
+            app.screen_updating = False
+            
+            try:
+                for range_str in ranges:
+                    row_range = self.worksheet.range(range_str)
+                    if hidden:
+                        row_range.row_height = 0
+                    else:
+                        row_range.row_height = None
+            finally:
+                app.screen_updating = screen_updating
+            
+            self._log(f"Batch: {len(excel_rows)} Zeilen {'versteckt' if hidden else 'angezeigt'} ({len(ranges)} Ranges)")
+            return {'success': True, 'count': len(excel_rows), 'hidden': hidden}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Batch-Verstecken: {e}")
             return {'success': False, 'error': str(e)}
     
     def highlight_row(self, row_index: int, color: Optional[str] = None) -> Dict[str, Any]:
@@ -336,8 +783,23 @@ class ExcelLiveSession:
             excel_col = col_index + 1
             col_letter = self._get_column_letter(excel_col)
             
-            self._log(f"Lösche Spalte {col_letter}")
-            self.worksheet.range(f'{col_letter}:{col_letter}').delete()
+            self._log(f"Lösche Spalte {col_letter} (Index {col_index})")
+            
+            # Verwende die native Excel API zum Löschen der gesamten Spalte
+            # Dies stellt sicher, dass auch Tabellen-Bereiche korrekt angepasst werden
+            if platform.system() == 'Darwin':
+                # macOS: Verwende xlwings api direkt für ganze Spalte
+                self.worksheet.range(f'{col_letter}:{col_letter}').api.entire_column.delete()
+            else:
+                # Windows: Verwende api.Delete() mit Shift-Parameter
+                self.worksheet.range(f'{col_letter}:{col_letter}').api.Delete()
+            
+            # Screen refresh erzwingen
+            self._force_screen_refresh()
+            
+            # Journal-Eintrag
+            self._journal_add('deleteColumn', {'colIndex': col_index})
+            self._check_auto_save()
             
             return {'success': True, 'deletedColumn': col_index}
             
@@ -362,6 +824,10 @@ class ExcelLiveSession:
             if headers:
                 for i, header in enumerate(headers):
                     self.worksheet.range((1, excel_col + i)).value = header
+            
+            # Journal-Eintrag
+            self._journal_add('insertColumn', {'colIndex': col_index, 'count': count, 'headers': headers})
+            self._check_auto_save()
             
             return {'success': True, 'insertedAt': col_index, 'count': count}
             
@@ -423,12 +889,15 @@ class ExcelLiveSession:
             
             excel_col = col_index + 1
             col_letter = self._get_column_letter(excel_col)
-            col_range = self.worksheet.range(f'{col_letter}:{col_letter}')
             
-            if hidden:
-                col_range.column_width = 0
+            # Nutze eine Zelle der Spalte und dann entire_column
+            col_range = self.worksheet.range(f'{col_letter}1')
+            
+            if platform.system() == 'Windows':
+                col_range.api.EntireColumn.Hidden = hidden
             else:
-                col_range.column_width = None  # Standard-Breite
+                # macOS: Nutze xlwings api
+                col_range.api.entire_column.hidden.set(hidden)
             
             self._log(f"Spalte {col_letter} {'versteckt' if hidden else 'angezeigt'}")
             return {'success': True, 'column': col_index, 'hidden': hidden}
@@ -450,13 +919,249 @@ class ExcelLiveSession:
             excel_row = row_index + 2
             excel_col = col_index + 1
             
+            # Alten Wert für Journal holen
+            old_value = self.worksheet.range((excel_row, excel_col)).value
+            
             self.worksheet.range((excel_row, excel_col)).value = value
+            
+            # Änderung im Journal protokollieren
+            self._journal_add('setCellValue', {
+                'row': row_index,
+                'col': col_index,
+                'oldValue': str(old_value) if old_value else None,
+                'newValue': str(value) if value else None
+            })
+            
+            # Prüfen ob Auto-Save fällig ist
+            self._check_auto_save()
             
             return {'success': True, 'row': row_index, 'col': col_index, 'value': value}
             
         except Exception as e:
             self._log(f"Fehler beim Setzen des Zellwerts: {e}")
             return {'success': False, 'error': str(e)}
+    
+    def set_column_values(self, col_index: int, values: list, start_row: int = 0) -> Dict[str, Any]:
+        """Setzt alle Werte einer Spalte auf einmal (effizienter als einzelne setCellValue Aufrufe)
+        
+        Args:
+            col_index: 0-basierter Spaltenindex
+            values: Liste von Werten (für jede Zeile ein Wert)
+            start_row: 0-basierter Start-Zeilenindex (Default: 0 = erste Datenzeile)
+        """
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            excel_col = col_index + 1
+            excel_start_row = start_row + 2  # +2 weil Header in Zeile 1
+            
+            # Werte als vertikale Liste formatieren (jeder Wert in eigener Liste)
+            vertical_values = [[v] for v in values]
+            
+            # Range für die gesamte Spalte
+            end_row = excel_start_row + len(values) - 1
+            col_letter = self._get_column_letter(excel_col)
+            range_addr = f'{col_letter}{excel_start_row}:{col_letter}{end_row}'
+            
+            self._log(f"Setze {len(values)} Werte in Spalte {col_letter} (Zeilen {excel_start_row}-{end_row})")
+            self.worksheet.range(range_addr).value = vertical_values
+            
+            return {'success': True, 'colIndex': col_index, 'count': len(values)}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Setzen der Spaltenwerte: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    # =========================================================================
+    # FILTER-OPERATIONEN
+    # =========================================================================
+    
+    def set_autofilter(self, filters: list = None) -> Dict[str, Any]:
+        """Setzt AutoFilter auf das Worksheet
+        
+        Args:
+            filters: Liste von Filter-Definitionen:
+                     [{ colIndex: 0, criteria: "value" }, ...]
+                     Wenn None oder leer, wird AutoFilter entfernt
+        """
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            used_range = self.worksheet.used_range
+            if not used_range:
+                return {'success': False, 'error': 'Keine Daten vorhanden'}
+            
+            self._log(f"set_autofilter aufgerufen mit: {filters}")
+            self._log(f"Platform: {platform.system()}")
+            
+            is_windows = platform.system() == 'Windows'
+            
+            try:
+                if filters and len(filters) > 0:
+                    if is_windows:
+                        # ===== WINDOWS =====
+                        # AutoFilter aktivieren falls noch nicht aktiv
+                        try:
+                            if not self.worksheet.api.AutoFilterMode:
+                                used_range.api.AutoFilter()
+                                self._log("Windows: AutoFilter aktiviert")
+                        except Exception as e:
+                            self._log(f"Windows: AutoFilter-Aktivierung Fehler: {e}")
+                            # Versuche es trotzdem
+                            try:
+                                used_range.api.AutoFilter()
+                            except:
+                                pass
+                        
+                        # Filter für jede Spalte setzen
+                        for f in filters:
+                            col_idx = f.get('colIndex', 0) + 1  # 1-basiert
+                            criteria = f.get('criteria', '')
+                            operator = f.get('operator', 'equals')
+                            
+                            if operator == 'contains':
+                                criteria = f'*{criteria}*'
+                            elif operator == 'startsWith':
+                                criteria = f'{criteria}*'
+                            elif operator == 'endsWith':
+                                criteria = f'*{criteria}'
+                            
+                            self._log(f"Windows: Setze Filter Spalte {col_idx}: '{criteria}'")
+                            
+                            try:
+                                # AutoFilter mit Kriterien setzen
+                                used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria)
+                                self._log(f"Windows: Filter gesetzt für Spalte {col_idx}")
+                            except Exception as e:
+                                self._log(f"Windows: Fehler bei Filter Spalte {col_idx}: {e}")
+                    else:
+                        # ===== macOS =====
+                        # AutoFilter via AppleScript ist auf macOS sehr eingeschränkt.
+                        # Stattdessen: Zeilen ausblenden, die nicht dem Filter entsprechen.
+                        import subprocess
+                        
+                        self._log(f"macOS: Verwende Zeilen-Ausblendung statt AutoFilter")
+                        
+                        last_row = used_range.last_cell.row
+                        wb_name = self.workbook.name
+                        ws_name = self.worksheet.name
+                        
+                        # Erst alle Daten der Filter-Spalten einlesen (performant)
+                        rows_to_hide = set()
+                        
+                        for f in filters:
+                            col_idx = f.get('colIndex', 0) + 1  # 1-basiert für Excel
+                            criteria = f.get('criteria', '').lower()
+                            operator = f.get('operator', 'equals')
+                            
+                            self._log(f"macOS: Filter Spalte {col_idx}, Operator '{operator}', Kriterium '{criteria}'")
+                            
+                            # Ganze Spalte auf einmal lesen (viel schneller!)
+                            col_letter = self._get_column_letter(col_idx)
+                            col_range = self.worksheet.range(f'{col_letter}2:{col_letter}{last_row}')
+                            col_values = col_range.value
+                            
+                            # Wenn nur ein Wert, in Liste umwandeln
+                            if not isinstance(col_values, list):
+                                col_values = [col_values]
+                            
+                            for idx, cell_value in enumerate(col_values):
+                                row_num = idx + 2  # Zeile 2, 3, 4, ...
+                                cell_str = str(cell_value).lower() if cell_value is not None else ''
+                                
+                                # Prüfe ob Zeile dem Filter entspricht
+                                matches = False
+                                if operator == 'contains':
+                                    matches = criteria in cell_str
+                                elif operator == 'startsWith':
+                                    matches = cell_str.startswith(criteria)
+                                elif operator == 'endsWith':
+                                    matches = cell_str.endswith(criteria)
+                                elif operator == 'equals':
+                                    matches = cell_str == criteria
+                                else:
+                                    matches = criteria in cell_str  # Fallback
+                                
+                                if not matches:
+                                    rows_to_hide.add(row_num)
+                        
+                        self._log(f"macOS: {len(rows_to_hide)} Zeilen werden ausgeblendet")
+                        
+                        # Zeilen ausblenden via xlwings direkt (nicht AppleScript)
+                        # Erst alle Zeilen einblenden
+                        try:
+                            self._log(f"macOS: Blende alle Zeilen ein...")
+                            # Nutze xlwings direkt für einzelne Zeilen (langsamer aber funktioniert)
+                            for row_num in range(2, min(last_row + 1, 100)):  # Erstmal nur erste 100
+                                try:
+                                    row_range = self.worksheet.range(f'A{row_num}')
+                                    row_range.api.entire_row.hidden.set(False)
+                                except:
+                                    pass
+                            
+                            # Zeilen ausblenden
+                            hidden_count = 0
+                            self._log(f"macOS: Blende {len(rows_to_hide)} Zeilen aus...")
+                            for row_num in rows_to_hide:
+                                try:
+                                    row_range = self.worksheet.range(f'A{row_num}')
+                                    row_range.api.entire_row.hidden.set(True)
+                                    hidden_count += 1
+                                except Exception as e:
+                                    if hidden_count == 0:
+                                        self._log(f"macOS: Fehler bei Zeile {row_num}: {e}")
+                            
+                            self._log(f"macOS: {hidden_count} Zeilen ausgeblendet")
+                            
+                        except Exception as e:
+                            self._log(f"macOS: Fehler bei Zeilen-Ausblendung: {e}")
+                else:
+                    # ===== AutoFilter entfernen / Alle Zeilen einblenden =====
+                    if is_windows:
+                        try:
+                            if self.worksheet.api.AutoFilterMode:
+                                self.worksheet.api.AutoFilterMode = False
+                                self._log("Windows: AutoFilter entfernt")
+                        except Exception as e:
+                            self._log(f"Windows: Fehler beim Entfernen: {e}")
+                    else:
+                        # macOS: Alle Zeilen wieder einblenden via AppleScript
+                        import subprocess
+                        
+                        self._log("macOS: Alle Zeilen einblenden")
+                        last_row = used_range.last_cell.row
+                        
+                        try:
+                            # Nutze xlwings direkt
+                            shown_count = 0
+                            for row_num in range(2, last_row + 1):
+                                try:
+                                    row_range = self.worksheet.range(f'A{row_num}')
+                                    if row_range.api.entire_row.hidden.get():
+                                        row_range.api.entire_row.hidden.set(False)
+                                        shown_count += 1
+                                except:
+                                    pass
+                            self._log(f"macOS: {shown_count} Zeilen eingeblendet")
+                        except Exception as e:
+                            self._log(f"macOS: Fehler beim Einblenden: {e}")
+                        
+            except Exception as api_error:
+                self._log(f"AutoFilter API Fehler: {api_error}")
+                return {'success': False, 'error': str(api_error)}
+            
+            self._log(f"AutoFilter abgeschlossen: {len(filters) if filters else 0} Filter")
+            return {'success': True, 'filterCount': len(filters) if filters else 0}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Setzen des AutoFilters: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def clear_autofilter(self) -> Dict[str, Any]:
+        """Entfernt alle AutoFilter"""
+        return self.set_autofilter(None)
     
     def get_data(self) -> Dict[str, Any]:
         """Liest alle Daten aus dem aktuellen Sheet"""
@@ -491,16 +1196,21 @@ class ExcelLiveSession:
         action = cmd.get('action', '')
         
         handlers = {
-            'open': lambda: self.open_file(cmd.get('filePath'), cmd.get('sheetName')),
-            'save': lambda: self.save_file(cmd.get('outputPath')),
+            'open': lambda: self.open_file(cmd.get('filePath'), cmd.get('sheetName'), cmd.get('password')),
+            'save': lambda: self.save_file(cmd.get('outputPath'), cmd.get('password')),
             'close': lambda: self.close_session(),
             'getData': lambda: self.get_data(),
+            
+            # Passwort
+            'setPassword': lambda: self.set_password(cmd.get('password')),
+            'getPasswordStatus': lambda: self.get_password_status(),
             
             # Zeilen
             'deleteRow': lambda: self.delete_row(cmd.get('rowIndex')),
             'insertRow': lambda: self.insert_row(cmd.get('rowIndex'), cmd.get('count', 1)),
             'moveRow': lambda: self.move_row(cmd.get('fromIndex'), cmd.get('toIndex')),
             'hideRow': lambda: self.hide_row(cmd.get('rowIndex'), cmd.get('hidden', True)),
+            'hideRowsBatch': lambda: self.hide_rows_batch(cmd.get('rowIndices', []), cmd.get('hidden', True)),
             'highlightRow': lambda: self.highlight_row(cmd.get('rowIndex'), cmd.get('color')),
             
             # Spalten
@@ -511,10 +1221,21 @@ class ExcelLiveSession:
             
             # Zellen
             'setCellValue': lambda: self.set_cell_value(cmd.get('rowIndex'), cmd.get('colIndex'), cmd.get('value')),
+            'setColumnValues': lambda: self.set_column_values(cmd.get('colIndex'), cmd.get('values', []), cmd.get('startRow', 0)),
+            
+            # Filter
+            'setAutoFilter': lambda: self.set_autofilter(cmd.get('filters')),
+            'clearAutoFilter': lambda: self.clear_autofilter(),
             
             # Session
             'ping': lambda: {'success': True, 'pong': True},
+            'checkAlive': lambda: self.check_alive(),
             'quit': lambda: self._quit(),
+            'setVisible': lambda: self.set_visible(cmd.get('visible', True)),
+            
+            # Recovery
+            'getRecoveryFiles': lambda: self.get_recovery_files(),
+            'deleteRecoveryFile': lambda: self.delete_recovery_file(cmd.get('filePath')),
         }
         
         handler = handlers.get(action)
@@ -526,6 +1247,8 @@ class ExcelLiveSession:
     def _quit(self) -> Dict[str, Any]:
         """Beendet die Session"""
         self._is_running = False
+        # Journal flushen vor dem Beenden
+        self._flush_journal()
         self.close_session()
         return {'success': True, 'message': 'Session beendet'}
     

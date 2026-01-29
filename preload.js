@@ -87,16 +87,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     // Session-Management
     liveSessionStart: () => ipcRenderer.invoke('liveSession:start'),
-    liveSessionOpenFile: (filePath, sheetName) => ipcRenderer.invoke('liveSession:openFile', filePath, sheetName),
-    liveSessionSaveFile: (outputPath) => ipcRenderer.invoke('liveSession:saveFile', outputPath),
+    liveSessionOpenFile: (filePath, sheetName, password) => ipcRenderer.invoke('liveSession:openFile', filePath, sheetName, password),
+    liveSessionSaveFile: (outputPath, password) => ipcRenderer.invoke('liveSession:saveFile', outputPath, password),
     liveSessionClose: () => ipcRenderer.invoke('liveSession:close'),
     liveSessionGetData: () => ipcRenderer.invoke('liveSession:getData'),
+    
+    // Passwort-Funktionen
+    liveSessionSetPassword: (password) => ipcRenderer.invoke('liveSession:setPassword', password),
+    liveSessionGetPasswordStatus: () => ipcRenderer.invoke('liveSession:getPasswordStatus'),
     
     // Zeilen-Operationen (werden SOFORT in Excel ausgeführt!)
     liveSessionDeleteRow: (rowIndex) => ipcRenderer.invoke('liveSession:deleteRow', rowIndex),
     liveSessionInsertRow: (rowIndex, count) => ipcRenderer.invoke('liveSession:insertRow', rowIndex, count || 1),
     liveSessionMoveRow: (fromIndex, toIndex) => ipcRenderer.invoke('liveSession:moveRow', fromIndex, toIndex),
     liveSessionHideRow: (rowIndex, hidden) => ipcRenderer.invoke('liveSession:hideRow', rowIndex, hidden !== false),
+    liveSessionHideRowsBatch: (rowIndices, hidden) => ipcRenderer.invoke('liveSession:hideRowsBatch', rowIndices, hidden !== false),
     liveSessionHighlightRow: (rowIndex, color) => ipcRenderer.invoke('liveSession:highlightRow', rowIndex, color),
     
     // Spalten-Operationen (werden SOFORT in Excel ausgeführt!)
@@ -106,5 +111,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
     liveSessionHideColumn: (colIndex, hidden) => ipcRenderer.invoke('liveSession:hideColumn', colIndex, hidden !== false),
     
     // Zell-Operationen
-    liveSessionSetCellValue: (rowIndex, colIndex, value) => ipcRenderer.invoke('liveSession:setCellValue', rowIndex, colIndex, value)
+    liveSessionSetCellValue: (rowIndex, colIndex, value) => ipcRenderer.invoke('liveSession:setCellValue', rowIndex, colIndex, value),
+    liveSessionSetColumnValues: (colIndex, values, startRow) => ipcRenderer.invoke('liveSession:setColumnValues', colIndex, values, startRow || 0),
+    
+    // Filter-Operationen
+    liveSessionSetAutoFilter: (filters) => ipcRenderer.invoke('liveSession:setAutoFilter', filters),
+    liveSessionClearAutoFilter: () => ipcRenderer.invoke('liveSession:clearAutoFilter'),
+    
+    // Sichtbarkeit & Status
+    liveSessionSetVisible: (visible) => ipcRenderer.invoke('liveSession:setVisible', visible),
+    liveSessionCheckAlive: () => ipcRenderer.invoke('liveSession:checkAlive'),
+    
+    // Recovery
+    liveSessionGetRecoveryFiles: () => ipcRenderer.invoke('liveSession:getRecoveryFiles'),
+    liveSessionDeleteRecoveryFile: (filePath) => ipcRenderer.invoke('liveSession:deleteRecoveryFile', filePath),
+    liveSessionOpenRecoveryFolder: () => ipcRenderer.invoke('liveSession:openRecoveryFolder')
 });

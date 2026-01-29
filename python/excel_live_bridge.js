@@ -11,6 +11,17 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
+// Globaler Handler für EPIPE-Fehler (verhindert Crash beim Beenden)
+process.on('uncaughtException', (err) => {
+    if (err.code === 'EPIPE' || err.message?.includes('EPIPE')) {
+        // EPIPE während Shutdown ignorieren
+        console.error('[LiveSession] EPIPE ignoriert (Shutdown)');
+        return;
+    }
+    // Andere Fehler weiterleiten
+    throw err;
+});
+
 // Python-Pfad ermitteln (übernommen von python_bridge.js)
 function getPythonBasePath() {
     const isPackaged = process.mainModule 
@@ -79,6 +90,7 @@ class ExcelLiveSession {
         this.currentReject = null;
         this.isReady = false;
         this.responseBuffer = '';
+        this.isBusy = false;  // true wenn gerade ein Befehl verarbeitet wird
     }
 
     /**
@@ -101,42 +113,65 @@ class ExcelLiveSession {
                 cwd: __dirname
             });
 
+            // Flag um zu verhindern, dass nach close noch geloggt wird
+            let processEnded = false;
+
             // stderr = Log-Output
             this.pythonProcess.stderr.on('data', (data) => {
-                console.log('[Python]', data.toString().trim());
+                if (processEnded) return;
+                try {
+                    console.log('[Python]', data.toString().trim());
+                } catch (e) {
+                    // Ignore EPIPE errors during shutdown
+                }
             });
 
             // stdout = JSON-Responses
             this.pythonProcess.stdout.on('data', (data) => {
-                this.responseBuffer += data.toString();
-                
-                // Verarbeite vollständige JSON-Zeilen
-                const lines = this.responseBuffer.split('\n');
-                this.responseBuffer = lines.pop(); // Letzte (möglicherweise unvollständige) Zeile behalten
-                
-                for (const line of lines) {
-                    if (line.trim()) {
-                        try {
-                            const response = JSON.parse(line);
-                            if (this.currentResolve) {
-                                this.currentResolve(response);
-                                this.currentResolve = null;
-                                this.currentReject = null;
+                if (processEnded) return;
+                try {
+                    this.responseBuffer += data.toString();
+                    
+                    // Verarbeite vollständige JSON-Zeilen
+                    const lines = this.responseBuffer.split('\n');
+                    this.responseBuffer = lines.pop(); // Letzte (möglicherweise unvollständige) Zeile behalten
+                    
+                    for (const line of lines) {
+                        if (line.trim()) {
+                            try {
+                                const response = JSON.parse(line);
+                                if (this.currentResolve) {
+                                    this.currentResolve(response);
+                                    this.currentResolve = null;
+                                    this.currentReject = null;
+                                }
+                            } catch (e) {
+                                console.error('[LiveSession] JSON Parse Error:', e, 'Line:', line);
                             }
-                        } catch (e) {
-                            console.error('[LiveSession] JSON Parse Error:', e, 'Line:', line);
                         }
                     }
+                } catch (e) {
+                    // Ignore EPIPE errors during shutdown
                 }
             });
 
             this.pythonProcess.on('error', (err) => {
-                console.error('[LiveSession] Prozess-Fehler:', err);
+                processEnded = true;
+                try {
+                    console.error('[LiveSession] Prozess-Fehler:', err);
+                } catch (e) {
+                    // Ignore logging errors
+                }
                 reject(err);
             });
 
             this.pythonProcess.on('close', (code) => {
-                console.log('[LiveSession] Prozess beendet mit Code:', code);
+                processEnded = true;
+                try {
+                    console.log('[LiveSession] Prozess beendet mit Code:', code);
+                } catch (e) {
+                    // Ignore logging errors during shutdown
+                }
                 this.pythonProcess = null;
                 this.isReady = false;
                 if (this.currentReject) {
@@ -171,16 +206,25 @@ class ExcelLiveSession {
                 return;
             }
 
-            this.currentResolve = resolve;
-            this.currentReject = reject;
+            this.isBusy = true;
+            this.currentResolve = (result) => {
+                this.isBusy = false;
+                resolve(result);
+            };
+            this.currentReject = (error) => {
+                this.isBusy = false;
+                reject(error);
+            };
 
             const cmdJson = JSON.stringify(command) + '\n';
             this.pythonProcess.stdin.write(cmdJson);
 
             // Timeout
+            const timeoutReject = reject;
             setTimeout(() => {
-                if (this.currentReject === reject) {
-                    reject(new Error('Timeout waiting for response'));
+                if (this.currentReject && this.isBusy) {
+                    this.isBusy = false;
+                    timeoutReject(new Error('Timeout waiting for response'));
                     this.currentResolve = null;
                     this.currentReject = null;
                 }
@@ -190,23 +234,50 @@ class ExcelLiveSession {
 
     /**
      * Öffnet eine Excel-Datei
+     * @param {string} filePath - Pfad zur Datei
+     * @param {string} sheetName - Name des Sheets
+     * @param {string|null} password - Optionales Passwort
      */
-    async openFile(filePath, sheetName) {
-        console.log('[LiveSession] Öffne:', filePath, sheetName);
+    async openFile(filePath, sheetName, password = null) {
+        console.log('[LiveSession] Öffne:', filePath, sheetName, password ? '(mit Passwort)' : '');
         return this._sendCommand({
             action: 'open',
             filePath: filePath,
-            sheetName: sheetName
+            sheetName: sheetName,
+            password: password
         });
     }
 
     /**
      * Speichert die Datei
+     * @param {string|null} outputPath - Optionaler neuer Pfad
+     * @param {string|null} password - Optionales Passwort (null=beibehalten, ''=entfernen, 'xxx'=neu)
      */
-    async saveFile(outputPath = null) {
+    async saveFile(outputPath = null, password = null) {
         return this._sendCommand({
             action: 'save',
-            outputPath: outputPath
+            outputPath: outputPath,
+            password: password
+        });
+    }
+    
+    /**
+     * Setzt oder entfernt das Passwort
+     * @param {string|null} password - Neues Passwort (null oder '' zum Entfernen)
+     */
+    async setPassword(password) {
+        return this._sendCommand({
+            action: 'setPassword',
+            password: password
+        });
+    }
+    
+    /**
+     * Gibt den Passwort-Status zurück
+     */
+    async getPasswordStatus() {
+        return this._sendCommand({
+            action: 'getPasswordStatus'
         });
     }
 
@@ -319,6 +390,19 @@ class ExcelLiveSession {
     }
 
     /**
+     * Versteckt oder zeigt mehrere Zeilen auf einmal (Performance-optimiert)
+     * @param {number[]} rowIndices - Array von Zeilen-Indizes
+     * @param {boolean} hidden - true zum Verstecken, false zum Anzeigen
+     */
+    async hideRowsBatch(rowIndices, hidden = true) {
+        return this._sendCommand({
+            action: 'hideRowsBatch',
+            rowIndices: rowIndices,
+            hidden: hidden
+        });
+    }
+
+    /**
      * Markiert eine Zeile mit Farbe
      * @param {number} rowIndex
      * @param {string|null} color - 'green', 'yellow', 'red', etc. oder null zum Entfernen
@@ -396,6 +480,85 @@ class ExcelLiveSession {
             rowIndex: rowIndex,
             colIndex: colIndex,
             value: value
+        });
+    }
+    
+    /**
+     * Setzt alle Werte einer Spalte auf einmal (effizienter bei vielen Werten)
+     * @param {number} colIndex - 0-basierter Spaltenindex
+     * @param {Array} values - Array von Werten für jede Zeile
+     * @param {number} startRow - 0-basierter Start-Zeilenindex (Default: 0)
+     */
+    async setColumnValues(colIndex, values, startRow = 0) {
+        return this._sendCommand({
+            action: 'setColumnValues',
+            colIndex: colIndex,
+            values: values,
+            startRow: startRow
+        });
+    }
+    
+    /**
+     * Setzt AutoFilter in Excel
+     * @param {Array} filters - Array von {colIndex, criteria, operator}
+     */
+    async setAutoFilter(filters) {
+        return this._sendCommand({
+            action: 'setAutoFilter',
+            filters: filters
+        });
+    }
+    
+    /**
+     * Entfernt alle AutoFilter
+     */
+    async clearAutoFilter() {
+        return this._sendCommand({
+            action: 'clearAutoFilter'
+        });
+    }
+    
+    /**
+     * Zeigt oder versteckt das Excel-Fenster
+     */
+    async setVisible(visible) {
+        return this._sendCommand({
+            action: 'setVisible',
+            visible: visible
+        });
+    }
+    
+    /**
+     * Prüft ob Excel und das Workbook noch aktiv sind
+     * Wenn gerade ein Befehl läuft, wird angenommen dass alles OK ist
+     */
+    async checkAlive() {
+        // Wenn gerade ein Befehl läuft, ist Excel definitiv noch aktiv
+        if (this.isBusy) {
+            return { success: true, alive: true, reason: 'busy' };
+        }
+        
+        return this._sendCommand({
+            action: 'checkAlive'
+        });
+    }
+    
+    /**
+     * Gibt verfügbare Recovery-Dateien zurück
+     */
+    async getRecoveryFiles() {
+        return this._sendCommand({
+            action: 'getRecoveryFiles'
+        });
+    }
+    
+    /**
+     * Löscht eine Recovery-Datei
+     */
+    async deleteRecoveryFile(filePath) {
+        return this._sendCommand({
+            action: 'deleteRecoveryFile',
+            filePath: filePath
         });
     }
 }

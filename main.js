@@ -4399,11 +4399,11 @@ ipcMain.handle('liveSession:start', async () => {
 });
 
 // Datei öffnen
-ipcMain.handle('liveSession:openFile', async (event, filePath, sheetName) => {
-    console.log('[LiveSession] IPC: openFile', filePath, sheetName);
+ipcMain.handle('liveSession:openFile', async (event, filePath, sheetName, password) => {
+    console.log('[LiveSession] IPC: openFile', filePath, sheetName, password ? '(mit Passwort)' : '');
     try {
         const session = getLiveSession();
-        return await session.openFile(filePath, sheetName);
+        return await session.openFile(filePath, sheetName, password);
     } catch (error) {
         console.error('[LiveSession] openFile error:', error);
         return { success: false, error: error.message };
@@ -4411,13 +4411,73 @@ ipcMain.handle('liveSession:openFile', async (event, filePath, sheetName) => {
 });
 
 // Datei speichern
-ipcMain.handle('liveSession:saveFile', async (event, outputPath) => {
-    console.log('[LiveSession] IPC: saveFile', outputPath);
+// password: undefined = altes Passwort beibehalten, null = Passwort entfernen, 'xxx' = neues Passwort
+ipcMain.handle('liveSession:saveFile', async (event, outputPath, password) => {
     try {
         const session = getLiveSession();
-        return await session.saveFile(outputPath);
+        
+        // Hole aktuelles Passwort der Session
+        const currentPasswordStatus = await session.getPasswordStatus();
+        const currentPassword = currentPasswordStatus.hasPassword ? 'HAS_PASSWORD' : null;
+        
+        // Python speichert die Datei
+        // Wenn password === undefined, soll Python das Original-Passwort beibehalten (keine Entschlüsselung)
+        const result = await session.saveFile(outputPath, password === undefined ? 'KEEP' : null);
+        
+        if (!result.success) {
+            return result;
+        }
+        
+        // Passwort-Schutz mit xlsx-populate:
+        // - password === undefined: altes Passwort beibehalten (nichts tun, Datei ist noch verschlüsselt)
+        // - password === null: Passwort entfernen (Datei wurde entschlüsselt, nichts weiter tun)
+        // - password === 'xxx': neues Passwort setzen
+        if (password && outputPath) {
+            try {
+                const XlsxPopulate = require('xlsx-populate');
+                
+                // Kurze Pause um sicherzustellen dass die Datei vollständig geschrieben wurde
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                const pwWorkbook = await XlsxPopulate.fromFileAsync(outputPath);
+                await pwWorkbook.toFileAsync(outputPath, { password: password });
+                result.hasPassword = true;
+            } catch (pwError) {
+                console.error('[LiveSession] Fehler beim Passwort-Setzen:', pwError.message);
+                result.passwordError = pwError.message;
+            }
+        } else if (password === null) {
+            result.hasPassword = false;
+        } else {
+            // password === undefined: altes Passwort beibehalten
+            result.hasPassword = currentPassword ? true : false;
+        }
+        
+        return result;
     } catch (error) {
         console.error('[LiveSession] saveFile error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Passwort setzen
+ipcMain.handle('liveSession:setPassword', async (event, password) => {
+    console.log('[LiveSession] IPC: setPassword', password ? '***' : '(entfernen)');
+    try {
+        const session = getLiveSession();
+        return await session.setPassword(password);
+    } catch (error) {
+        console.error('[LiveSession] setPassword error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Passwort-Status abfragen
+ipcMain.handle('liveSession:getPasswordStatus', async () => {
+    try {
+        const session = getLiveSession();
+        return await session.getPasswordStatus();
+    } catch (error) {
         return { success: false, error: error.message };
     }
 });
@@ -4486,6 +4546,16 @@ ipcMain.handle('liveSession:hideRow', async (event, rowIndex, hidden = true) => 
     }
 });
 
+ipcMain.handle('liveSession:hideRowsBatch', async (event, rowIndices, hidden = true) => {
+    console.log('[LiveSession] IPC: hideRowsBatch', rowIndices?.length, 'rows, hidden:', hidden);
+    try {
+        const session = getLiveSession();
+        return await session.hideRowsBatch(rowIndices, hidden);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 ipcMain.handle('liveSession:highlightRow', async (event, rowIndex, color) => {
     console.log('[LiveSession] IPC: highlightRow', rowIndex, color);
     try {
@@ -4544,6 +4614,101 @@ ipcMain.handle('liveSession:setCellValue', async (event, rowIndex, colIndex, val
     try {
         const session = getLiveSession();
         return await session.setCellValue(rowIndex, colIndex, value);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:setColumnValues', async (event, colIndex, values, startRow) => {
+    try {
+        const session = getLiveSession();
+        return await session.setColumnValues(colIndex, values, startRow || 0);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// === FILTER-OPERATIONEN ===
+
+ipcMain.handle('liveSession:setAutoFilter', async (event, filters) => {
+    console.log('[LiveSession] IPC: setAutoFilter', filters);
+    try {
+        const session = getLiveSession();
+        return await session.setAutoFilter(filters);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:clearAutoFilter', async (event) => {
+    console.log('[LiveSession] IPC: clearAutoFilter');
+    try {
+        const session = getLiveSession();
+        return await session.clearAutoFilter();
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:setVisible', async (event, visible) => {
+    console.log('[LiveSession] IPC: setVisible', visible);
+    try {
+        const session = getLiveSession();
+        return await session.setVisible(visible);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:checkAlive', async (event) => {
+    try {
+        const session = getLiveSession();
+        return await session.checkAlive();
+    } catch (error) {
+        return { success: true, alive: false, reason: error.message };
+    }
+});
+
+// Recovery-Dateien abrufen
+ipcMain.handle('liveSession:getRecoveryFiles', async (event) => {
+    try {
+        const session = getLiveSession();
+        return await session.getRecoveryFiles();
+    } catch (error) {
+        return { success: false, error: error.message, files: [] };
+    }
+});
+
+// Recovery-Datei löschen
+ipcMain.handle('liveSession:deleteRecoveryFile', async (event, filePath) => {
+    try {
+        const session = getLiveSession();
+        return await session.deleteRecoveryFile(filePath);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Recovery-Verzeichnis öffnen
+ipcMain.handle('liveSession:openRecoveryFolder', async (event) => {
+    try {
+        const { shell } = require('electron');
+        let recoveryDir;
+        if (process.platform === 'darwin') {
+            recoveryDir = path.join(require('os').homedir(), 'Library', 'Application Support', 'ExcelDataSyncPro', 'recovery');
+        } else if (process.platform === 'win32') {
+            recoveryDir = path.join(process.env.APPDATA || '', 'ExcelDataSyncPro', 'recovery');
+        } else {
+            recoveryDir = path.join(require('os').homedir(), '.exceldatasyncpro', 'recovery');
+        }
+        
+        // Verzeichnis erstellen falls nicht vorhanden
+        if (!require('fs').existsSync(recoveryDir)) {
+            require('fs').mkdirSync(recoveryDir, { recursive: true });
+        }
+        
+        shell.openPath(recoveryDir);
+        return { success: true, path: recoveryDir };
     } catch (error) {
         return { success: false, error: error.message };
     }

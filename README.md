@@ -9,6 +9,7 @@ Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen E
 ## Hauptfunktionen
 
 ### Datentransfer
+
 - **Quelldatei durchsuchen**: Suchen Sie nach Seriennummern oder Text mit Wildcard-Unterstützung (`*` und `?`)
 - **Multi-Select**: Mehrere Zeilen gleichzeitig auswählen und übertragen
 - **Warteschlange**: Zeilen sammeln und als Batch übertragen
@@ -19,30 +20,35 @@ Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen E
 - **Duplikat-Erkennung**: Verhindert doppelte Einträge
 
 ### Arbeitsblatt-Verwaltung
+
 - **Arbeitsblatt-Auswahl**: Wählen Sie für beide Dateien das gewünschte Arbeitsblatt
 - **Spalten-Mapping**: Konfigurieren Sie, welche Spalten kopiert werden
 - **Direktes Speichern**: Änderungen werden direkt in die Datei gespeichert
 
 ### Template-Funktionen
+
 - **Template laden**: Leere Vorlage mit Formatierungen und Conditional Formatting (CF)
-- **🔧 Template aus Quelldatei erstellen**: 
+- **🔧 Template aus Quelldatei erstellen**:
   - Erstellt ein neues Template aus einer beliebigen Quelldatei
   - Behält alle Conditional Formatting Regeln (bis zu 500+)
   - Auswahl welche Arbeitsblätter übernommen werden
   - Optional: Flag- und Kommentar-Spalten automatisch einfügen
   - Alle Spalten werden automatisch verschoben wenn Extra-Spalten aktiviert
 
-### Neuer Monat
-- **📅 Neuen Monat erstellen**: 
+### Monat erstellen
+
+- **📅 Neuen Monat erstellen**:
   - Template kopieren und für neuen Monat vorbereiten
   - Sheet-Name automatisch auf neuen Monat setzen
   - Alle Formatierungen und CF-Regeln bleiben erhalten
 
 ### Export-Funktionen
+
 - **Export nur geänderter Zeilen**: Nur Zeilen mit Flag exportieren
 - **Export mit allen Arbeitsblättern**: Komplette Datei mit allen Sheets exportieren
 
-### Konfiguration
+### Konfiguration speichern
+
 - **Export/Import**: Konfiguration als JSON-Datei sichern und wiederherstellen
 - **Automatisches Laden**: config.json wird automatisch gesucht in:
   1. **Arbeitsordner** (höchste Priorität)
@@ -52,6 +58,7 @@ Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen E
   5. Downloads-Ordner
 
 ### 📁 Arbeitsordner
+
 - **Arbeitsordner festlegen**: Definieren Sie einen Standard-Ordner für alle Datei-Dialoge
 - **Automatische Config-Suche**: config.json wird zuerst im Arbeitsordner gesucht
 - **Persistente Einstellung**: Der Arbeitsordner wird zwischen Sitzungen gespeichert
@@ -59,9 +66,11 @@ Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen E
 ## Datenexplorer
 
 ### Übersicht
+
 Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Exportieren von Excel-Daten.
 
-### Funktionen
+### Explorer-Funktionen
+
 - **📂 Datei öffnen**: Excel-Dateien laden und alle Arbeitsblätter anzeigen
 - **🔍 Suchen & Filtern**: Globale Suche und spaltenbasierte Filter mit Suchen & Ersetzen
 - **✏️ Zellen bearbeiten**: Direktes Bearbeiten von Zellinhalten mit Doppelklick
@@ -78,14 +87,16 @@ Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Ex
 - **⚠️ Pivot-Warnung**: Warnung bei Dateien mit Pivot-Tabellen
 
 ### Speichern & Exportieren
+
 - **💾 Speichern**: Änderungen direkt in die Originaldatei speichern (mit Bestätigung)
-- **📤 Exportieren**: 
+- **📤 Exportieren**:
   - Auswahl welche Arbeitsblätter exportiert werden
   - Formatierung der Originaldatei bleibt erhalten
   - Änderungen werden in Export übernommen
   - Sheets ohne Änderungen behalten volle Formatierung
 
 ### Arbeitsblatt-Wechsel
+
 - Wechseln Sie zwischen Arbeitsblättern ohne Datenverlust
 - **Änderungen bleiben erhalten**: Bearbeitete Daten werden zwischen Sheet-Wechseln gecacht
 - **Warnung bei neuer Datei**: Bei ungespeicherten Änderungen erscheint eine Warnung
@@ -93,11 +104,13 @@ Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Ex
 ## Installation
 
 ### Windows
+
 1. Laden Sie `Excel-Data-Sync-Pro-x.x.x-Setup.exe` herunter
 2. Führen Sie den Installer aus
 3. Starten Sie die App über das Desktop-Icon oder Startmenü
 
 ### macOS
+
 1. Laden Sie `Excel-Data-Sync-Pro-x.x.x.dmg` herunter
 2. Öffnen Sie die DMG-Datei
 3. Ziehen Sie die App in den Programme-Ordner
@@ -147,7 +160,7 @@ Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Ex
    - Alle Conditional Formatting Regeln sind erhalten
    - Spalten sind bereit für Flag/Kommentar wenn aktiviert
 
-### Neuer Monat
+### Workflow Neuer Monat
 
 1. **Template laden** (falls nicht bereits geladen)
 2. **Auf "📅 Neuer Monat" klicken**
@@ -157,23 +170,23 @@ Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Ex
 
 ## Tastenkürzel
 
-| Taste | Aktion |
-|-------|--------|
-| Strg+O | Konfiguration laden |
-| Strg+S | Datei 2 speichern |
-| Enter | Suche starten |
-| F1 | Hilfe anzeigen |
-| Esc | Dialog schließen |
+| Taste   | Aktion              |
+| ------- | ------------------- |
+| Strg+O  | Konfiguration laden |
+| Strg+S  | Datei 2 speichern   |
+| Enter   | Suche starten       |
+| F1      | Hilfe anzeigen      |
+| Esc     | Dialog schließen    |
 
 ## Flags
 
-| Flag | Bedeutung |
-|------|-----------|
-| A | Add - Zeile hinzufügen |
-| D | Delete - Zeile löschen |
-| C | Change - Zeile ändern |
+| Flag | Bedeutung              |
+| ---- | ---------------------- |
+| A    | Add - Zeile hinzufügen |
+| D    | Delete - Zeile löschen |
+| C    | Change - Zeile ändern  |
 
-## Konfiguration
+## Konfiguration laden
 
 ### Gemeinsame Konfiguration (Netzwerklaufwerk)
 
@@ -207,14 +220,14 @@ Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Ex
 
 Excel Data Sync Pro verfügt über ein manipulationssicheres Sicherheits-Protokoll zur Nachverfolgung aller wichtigen Aktionen.
 
-### Funktionen
+### Sicherheits-Funktionen
 
 - **Manipulationssichere Speicherung**: Jeder Log-Eintrag wird mit einer HMAC-SHA256-Signatur versehen
 - **Hash-Chain**: Ähnlich einer Blockchain werden alle Einträge kryptografisch verkettet
 - **Integritätsprüfung**: Nachträgliche Änderungen an der Log-Datei werden erkannt
 - **Log-Levels**: INFO, WARNING, ERROR für verschiedene Ereignistypen
 
-### Protokollierte Aktionen
+### Protokollierte Aktionen (Sicherheit)
 
 - App-Start/Stop
 - Datei-Operationen (Öffnen, Speichern, Export)
@@ -223,7 +236,7 @@ Excel Data Sync Pro verfügt über ein manipulationssicheres Sicherheits-Protoko
 - Sheet-Operationen (Hinzufügen, Löschen)
 - Sicherheitsrelevante Ereignisse
 
-### Verwendung
+### Protokoll-Verwendung
 
 1. Öffnen Sie die **Einstellungen** (⚙️ Button in der Seitenleiste)
 2. Klicken Sie auf **"🔒 Sicherheits-Protokoll"**
@@ -235,7 +248,7 @@ Excel Data Sync Pro verfügt über ein manipulationssicheres Sicherheits-Protoko
 
 Für Dateien auf Netzlaufwerken wird automatisch ein zusätzliches Protokoll geführt, das die Zusammenarbeit mehrerer Benutzer nachvollziehbar macht.
 
-### Funktionen
+### Netzwerk-Funktionen
 
 - **Automatische Erkennung**: Netzlaufwerke werden automatisch erkannt (UNC-Pfade, /Volumes/)
 - **DSGVO-konform**: Nur Rechnername wird protokolliert, keine persönlichen Daten
@@ -253,7 +266,7 @@ Beim Öffnen einer Datei auf einem Netzlaufwerk wird automatisch geprüft:
 
 Falls ja, erscheint eine Warnung:
 
-```
+```text
 ⚠️ Achtung: Möglicher Bearbeitungskonflikt!
 
 Diese Datei wurde kürzlich bearbeitet:
@@ -267,7 +280,7 @@ können Änderungen verloren gehen.
 Trotzdem öffnen?
 ```
 
-### Protokollierte Aktionen
+### Protokollierte Aktionen (Netzwerk)
 
 - Datei speichern (`EXCEL_FILE_SAVED`)
 - Datenübertragung (`DATA_TRANSFER`)
@@ -276,12 +289,13 @@ Trotzdem öffnen?
 ### Log-Datei
 
 Die Netzwerk-Log-Datei wird automatisch erstellt unter:
-```
+
+```text
 \\server\share\.excel-sync-audit.log  (Windows)
 /Volumes/Share/.excel-sync-audit.log  (macOS)
 ```
 
-### Verwendung
+### Netzwerk-Verwendung
 
 1. Laden Sie eine Datei von einem Netzlaufwerk
 2. Klicken Sie auf **"🌐 Netzwerk-Logs"** in den Einstellungen
@@ -303,6 +317,7 @@ Die Netzwerk-Log-Datei wird automatisch erstellt unter:
 ## Changelog
 
 ### v1.0.15
+
 - **Performance-Fix**: Speichern/Exportieren großer Dateien (> 10MB) optimiert
   - Zentrale saveWorkbookOptimized() Funktion für konsistentes Error-Handling
   - Automatische Garbage Collection nach Speichern großer Dateien
@@ -311,6 +326,7 @@ Die Netzwerk-Log-Datei wird automatisch erstellt unter:
   - Stabileres Speichern ohne OOM-Fehler
 
 ### v1.0.12
+
 - **Neu**: Sicherheits-Protokoll (Security-Logs) mit manipulationssicherer Speicherung
 - **Neu**: Netzwerk-Protokoll für Dateien auf Netzlaufwerken (Multi-User-Tracking)
 - **Neu**: Konflikt-Warnung beim Öffnen: Zeigt an wenn Datei kürzlich von anderem Rechner bearbeitet wurde
@@ -324,6 +340,7 @@ Die Netzwerk-Log-Datei wird automatisch erstellt unter:
 - **Neu**: Integritätsprüfung erkennt nachträgliche Manipulationen
 
 ### v1.0.11
+
 - **Neu**: Zeilen einfügen (oberhalb/unterhalb) per Rechtsklick im Datenexplorer
 - **Neu**: Zeilen löschen mit Bestätigungsdialog
 - **Neu**: Spalten einfügen (links/rechts) mit Namenseingabe
@@ -335,6 +352,7 @@ Die Netzwerk-Log-Datei wird automatisch erstellt unter:
 - **Fix**: Korrekte englische Übersetzung für Warteschlange, Vorschau, Export-Button
 
 ### v1.0.10
+
 - **Neu**: Datenexplorer mit erweitertem Funktionsumfang
 - **Neu**: Multi-Zellen-Auswahl (Shift+Klick, Strg+Klick, Mausziehen)
 - **Neu**: Rechtsklick-Kontextmenü zum Löschen/Kopieren von Zellinhalten
@@ -346,50 +364,60 @@ Die Netzwerk-Log-Datei wird automatisch erstellt unter:
 - **Neu**: config.json Suche erweitert auf Arbeitsordner (höchste Priorität)
 
 ### v1.0.9
+
 - **Neu**: Arbeitsordner (Working Directory) einstellbar
 - **Neu**: History-Verlauf für letzte 50 Übertragungen
 - **Neu**: Erweiterte Undo/Redo-Funktionalität
 
 ### v1.0.8
+
 - **Fix**: Template aus Quelldatei funktioniert wieder korrekt
 - Behebt Problem mit Sheet-Namen die Sonderzeichen enthalten (z.B. &, <, >)
 - Sheet-Namen werden jetzt korrekt XML-dekodiert beim Mapping
 
 ### v1.0.7
+
 - **Neu**: Template aus Quelldatei erstellen
 - **Neu**: Arbeitsblatt-Auswahl für Template-Erstellung
 - **Neu**: Automatisches Einfügen von Flag-/Kommentar-Spalten
 - **Neu**: CF-Regeln werden auf ganze Spalten erweitert
 
 ### v1.0.6
+
 - Hybrid-Ansatz für Formatierungserhalt
 - Verbessertes CF-Handling
 
 ### v1.0.5
+
 - Neuer Monat Funktion
 - Export mit allen Sheets
 
 ### v1.0.4
+
 - Icon-Anpassungen
 - UI-Verbesserungen
 
 ## Fehlerbehebung
 
 ### "Datei kann nicht gelesen werden"
+
 - Stellen Sie sicher, dass die Datei nicht in Excel geöffnet ist
 - Prüfen Sie ob es sich um eine gültige .xlsx Datei handelt
 
 ### "Suche findet nichts"
+
 - Die Suche durchsucht alle Spalten
 - Groß-/Kleinschreibung wird ignoriert
 - Wildcards nutzen: `*text*` findet "text" überall
 - Prüfen Sie das ausgewählte Arbeitsblatt
 
 ### "Template enthält keine Formatierungen"
+
 - Verwenden Sie "🔧 Template aus Quelldatei" statt manueller Template-Erstellung
 - Die Quelldatei muss die gewünschten CF-Regeln enthalten
 
 ### "Sheet-Name nicht gefunden bei Template-Erstellung"
+
 - Sheet-Namen mit Sonderzeichen werden seit v1.0.8 korrekt unterstützt
 - Aktualisieren Sie auf die neueste Version
 

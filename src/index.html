@@ -1598,14 +1598,14 @@
                         </div>
                     </div>
                     <div class="config-group" style="margin-top: 10px;">
-                        <label class="config-label" data-i18n="excelEngine">Excel-Engine</label>
-                        <select class="config-select" id="selectExcelEngine" style="width: 100%;">
-                            <option value="auto">🔄 Auto (xlwings wenn Excel vorhanden)</option>
-                            <option value="xlwings">⚡ xlwings (erfordert Excel)</option>
-                            <option value="openpyxl">📦 openpyxl (ohne Excel)</option>
+                        <label class="config-label">Excel-Engine</label>
+                        <select class="config-select" id="selectExcelEngine" style="width: 100%; margin-bottom: 8px;">
+                            <option value="auto">🔄 Automatisch</option>
+                            <option value="xlwings">🔴 xlwings (Live-Modus)</option>
+                            <option value="openpyxl">📦 openpyxl (Offline)</option>
                         </select>
-                        <div id="excelEngineInfo" style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">
-                            Engine wird beim Start erkannt
+                        <div id="excelEngineInfo" style="font-size: 12px; color: var(--text-muted); padding: 8px; background: var(--bg-lighter); border-radius: 4px;">
+                            <span id="engineStatusIcon">⏳</span> <span id="engineStatusText">Wird erkannt...</span>
                         </div>
                     </div>
                     <div style="margin-top: 15px;">
@@ -2114,7 +2114,14 @@
                 <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
                     Der Datenexplorer speichert automatisch alle 30 Sekunden Ihre Änderungen im Hintergrund.<br>
                     Bei einem Absturz oder Stromausfall können Sie beim nächsten Öffnen wählen, ob die letzte Sitzung wiederhergestellt werden soll.<br>
-                    Recovery-Daten werden nach 24 Stunden automatisch gelöscht.
+                    Recovery-Daten werden nach 24 Stunden automatisch gelöscht.<br><br>
+                    <strong>🛡️ Live-Modus Schutz:</strong><br>
+                    • Automatische Backup-Kopie beim Öffnen<br>
+                    • Änderungs-Journal für jede Bearbeitung<br>
+                    • Auto-Save alle 2 Minuten in Excel<br>
+                    <button onclick="openRecoveryFolder()" style="margin-top: 8px; padding: 4px 10px; font-size: 12px; cursor: pointer; background: var(--background-light); border: 1px solid var(--border); border-radius: 4px;">
+                        📁 Recovery-Ordner öffnen
+                    </button>
                 </p>
                 
                 <h4 style="margin: 15px 0 8px 0; color: var(--primary);">⚠️ Warnung bei ungespeicherten Änderungen</h4>
@@ -2557,13 +2564,6 @@
             <span>📅</span> Datum Neu → Alt
         </div>
         <div class="context-menu-divider" style="height: 1px; background: var(--border); margin: 4px 0;"></div>
-        <div class="context-menu-item" data-action="filter-date-soon" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
-            <span>⏰</span> Fällig in X Tagen...
-        </div>
-        <div class="context-menu-item" data-action="filter-date-overdue" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
-            <span>⚠️</span> Überfällig seit X Tagen...
-        </div>
-        <div class="context-menu-divider" style="height: 1px; background: var(--border); margin: 4px 0;"></div>
         <div class="context-menu-item" data-action="hide-column" style="padding: 8px 12px; cursor: pointer; display: flex; align-items: center; gap: 8px;">
             <span>👁️‍🗨️</span> Spalte ausblenden
         </div>
@@ -2619,8 +2619,8 @@
                     <button class="btn btn-primary" id="btnToggleColumns" title="Spalten ein-/ausblenden">
                         ❙❙ Spalten
                     </button>
-                    <button class="btn btn-primary" id="btnExplorerPreview" title="Vorschau des gesamten Datenblattes mit Änderungen" disabled>
-                        👁️ Vorschau
+                    <button class="btn btn-primary" id="btnToggleExcel" title="Excel-Fenster ein-/ausblenden" disabled>
+                        👁️ Excel
                     </button>
                     <button class="btn btn-info" id="btnDataJoin" title="Spalten aus einer anderen Excel-Datei hinzufügen (basierend auf gemeinsamer Seriennummer)" disabled data-i18n="addColumns" data-i18n-title="addColumnsTitle">
                         🔗 Spalten hinzufügen
@@ -2628,19 +2628,22 @@
                     <button class="btn btn-success" id="btnExplorerExport" title="Änderungen speichern oder als neue Datei exportieren">
                         💾 Speichern
                     </button>
-                    <!-- Live Session Toggle -->
-                    <div style="display: flex; align-items: center; gap: 6px; padding: 4px 10px; background: var(--bg-lighter); border-radius: 4px; cursor: pointer;" id="liveSessionToggle" title="Live-Session: Excel bleibt im Hintergrund offen und Änderungen werden sofort ausgeführt">
-                        <input type="checkbox" id="chkLiveSession" class="green-checkbox" style="cursor: pointer;">
-                        <label for="chkLiveSession" style="cursor: pointer; font-size: 12px; white-space: nowrap;">🔴 Live</label>
+                    <!-- Live-Mode Status (automatisch aktiviert wenn Excel verfügbar) -->
+                    <div id="liveModeIndicator" style="display: flex; padding: 4px 12px; border-radius: 4px; font-size: 12px; font-weight: 600; align-items: center; gap: 6px; background: var(--bg-lighter);" title="Live-Modus wird automatisch aktiviert wenn Excel verfügbar ist">
+                        <span id="liveModeIcon">⚫</span>
+                        <span id="liveModeText">Offline</span>
                     </div>
                 </div>
                 
                 <!-- Filter Controls -->
                 <div id="explorerFilterControls" style="display: flex; flex-direction: column; gap: 10px; padding: 12px; background: var(--bg-light); border-radius: 6px; border: 1px solid var(--border); flex-shrink: 0;">
                     <div style="display: flex; gap: 10px; align-items: center;">
-                        <span style="font-weight: 600; font-size: 14px;">🔍 Filter</span>
+                        <span style="font-weight: 600; font-size: 14px; cursor: pointer;" id="filterSectionToggle" title="Filter-Bereich ein-/ausblenden">🔍 Filter <span id="filterToggleIcon">▼</span></span>
                         <button class="btn btn-primary btn-sm" id="btnAddExplorerFilter">➕ Filter hinzufügen</button>
                         <button class="btn btn-secondary btn-sm" id="btnClearExplorerFilters" disabled>🗑️ Filter zurücksetzen</button>
+                        <button class="btn btn-success btn-sm" id="btnSyncFiltersToExcel" style="display: none;" title="Filter an Excel senden (Enter)">▶ An Excel</button>
+                        <!-- Filter-Anzahl Badge -->
+                        <span id="filterCountBadge" style="display: none; background: #ff9800; color: white; font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600;"></span>
                         <!-- Indikatoren-Bereich (rechts) -->
                         <div id="filterIndicatorsContainer" style="display: flex; gap: 8px; margin-left: auto; align-items: center;">
                             <!-- AutoFilter Indikator -->
@@ -2996,6 +2999,7 @@
                 <optgroup label="Datum">
                     <option value="dateInDays">📅 in X Tagen</option>
                     <option value="dateOverdueDays">📅 X Tage überschritten</option>
+                    <option value="dateBetween">📅 Zeitraum von-bis</option>
                     <option value="dateToday">📅 heute</option>
                     <option value="datePast">📅 Vergangenheit</option>
                     <option value="dateFuture">📅 Zukunft</option>
@@ -3005,6 +3009,8 @@
             </select>
             <input type="text" class="filter-value config-input" placeholder="Wert..." style="flex: 1; min-width: 100px;">
             <input type="number" class="filter-days config-input" placeholder="Tage" style="width: 60px; display: none;" min="0">
+            <input type="date" class="filter-date-from config-input" style="width: 130px; display: none;" title="Von-Datum">
+            <input type="date" class="filter-date-to config-input" style="width: 130px; display: none;" title="Bis-Datum">
             <button type="button" class="btn btn-secondary btn-sm remove-filter" style="padding: 2px 8px;">✕</button>
         </div>
     </template>
@@ -4140,6 +4146,63 @@
             localStorage.removeItem(CLEAN_SHUTDOWN_KEY);
         }
         
+        // Öffnet den Recovery-Ordner im Dateimanager
+        async function openRecoveryFolder() {
+            try {
+                const result = await window.electronAPI.liveSessionOpenRecoveryFolder();
+                if (result.success) {
+                    console.log('[Recovery] Ordner geöffnet:', result.path);
+                } else {
+                    console.error('[Recovery] Fehler:', result.error);
+                }
+            } catch (error) {
+                console.error('[Recovery] Fehler:', error);
+            }
+        }
+        
+        // Prüft ob Live-Session Recovery-Dateien vorhanden sind
+        async function checkLiveSessionRecovery() {
+            try {
+                const result = await window.electronAPI.liveSessionGetRecoveryFiles();
+                if (!result.success || !result.files || result.files.length === 0) {
+                    return;
+                }
+                
+                // Gruppiere nach Original-Datei
+                const backups = result.files.filter(f => f.type === 'backup');
+                const journals = result.files.filter(f => f.type === 'journal');
+                
+                if (backups.length === 0 && journals.length === 0) {
+                    return;
+                }
+                
+                // Zusammenfassung erstellen
+                let summary = '🛡️ Live-Modus Recovery-Dateien gefunden:\n\n';
+                
+                for (const backup of backups) {
+                    summary += `📁 Backup: ${backup.name}\n`;
+                    summary += `   Größe: ${Math.round(backup.size / 1024)} KB\n`;
+                    summary += `   Alter: ${backup.ageHours} Stunden\n\n`;
+                }
+                
+                for (const journal of journals) {
+                    summary += `📝 Journal: ${journal.name}\n`;
+                    summary += `   Original: ${journal.originalFile || 'unbekannt'}\n`;
+                    summary += `   Einträge: ${journal.entryCount}\n`;
+                    summary += `   Alter: ${journal.ageHours} Stunden\n\n`;
+                }
+                
+                summary += 'Diese Dateien können zur Wiederherstellung verwendet werden.\n\n';
+                summary += 'Möchten Sie den Recovery-Ordner öffnen?';
+                
+                if (confirm(summary)) {
+                    await openRecoveryFolder();
+                }
+            } catch (error) {
+                console.error('[Recovery] Prüfung fehlgeschlagen:', error);
+            }
+        }
+        
         // Markiert einen sauberen App-Shutdown (kein Crash)
         function markCleanShutdown() {
             localStorage.setItem(CLEAN_SHUTDOWN_KEY, 'true');
@@ -4154,6 +4217,10 @@
         
         async function checkAutoSaveRecovery() {
             try {
+                // === 1. Live-Session Recovery-Dateien prüfen ===
+                await checkLiveSessionRecovery();
+                
+                // === 2. LocalStorage Auto-Save prüfen ===
                 const saved = localStorage.getItem(AUTO_SAVE_KEY);
                 const cleanShutdown = wasCleanShutdown();
                 
@@ -4621,7 +4688,7 @@
             btnExplorerExport: document.getElementById('btnExplorerExport'),
             btnExplorerOpenFile: document.getElementById('btnExplorerOpenFile'),
             btnExplorerSearch: document.getElementById('btnExplorerSearch'),
-            btnExplorerPreview: document.getElementById('btnExplorerPreview'),
+            btnToggleExcel: document.getElementById('btnToggleExcel'),
             btnExplorerFullscreen: document.getElementById('btnExplorerFullscreen'),
             btnCloseExplorerX: document.getElementById('btnCloseExplorerX'),
             btnCloseExplorerFooter: document.getElementById('btnCloseExplorerFooter'),
@@ -6812,6 +6879,32 @@
         // Live Session = Excel bleibt im Hintergrund offen, Operationen werden SOFORT ausgeführt
         
         /**
+         * Aktualisiert den Live-Mode-Indikator in der Explorer-Toolbar
+         */
+        function updateLiveModeIndicator() {
+            const indicator = document.getElementById('liveModeIndicator');
+            
+            if (!indicator) return;
+            
+            const isActive = explorerState.liveSessionActive && explorerState.liveSessionReady;
+            
+            if (isActive) {
+                // Grüner Punkt = Live aktiv
+                indicator.style.background = 'rgba(76, 175, 80, 0.2)';
+                indicator.style.border = '1px solid #4CAF50';
+                indicator.innerHTML = `<span style="color: #4CAF50;">🟢</span> <span style="color: #4CAF50;">Live aktiv</span>`;
+            } else {
+                // Grauer Punkt = Offline/openpyxl
+                indicator.style.background = 'var(--bg-lighter)';
+                indicator.style.border = '1px solid var(--border)';
+                indicator.innerHTML = `<span style="color: var(--text-muted);">⚫</span> <span style="color: var(--text-muted);">Offline</span>`;
+            }
+            
+            // Sync-Filters-Button aktualisieren
+            updateSyncFiltersButton();
+        }
+        
+        /**
          * Startet die Live-Session und öffnet die Datei in Excel
          * @returns {Promise<boolean>} true wenn erfolgreich
          */
@@ -6831,10 +6924,11 @@
                     return false;
                 }
                 
-                // Datei öffnen
+                // Datei öffnen (mit Passwort falls vorhanden)
                 const openResult = await window.electronAPI.liveSessionOpenFile(
                     explorerState.filePath, 
-                    explorerState.selectedSheet
+                    explorerState.selectedSheet,
+                    explorerState.filePassword || null
                 );
                 
                 if (!openResult.success) {
@@ -6844,8 +6938,16 @@
                 
                 explorerState.liveSessionActive = true;
                 explorerState.liveSessionReady = true;
-                console.log('[LiveSession] ✓ Session aktiv');
+                explorerState.excelVisible = false;  // Excel startet versteckt
+                console.log('[LiveSession] ✓ Session aktiv (Excel versteckt)');
                 showFloatingStatus('🔴 Live-Session aktiv', 'success');
+                
+                // Heartbeat starten um Excel-Schließung zu erkennen
+                startLiveSessionHeartbeat();
+                
+                // Live-Mode-Indikator und Excel-Button aktualisieren
+                updateLiveModeIndicator();
+                updateExcelToggleButton();
                 
                 return true;
             } catch (error) {
@@ -6862,13 +6964,200 @@
         async function stopLiveSession() {
             if (!explorerState.liveSessionActive) return;
             
+            // Heartbeat stoppen
+            stopLiveSessionHeartbeat();
+            
             try {
                 await window.electronAPI.liveSessionClose();
                 explorerState.liveSessionActive = false;
                 explorerState.liveSessionReady = false;
+                explorerState.excelVisible = false;
                 console.log('[LiveSession] Session beendet');
+                
+                // Live-Mode-Indikator aktualisieren
+                updateLiveModeIndicator();
+                updateExcelToggleButton();
             } catch (error) {
                 console.error('[LiveSession] Fehler beim Beenden:', error);
+            }
+        }
+        
+        /**
+         * Startet den Heartbeat-Check für die Live-Session
+         * Prüft alle 3 Sekunden ob Excel noch läuft
+         */
+        let heartbeatFailCount = 0;
+        const MAX_HEARTBEAT_FAILS = 2; // Nach 2 aufeinanderfolgenden Fehlern als offline betrachten
+        
+        function startLiveSessionHeartbeat() {
+            stopLiveSessionHeartbeat(); // Vorherigen stoppen falls vorhanden
+            heartbeatFailCount = 0;
+            
+            explorerState.heartbeatInterval = setInterval(async () => {
+                if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) {
+                    stopLiveSessionHeartbeat();
+                    return;
+                }
+                
+                // Wenn pausiert, diesen Check überspringen
+                if (explorerState.heartbeatPaused) {
+                    return;
+                }
+                
+                try {
+                    const result = await window.electronAPI.liveSessionCheckAlive();
+                    
+                    if (result && !result.alive) {
+                        heartbeatFailCount++;
+                        console.warn(`[LiveSession] Heartbeat fail ${heartbeatFailCount}/${MAX_HEARTBEAT_FAILS}, Reason:`, result.reason);
+                        
+                        if (heartbeatFailCount >= MAX_HEARTBEAT_FAILS) {
+                            console.error('[LiveSession] Excel wurde geschlossen!');
+                            stopLiveSessionHeartbeat();
+                            
+                            // Session-State zurücksetzen
+                            explorerState.liveSessionActive = false;
+                            explorerState.liveSessionReady = false;
+                            explorerState.excelVisible = false;
+                            
+                            // UI aktualisieren
+                            updateLiveModeIndicator();
+                            updateExcelToggleButton();
+                            
+                            // Benutzer warnen und fragen ob Session neu gestartet werden soll
+                            showExcelClosedWarning();
+                        }
+                    } else {
+                        // Erfolgreicher Check - Zähler zurücksetzen
+                        heartbeatFailCount = 0;
+                    }
+                } catch (error) {
+                    // Bei Timeout/Error nicht sofort aufgeben - könnte beschäftigt sein
+                    heartbeatFailCount++;
+                    console.warn(`[LiveSession] Heartbeat error ${heartbeatFailCount}/${MAX_HEARTBEAT_FAILS}:`, error.message);
+                }
+            }, 3000); // Alle 3 Sekunden prüfen
+        }
+        
+        /**
+         * Stoppt den Heartbeat-Check
+         */
+        function stopLiveSessionHeartbeat() {
+            if (explorerState.heartbeatInterval) {
+                clearInterval(explorerState.heartbeatInterval);
+                explorerState.heartbeatInterval = null;
+            }
+            explorerState.heartbeatPaused = false;
+        }
+        
+        /**
+         * Pausiert den Heartbeat temporär (für lange Operationen)
+         */
+        function pauseLiveSessionHeartbeat() {
+            explorerState.heartbeatPaused = true;
+            heartbeatFailCount = 0; // Zähler zurücksetzen
+        }
+        
+        /**
+         * Setzt den Heartbeat nach Pause fort
+         */
+        function resumeLiveSessionHeartbeat() {
+            explorerState.heartbeatPaused = false;
+            heartbeatFailCount = 0; // Zähler zurücksetzen
+        }
+        
+        /**
+         * Zeigt eine Warnung an wenn Excel unerwartet geschlossen wurde
+         */
+        function showExcelClosedWarning() {
+            const dialog = document.createElement('div');
+            dialog.className = 'modal-overlay';
+            dialog.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; z-index: 10000;';
+            
+            dialog.innerHTML = `
+                <div style="background: var(--bg-dark); border: 1px solid var(--accent); border-radius: 8px; padding: 24px; max-width: 400px; text-align: center;">
+                    <div style="font-size: 48px; margin-bottom: 16px;">⚠️</div>
+                    <h3 style="margin: 0 0 12px 0; color: var(--accent);">Excel wurde geschlossen</h3>
+                    <p style="margin: 0 0 20px 0; color: var(--text-muted);">
+                        Die Excel-Anwendung wurde unerwartet beendet.<br>
+                        Möchten Sie die Live-Session neu starten?
+                    </p>
+                    <div style="display: flex; gap: 12px; justify-content: center;">
+                        <button id="btnRestartSession" class="btn btn-primary" style="padding: 8px 20px;">
+                            🔄 Neu starten
+                        </button>
+                        <button id="btnDismissWarning" class="btn btn-secondary" style="padding: 8px 20px;">
+                            Schließen
+                        </button>
+                    </div>
+                </div>
+            `;
+            
+            document.body.appendChild(dialog);
+            
+            document.getElementById('btnRestartSession').onclick = async () => {
+                dialog.remove();
+                showFloatingStatus('Starte Live-Session neu...', false);
+                await startLiveSession();
+            };
+            
+            document.getElementById('btnDismissWarning').onclick = () => {
+                dialog.remove();
+            };
+            
+            // Auch bei Klick außerhalb schließen
+            dialog.onclick = (e) => {
+                if (e.target === dialog) dialog.remove();
+            };
+        }
+        
+        /**
+         * Schaltet die Sichtbarkeit des Excel-Fensters um
+         */
+        async function toggleExcelVisibility() {
+            if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) {
+                showFloatingStatus('Keine Live-Session aktiv', true);
+                return;
+            }
+            
+            try {
+                const newVisible = !explorerState.excelVisible;
+                const result = await window.electronAPI.liveSessionSetVisible(newVisible);
+                
+                if (result && result.success) {
+                    explorerState.excelVisible = newVisible;
+                    updateExcelToggleButton();
+                    showFloatingStatus(newVisible ? '👁️ Excel eingeblendet' : '🙈 Excel ausgeblendet');
+                } else {
+                    showFloatingStatus('Fehler beim Umschalten', true);
+                }
+            } catch (error) {
+                console.error('[LiveSession] Fehler bei toggleExcelVisibility:', error);
+                showFloatingStatus('Fehler: ' + error.message, true);
+            }
+        }
+        
+        /**
+         * Aktualisiert den Excel-Toggle-Button basierend auf dem State
+         */
+        function updateExcelToggleButton() {
+            const btn = document.getElementById('btnToggleExcel');
+            if (!btn) return;
+            
+            const isLiveActive = explorerState.liveSessionActive && explorerState.liveSessionReady;
+            btn.disabled = !isLiveActive;
+            
+            if (isLiveActive) {
+                if (explorerState.excelVisible) {
+                    btn.innerHTML = '🙈 Excel';
+                    btn.title = 'Excel-Fenster ausblenden';
+                } else {
+                    btn.innerHTML = '👁️ Excel';
+                    btn.title = 'Excel-Fenster einblenden';
+                }
+            } else {
+                btn.innerHTML = '👁️ Excel';
+                btn.title = 'Live-Session nicht aktiv';
             }
         }
         
@@ -6904,17 +7193,22 @@
         /**
          * Speichert die Live-Session als neue Datei (Export)
          * @param {string} outputPath - Pfad für die Export-Datei
+         * @param {string|null} password - Optionales Passwort
          * @returns {Promise<object>} Ergebnis
          */
-        async function liveSessionExport(outputPath) {
+        async function liveSessionExport(outputPath, password = null) {
             if (!explorerState.liveSessionActive) {
                 return { success: false, error: 'Live-Session nicht aktiv' };
             }
             
             try {
-                const result = await window.electronAPI.liveSessionSaveFile(outputPath);
+                const result = await window.electronAPI.liveSessionSaveFile(outputPath, password);
                 if (result.success) {
                     showFloatingStatus(`✓ Export via Live-Session: ${outputPath.split('/').pop()}`, 'success');
+                    // Passwort-Status aktualisieren
+                    if (password) {
+                        explorerState.filePassword = password;
+                    }
                 }
                 return result;
             } catch (error) {
@@ -6925,24 +7219,10 @@
         
         /**
          * Aktualisiert die UI-Anzeige des Live-Session-Status
+         * Legacy-Funktion - leitet jetzt an updateLiveModeIndicator() weiter
          */
         function updateLiveSessionIndicator() {
-            const chkLiveSession = document.getElementById('chkLiveSession');
-            const liveSessionToggle = document.getElementById('liveSessionToggle');
-            
-            if (chkLiveSession) {
-                chkLiveSession.checked = explorerState.liveSessionActive;
-            }
-            
-            if (liveSessionToggle) {
-                if (explorerState.liveSessionActive) {
-                    liveSessionToggle.style.background = 'rgba(76, 175, 80, 0.3)';
-                    liveSessionToggle.style.border = '1px solid #4CAF50';
-                } else {
-                    liveSessionToggle.style.background = 'var(--bg-lighter)';
-                    liveSessionToggle.style.border = 'none';
-                }
-            }
+            updateLiveModeIndicator();
         }
 
         const explorerState = {
@@ -7007,7 +7287,10 @@
             rowOperationsQueue: [],  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X}]
             // LIVE SESSION MODE - Operationen werden sofort in Excel ausgeführt
             liveSessionActive: false,  // true wenn Live-Session aktiv ist
-            liveSessionReady: false    // true wenn Session bereit für Operationen
+            liveSessionReady: false,   // true wenn Session bereit für Operationen
+            excelVisible: false,       // true wenn Excel-Fenster sichtbar ist
+            heartbeatInterval: null,   // Interval-ID für Heartbeat-Check
+            heartbeatPaused: false     // true wenn Heartbeat pausiert ist (während langer Operationen)
         };
         
         // ==================== Data Join State & Functions ====================
@@ -7337,7 +7620,7 @@
             showNotification(`Vorschau berechnet: ${matches} Matches, ${noMatch} ohne Match`, 'success');
         }
         
-        function executeDataJoin() {
+        async function executeDataJoin() {
             if (!dataJoinState.previewCalculated) {
                 showNotification('Bitte zuerst Vorschau berechnen', 'warning');
                 return;
@@ -7626,15 +7909,97 @@
                 totalCount: totalInsertCount
             });
             
+            // Live-Session: Spalten in Excel einfügen und Werte setzen
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                // Heartbeat pausieren während der Operation
+                pauseLiveSessionHeartbeat();
+                
+                try {
+                    console.log('[LiveSession] DataJoin - Füge Spalten in Excel ein...');
+                    
+                    // Wir müssen die Operationen in aufsteigender Reihenfolge durchführen,
+                    // dabei aber den Index-Offset beachten weil jede Einfügung die Indizes verschiebt
+                    const sortedOps = insertOperations.sort((a, b) => a.position - b.position);
+                    let insertOffset = 0;
+                    
+                    for (const op of sortedOps) {
+                        const actualInsertPos = op.position + insertOffset;
+                        
+                        // Spalten einfügen mit Headers
+                        const insertResult = await window.electronAPI.liveSessionInsertColumn(
+                            actualInsertPos, 
+                            op.count, 
+                            op.headers
+                        );
+                        
+                        if (!insertResult || !insertResult.success) {
+                            console.error('[LiveSession] DataJoin insertColumn failed:', insertResult);
+                            continue;
+                        }
+                        
+                        console.log(`[LiveSession] DataJoin - ${op.count} Spalte(n) eingefügt an Position ${actualInsertPos}`);
+                        
+                        // Werte für jede eingefügte Spalte setzen
+                        // Wir müssen die Daten aus explorerState.data extrahieren
+                        for (let i = 0; i < op.count; i++) {
+                            const targetColIndex = actualInsertPos + i;
+                            const columnValues = explorerState.data.map(row => row[targetColIndex] || '');
+                            
+                            if (columnValues.length > 0) {
+                                const valuesResult = await window.electronAPI.liveSessionSetColumnValues(
+                                    targetColIndex,
+                                    columnValues,
+                                    0 // Start bei Zeile 0
+                                );
+                                
+                                if (!valuesResult || !valuesResult.success) {
+                                    console.error(`[LiveSession] DataJoin setColumnValues failed for col ${targetColIndex}:`, valuesResult);
+                                }
+                            }
+                        }
+                        
+                        // Offset für nachfolgende Einfügungen anpassen
+                        insertOffset += op.count;
+                    }
+                    
+                    console.log('[LiveSession] DataJoin - Alle Spalten eingefügt');
+                } catch (error) {
+                    console.error('[LiveSession] DataJoin error:', error);
+                    showFloatingStatus('⚠️ Fehler beim Synchronisieren mit Excel', 'warning');
+                } finally {
+                    // Heartbeat wieder aktivieren
+                    resumeLiveSessionHeartbeat();
+                }
+            }
+            
             // Markierung für nicht gefundene Zeilen
             // WICHTIG: currentKeyIndex enthält den korrekten Index nach allen Einfügungen!
             if (markNotFound) {
+                const notFoundRows = [];
                 explorerState.data.forEach((row, rowIndex) => {
                     const keyValue = String(row[currentKeyIndex] || '').trim();
                     if (keyValue && !sourceMap.has(keyValue)) {
                         explorerState.rowHighlights.set(rowIndex, 'yellow');
+                        notFoundRows.push(rowIndex);
                     }
                 });
+                
+                // Live-Session: Nicht gefundene Zeilen in Excel markieren
+                if (explorerState.liveSessionActive && explorerState.liveSessionReady && notFoundRows.length > 0) {
+                    // Heartbeat pausieren während der Operation
+                    pauseLiveSessionHeartbeat();
+                    try {
+                        console.log(`[LiveSession] DataJoin - Markiere ${notFoundRows.length} nicht gefundene Zeilen`);
+                        for (const rowIndex of notFoundRows) {
+                            await window.electronAPI.liveSessionHighlightRow(rowIndex, 'yellow');
+                        }
+                    } catch (error) {
+                        console.error('[LiveSession] DataJoin highlightRow error:', error);
+                    } finally {
+                        // Heartbeat wieder aktivieren
+                        resumeLiveSessionHeartbeat();
+                    }
+                }
             }
             
             // UI aktualisieren
@@ -8305,8 +8670,26 @@
         // ==================== Zeilen/Spalten Einfügen/Löschen ====================
         
         // Neue Zeile einfügen
-        function insertExplorerRow(rowIndex, position = 'below') {
+        async function insertExplorerRow(rowIndex, position = 'below') {
             const insertIndex = position === 'above' ? rowIndex : rowIndex + 1;
+            
+            // Live-Session: Zeile sofort in Excel einfügen
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                // insertIndex ist 0-basiert, Python rechnet selbst +2 für Excel
+                try {
+                    const result = await window.electronAPI.liveSessionInsertRow(insertIndex, 1);
+                    if (!result || !result.success) {
+                        console.error('[LiveSession] insertRow failed:', result);
+                        showFloatingStatus('❌ Fehler beim Einfügen in Excel', 'error');
+                        return;
+                    }
+                    console.log('[LiveSession] Row inserted at index:', insertIndex);
+                } catch (error) {
+                    console.error('[LiveSession] insertRow error:', error);
+                    showFloatingStatus('❌ Fehler beim Einfügen in Excel', 'error');
+                    return;
+                }
+            }
             
             // Leere Zeile erstellen mit gleicher Anzahl Spalten
             const emptyRow = new Array(explorerState.headers.length).fill('');
@@ -8575,7 +8958,21 @@
         }
         
         // Zeile ausblenden
-        function hideExplorerRow(rowIndex) {
+        async function hideExplorerRow(rowIndex) {
+            // Live-Session: Zeile sofort in Excel ausblenden
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                try {
+                    const result = await window.electronAPI.liveSessionHideRow(rowIndex, true);
+                    if (!result || !result.success) {
+                        console.error('[LiveSession] hideRow failed:', result);
+                    } else {
+                        console.log('[LiveSession] Row hidden:', rowIndex);
+                    }
+                } catch (error) {
+                    console.error('[LiveSession] hideRow error:', error);
+                }
+            }
+            
             explorerState.hiddenRows.add(rowIndex);
             // Markierung, dass Zeilen-Sichtbarkeit geändert wurde
             explorerState.editedCells.set('_rowVisibilityChanged', true);
@@ -8586,7 +8983,21 @@
         }
         
         // Zeile wieder einblenden
-        function showExplorerRow(rowIndex) {
+        async function showExplorerRow(rowIndex) {
+            // Live-Session: Zeile sofort in Excel einblenden
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                try {
+                    const result = await window.electronAPI.liveSessionHideRow(rowIndex, false);
+                    if (!result || !result.success) {
+                        console.error('[LiveSession] showRow failed:', result);
+                    } else {
+                        console.log('[LiveSession] Row shown:', rowIndex);
+                    }
+                } catch (error) {
+                    console.error('[LiveSession] showRow error:', error);
+                }
+            }
+            
             explorerState.hiddenRows.delete(rowIndex);
             // Markierung, dass Zeilen-Sichtbarkeit geändert wurde
             explorerState.editedCells.set('_rowVisibilityChanged', true);
@@ -8598,6 +9009,18 @@
         
         // Alle versteckten Zeilen einblenden
         function showAllHiddenRows() {
+            // LIVE SESSION: Zeilen in Excel wieder einblenden (Batch für Performance)
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady && explorerState.hiddenRows.size > 0) {
+                const indicesToShow = Array.from(explorerState.hiddenRows);
+                window.electronAPI.liveSessionHideRowsBatch(indicesToShow, false)
+                    .then(result => {
+                        if (result && result.success) {
+                            console.log(`[LiveSession] ${indicesToShow.length} Zeilen in Excel eingeblendet (Batch)`);
+                        }
+                    })
+                    .catch(error => console.error('[LiveSession] showRowsBatch error:', error));
+            }
+            
             explorerState.hiddenRows.clear();
             explorerState.editedCells.set('_rowVisibilityChanged', true);
             filterExplorerData();
@@ -8847,7 +9270,10 @@
                 // Erstelle Indikator-Badge
                 indicator = document.createElement('span');
                 indicator.id = 'passwordIndicator';
-                indicator.style.cssText = 'margin-left: 8px; background: #FF9800; color: white; font-size: 11px; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; vertical-align: middle;';
+                indicator.style.cssText = 'margin-left: 8px; background: #FF9800; color: white; font-size: 11px; padding: 3px 8px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; vertical-align: middle; cursor: pointer;';
+                
+                // Klick-Handler für Passwort-Änderung im Live-Modus
+                indicator.onclick = () => showPasswordManagementDialog();
                 
                 // Füge nach dem Dateinamen ein
                 const fileNameElement = document.getElementById('explorerFileName');
@@ -8857,7 +9283,130 @@
             }
             
             indicator.innerHTML = `🔐 Passwortgeschützt`;
-            indicator.title = 'Diese Datei ist passwortgeschützt.\nDas Passwort wird beim Speichern beibehalten.';
+            indicator.title = 'Klicken um Passwort zu verwalten.\nDas Passwort wird beim Speichern beibehalten.';
+        }
+        
+        // Dialog zur Passwortverwaltung
+        async function showPasswordManagementDialog() {
+            return new Promise((resolve) => {
+                const dialogHTML = `
+                    <div id="passwordManagementDialog" style="position: fixed; top: 0; left: 0; right: 0; bottom: 0; 
+                        background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 10000;">
+                        <div style="background: var(--background); border-radius: 12px; padding: 24px; width: 400px; 
+                            box-shadow: 0 20px 60px rgba(0,0,0,0.4); border: 1px solid var(--border);">
+                            <h3 style="margin: 0 0 20px 0; color: var(--text);">🔐 Passwort verwalten</h3>
+                            
+                            <div style="margin-bottom: 16px;">
+                                <p style="color: var(--text-muted); margin-bottom: 12px;">Diese Datei ist passwortgeschützt.</p>
+                            </div>
+                            
+                            <div style="margin-bottom: 16px;">
+                                <label style="display: block; margin-bottom: 6px; color: var(--text);">Neues Passwort (leer lassen zum Entfernen):</label>
+                                <input type="password" id="newPasswordInput" placeholder="Neues Passwort" 
+                                    style="width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; 
+                                    background: var(--background-light); color: var(--text); box-sizing: border-box;">
+                            </div>
+                            
+                            <div style="margin-bottom: 20px;">
+                                <label style="display: block; margin-bottom: 6px; color: var(--text);">Passwort bestätigen:</label>
+                                <input type="password" id="confirmPasswordInput" placeholder="Passwort bestätigen" 
+                                    style="width: 100%; padding: 10px; border: 1px solid var(--border); border-radius: 6px; 
+                                    background: var(--background-light); color: var(--text); box-sizing: border-box;">
+                            </div>
+                            
+                            <p id="passwordError" style="color: #f44336; font-size: 12px; margin-bottom: 12px; display: none;"></p>
+                            
+                            <div style="display: flex; gap: 12px; justify-content: flex-end;">
+                                <button id="cancelPasswordBtn" style="padding: 10px 20px; border: 1px solid var(--border); 
+                                    background: var(--background-light); color: var(--text); border-radius: 6px; cursor: pointer;">
+                                    Abbrechen
+                                </button>
+                                <button id="removePasswordBtn" style="padding: 10px 20px; border: none; 
+                                    background: #f44336; color: white; border-radius: 6px; cursor: pointer;">
+                                    🔓 Passwort entfernen
+                                </button>
+                                <button id="changePasswordBtn" style="padding: 10px 20px; border: none; 
+                                    background: var(--primary); color: white; border-radius: 6px; cursor: pointer;">
+                                    🔐 Passwort ändern
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                `;
+                
+                document.body.insertAdjacentHTML('beforeend', dialogHTML);
+                const dialog = document.getElementById('passwordManagementDialog');
+                const newPasswordInput = dialog.querySelector('#newPasswordInput');
+                const confirmPasswordInput = dialog.querySelector('#confirmPasswordInput');
+                const passwordError = dialog.querySelector('#passwordError');
+                
+                newPasswordInput.focus();
+                
+                const closeDialog = (result) => {
+                    dialog.remove();
+                    resolve(result);
+                };
+                
+                dialog.querySelector('#cancelPasswordBtn').onclick = () => closeDialog(null);
+                dialog.onclick = (e) => { if (e.target === dialog) closeDialog(null); };
+                
+                dialog.querySelector('#removePasswordBtn').onclick = async () => {
+                    if (confirm('Passwortschutz wirklich entfernen?')) {
+                        if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                            const result = await window.electronAPI.liveSessionSetPassword(null);
+                            if (result.success) {
+                                explorerState.filePassword = null;
+                                updatePasswordIndicator();
+                                showFloatingStatus('🔓 Passwortschutz entfernt', 'success');
+                                closeDialog({ removed: true });
+                            } else {
+                                passwordError.textContent = 'Fehler: ' + result.error;
+                                passwordError.style.display = 'block';
+                            }
+                        } else {
+                            explorerState.filePassword = null;
+                            updatePasswordIndicator();
+                            showFloatingStatus('🔓 Passwort wird beim Speichern entfernt', 'info');
+                            closeDialog({ removed: true });
+                        }
+                    }
+                };
+                
+                dialog.querySelector('#changePasswordBtn').onclick = async () => {
+                    const newPass = newPasswordInput.value;
+                    const confirmPass = confirmPasswordInput.value;
+                    
+                    if (!newPass) {
+                        passwordError.textContent = 'Bitte ein neues Passwort eingeben';
+                        passwordError.style.display = 'block';
+                        return;
+                    }
+                    
+                    if (newPass !== confirmPass) {
+                        passwordError.textContent = 'Passwörter stimmen nicht überein';
+                        passwordError.style.display = 'block';
+                        return;
+                    }
+                    
+                    if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                        const result = await window.electronAPI.liveSessionSetPassword(newPass);
+                        if (result.success) {
+                            explorerState.filePassword = newPass;
+                            updatePasswordIndicator();
+                            showFloatingStatus('🔐 Passwort geändert', 'success');
+                            closeDialog({ changed: true });
+                        } else {
+                            passwordError.textContent = 'Fehler: ' + result.error;
+                            passwordError.style.display = 'block';
+                        }
+                    } else {
+                        explorerState.filePassword = newPass;
+                        updatePasswordIndicator();
+                        showFloatingStatus('🔐 Passwort wird beim Speichern angewendet', 'info');
+                        closeDialog({ changed: true });
+                    }
+                };
+            });
         }
         
         // Hilfsfunktion: Generiert einen eindeutigen Spaltennamen
@@ -8907,6 +9456,24 @@
             
             // Stelle sicher, dass der eingegebene Name eindeutig ist
             const uniqueHeaderName = getUniqueColumnName(headerName || defaultName, explorerState.headers);
+            
+            // Live-Session: Spalte sofort in Excel einfügen
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                try {
+                    // insertIndex ist 0-basiert, Python erwartet 0-basiert und rechnet selbst +1 für Excel
+                    const result = await window.electronAPI.liveSessionInsertColumn(insertIndex, 1, [uniqueHeaderName]);
+                    if (!result || !result.success) {
+                        console.error('[LiveSession] insertColumn failed:', result);
+                        showFloatingStatus('❌ Fehler beim Einfügen der Spalte in Excel', 'error');
+                        return;
+                    }
+                    console.log('[LiveSession] Column inserted at index:', insertIndex);
+                } catch (error) {
+                    console.error('[LiveSession] insertColumn error:', error);
+                    showFloatingStatus('❌ Fehler beim Einfügen der Spalte in Excel', 'error');
+                    return;
+                }
+            }
             
             // Header einfügen
             explorerState.headers.splice(insertIndex, 0, uniqueHeaderName);
@@ -10556,6 +11123,30 @@
                 await loadExplorerSheet(explorerState.sheets[0]);
             }
             
+            // Nach dem Laden prüfen, ob Excel verfügbar ist und Live-Session starten (basierend auf Einstellung)
+            try {
+                const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
+                const status = await window.electronAPI.checkExcelAvailable();
+                
+                // Live-Session nur starten wenn: (auto + Excel verfügbar) ODER (explizit xlwings)
+                const shouldUseLive = (engineSetting === 'xlwings') || 
+                                      (engineSetting === 'auto' && status && status.excelAvailable);
+                
+                if (shouldUseLive && status && status.excelAvailable) {
+                    await startLiveSession();
+                    explorerState.engineMode = 'live';
+                    console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
+                } else {
+                    explorerState.engineMode = 'openpyxl';
+                    console.log(`[Engine] openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
+                    updateLiveModeIndicator();
+                }
+            } catch (e) {
+                explorerState.engineMode = 'openpyxl';
+                console.log('[Engine] Fallback: openpyxl (Fehler)', e);
+                updateLiveModeIndicator();
+            }
+            
             showFloatingStatus(`📂 ${result.fileName} geladen`);
         }
         
@@ -10655,7 +11246,31 @@
             updatePasswordIndicator();
             
             await loadExplorerSheet(result.sheets[0]);
-            
+
+            // Nach dem Laden prüfen, ob Excel verfügbar ist und Live-Session starten (basierend auf Einstellung)
+            try {
+                const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
+                const status = await window.electronAPI.checkExcelAvailable();
+                
+                // Live-Session nur starten wenn: (auto + Excel verfügbar) ODER (explizit xlwings)
+                const shouldUseLive = (engineSetting === 'xlwings') || 
+                                      (engineSetting === 'auto' && status && status.excelAvailable);
+                
+                if (shouldUseLive && status && status.excelAvailable) {
+                    await startLiveSession();
+                    explorerState.engineMode = 'live';
+                    console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
+                } else {
+                    explorerState.engineMode = 'openpyxl';
+                    console.log(`[Engine] openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
+                    updateLiveModeIndicator(); // Offline-Status anzeigen
+                }
+            } catch (e) {
+                explorerState.engineMode = 'openpyxl';
+                console.log('[Engine] Fallback: openpyxl (Fehler)', e);
+                updateLiveModeIndicator(); // Offline-Status anzeigen
+            }
+
             // Auto-Save für Crash-Recovery starten
             startExplorerAutoSave();
         }
@@ -10925,7 +11540,7 @@
         /**
          * Prüft ob ein Datum den Filter-Bedingungen entspricht
          */
-        function matchDateFilter(cellValue, operator, days = 0) {
+        function matchDateFilter(cellValue, operator, days = 0, dateFrom = null, dateTo = null) {
             const cellDate = parseDateValue(cellValue);
             if (!cellDate) return false;
             
@@ -10946,6 +11561,33 @@
                     // Datum liegt in der Zeitspanne von heute bis -X Tage
                     // Beispiel: days=7 zeigt alles was in den letzten 7 Tagen überfällig wurde
                     return diffDays < 0 && Math.abs(diffDays) <= days;
+                    
+                case 'dateBetween':
+                    // Datum liegt im angegebenen Zeitraum von-bis
+                    if (!dateFrom && !dateTo) return false;
+                    
+                    let fromDate = null;
+                    let toDate = null;
+                    
+                    if (dateFrom) {
+                        fromDate = new Date(dateFrom);
+                        fromDate.setHours(0, 0, 0, 0);
+                    }
+                    if (dateTo) {
+                        toDate = new Date(dateTo);
+                        toDate.setHours(23, 59, 59, 999); // Ende des Tages
+                    }
+                    
+                    // Wenn nur Von-Datum: alles ab diesem Datum
+                    if (fromDate && !toDate) {
+                        return cellDate >= fromDate;
+                    }
+                    // Wenn nur Bis-Datum: alles bis zu diesem Datum
+                    if (!fromDate && toDate) {
+                        return cellDate <= toDate;
+                    }
+                    // Beide Daten: Bereich prüfen
+                    return cellDate >= fromDate && cellDate <= toDate;
                     
                 case 'dateToday':
                     return diffDays === 0;
@@ -11025,6 +11667,8 @@
                         case 'isNotEmpty': return rawCellValue && String(rawCellValue).trim() !== '';
                         
                         // Datum-Filter
+                        case 'dateBetween':
+                            return matchDateFilter(rawCellValue, filter.operator, 0, filter.dateFrom, filter.dateTo);
                         case 'dateInDays':
                         case 'dateOverdueDays':
                         case 'dateToday':
@@ -11042,12 +11686,60 @@
             explorerState.filteredData = filtered;
             explorerState.currentPage = 1; // Bei Filteränderung zurück zur ersten Seite
             
+            // Live-Session: Button anzeigen wenn aktiv (Filter werden erst bei Enter/Button-Klick gesendet)
+            updateSyncFiltersButton();
+            
             // Sortierung anwenden, wenn eine gesetzt ist
             if (explorerState.sortColumn !== null && explorerState.sortDirection !== null) {
                 applyExplorerSort();
             }
             
             renderExplorerTable();
+        }
+        
+        /**
+         * Aktualisiert die Sichtbarkeit des "An Excel senden" Buttons
+         */
+        function updateSyncFiltersButton() {
+            const btn = document.getElementById('btnSyncFiltersToExcel');
+            if (!btn) return;
+            
+            const hasFilters = explorerState.filters.some(f => f.column && f.value);
+            const isLiveActive = explorerState.liveSessionActive && explorerState.liveSessionReady;
+            
+            btn.style.display = isLiveActive ? 'inline-block' : 'none';
+            btn.disabled = !hasFilters;
+        }
+        
+        /**
+         * Synchronisiert die aktuellen Filter mit Excel's AutoFilter
+         */
+        async function syncFiltersToExcel() {
+            if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) return;
+            
+            try {
+                // Konvertiere Explorer-Filter zu Excel-AutoFilter-Format
+                const excelFilters = explorerState.filters
+                    .filter(f => f.column && f.value)
+                    .map(f => ({
+                        colIndex: parseInt(f.column),
+                        criteria: f.value,
+                        operator: f.operator || 'contains'
+                    }));
+                
+                if (excelFilters.length > 0) {
+                    const result = await window.electronAPI.liveSessionSetAutoFilter(excelFilters);
+                    if (result && result.success) {
+                        console.log('[LiveSession] AutoFilter gesetzt:', excelFilters.length, 'Filter');
+                    }
+                } else {
+                    // Keine Filter - AutoFilter in Excel entfernen
+                    await window.electronAPI.liveSessionClearAutoFilter();
+                    console.log('[LiveSession] AutoFilter entfernt');
+                }
+            } catch (error) {
+                console.error('[LiveSession] Filter-Sync Fehler:', error);
+            }
         }
         
         /**
@@ -11292,6 +11984,8 @@
             // Tage-Feld konfigurieren
             const valueInput = row.querySelector('.filter-value');
             const daysInput = row.querySelector('.filter-days');
+            const dateFromInput = row.querySelector('.filter-date-from');
+            const dateToInput = row.querySelector('.filter-date-to');
             valueInput.style.display = 'none';
             daysInput.style.display = 'block';
             daysInput.value = days;
@@ -11300,14 +11994,17 @@
             operatorSelect.onchange = () => {
                 const op = operatorSelect.value;
                 const needsDays = op === 'dateInDays' || op === 'dateOverdueDays';
+                const needsDateRange = op === 'dateBetween';
                 const needsNoValue = ['dateToday', 'datePast', 'dateFuture', 'dateThisWeek', 'dateThisMonth', 'isEmpty', 'isNotEmpty'].includes(op);
                 
                 daysInput.style.display = needsDays ? 'block' : 'none';
-                valueInput.style.display = needsNoValue ? 'none' : (needsDays ? 'none' : 'block');
+                dateFromInput.style.display = needsDateRange ? 'block' : 'none';
+                dateToInput.style.display = needsDateRange ? 'block' : 'none';
+                valueInput.style.display = (needsNoValue || needsDays || needsDateRange) ? 'none' : 'block';
                 
                 if (needsNoValue) {
                     valueInput.value = '_no_value_required_';
-                } else if (needsDays) {
+                } else if (needsDays || needsDateRange) {
                     valueInput.value = '';
                 }
                 
@@ -11320,7 +12017,23 @@
             };
             row.querySelector('.filter-column').onchange = updateFiltersFromDOM;
             daysInput.oninput = updateFiltersFromDOM;
+            dateFromInput.onchange = updateFiltersFromDOM;
+            dateToInput.onchange = updateFiltersFromDOM;
             valueInput.oninput = updateFiltersFromDOM;
+            
+            // Enter-Handler für Filter-Value
+            valueInput.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    syncFiltersToExcel();
+                }
+            };
+            daysInput.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    syncFiltersToExcel();
+                }
+            };
             
             document.getElementById('explorerFilters').appendChild(row);
             document.getElementById('btnClearExplorerFilters').disabled = false;
@@ -11467,7 +12180,7 @@
         }
         
         function renderExplorerTable() {
-            const btnPreview = document.getElementById('btnExplorerPreview');
+            const btnToggleExcel = document.getElementById('btnToggleExcel');
             const btnDataJoin = document.getElementById('btnDataJoin');
             
             if (!explorerState.headers.length) {
@@ -11475,7 +12188,7 @@
                 elements.explorerTableBody.innerHTML = '';
                 elements.explorerResultCount.textContent = t('noDataLoaded');
                 document.getElementById('explorerPagination').style.display = 'none';
-                if (btnPreview) btnPreview.disabled = true;
+                if (btnToggleExcel) btnToggleExcel.disabled = true;
                 if (btnDataJoin) btnDataJoin.disabled = true;
                 // Drop-Zone anzeigen wenn keine Daten
                 showExplorerDropZone(true);
@@ -11485,8 +12198,10 @@
             // Drop-Zone ausblenden wenn Daten vorhanden
             showExplorerDropZone(false);
             
-            // Preview-Button aktivieren, wenn Daten vorhanden sind
-            if (btnPreview) btnPreview.disabled = false;
+            // Excel-Toggle-Button nur aktivieren, wenn Live-Session aktiv ist
+            if (btnToggleExcel) {
+                btnToggleExcel.disabled = !(explorerState.liveSessionActive && explorerState.liveSessionReady);
+            }
             // Data Join Button aktivieren
             if (btnDataJoin) btnDataJoin.disabled = false;
             
@@ -12221,18 +12936,33 @@
                 // Berechne Zielposition
                 let liveTargetIndex = movePosition === 'before' ? targetIndex : targetIndex + 1;
                 
-                // Bei Verschiebung nach oben: von oben nach unten verschieben
-                // Bei Verschiebung nach unten: von unten nach oben verschieben
-                const sortedForMove = selectedIndices[0] > liveTargetIndex 
-                    ? [...selectedIndices]  // Nach oben: von oben nach unten
-                    : [...selectedIndices].reverse();  // Nach unten: von unten nach oben
+                // Bei Verschiebung nach oben: von oben nach unten verschieben (kleinster Index zuerst)
+                // Bei Verschiebung nach unten: von unten nach oben verschieben (größter Index zuerst)
+                const movingUp = selectedIndices[0] > liveTargetIndex;
+                const sortedForMove = movingUp 
+                    ? [...selectedIndices].sort((a, b) => a - b)  // Nach oben: kleinster Index zuerst
+                    : [...selectedIndices].sort((a, b) => b - a);  // Nach unten: größter Index zuerst
                 
-                for (const fromIdx of sortedForMove) {
-                    await liveSessionExecute('moveRow', fromIdx, liveTargetIndex);
-                    // Nach jeder Verschiebung ändert sich die Zielposition
-                    if (fromIdx > liveTargetIndex) {
-                        liveTargetIndex++;  // Ziel rutscht eins runter
+                // Tracke wie viele Zeilen bereits verschoben wurden (für Index-Anpassung)
+                let movedCount = 0;
+                
+                for (const originalIdx of sortedForMove) {
+                    // Berechne den aktuellen Index nach vorherigen Verschiebungen
+                    let currentFromIdx = originalIdx;
+                    let currentTargetIdx = liveTargetIndex;
+                    
+                    if (movingUp) {
+                        // Nach oben verschieben: Quellindex bleibt, Ziel rutscht nach jeder Verschiebung eins runter
+                        currentTargetIdx = liveTargetIndex + movedCount;
+                    } else {
+                        // Nach unten verschieben: Nach jeder Verschiebung rutschen alle Indizes oberhalb eins hoch
+                        // Da wir von unten nach oben arbeiten, müssen wir den Quellindex anpassen
+                        currentFromIdx = originalIdx - movedCount;
+                        // Zielindex bleibt gleich (wir fügen immer an der gleichen Stelle ein)
                     }
+                    
+                    await liveSessionExecute('moveRow', currentFromIdx, currentTargetIdx);
+                    movedCount++;
                 }
                 console.log(`[LiveSession] ${selectedIndices.length} Zeilen verschoben`);
             }
@@ -12793,13 +13523,19 @@
                 return;
             }
             
-            // LIVE SESSION: Verstecke Zeilen sofort in Excel
+            // LIVE SESSION: Verstecke Zeilen sofort in Excel (Batch für Performance)
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 const indicesToHide = Array.from(explorerState.selectedRows);
-                for (const idx of indicesToHide) {
-                    liveSessionExecute('hideRow', idx, true);
-                }
-                console.log(`[LiveSession] ${indicesToHide.length} Zeilen in Excel versteckt`);
+                // Verwende Batch-Funktion statt einzelner Aufrufe
+                window.electronAPI.liveSessionHideRowsBatch(indicesToHide, true)
+                    .then(result => {
+                        if (result && result.success) {
+                            console.log(`[LiveSession] ${indicesToHide.length} Zeilen in Excel versteckt (Batch)`);
+                        } else {
+                            console.error('[LiveSession] hideRowsBatch failed:', result);
+                        }
+                    })
+                    .catch(error => console.error('[LiveSession] hideRowsBatch error:', error));
             }
             
             // Füge alle ausgewählten Zeilen zu den ausgeblendeten Zeilen hinzu
@@ -12909,7 +13645,7 @@
             `).join('');
         }
         
-        window.toggleExplorerColumn = function(colIndex, visible) {
+        window.toggleExplorerColumn = async function(colIndex, visible) {
             if (visible) {
                 if (!explorerState.visibleColumns.includes(colIndex)) {
                     explorerState.visibleColumns.push(colIndex);
@@ -12918,6 +13654,16 @@
             } else {
                 explorerState.visibleColumns = explorerState.visibleColumns.filter(i => i !== colIndex);
             }
+            
+            // Live-Session: Spalte in Excel ein-/ausblenden
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                try {
+                    await window.electronAPI.liveSessionHideColumn(colIndex, !visible);
+                } catch (error) {
+                    console.error('[LiveSession] Spalten-Sichtbarkeit Fehler:', error);
+                }
+            }
+            
             // Markierung, dass Spalten-Sichtbarkeit geändert wurde
             explorerState.editedCells.set('_columnVisibilityChanged', true);
             renderExplorerTable();
@@ -12927,7 +13673,24 @@
             showFloatingStatus(visible ? (currentLanguage === 'en' ? 'Column shown' : 'Spalte eingeblendet') : (currentLanguage === 'en' ? 'Column hidden' : 'Spalte ausgeblendet'));
         };
         
-        function showAllExplorerColumns() {
+        async function showAllExplorerColumns() {
+            // Live-Session: Alle Spalten in Excel einblenden
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                try {
+                    // Alle versteckten Spalten einblenden
+                    const hiddenColumns = explorerState.headers
+                        .map((_, i) => i)
+                        .filter(i => !explorerState.visibleColumns.includes(i));
+                    
+                    for (const colIndex of hiddenColumns) {
+                        await window.electronAPI.liveSessionHideColumn(colIndex, false);
+                    }
+                    console.log('[LiveSession] All columns shown');
+                } catch (error) {
+                    console.error('[LiveSession] showAllColumns error:', error);
+                }
+            }
+            
             explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
             // Markierung, dass Spalten-Sichtbarkeit geändert wurde
             explorerState.editedCells.set('_columnVisibilityChanged', true);
@@ -12938,7 +13701,20 @@
             showFloatingStatus(currentLanguage === 'en' ? 'All columns shown' : 'Alle Spalten eingeblendet');
         }
         
-        function hideAllExplorerColumns() {
+        async function hideAllExplorerColumns() {
+            // Live-Session: Alle Spalten in Excel ausblenden
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                try {
+                    // Alle sichtbaren Spalten ausblenden
+                    for (const colIndex of explorerState.visibleColumns) {
+                        await window.electronAPI.liveSessionHideColumn(colIndex, true);
+                    }
+                    console.log('[LiveSession] All columns hidden');
+                } catch (error) {
+                    console.error('[LiveSession] hideAllColumns error:', error);
+                }
+            }
+            
             explorerState.visibleColumns = [];
             // Markierung, dass Spalten-Sichtbarkeit geändert wurde
             explorerState.editedCells.set('_columnVisibilityChanged', true);
@@ -12961,19 +13737,24 @@
             const operatorSelect = row.querySelector('.filter-operator');
             const valueInput = row.querySelector('.filter-value');
             const daysInput = row.querySelector('.filter-days');
+            const dateFromInput = row.querySelector('.filter-date-from');
+            const dateToInput = row.querySelector('.filter-date-to');
             
-            // Operator-Änderung: Tage-Feld anzeigen/ausblenden
+            // Operator-Änderung: passende Felder anzeigen/ausblenden
             operatorSelect.onchange = () => {
                 const op = operatorSelect.value;
                 const needsDays = op === 'dateInDays' || op === 'dateOverdueDays';
+                const needsDateRange = op === 'dateBetween';
                 const needsNoValue = ['dateToday', 'datePast', 'dateFuture', 'dateThisWeek', 'dateThisMonth', 'isEmpty', 'isNotEmpty'].includes(op);
                 
                 daysInput.style.display = needsDays ? 'block' : 'none';
-                valueInput.style.display = needsNoValue ? 'none' : (needsDays ? 'none' : 'block');
+                dateFromInput.style.display = needsDateRange ? 'block' : 'none';
+                dateToInput.style.display = needsDateRange ? 'block' : 'none';
+                valueInput.style.display = (needsNoValue || needsDays || needsDateRange) ? 'none' : 'block';
                 
                 if (needsNoValue) {
                     valueInput.value = '_no_value_required_';
-                } else if (needsDays) {
+                } else if (needsDays || needsDateRange) {
                     valueInput.value = '';
                 }
                 
@@ -12987,7 +13768,18 @@
             };
             row.querySelector('.filter-column').onchange = updateFiltersFromDOM;
             daysInput.oninput = updateFiltersFromDOM;
-            row.querySelector('.filter-value').oninput = updateFiltersFromDOM;
+            dateFromInput.onchange = updateFiltersFromDOM;
+            dateToInput.onchange = updateFiltersFromDOM;
+            
+            // Filter-Value: Enter sendet an Excel
+            const filterValueInput = row.querySelector('.filter-value');
+            filterValueInput.oninput = updateFiltersFromDOM;
+            filterValueInput.onkeydown = (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    syncFiltersToExcel();
+                }
+            };
             
             document.getElementById('explorerFilters').appendChild(row);
             document.getElementById('btnClearExplorerFilters').disabled = false;
@@ -12998,33 +13790,106 @@
             explorerState.filters = Array.from(rows).map(row => {
                 const operator = row.querySelector('.filter-operator').value;
                 const needsDays = operator === 'dateInDays' || operator === 'dateOverdueDays';
+                const needsDateRange = operator === 'dateBetween';
                 const needsNoValue = ['dateToday', 'datePast', 'dateFuture', 'dateThisWeek', 'dateThisMonth', 'isEmpty', 'isNotEmpty'].includes(operator);
                 
                 let value = row.querySelector('.filter-value').value;
                 const days = row.querySelector('.filter-days').value;
+                const dateFrom = row.querySelector('.filter-date-from')?.value || '';
+                const dateTo = row.querySelector('.filter-date-to')?.value || '';
                 
                 // Für Datums-Filter mit Tagen: days als value verwenden
                 if (needsDays) {
                     value = days || '0';
                 } else if (needsNoValue) {
                     value = '_no_value_required_';
+                } else if (needsDateRange) {
+                    value = dateFrom || dateTo ? '_date_range_' : '';
                 }
                 
                 return {
                     column: row.querySelector('.filter-column').value,
                     operator: operator,
                     value: value,
-                    days: days
+                    days: days,
+                    dateFrom: dateFrom,
+                    dateTo: dateTo
                 };
-            }).filter(f => f.column && (f.value || f.days));
+            }).filter(f => f.column && (f.value || f.days || f.dateFrom || f.dateTo));
+            updateFilterBadge();
             filterExplorerData();
         }
         
-        function clearExplorerFilters() {
+        async function clearExplorerFilters() {
             document.getElementById('explorerFilters').innerHTML = '';
             explorerState.filters = [];
             document.getElementById('btnClearExplorerFilters').disabled = true;
+            updateFilterBadge();
+            
+            // LIVE SESSION: AutoFilter in Excel zurücksetzen
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                try {
+                    const result = await window.electronAPI.liveSessionClearAutoFilter();
+                    if (result && result.success) {
+                        console.log('[LiveSession] AutoFilter in Excel zurückgesetzt');
+                    } else {
+                        console.error('[LiveSession] clearAutoFilter failed:', result);
+                    }
+                } catch (error) {
+                    console.error('[LiveSession] clearAutoFilter error:', error);
+                }
+            }
+            
             filterExplorerData();
+        }
+        
+        // Filter-Bereich ein-/ausblenden
+        function toggleFilterSection() {
+            const filtersDiv = document.getElementById('explorerFilters');
+            const toggleIcon = document.getElementById('filterToggleIcon');
+            const countBadge = document.getElementById('filterCountBadge');
+            
+            if (!filtersDiv) return;
+            
+            const isHidden = filtersDiv.style.display === 'none';
+            
+            if (isHidden) {
+                // Einblenden
+                filtersDiv.style.display = 'flex';
+                if (toggleIcon) toggleIcon.textContent = '▼';
+                if (countBadge) countBadge.style.display = 'none';
+            } else {
+                // Ausblenden
+                filtersDiv.style.display = 'none';
+                if (toggleIcon) toggleIcon.textContent = '▶';
+                // Zeige Anzahl der aktiven Filter als Badge
+                const filterCount = explorerState.filters.length;
+                if (filterCount > 0 && countBadge) {
+                    countBadge.textContent = `${filterCount} Filter aktiv`;
+                    countBadge.style.display = 'inline-block';
+                }
+            }
+        }
+        
+        // Aktualisiert das Filter-Badge wenn Filter hinzugefügt/entfernt werden
+        function updateFilterBadge() {
+            const filtersDiv = document.getElementById('explorerFilters');
+            const countBadge = document.getElementById('filterCountBadge');
+            
+            if (!countBadge) return;
+            
+            // Nur Badge anzeigen wenn Filter-Bereich ausgeblendet ist
+            if (filtersDiv && filtersDiv.style.display === 'none') {
+                const filterCount = explorerState.filters.length;
+                if (filterCount > 0) {
+                    countBadge.textContent = `${filterCount} Filter aktiv`;
+                    countBadge.style.display = 'inline-block';
+                } else {
+                    countBadge.style.display = 'none';
+                }
+            } else {
+                countBadge.style.display = 'none';
+            }
         }
         
         async function exportExplorerData() {
@@ -13697,94 +14562,164 @@
                     sheetsToExport.push(sheetData);
                 }
                 
-                // IMMER xlwings/Python für Export verwenden (CF-Erhaltung)
-                // Die Checkbox steuert nur das LESEN, nicht das Schreiben
-                console.log('[Export] Verwende xlwings/Python für CF-Erhaltung...');
-                
                 let result;
-                result = await window.electronAPI.pythonExportMultipleSheets({
-                    sourcePath: explorerState.filePath,
-                    originalSourcePath: explorerState.originalFilePath,  // Ursprüngliche Datei für Style-Wiederherstellung
-                    targetPath: savePath,
-                    sheets: sheetsToExport,
-                    password: exportPassword,
-                    sourcePassword: explorerState.filePassword
-                });
+                
+                // LIVE-SESSION MODUS: Direkt über Excel speichern (schneller & keine Konflikte)
+                if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                    console.log('[Export] Live-Session aktiv - verwende Excel direkt zum Speichern...');
+                    
+                    // Heartbeat pausieren während des Speicherns
+                    pauseLiveSessionHeartbeat();
+                    
+                    try {
+                        // Im Live-Modus sind alle Änderungen bereits in Excel
+                        // Wir müssen nur noch speichern (mit optionalem Passwort)
+                        // exportPassword ist: undefined (Checkbox nicht aktiviert), '' (aktiviert aber leer), oder 'xxx' (neues Passwort)
+                        // passwordToUse: undefined = beibehalten, null = entfernen, 'xxx' = neues Passwort
+                        let passwordToUse;
+                        if (exportPassword === undefined) {
+                            passwordToUse = undefined; // Passwort beibehalten
+                        } else if (exportPassword === '') {
+                            passwordToUse = null; // Passwort entfernen
+                        } else {
+                            passwordToUse = exportPassword; // Neues Passwort
+                        }
+                        
+                        result = await window.electronAPI.liveSessionSaveFile(savePath, passwordToUse);
+                        
+                        if (result.success) {
+                            result.method = 'Live-Session';
+                            // Passwort-Status aktualisieren
+                            if (exportPassword) {
+                                explorerState.filePassword = exportPassword;
+                            } else if (exportPassword === '') {
+                                explorerState.filePassword = null;
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[Export] Live-Session save error:', error);
+                        result = { success: false, error: error.message };
+                    } finally {
+                        // Heartbeat wieder aktivieren
+                        resumeLiveSessionHeartbeat();
+                    }
+                } else {
+                    // FALLBACK MODUS: xlwings/Python für Export verwenden (CF-Erhaltung)
+                    console.log('[Export] Fallback-Modus - verwende xlwings/Python für CF-Erhaltung...');
+                    
+                    result = await window.electronAPI.pythonExportMultipleSheets({
+                        sourcePath: explorerState.filePath,
+                        originalSourcePath: explorerState.originalFilePath,  // Ursprüngliche Datei für Style-Wiederherstellung
+                        targetPath: savePath,
+                        sheets: sheetsToExport,
+                        password: exportPassword,
+                        sourcePassword: explorerState.filePassword
+                    });
+                }
                 
                 if (result.success) {
                     const pwInfo = exportPassword ? ' (passwortgeschützt)' : '';
                     const engineInfo = result.method ? ` [${result.method}]` : '';
                     elements.explorerStatus.textContent = `✓ ${selectedSheets.length} Arbeitsblatt/blätter exportiert${pwInfo}${engineInfo}: ${savePath}`;
                     
-                    // Prüfe ob strukturelle Änderungen vorlagen (Spalten eingefügt/gelöscht)
-                    const exportedSheet = sheetsToExport.find(s => s.sheetName === explorerState.selectedSheet);
-                    const hadStructuralChange = exportedSheet && exportedSheet.structuralChange;
-                    
-                    if (hadStructuralChange) {
-                        // Bei strukturellen Änderungen: Datei neu einlesen für korrekte Styles
-                        console.log('[Export] Strukturelle Änderung - lade Datei neu für korrekte Styles...');
-                        
-                        // Speichere aktuelle Ansicht für Wiederherstellung
-                        const currentSheet = explorerState.selectedSheet;
-                        const currentPage = explorerState.currentPage;
-                        const currentSort = { column: explorerState.sortColumn, direction: explorerState.sortDirection, type: explorerState.sortType };
-                        
-                        // Datei neu laden (lädt auch das aktuelle Sheet automatisch)
-                        await reloadExplorerFile(savePath, explorerState.filePassword);
-                        
-                        // WICHTIG: Nach Reload nochmal sicherstellen dass alles sauber ist
-                        explorerState.editedCells.clear();
-                        explorerState.sheetDataCache.clear();
-                        explorerState.rowMapping = null;
-                        explorerState.affectedRows?.clear();
-                        
-                        // Sortierung wiederherstellen
-                        if (currentSort.column !== null) {
-                            explorerState.sortColumn = currentSort.column;
-                            explorerState.sortDirection = currentSort.direction;
-                            explorerState.sortType = currentSort.type;
-                            applyExplorerSort();
-                            renderExplorerTable();
-                        }
-                        
-                        // Seite wiederherstellen
-                        if (currentPage <= Math.ceil(explorerState.filteredData.length / explorerState.pageSize)) {
-                            explorerState.currentPage = currentPage;
-                            renderExplorerTable();
-                        }
-                    } else {
-                        // Keine strukturelle Änderung: Schneller Refresh ohne Datei neu lesen
-                        console.log('[Export] Keine strukturelle Änderung - schneller State-Refresh...');
-                        
-                        if (exportedSheet && exportedSheet.fullRewrite && exportedSheet.data) {
-                            // Headers und Data übernehmen
-                            explorerState.headers = [...exportedSheet.headers];
-                            explorerState.data = exportedSheet.data.map(row => [...row]);
-                            explorerState.originalData = exportedSheet.data.map(row => [...row]);
-                            
-                            // filteredData neu aufbauen
-                            explorerState.filteredData = explorerState.data.map((row, index) => ({
-                                originalIndex: index,
-                                row: row
-                            }));
-                            
-                            // rowHighlights: Neue wurden gesetzt, sind jetzt "original"
-                            explorerState.originalRowHighlights = new Map(explorerState.rowHighlights);
-                        }
+                    // Im Live-Modus: State bereinigen, aber Datei nicht neu laden
+                    if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                        console.log('[Export] Live-Session: Änderungsmarkierungen zurücksetzen...');
                         
                         // Änderungsmarkierungen zurücksetzen
                         explorerState.editedCells.clear();
                         explorerState.affectedRows?.clear();
                         explorerState.rowMapping = null;
                         
-                        // Cache aktualisieren
-                        saveCurrentSheetToCache();
+                        // rowHighlights: Aktuelle sind jetzt "original"
+                        explorerState.originalRowHighlights = new Map(explorerState.rowHighlights);
+                        
+                        // originalData aktualisieren (aktuelle Daten sind jetzt die "Originale")
+                        explorerState.originalData = explorerState.data.map(row => [...row]);
+                        
+                        // Dateipfad aktualisieren falls "Speichern unter"
+                        if (savePath !== explorerState.filePath) {
+                            explorerState.filePath = savePath;
+                            explorerState.fileName = savePath.split('/').pop();
+                            document.getElementById('explorerFileName').textContent = explorerState.fileName;
+                        }
                         
                         // UI aktualisieren
                         filterExplorerData();
-                    }
+                        
+                        showFloatingStatus(`✓ Export erfolgreich${pwInfo}${engineInfo}`, 'success');
+                    } else {
+                        // Fallback-Modus: Strukturelle Änderungen behandeln
+                        // Prüfe ob strukturelle Änderungen vorlagen (Spalten eingefügt/gelöscht)
+                        const exportedSheet = sheetsToExport.find(s => s.sheetName === explorerState.selectedSheet);
+                        const hadStructuralChange = exportedSheet && exportedSheet.structuralChange;
                     
-                    showFloatingStatus(`✓ Export erfolgreich${pwInfo}${engineInfo}`, 'success');
+                        if (hadStructuralChange) {
+                            // Bei strukturellen Änderungen: Datei neu einlesen für korrekte Styles
+                            console.log('[Export] Strukturelle Änderung - lade Datei neu für korrekte Styles...');
+                            
+                            // Speichere aktuelle Ansicht für Wiederherstellung
+                            const currentSheet = explorerState.selectedSheet;
+                            const currentPage = explorerState.currentPage;
+                            const currentSort = { column: explorerState.sortColumn, direction: explorerState.sortDirection, type: explorerState.sortType };
+                            
+                            // Datei neu laden (lädt auch das aktuelle Sheet automatisch)
+                            await reloadExplorerFile(savePath, explorerState.filePassword);
+                            
+                            // WICHTIG: Nach Reload nochmal sicherstellen dass alles sauber ist
+                            explorerState.editedCells.clear();
+                            explorerState.sheetDataCache.clear();
+                            explorerState.rowMapping = null;
+                            explorerState.affectedRows?.clear();
+                            
+                            // Sortierung wiederherstellen
+                            if (currentSort.column !== null) {
+                                explorerState.sortColumn = currentSort.column;
+                                explorerState.sortDirection = currentSort.direction;
+                                explorerState.sortType = currentSort.type;
+                                applyExplorerSort();
+                                renderExplorerTable();
+                            }
+                            
+                            // Seite wiederherstellen
+                            if (currentPage <= Math.ceil(explorerState.filteredData.length / explorerState.pageSize)) {
+                                explorerState.currentPage = currentPage;
+                                renderExplorerTable();
+                            }
+                        } else {
+                            // Keine strukturelle Änderung: Schneller Refresh ohne Datei neu lesen
+                            console.log('[Export] Keine strukturelle Änderung - schneller State-Refresh...');
+                            
+                            if (exportedSheet && exportedSheet.fullRewrite && exportedSheet.data) {
+                                // Headers und Data übernehmen
+                                explorerState.headers = [...exportedSheet.headers];
+                                explorerState.data = exportedSheet.data.map(row => [...row]);
+                                explorerState.originalData = exportedSheet.data.map(row => [...row]);
+                                
+                                // filteredData neu aufbauen
+                                explorerState.filteredData = explorerState.data.map((row, index) => ({
+                                    originalIndex: index,
+                                    row: row
+                                }));
+                                
+                                // rowHighlights: Neue wurden gesetzt, sind jetzt "original"
+                                explorerState.originalRowHighlights = new Map(explorerState.rowHighlights);
+                            }
+                            
+                            // Änderungsmarkierungen zurücksetzen
+                            explorerState.editedCells.clear();
+                            explorerState.affectedRows?.clear();
+                            explorerState.rowMapping = null;
+                            
+                            // Cache aktualisieren
+                            saveCurrentSheetToCache();
+                            
+                            // UI aktualisieren
+                            filterExplorerData();
+                        }
+                        
+                        showFloatingStatus(`✓ Export erfolgreich${pwInfo}${engineInfo}`, 'success');
+                    } // Ende else (Fallback-Modus)
                 } else {
                     elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 }
@@ -13968,9 +14903,17 @@
                         .map(cb => cb.value);
                     
                     // Bei Export: Passwort mit zurückgeben
-                    const password = (mode === 'export' && passwordCheckbox && passwordCheckbox.checked) 
-                        ? (passwordInput?.value || null) 
-                        : null;
+                    // undefined = Checkbox nicht aktiviert (Passwort beibehalten)
+                    // '' = Checkbox aktiviert aber leer (Passwort entfernen)
+                    // 'xxx' = Checkbox aktiviert mit Passwort (neues Passwort setzen)
+                    let password = undefined;
+                    if (mode === 'export' && passwordCheckbox) {
+                        if (passwordCheckbox.checked) {
+                            // Checkbox aktiviert: leerer String oder Passwort
+                            password = passwordInput?.value || '';
+                        }
+                        // Checkbox nicht aktiviert: password bleibt undefined
+                    }
                     
                     overlay.remove();
                     
@@ -14492,46 +15435,58 @@
             document.getElementById('selectLanguage').onchange = (e) => setLanguage(e.target.value);
             document.getElementById('selectTheme').onchange = (e) => setTheme(e.target.value);
             
-            // Excel Engine Selector initialisieren
+            // Excel Engine Auswahl
             const engineSelect = document.getElementById('selectExcelEngine');
-            const engineInfo = document.getElementById('excelEngineInfo');
-            
-            // Gespeicherte Engine laden
             const savedEngine = localStorage.getItem('excelSyncEngine') || 'auto';
-            engineSelect.value = savedEngine;
-            
-            // Engine-Status vom Backend abfragen
-            async function updateEngineStatus() {
-                try {
-                    const status = await window.electronAPI.checkExcelAvailable();
-                    const engine = engineSelect.value;
-                    
-                    if (status.excelAvailable) {
-                        engineInfo.innerHTML = `✓ <span style="color: var(--success);">xlwings aktiv</span> (Excel erkannt)`;
-                    } else if (engine === 'xlwings') {
-                        engineInfo.innerHTML = `⚠️ <span style="color: var(--warning);">xlwings nicht verfügbar</span> - Excel nicht installiert`;
-                    } else {
-                        engineInfo.innerHTML = `📦 <span style="color: var(--info);">openpyxl aktiv</span> (kein Excel)`;
-                    }
-                } catch (error) {
-                    engineInfo.innerHTML = `⚠️ Status unbekannt`;
-                }
+            if (engineSelect) {
+                engineSelect.value = savedEngine;
+                engineSelect.onchange = (e) => {
+                    localStorage.setItem('excelSyncEngine', e.target.value);
+                    updateEngineStatus();
+                };
             }
             
-            // Engine-Änderung verarbeiten
-            engineSelect.onchange = async (e) => {
-                const newEngine = e.target.value;
-                localStorage.setItem('excelSyncEngine', newEngine);
+            // Excel Engine Status anzeigen
+            async function updateEngineStatus() {
+                const statusIcon = document.getElementById('engineStatusIcon');
+                const statusText = document.getElementById('engineStatusText');
+                const engineSelect = document.getElementById('selectExcelEngine');
                 
-                // Engine im Backend setzen
+                if (!statusIcon || !statusText) return;
+                
+                const selectedEngine = engineSelect ? engineSelect.value : 'auto';
+                
                 try {
-                    await window.electronAPI.setExcelEngine(newEngine);
-                    await updateEngineStatus();
-                    showNotification(`Excel-Engine auf "${newEngine}" gesetzt`, 'info');
+                    const status = await window.electronAPI.checkExcelAvailable();
+                    
+                    if (selectedEngine === 'openpyxl') {
+                        // Manuell openpyxl erzwungen
+                        statusIcon.textContent = '📦';
+                        statusText.innerHTML = '<span style="color: var(--info);">openpyxl</span> - Manuell gewählt';
+                    } else if (selectedEngine === 'xlwings') {
+                        // Manuell xlwings erzwungen
+                        if (status.excelAvailable) {
+                            statusIcon.textContent = '🔴';
+                            statusText.innerHTML = '<span style="color: var(--success);">xlwings</span> - Live-Modus aktiv';
+                        } else {
+                            statusIcon.textContent = '⚠️';
+                            statusText.innerHTML = '<span style="color: var(--warning);">xlwings</span> - Excel nicht gefunden!';
+                        }
+                    } else {
+                        // Auto-Modus
+                        if (status.excelAvailable) {
+                            statusIcon.textContent = '✓';
+                            statusText.innerHTML = '<span style="color: var(--success);">Auto: xlwings</span> - Excel erkannt';
+                        } else {
+                            statusIcon.textContent = '📦';
+                            statusText.innerHTML = '<span style="color: var(--info);">Auto: openpyxl</span> - Kein Excel';
+                        }
+                    }
                 } catch (error) {
-                    showNotification(`Fehler beim Setzen der Engine: ${error.message}`, 'error');
+                    statusIcon.textContent = '⚠️';
+                    statusText.textContent = 'Status unbekannt';
                 }
-            };
+            }
             
             // Initial Engine-Status laden
             updateEngineStatus();
@@ -14830,30 +15785,22 @@
             elements.btnClearExplorerFilters.onclick = clearExplorerFilters;
             elements.btnExplorerExport.onclick = exportExplorerData;
             
-            // Live Session Toggle
-            const chkLiveSession = document.getElementById('chkLiveSession');
-            if (chkLiveSession) {
-                chkLiveSession.onchange = async (e) => {
-                    if (e.target.checked) {
-                        // Live-Session aktivieren
-                        if (!explorerState.filePath) {
-                            showNotification('Bitte zuerst eine Datei laden', 'warning');
-                            e.target.checked = false;
-                            return;
-                        }
-                        const success = await startLiveSession();
-                        if (!success) {
-                            e.target.checked = false;
-                            showNotification('Live-Session konnte nicht gestartet werden', 'error');
-                        }
-                    } else {
-                        // Live-Session deaktivieren
-                        await stopLiveSession();
-                        showFloatingStatus('Live-Session beendet');
-                    }
-                    updateLiveSessionIndicator();
+            // Filter-Bereich Toggle
+            const filterSectionToggle = document.getElementById('filterSectionToggle');
+            if (filterSectionToggle) {
+                filterSectionToggle.onclick = toggleFilterSection;
+            }
+            
+            // Filter an Excel senden Button
+            const btnSyncFilters = document.getElementById('btnSyncFiltersToExcel');
+            if (btnSyncFilters) {
+                btnSyncFilters.onclick = () => {
+                    syncFiltersToExcel();
                 };
             }
+            
+            // Live Session Toggle
+            // Live-Session wird jetzt automatisch aktiviert - kein manueller Toggle mehr nötig
             
             // Data Join Event Listeners
             elements.btnDataJoin.onclick = openDataJoinModal;
@@ -14929,8 +15876,8 @@
             document.getElementById('btnSheetMoveDown').onclick = () => moveSelectedSheet('down');
             document.getElementById('btnSheetDelete').onclick = deleteSelectedSheet;
             
-            // Explorer-Vorschau Event Listeners
-            elements.btnExplorerPreview.onclick = showExplorerPreview;
+            // Excel Ein-/Ausblenden Button
+            elements.btnToggleExcel.onclick = toggleExcelVisibility;
             document.getElementById('btnClosePreviewX').onclick = closeExplorerPreview;
             document.getElementById('btnClosePreview').onclick = closeExplorerPreview;
             
