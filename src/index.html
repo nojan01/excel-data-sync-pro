@@ -8549,6 +8549,12 @@
                 `;
             });
             
+            // Markierung entfernen Option (nur anzeigen wenn Zeile markiert ist)
+            if (currentColor) {
+                menuHtml += '<div class="context-menu-divider"></div>';
+                menuHtml += `<div class="context-menu-item" data-action="clear-highlight" data-row="${rowIndex}" style="color: var(--text-muted);">✖️ Markierung entfernen</div>`;
+            }
+            
             menuHtml += '<div class="context-menu-divider"></div>';
             menuHtml += `<div class="context-menu-item" data-action="insert-row-above" data-row="${rowIndex}">⬆️ Zeile oberhalb einfügen</div>`;
             menuHtml += `<div class="context-menu-item" data-action="insert-row-below" data-row="${rowIndex}">⬇️ Zeile unterhalb einfügen</div>`;
@@ -8587,6 +8593,13 @@
                     setRowHighlight(row, color);
                     menuEl.remove();
                 });
+            });
+            
+            // Markierung entfernen Handler
+            menuEl.querySelector('[data-action="clear-highlight"]')?.addEventListener('click', () => {
+                const row = parseInt(menuEl.querySelector('[data-action="clear-highlight"]').dataset.row);
+                clearRowHighlight(row);
+                menuEl.remove();
             });
             
             // Neue Zeilen-Aktionen
