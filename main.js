@@ -1624,6 +1624,45 @@ ipcMain.handle('fs:checkFileExists', async (event, filePath) => {
     }
 });
 
+// Dateien nach Muster im Verzeichnis suchen
+ipcMain.handle('fs:findFiles', async (event, { directory, pattern }) => {
+    // Sicherheitsprüfung: Pfad validieren
+    if (!isValidFilePath(directory)) {
+        return { success: false, error: 'Ungültiger Verzeichnispfad', files: [] };
+    }
+
+    try {
+        const fs = require('fs');
+        const path = require('path');
+        
+        if (!fs.existsSync(directory)) {
+            return { success: false, error: 'Verzeichnis nicht gefunden', files: [] };
+        }
+        
+        const allFiles = fs.readdirSync(directory);
+        
+        // Pattern in RegExp umwandeln (z.B. "Defence&Space_MVMS_Change_Request_*.*" -> RegExp)
+        // * wird zu .*, ? wird zu ., Sonderzeichen werden escaped
+        const regexPattern = pattern
+            .replace(/[.+^${}()|[\]\\]/g, '\\$&')  // Escape Regex-Sonderzeichen außer * und ?
+            .replace(/\*/g, '.*')                   // * -> .*
+            .replace(/\?/g, '.');                   // ? -> .
+        
+        const regex = new RegExp('^' + regexPattern + '$', 'i');
+        
+        const matchingFiles = allFiles
+            .filter(file => regex.test(file))
+            .map(file => path.join(directory, file));
+        
+        console.log(`[fs:findFiles] Suche in ${directory} nach "${pattern}": ${matchingFiles.length} Treffer`);
+        
+        return { success: true, files: matchingFiles };
+    } catch (err) {
+        console.error('Dateisuche Fehler:', err);
+        return { success: false, error: err.message, files: [] };
+    }
+});
+
 // ============================================
 // EXCEL OPERATIONEN (xlsx-populate - erhaelt Formatierung!)
 // ============================================

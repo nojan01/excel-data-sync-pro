@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     // Dateisystem
     checkFileExists: (filePath) => ipcRenderer.invoke('fs:checkFileExists', filePath),
+    findFiles: (directory, pattern) => ipcRenderer.invoke('fs:findFiles', { directory, pattern }),
     
     // Drag & Drop - Dateipfad aus File-Objekt extrahieren
     getPathForFile: (file) => {

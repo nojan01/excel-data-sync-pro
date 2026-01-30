@@ -5054,6 +5054,9 @@
                         state.file2.sheets = result.sheets;
                         state.file2.workbook = { SheetNames: result.sheets };
                         
+                        // Change-Request-Cache invalidieren (neues Verzeichnis)
+                        invalidateChangeRequestCache();
+                        
                         elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
                         elements.selectSheet2.disabled = false;
                         elements.file2Info.textContent = `✓ ${result.fileName}`;
@@ -5208,7 +5211,7 @@
                     const term = item.dataset.term;
                     elements.searchInput.value = term;
                     hideSearchHistoryDropdown();
-                    performSearch();
+                    search();
                 });
             });
         }
@@ -5298,7 +5301,14 @@
                 pageSizeOptions: [50, 100, 250, 500]
             },
             // Arbeitsordner
-            workingDirectory: null
+            workingDirectory: null,
+            // Cache für Change-Request-Dateien (für Duplikatprüfung)
+            changeRequestCache: {
+                files: [],           // Liste der gefundenen Dateien
+                data: new Map(),     // Map<filePath, {headers, data, checkColumn}>
+                lastUpdate: null,    // Zeitstempel der letzten Aktualisierung
+                directory: null      // Verzeichnis das gescannt wurde
+            }
         };
         
         // ==================== DOM Elements ====================
@@ -6612,21 +6622,170 @@
         }
         
         // ==================== Transfer ====================
+        
+        // Pattern für Change-Request-Dateien
+        const CHANGE_REQUEST_PATTERN = 'Defence&Space_MVMS_Change_Request_*.*';
+        
+        /**
+         * Lädt alle Change-Request-Dateien aus dem Zieldatei-Verzeichnis
+         * und cached deren Daten für schnelle Duplikatprüfung
+         */
+        async function loadChangeRequestFiles() {
+            if (!state.file2.filePath) {
+                return;
+            }
+            
+            // Verzeichnis aus Zieldatei-Pfad extrahieren
+            const directory = state.file2.filePath.substring(0, state.file2.filePath.lastIndexOf('/'));
+            
+            // Prüfe ob Cache aktuell ist (gleiches Verzeichnis, nicht älter als 5 Minuten)
+            const cacheAge = state.changeRequestCache.lastUpdate 
+                ? Date.now() - state.changeRequestCache.lastUpdate 
+                : Infinity;
+            
+            if (state.changeRequestCache.directory === directory && cacheAge < 5 * 60 * 1000) {
+                return;
+            }
+            
+            try {
+                const result = await window.electronAPI.findFiles(directory, CHANGE_REQUEST_PATTERN);
+                
+                if (!result.success) {
+                    console.error('[ChangeRequest] Fehler bei Dateisuche:', result.error);
+                    return;
+                }
+                
+                // Zieldatei selbst ausschließen (wird separat geprüft)
+                const files = result.files.filter(f => f !== state.file2.filePath);
+                
+                // Cache zurücksetzen
+                state.changeRequestCache.files = files;
+                state.changeRequestCache.data.clear();
+                state.changeRequestCache.directory = directory;
+                state.changeRequestCache.lastUpdate = Date.now();
+                
+                // Dateien laden (nur Excel-Dateien)
+                for (const filePath of files) {
+                    if (!filePath.match(/\.(xlsx|xls)$/i)) continue;
+                    
+                    try {
+                        // Schnelles Laden: nur Sheets auflisten
+                        const fileResult = await window.electronAPI.readExcelFile(filePath);
+                        
+                        if (fileResult.success && fileResult.sheets.length > 0) {
+                            // Dasselbe Sheet wie in der Zieldatei verwenden, falls vorhanden
+                            const targetSheet = state.file2.selectedSheet || fileResult.sheets[0];
+                            const sheetToLoad = fileResult.sheets.includes(targetSheet) ? targetSheet : fileResult.sheets[0];
+                            
+                            const sheetResult = await window.electronAPI.readExcelSheet(
+                                filePath, 
+                                sheetToLoad
+                            );
+                            
+                            if (sheetResult.success) {
+                                state.changeRequestCache.data.set(filePath, {
+                                    fileName: filePath.substring(filePath.lastIndexOf('/') + 1),
+                                    headers: sheetResult.headers || [],
+                                    data: sheetResult.data || [],
+                                    sheetName: sheetToLoad
+                                });
+                            }
+                        }
+                    } catch (err) {
+                        console.warn(`[ChangeRequest] Fehler beim Laden von ${filePath}:`, err.message);
+                    }
+                }
+                
+
+                
+            } catch (err) {
+                console.error('[ChangeRequest] Fehler:', err);
+            }
+        }
+        
+        /**
+         * Prüft ob ein Wert bereits in der Zieldatei oder in Change-Request-Dateien existiert
+         * @param {string} value - Der zu prüfende Wert
+         * @returns {Object|null} - {rowIndex, value, source} wenn gefunden, sonst null
+         */
+        /**
+         * Prüft ob ein Wert bereits in der Zieldatei oder Change-Request-Dateien vorkommt.
+         * Gibt ein Objekt mit allen Fundorten zurück.
+         * @param {string} value - Der zu prüfende Wert
+         * @returns {Object|null} - { inTarget: boolean, inChangeRequests: string[], firstMatch: {...} } oder null
+         */
         function checkForDuplicate(value) {
-            if (!value || !state.file2.data.length) return null;
+            if (!value) return null;
             
             const valueStr = String(value).toLowerCase().trim();
             const dataStartCol = getDataStartColumn();
             
-            for (let i = 0; i < state.file2.data.length; i++) {
-                const row = state.file2.data[i];
-                for (let j = dataStartCol - 1; j < row.length; j++) {
-                    if (row[j] && String(row[j]).toLowerCase().trim() === valueStr) {
-                        return { rowIndex: i + 2, value: row[j] };
+            let result = {
+                inTarget: false,
+                inChangeRequests: [], // Liste der Dateinamen
+                firstMatch: null
+            };
+            
+            // 1. Prüfe in Zieldatei (Datei 2)
+            if (state.file2.data.length > 0) {
+                for (let i = 0; i < state.file2.data.length; i++) {
+                    const row = state.file2.data[i];
+                    for (let j = dataStartCol - 1; j < row.length; j++) {
+                        if (row[j] && String(row[j]).toLowerCase().trim() === valueStr) {
+                            result.inTarget = true;
+                            if (!result.firstMatch) {
+                                result.firstMatch = { 
+                                    rowIndex: i + 2, 
+                                    value: row[j], 
+                                    source: 'Zieldatei' 
+                                };
+                            }
+                            break; // Keine weitere Suche in dieser Datei nötig
+                        }
+                    }
+                    if (result.inTarget) break;
+                }
+            }
+            
+            // 2. Prüfe in Change-Request-Dateien (Cache)
+            for (const [filePath, fileData] of state.changeRequestCache.data) {
+                if (!fileData.data) continue;
+                
+                let foundInFile = false;
+                for (let i = 0; i < fileData.data.length && !foundInFile; i++) {
+                    const row = fileData.data[i];
+                    // Prüfe alle Spalten (Change-Request-Dateien haben möglicherweise anderes Layout)
+                    for (let j = 0; j < row.length; j++) {
+                        const cellValue = row[j] ? String(row[j]).toLowerCase().trim() : '';
+                        if (cellValue === valueStr) {
+                            foundInFile = true;
+                            result.inChangeRequests.push(fileData.fileName || 'Change-Request');
+                            if (!result.firstMatch) {
+                                result.firstMatch = { 
+                                    rowIndex: i + 2, 
+                                    value: row[j], 
+                                    source: fileData.fileName || 'Change-Request'
+                                };
+                            }
+                            break;
+                        }
                     }
                 }
             }
+            
+            // Nur zurückgeben wenn mindestens ein Treffer
+            if (result.inTarget || result.inChangeRequests.length > 0) {
+                return result;
+            }
             return null;
+        }
+        
+        /**
+         * Cache der Change-Request-Dateien invalidieren
+         */
+        function invalidateChangeRequestCache() {
+            state.changeRequestCache.lastUpdate = null;
+            state.changeRequestCache.directory = null;
         }
         
         async function transferSelectedDirect() {
@@ -6642,6 +6801,9 @@
                 return;
             }
             
+            // Change-Request-Dateien laden (für erweiterte Duplikatprüfung)
+            await loadChangeRequestFiles();
+            
             const flag = elements.transferFlag.value;
             const comment = elements.transferComment.value;
             
@@ -6651,6 +6813,8 @@
                 let addedCount = 0;
                 let skippedQueue = 0;
                 let skippedTarget = 0;
+                let skippedChangeRequest = 0;
+                let alsoInChangeRequest = 0;
                 
                 for (const rowIndex of state.selectedRows) {
                     const row = state.searchResults[rowIndex];
@@ -6666,11 +6830,18 @@
                         continue;
                     }
                     
-                    // Prüfe ob bereits in Zieldatei (Datei 2)
+                    // Prüfe ob bereits in Zieldatei oder Change-Request-Dateien
                     if (checkValue) {
                         const duplicate = checkForDuplicate(checkValue);
                         if (duplicate) {
-                            skippedTarget++;
+                            if (duplicate.inTarget) {
+                                skippedTarget++;
+                                if (duplicate.inChangeRequests.length > 0) {
+                                    alsoInChangeRequest++;
+                                }
+                            } else if (duplicate.inChangeRequests.length > 0) {
+                                skippedChangeRequest++;
+                            }
                             continue;
                         }
                     }
@@ -6688,10 +6859,15 @@
                 }
                 
                 // Statusmeldung für übersprungene Zeilen
-                if (skippedQueue > 0 || skippedTarget > 0) {
+                if (skippedQueue > 0 || skippedTarget > 0 || skippedChangeRequest > 0) {
                     let skipMsg = '';
                     if (skippedQueue > 0) skipMsg += `${skippedQueue} bereits in Warteschlange, `;
-                    if (skippedTarget > 0) skipMsg += `${skippedTarget} bereits in Zieldatei`;
+                    if (skippedTarget > 0) {
+                        skipMsg += `${skippedTarget} bereits in Zieldatei`;
+                        if (alsoInChangeRequest > 0) skipMsg += ` (${alsoInChangeRequest} auch in CR)`;
+                        skipMsg += ', ';
+                    }
+                    if (skippedChangeRequest > 0) skipMsg += `${skippedChangeRequest} nur in Change-Request`;
                     showStatus(elements.transferStatus, `⚠️ Übersprungen: ${skipMsg}`, 'warning');
                     await new Promise(r => setTimeout(r, 1500));
                 }
@@ -6736,8 +6912,13 @@
                 
                 if (checkValue) {
                     const duplicate = checkForDuplicate(checkValue);
-                    if (duplicate) {
-                        duplicatesFound.push({ value: checkValue, row: duplicate.rowIndex });
+                    if (duplicate && duplicate.firstMatch) {
+                        duplicatesFound.push({ 
+                            value: checkValue, 
+                            row: duplicate.firstMatch.rowIndex,
+                            inTarget: duplicate.inTarget,
+                            inChangeRequests: duplicate.inChangeRequests
+                        });
                     }
                 }
                 
@@ -6795,11 +6976,14 @@
         }
         
         // ==================== Queue Functions ====================
-        function addToQueue() {
+        async function addToQueue() {
             if (state.selectedRows.length === 0) {
                 showStatus(elements.transferStatus, 'Bitte wählen Sie mindestens eine Zeile aus', 'error');
                 return;
             }
+            
+            // Change-Request-Dateien laden (für erweiterte Duplikatprüfung)
+            await loadChangeRequestFiles();
             
             const flag = elements.transferFlag.value;
             const comment = elements.transferComment.value;
@@ -6808,6 +6992,8 @@
             let editedCount = 0;
             let skippedQueue = 0;
             let skippedTarget = 0;
+            let skippedChangeRequest = 0;
+            let alsoInChangeRequest = 0; // Zusätzlich in Change-Request (wenn auch in Zieldatei)
             
             for (const rowIndex of state.selectedRows) {
                 const row = state.searchResults[rowIndex];
@@ -6825,11 +7011,19 @@
                     continue;
                 }
                 
-                // Prüfe ob bereits in Zieldatei (Datei 2)
+                // Prüfe ob bereits in Zieldatei oder Change-Request-Dateien
                 if (checkValue) {
                     const duplicate = checkForDuplicate(checkValue);
                     if (duplicate) {
-                        skippedTarget++;
+                        if (duplicate.inTarget) {
+                            skippedTarget++;
+                            // Auch in Change-Requests?
+                            if (duplicate.inChangeRequests.length > 0) {
+                                alsoInChangeRequest++;
+                            }
+                        } else if (duplicate.inChangeRequests.length > 0) {
+                            skippedChangeRequest++;
+                        }
                         continue;
                     }
                 }
@@ -6861,7 +7055,15 @@
                 message += ` (${skippedQueue} bereits in Warteschlange)`;
             }
             if (skippedTarget > 0) {
-                message += ` ⚠️ ${skippedTarget} bereits in Zieldatei!`;
+                let targetMsg = `⚠️ ${skippedTarget} bereits in Zieldatei`;
+                if (alsoInChangeRequest > 0) {
+                    targetMsg += ` (${alsoInChangeRequest} davon auch in Change-Request)`;
+                }
+                message += ` ${targetMsg}!`;
+                status = 'warning';
+            }
+            if (skippedChangeRequest > 0) {
+                message += ` 📋 ${skippedChangeRequest} nur in Change-Request!`;
                 status = 'warning';
             }
             
@@ -7257,6 +7459,9 @@
             state.file2.sheets = result.sheets;
             state.file2.workbook = { SheetNames: result.sheets };
             
+            // Change-Request-Cache invalidieren (neues Verzeichnis)
+            invalidateChangeRequestCache();
+            
             elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
             elements.selectSheet2.disabled = false;
             elements.file2Info.textContent = `✓ ${result.fileName}`;
@@ -7523,6 +7728,9 @@
                         state.file2.filePath = config.file2Path;
                         state.file2.sheets = result.sheets;
                         state.file2.workbook = { SheetNames: result.sheets };
+                        
+                        // Change-Request-Cache invalidieren (neues Verzeichnis)
+                        invalidateChangeRequestCache();
             
                         elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
                         elements.selectSheet2.disabled = false;
@@ -15967,6 +16175,9 @@
                             state.file2.filePath = savePath;
                             state.file2.sheets = readResult.sheets;
                             state.file2.workbook = { SheetNames: readResult.sheets };
+                            
+                            // Change-Request-Cache invalidieren (neues Verzeichnis)
+                            invalidateChangeRequestCache();
                             
                             elements.selectSheet2.innerHTML = readResult.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
                             elements.selectSheet2.disabled = false;
