@@ -86,9 +86,8 @@ Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Ex
 - **⛶ Vollbild-Modus**: F11 für Vollbildansicht
 - **⚠️ Pivot-Warnung**: Warnung bei Dateien mit Pivot-Tabellen
 
-### Speichern & Exportieren
+### Exportieren
 
-- **💾 Speichern**: Änderungen direkt in die Originaldatei speichern (mit Bestätigung)
 - **📤 Exportieren**:
   - Auswahl welche Arbeitsblätter exportiert werden
   - Formatierung der Originaldatei bleibt erhalten
