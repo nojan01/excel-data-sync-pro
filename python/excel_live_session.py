@@ -710,12 +710,14 @@ class ExcelLiveSession:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
             
             excel_row = row_index + 2
-            row_range = self.worksheet.range(f'{excel_row}:{excel_row}')
+            # Nutze eine Zelle der Zeile und dann entire_row (analog zu hide_column)
+            row_range = self.worksheet.range(f'A{excel_row}')
             
-            if hidden:
-                row_range.row_height = 0
+            if platform.system() == 'Windows':
+                row_range.api.EntireRow.Hidden = hidden
             else:
-                row_range.row_height = None  # Standard-Höhe
+                # macOS: Nutze xlwings api
+                row_range.api.entire_row.hidden.set(hidden)
             
             self._log(f"Zeile {excel_row} {'versteckt' if hidden else 'angezeigt'}")
             return {'success': True, 'row': row_index, 'hidden': hidden}
@@ -739,7 +741,7 @@ class ExcelLiveSession:
             self._log(f"Batch {'verstecke' if hidden else 'zeige'} {len(excel_rows)} Zeilen")
             
             # Gruppiere aufeinanderfolgende Zeilen für effizientere Ranges
-            # z.B. [2,3,4,7,8,10] -> ["2:4", "7:8", "10:10"]
+            # z.B. [2,3,4,7,8,10] -> ["A2:A4", "A7:A8", "A10:A10"]
             excel_rows.sort()
             ranges = []
             start = excel_rows[0]
@@ -749,10 +751,10 @@ class ExcelLiveSession:
                 if row == end + 1:
                     end = row
                 else:
-                    ranges.append(f'{start}:{end}')
+                    ranges.append(f'A{start}:A{end}')
                     start = row
                     end = row
-            ranges.append(f'{start}:{end}')
+            ranges.append(f'A{start}:A{end}')
             
             # Screen-Updating deaktivieren für Performance
             app = self.workbook.app
@@ -762,10 +764,11 @@ class ExcelLiveSession:
             try:
                 for range_str in ranges:
                     row_range = self.worksheet.range(range_str)
-                    if hidden:
-                        row_range.row_height = 0
+                    if platform.system() == 'Windows':
+                        row_range.api.EntireRow.Hidden = hidden
                     else:
-                        row_range.row_height = None
+                        # macOS: Nutze xlwings api
+                        row_range.api.entire_row.hidden.set(hidden)
             finally:
                 app.screen_updating = screen_updating
             
