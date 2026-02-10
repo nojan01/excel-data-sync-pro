@@ -267,8 +267,10 @@ class ExcelLiveSession {
             return { success: true };
         }
         
+        // Kürzerer Timeout: close sollte schnell gehen (display_alerts=False)
+        // Falls es trotzdem hängt, nach 10s abbrechen statt 30s warten
         try {
-            await this._sendCommand({ action: 'close' });
+            await this._sendCommand({ action: 'close' }, 10000);
         } catch (e) {
             console.error('[LiveSession] Fehler beim Schließen:', e);
         }
