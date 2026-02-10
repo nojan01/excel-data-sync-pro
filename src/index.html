@@ -12965,14 +12965,7 @@
          * Synchronisiert die aktuellen Filter mit Excel's AutoFilter
          */
         async function syncFiltersToExcel() {
-            console.log('[FilterSync] syncFiltersToExcel aufgerufen', {
-                liveActive: explorerState.liveSessionActive,
-                liveReady: explorerState.liveSessionReady,
-                filterCount: explorerState.filters.length,
-                filters: explorerState.filters
-            });
             if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) {
-                console.log('[FilterSync] Abbruch: Live Session nicht aktiv/ready');
                 return;
             }
             
@@ -12986,20 +12979,14 @@
                         operator: f.operator || 'contains'
                     }));
                 
-                console.log('[FilterSync] Excel-Filter:', JSON.stringify(excelFilters));
-                
                 if (excelFilters.length > 0) {
                     const result = await window.electronAPI.liveSessionSetAutoFilter(excelFilters);
-                    console.log('[FilterSync] Ergebnis:', JSON.stringify(result));
-                    if (result && result.success) {
-                        console.log('[LiveSession] AutoFilter gesetzt:', excelFilters.length, 'Filter');
-                    } else {
-                        console.error('[FilterSync] Filter fehlgeschlagen:', result);
+                    if (result && !result.success) {
+                        console.error('[LiveSession] Filter fehlgeschlagen:', result);
                     }
                 } else {
                     // Keine Filter - AutoFilter in Excel entfernen
                     await window.electronAPI.liveSessionClearAutoFilter();
-                    console.log('[LiveSession] AutoFilter entfernt');
                 }
             } catch (error) {
                 console.error('[LiveSession] Filter-Sync Fehler:', error);
