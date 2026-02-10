@@ -3759,10 +3759,13 @@ ipcMain.handle('liveSession:findReplace', async (event, searchText, replaceText,
 // === FILTER-OPERATIONEN ===
 
 ipcMain.handle('liveSession:setAutoFilter', async (event, filters) => {
-    console.log('[LiveSession] IPC: setAutoFilter', filters);
+    console.log('[LiveSession] IPC: setAutoFilter', JSON.stringify(filters));
     try {
         const session = getLiveSession();
-        return await session.setAutoFilter(filters);
+        console.log('[LiveSession] IPC: Session geholt, sende an Bridge...');
+        const result = await session.setAutoFilter(filters);
+        console.log('[LiveSession] IPC: setAutoFilter Ergebnis:', JSON.stringify(result));
+        return result;
     } catch (error) {
         return { success: false, error: error.message };
     }

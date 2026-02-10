@@ -187,15 +187,20 @@ class ExcelLiveSession:
             self._log(f"Journal-Flush-Fehler: {e}")
     
     def _check_auto_save(self):
-        """Auto-Save ist deaktiviert.
+        """Prüft ob Auto-Save fällig ist"""
+        if not self.workbook:
+            return
         
-        Änderungen werden nur gespeichert wenn der Benutzer explizit speichert
-        (über save_file()). Das Backup + Journal-System dient als Recovery-Schutz.
-        
-        xlwings-Operationen ändern Excel direkt im Speicher. Ein automatisches
-        workbook.save() würde die Originaldatei ohne Benutzerbestätigung überschreiben.
-        """
-        pass
+        now = time.time()
+        if now - self.last_auto_save >= self.auto_save_interval:
+            try:
+                self._log("Auto-Save...")
+                self.workbook.save()
+                self.last_auto_save = now
+                self._flush_journal()  # Journal auch speichern
+                self._log("Auto-Save erfolgreich")
+            except Exception as e:
+                self._log(f"Auto-Save-Fehler: {e}")
     
     def _cleanup_recovery(self, success: bool = True):
         """Bereinigt Recovery-Dateien nach erfolgreichem Speichern"""
@@ -572,9 +577,7 @@ class ExcelLiveSession:
                         self._log("Datei gespeichert vor dem Schließen")
                     else:
                         # Workbook als "gespeichert" markieren BEVOR close() aufgerufen wird.
-                        # Das ist die zuverlässigste Methode um den "Speichern?"-Dialog
-                        # zu verhindern - besonders auf macOS wo display_alerts=False
-                        # bei close() nicht immer greift.
+                        # Verhindert den "Speichern?"-Dialog auf macOS.
                         try:
                             if platform.system() == 'Windows':
                                 self.workbook.api.Saved = True
@@ -893,9 +896,7 @@ class ExcelLiveSession:
             return {'success': False, 'error': str(e)}
     
     def move_column(self, from_index: int, to_index: int) -> Dict[str, Any]:
-        """Verschiebt eine Spalte via Copy+Delete.
-        Stellt danach den Original-Header-Namen wieder her, falls Excel in Tabellen
-        eine '2' angehängt hat."""
+        """Verschiebt eine Spalte"""
         try:
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
@@ -907,9 +908,6 @@ class ExcelLiveSession:
             target_letter = self._get_column_letter(excel_to)
             
             self._log(f"Verschiebe Spalte {source_letter} nach {target_letter}")
-            
-            # Original-Header-Name merken (für Korrektur nach Copy bei Tabellen)
-            original_header = self.worksheet.range((1, excel_from)).value
             
             last_row = self.worksheet.used_range.last_cell.row if self.worksheet.used_range else 1000
             
@@ -925,8 +923,6 @@ class ExcelLiveSession:
                 else:
                     source_rng.api.copy_range(destination=dest_rng.api)
                 self.worksheet.range(f'{new_source_letter}:{new_source_letter}').delete()
-                # Header-Name korrigieren (Excel hängt ggf. "2" an bei Tabellen)
-                final_col = excel_to
             else:
                 # Nach rechts verschieben
                 after_target_letter = self._get_column_letter(excel_to + 1)
@@ -938,22 +934,6 @@ class ExcelLiveSession:
                 else:
                     source_rng.api.copy_range(destination=dest_rng.api)
                 self.worksheet.range(f'{source_letter}:{source_letter}').delete()
-                # Nach Delete ist die Zielspalte um 1 nach links gerutscht
-                final_col = excel_to
-            
-            # Header-Name wiederherstellen (falls Excel "2" angehängt hat)
-            if original_header:
-                current_header = self.worksheet.range((1, final_col)).value
-                if current_header != original_header:
-                    self._log(f"Header korrigiert: '{current_header}' → '{original_header}'")
-                    self.worksheet.range((1, final_col)).value = original_header
-            
-            # Screen refresh erzwingen
-            self._force_screen_refresh()
-            
-            # Journal-Eintrag
-            self._journal_add('moveColumn', {'fromIndex': from_index, 'toIndex': to_index})
-            self._check_auto_save()
             
             return {'success': True, 'movedFrom': from_index, 'movedTo': to_index}
             
@@ -1289,11 +1269,10 @@ class ExcelLiveSession:
                                 self._log(f"Windows: Fehler bei Filter Spalte {col_idx}: {e}")
                     else:
                         # ===== macOS =====
-                        # Native AutoFilter via appscript ist auf macOS unzuverlässig
-                        # (Aufrufe gelingen ohne Exception, filtern aber nicht).
-                        # Stattdessen: Batch-Zeilen-Ausblendung — alle Spalten-Daten
-                        # auf einmal lesen, Nicht-Treffer bestimmen, dann in einem
-                        # Batch ausblenden. ~5-25 API-Aufrufe statt 1 pro Zeile.
+                        # Auf macOS funktioniert weder appscript auto_filter()
+                        # noch VBA via AppleScript zuverlässig.
+                        # Batch-Zeilen-Ausblendung: Spalten-Daten in einem Aufruf
+                        # lesen, zusammenhängende Bereiche gruppiert ausblenden.
                         self._log(f"macOS: Verwende Batch-Zeilen-Ausblendung")
                         
                         last_row = used_range.last_cell.row
@@ -1301,7 +1280,7 @@ class ExcelLiveSession:
                         
                         for f in filters:
                             col_idx = f.get('colIndex', 0) + 1
-                            criteria_lower = f.get('criteria', '').lower()
+                            criteria = f.get('criteria', '').lower()
                             operator = f.get('operator', 'equals')
                             col_letter = self._get_column_letter(col_idx)
                             
@@ -1316,15 +1295,15 @@ class ExcelLiveSession:
                                 cell_str = str(cell_value).lower() if cell_value is not None else ''
                                 matches = False
                                 if operator == 'contains':
-                                    matches = criteria_lower in cell_str
+                                    matches = criteria in cell_str
                                 elif operator == 'startsWith':
-                                    matches = cell_str.startswith(criteria_lower)
+                                    matches = cell_str.startswith(criteria)
                                 elif operator == 'endsWith':
-                                    matches = cell_str.endswith(criteria_lower)
+                                    matches = cell_str.endswith(criteria)
                                 elif operator == 'equals':
-                                    matches = cell_str == criteria_lower
+                                    matches = cell_str == criteria
                                 else:
-                                    matches = criteria_lower in cell_str
+                                    matches = criteria in cell_str
                                 if not matches:
                                     rows_to_hide.add(row_num)
                         
@@ -1334,13 +1313,10 @@ class ExcelLiveSession:
                         try:
                             all_rows = self.worksheet.range(f'A2:A{last_row}')
                             all_rows.api.entire_row.hidden.set(False)
-                            self._log("macOS: Alle Zeilen eingeblendet")
                         except Exception as e:
                             self._log(f"macOS: Einblenden-Fehler: {e}")
                         
-                        # Zusammenhängende Bereiche einzeln ausblenden
-                        # (Komma-getrennte Ranges wie '5:5,10:15' funktionieren
-                        #  auf macOS/appscript nicht zuverlässig)
+                        # Zusammenhängende Bereiche gruppiert ausblenden
                         if rows_to_hide:
                             sorted_rows = sorted(rows_to_hide)
                             ranges = []
@@ -1361,16 +1337,7 @@ class ExcelLiveSession:
                                     hidden_count += (end_row - start_row + 1)
                                 except Exception as e:
                                     self._log(f"macOS: Hide {start_row}:{end_row} Fehler: {e}")
-                                    # Einzeln als letzter Fallback
-                                    for rn in range(start_row, end_row + 1):
-                                        try:
-                                            self.worksheet.range(f'A{rn}').api.entire_row.hidden.set(True)
-                                            hidden_count += 1
-                                        except:
-                                            pass
-                            self._log(f"macOS: {hidden_count} Zeilen ausgeblendet")
-                        else:
-                            self._log("macOS: Keine Zeilen auszublenden")
+                            self._log(f"macOS: {hidden_count} Zeilen in {len(ranges)} Bereichen ausgeblendet")
                 else:
                     # ===== AutoFilter entfernen / Alle Zeilen einblenden =====
                     if is_windows:
@@ -1392,13 +1359,13 @@ class ExcelLiveSession:
                         except Exception as e:
                             self._log(f"Windows: Fehler beim Entfernen: {e}")
                     else:
-                        # macOS: Alle Zeilen wieder einblenden (1 API-Aufruf)
+                        # macOS: Alle Zeilen einblenden (1 API-Aufruf)
                         self._log("macOS: Alle Zeilen einblenden")
                         try:
                             last_row = used_range.last_cell.row
                             all_rows = self.worksheet.range(f'A2:A{last_row}')
                             all_rows.api.entire_row.hidden.set(False)
-                            self._log(f"macOS: Alle {last_row - 1} Zeilen eingeblendet")
+                            self._log("macOS: Alle Zeilen eingeblendet")
                         except Exception as e:
                             self._log(f"macOS: Fehler beim Einblenden: {e}")
                         

@@ -11,9 +11,6 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-// Gemeinsames Python-Umgebungsmodul (gecachte Pfad-Ermittlung)
-const { getPythonPath, getPythonBasePath, getPythonEnv } = require('./python_env');
-
 // Globaler Handler für EPIPE-Fehler (verhindert Crash beim Beenden)
 process.on('uncaughtException', (err) => {
     if (err.code === 'EPIPE' || err.message?.includes('EPIPE')) {
@@ -24,6 +21,109 @@ process.on('uncaughtException', (err) => {
     // Andere Fehler loggen statt re-throw (verhindert Electron Main Process Crash)
     console.error('[LiveSession] Unbehandelter Fehler:', err.message || err);
 });
+
+// Python-Pfad ermitteln (übernommen von python_bridge.js)
+function getPythonBasePath() {
+    const isPackaged = process.mainModule 
+        ? process.mainModule.filename.includes('app.asar')
+        : (require.main && require.main.filename.includes('app.asar'));
+    
+    const hasAsar = process.resourcesPath && fs.existsSync(path.join(process.resourcesPath, 'app.asar'));
+    
+    if (isPackaged || hasAsar) {
+        return path.join(process.resourcesPath, 'app.asar.unpacked', 'python');
+    }
+    return __dirname;
+}
+
+// Globale Variable für PYTHONPATH (wird von getPythonPath gesetzt)
+let _pythonEnvPath = null;
+
+function getPythonPath() {
+    const basePath = getPythonBasePath();
+    const isPackaged = basePath.includes('app.asar.unpacked');
+    
+    if (isPackaged) {
+        const resourcesPath = process.resourcesPath;
+        
+        if (process.platform === 'darwin') {
+            // macOS: System-Python verwenden da venv nur Symlinks enthält
+            // Das venv kann auf anderen Macs nicht funktionieren
+            // Aber wir brauchen das venv für die Python-Pakete (xlwings, openpyxl)
+            const venvPath = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'mac-arm64', 'python-venv');
+            const sitePackages = path.join(venvPath, 'lib', 'python3.14', 'site-packages');
+            
+            // System-Python mit venv site-packages verwenden
+            const macPythonPaths = [
+                '/opt/homebrew/bin/python3',        // Homebrew Apple Silicon
+                '/usr/local/bin/python3',           // Homebrew Intel
+                '/usr/bin/python3',                 // System Python
+                '/Library/Frameworks/Python.framework/Versions/Current/bin/python3'
+            ];
+            
+            for (const pyPath of macPythonPaths) {
+                if (fs.existsSync(pyPath)) {
+                    console.log(`[LiveSession] macOS: System-Python gefunden: ${pyPath}`);
+                    // Site-packages für späteren Gebrauch speichern
+                    if (fs.existsSync(sitePackages)) {
+                        _pythonEnvPath = sitePackages;
+                        console.log(`[LiveSession] macOS: PYTHONPATH wird gesetzt auf: ${sitePackages}`);
+                    }
+                    return pyPath;
+                }
+            }
+            
+            console.log('[LiveSession] WARNUNG: Kein Python auf macOS gefunden');
+        } else if (process.platform === 'win32') {
+            const embeddedPython = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'win-x64', 'python.exe');
+            if (fs.existsSync(embeddedPython)) return embeddedPython;
+        }
+    }
+    
+    // Dev-Modus: venv
+    if (!isPackaged) {
+        const venvPath = path.join(basePath, '..', '.venv');
+        if (fs.existsSync(venvPath)) {
+            if (process.platform === 'win32') {
+                return path.join(venvPath, 'Scripts', 'python.exe');
+            } else {
+                return path.join(venvPath, 'bin', 'python3');
+            }
+        }
+    }
+    
+    // macOS System-Python
+    if (process.platform === 'darwin') {
+        const macPythonPaths = [
+            '/opt/homebrew/bin/python3',
+            '/usr/local/bin/python3',
+            '/usr/bin/python3'
+        ];
+        for (const pyPath of macPythonPaths) {
+            if (fs.existsSync(pyPath)) return pyPath;
+        }
+    }
+    
+    return process.platform === 'win32' ? 'python' : 'python3';
+}
+
+/**
+ * Gibt die Umgebungsvariablen für Python-Prozesse zurück
+ */
+function getPythonEnv() {
+    const env = { ...process.env };
+    if (_pythonEnvPath) {
+        // Für macOS: aeosa.pth wird nicht verarbeitet, daher aeosa-Verzeichnis explizit hinzufügen
+        // damit 'from appscript import ...' funktioniert
+        const aeosaPath = path.join(_pythonEnvPath, 'aeosa');
+        let pythonPath = _pythonEnvPath;
+        if (fs.existsSync(aeosaPath)) {
+            pythonPath = _pythonEnvPath + path.delimiter + aeosaPath;
+        }
+        env.PYTHONPATH = pythonPath + (env.PYTHONPATH ? path.delimiter + env.PYTHONPATH : '');
+    }
+    return env;
+}
 
 class ExcelLiveSession {
     constructor() {
@@ -96,8 +196,6 @@ class ExcelLiveSession {
                                     this.currentResolve(response);
                                     this.currentResolve = null;
                                     this.currentReject = null;
-                                    // Nächsten Command aus Queue verarbeiten
-                                    this._processNextCommand();
                                 }
                             } catch (e) {
                                 console.error('[LiveSession] JSON Parse Error:', e, 'Line:', line);
@@ -151,45 +249,7 @@ class ExcelLiveSession {
     }
 
     /**
-     * Verarbeitet den nächsten Command aus der Queue
-     */
-    _processNextCommand() {
-        if (this.commandQueue.length === 0 || this.isBusy) return;
-
-        const { command, resolve, reject, timeout } = this.commandQueue.shift();
-        this.isBusy = true;
-        let timeoutTimer = null;
-
-        this.currentResolve = (result) => {
-            if (timeoutTimer) clearTimeout(timeoutTimer);
-            this.isBusy = false;
-            resolve(result);
-            // Nächster Command wird vom stdout-Handler getriggert
-        };
-        this.currentReject = (error) => {
-            if (timeoutTimer) clearTimeout(timeoutTimer);
-            this.isBusy = false;
-            reject(error);
-            this._processNextCommand();
-        };
-
-        const cmdJson = JSON.stringify(command) + '\n';
-        this.pythonProcess.stdin.write(cmdJson);
-
-        // Timeout mit clearTimeout-Cleanup
-        timeoutTimer = setTimeout(() => {
-            if (this.isBusy) {
-                this.isBusy = false;
-                this.currentResolve = null;
-                this.currentReject = null;
-                reject(new Error('Timeout waiting for response'));
-                this._processNextCommand();
-            }
-        }, timeout);
-    }
-
-    /**
-     * Sendet einen Befehl an Python und wartet auf Antwort (Queue-basiert)
+     * Sendet einen Befehl an Python und wartet auf Antwort
      * @param {Object} command - Der Befehl
      * @param {number} timeout - Timeout in ms (default: 30000)
      */
@@ -200,13 +260,29 @@ class ExcelLiveSession {
                 return;
             }
 
-            // Command in Queue einreihen
-            this.commandQueue.push({ command, resolve, reject, timeout });
+            this.isBusy = true;
+            this.currentResolve = (result) => {
+                this.isBusy = false;
+                resolve(result);
+            };
+            this.currentReject = (error) => {
+                this.isBusy = false;
+                reject(error);
+            };
 
-            // Wenn nicht beschäftigt, sofort verarbeiten
-            if (!this.isBusy) {
-                this._processNextCommand();
-            }
+            const cmdJson = JSON.stringify(command) + '\n';
+            this.pythonProcess.stdin.write(cmdJson);
+
+            // Timeout
+            const timeoutReject = reject;
+            setTimeout(() => {
+                if (this.currentReject && this.isBusy) {
+                    this.isBusy = false;
+                    timeoutReject(new Error('Timeout waiting for response'));
+                    this.currentResolve = null;
+                    this.currentReject = null;
+                }
+            }, timeout);
         });
     }
 
@@ -269,37 +345,20 @@ class ExcelLiveSession {
         }
         
         if (this.isBusy) {
-            // Ein vorheriger Command (z.B. setAutoFilter mit langsamer
-            // Zeilen-Ausblendung auf macOS) läuft noch.
-            // Nicht warten (könnte 30+ Sekunden dauern!) - sofort beenden.
+            // Ein vorheriger Command läuft noch - sofort beenden.
             console.log('[LiveSession] Close: Prozess ist beschäftigt, force-close');
-            
-            // Queue leeren
-            for (const { reject } of this.commandQueue) {
-                try { reject(new Error('Session wird geschlossen')); } catch(e) {}
-            }
-            this.commandQueue = [];
-            
-            // Laufenden Command abbrechen
             this.isBusy = false;
             this.currentResolve = null;
             this.currentReject = null;
-            
-            // Python-Prozess sofort beenden
             this._forceKillProcess();
-            
-            // Excel separat beenden (Python konnte app.quit() nicht mehr aufrufen)
             this._forceCloseExcel();
-            
             return { success: true };
         }
         
-        // Normaler Close: Prozess ist idle, close-Command senden
         try {
             await this._sendCommand({ action: 'close' }, 10000);
         } catch (e) {
             console.error('[LiveSession] Fehler beim Schließen:', e);
-            // Timeout oder Fehler: Excel separat beenden
             this._forceCloseExcel();
         }
         
@@ -323,18 +382,15 @@ class ExcelLiveSession {
     
     /**
      * Beendet Excel separat über OS-Mechanismen
-     * (wenn Python-Prozess gekillt wurde bevor app.quit() lief)
      */
     _forceCloseExcel() {
         if (process.platform === 'darwin') {
-            // macOS: Workbook über AppleScript schließen
             const { exec } = require('child_process');
             const fileName = this._openedFilePath 
                 ? path.basename(this._openedFilePath) 
                 : null;
             
             if (fileName) {
-                // Erst versuchen nur das spezifische Workbook zu schließen
                 const script = `tell application "Microsoft Excel"
                     try
                         close workbook "${fileName}" saving no
@@ -346,13 +402,10 @@ class ExcelLiveSession {
                     else console.log('[LiveSession] macOS: Excel Workbook geschlossen');
                 });
             } else {
-                // Fallback: Excel beenden wenn kein Dateiname bekannt
-                exec(`osascript -e 'tell application "Microsoft Excel" to quit saving no'`, 
+                exec(`osascript -e 'tell application "Microsoft Excel" to quit saving no'`,
                     { timeout: 5000 });
             }
         }
-        // Windows: COM-Verbindung stirbt mit Python-Prozess,
-        // Excel-Instanz (visible=False) beendet sich selbst
     }
 
     /**
