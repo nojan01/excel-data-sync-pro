@@ -9310,9 +9310,17 @@
             
             // Filter-UI zurücksetzen
             const explorerFiltersEl = document.getElementById('explorerFilters');
-            if (explorerFiltersEl) explorerFiltersEl.innerHTML = '';
+            if (explorerFiltersEl) {
+                explorerFiltersEl.innerHTML = '';
+                explorerFiltersEl.style.display = 'flex'; // Filter-Bereich wieder einblenden (falls eingeklappt)
+            }
             const btnClearFilters = document.getElementById('btnClearExplorerFilters');
             if (btnClearFilters) btnClearFilters.disabled = true;
+            // Filter-Badge und Toggle-Icon zurücksetzen
+            const filterCountBadge = document.getElementById('filterCountBadge');
+            if (filterCountBadge) filterCountBadge.style.display = 'none';
+            const filterToggleIcon = document.getElementById('filterToggleIcon');
+            if (filterToggleIcon) filterToggleIcon.textContent = '▼';
             
             // Spalten-Panel zurücksetzen und schließen
             const columnToggles = document.getElementById('columnToggles');
