@@ -885,44 +885,53 @@ class ExcelLiveSession:
             return {'success': False, 'error': str(e)}
     
     def move_column(self, from_index: int, to_index: int) -> Dict[str, Any]:
-        """Verschiebt eine Spalte"""
+        """Verschiebt eine Spalte per Cut & Insert (verhindert doppelte Header)"""
         try:
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            if from_index == to_index:
+                return {'success': True, 'movedFrom': from_index, 'movedTo': to_index}
             
             excel_from = from_index + 1
             excel_to = to_index + 1
             
             source_letter = self._get_column_letter(excel_from)
-            target_letter = self._get_column_letter(excel_to)
             
-            self._log(f"Verschiebe Spalte {source_letter} nach {target_letter}")
+            self._log(f"Verschiebe Spalte {source_letter} (idx {from_index}) -> idx {to_index}")
             
             last_row = self.worksheet.used_range.last_cell.row if self.worksheet.used_range else 1000
             
-            if from_index > to_index:
-                # Nach links verschieben
-                self.worksheet.range(f'{target_letter}:{target_letter}').insert(shift='right')
-                new_source_col = excel_from + 1
-                new_source_letter = self._get_column_letter(new_source_col)
-                source_rng = self.worksheet.range(f'{new_source_letter}1:{new_source_letter}{last_row}')
-                dest_rng = self.worksheet.range(f'{target_letter}1')
-                if platform.system() == 'Windows':
-                    source_rng.api.Copy(Destination=dest_rng.api)
-                else:
-                    source_rng.api.copy_range(destination=dest_rng.api)
-                self.worksheet.range(f'{new_source_letter}:{new_source_letter}').delete()
+            # Schritt 1: Quelldaten in Zwischenspeicher lesen (Header + Daten)
+            source_rng = self.worksheet.range(f'{source_letter}1:{source_letter}{last_row}')
+            col_data = source_rng.value
+            # Einzelwert in Liste umwandeln
+            if not isinstance(col_data, list):
+                col_data = [col_data]
+            
+            # Schritt 2: Quellspalte löschen
+            self.worksheet.range(f'{source_letter}:{source_letter}').delete()
+            
+            # Schritt 3: Zielposition anpassen (nach Löschung verschieben sich Indizes)
+            if from_index < to_index:
+                # Spalte war links, nach Löschung verschiebt sich Ziel um 1 nach links
+                insert_col = excel_to  # excel_to - 1 + 1 = excel_to
             else:
-                # Nach rechts verschieben
-                after_target_letter = self._get_column_letter(excel_to + 1)
-                self.worksheet.range(f'{after_target_letter}:{after_target_letter}').insert(shift='right')
-                source_rng = self.worksheet.range(f'{source_letter}1:{source_letter}{last_row}')
-                dest_rng = self.worksheet.range(f'{after_target_letter}1')
-                if platform.system() == 'Windows':
-                    source_rng.api.Copy(Destination=dest_rng.api)
-                else:
-                    source_rng.api.copy_range(destination=dest_rng.api)
-                self.worksheet.range(f'{source_letter}:{source_letter}').delete()
+                # Spalte war rechts, Ziel bleibt gleich
+                insert_col = excel_to
+            
+            insert_letter = self._get_column_letter(insert_col)
+            
+            # Schritt 4: Leere Spalte an Zielposition einfügen
+            self.worksheet.range(f'{insert_letter}:{insert_letter}').insert(shift='right')
+            
+            # Schritt 5: Daten in neue Spalte schreiben
+            target_rng = self.worksheet.range(f'{insert_letter}1:{insert_letter}{len(col_data)}')
+            # xlwings erwartet für vertikale Ranges eine verschachtelte Liste
+            target_rng.value = [[v] for v in col_data]
+            
+            # Screen refresh erzwingen
+            self._force_screen_refresh()
             
             return {'success': True, 'movedFrom': from_index, 'movedTo': to_index}
             
