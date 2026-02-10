@@ -187,20 +187,15 @@ class ExcelLiveSession:
             self._log(f"Journal-Flush-Fehler: {e}")
     
     def _check_auto_save(self):
-        """Prüft ob Auto-Save fällig ist"""
-        if not self.workbook:
-            return
+        """Auto-Save ist deaktiviert.
         
-        now = time.time()
-        if now - self.last_auto_save >= self.auto_save_interval:
-            try:
-                self._log("Auto-Save...")
-                self.workbook.save()
-                self.last_auto_save = now
-                self._flush_journal()  # Journal auch speichern
-                self._log("Auto-Save erfolgreich")
-            except Exception as e:
-                self._log(f"Auto-Save-Fehler: {e}")
+        Änderungen werden nur gespeichert wenn der Benutzer explizit speichert
+        (über save_file()). Das Backup + Journal-System dient als Recovery-Schutz.
+        
+        xlwings-Operationen ändern Excel direkt im Speicher. Ein automatisches
+        workbook.save() würde die Originaldatei ohne Benutzerbestätigung überschreiben.
+        """
+        pass
     
     def _cleanup_recovery(self, success: bool = True):
         """Bereinigt Recovery-Dateien nach erfolgreichem Speichern"""
