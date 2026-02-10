@@ -1331,10 +1331,16 @@ class ExcelLiveSession:
                         self._log(f"macOS: {len(rows_to_hide)} von {last_row - 1} Zeilen ausblenden")
                         
                         # Alle Zeilen einblenden (1 API-Aufruf)
-                        all_rows = self.worksheet.range(f'A2:A{last_row}')
-                        all_rows.api.entire_row.hidden.set(False)
+                        try:
+                            all_rows = self.worksheet.range(f'A2:A{last_row}')
+                            all_rows.api.entire_row.hidden.set(False)
+                            self._log("macOS: Alle Zeilen eingeblendet")
+                        except Exception as e:
+                            self._log(f"macOS: Einblenden-Fehler: {e}")
                         
-                        # Zusammenhängende Bereiche gruppieren und batch-weise ausblenden
+                        # Zusammenhängende Bereiche einzeln ausblenden
+                        # (Komma-getrennte Ranges wie '5:5,10:15' funktionieren
+                        #  auf macOS/appscript nicht zuverlässig)
                         if rows_to_hide:
                             sorted_rows = sorted(rows_to_hide)
                             ranges = []
@@ -1343,25 +1349,28 @@ class ExcelLiveSession:
                                 if row == end + 1:
                                     end = row
                                 else:
-                                    ranges.append(f'{start}:{end}')
+                                    ranges.append((start, end))
                                     start = end = row
-                            ranges.append(f'{start}:{end}')
+                            ranges.append((start, end))
                             
-                            for batch_start in range(0, len(ranges), 50):
-                                batch = ranges[batch_start:batch_start+50]
+                            hidden_count = 0
+                            for start_row, end_row in ranges:
                                 try:
-                                    self.worksheet.range(','.join(batch)).api.entire_row.hidden.set(True)
-                                except:
-                                    # Einzeln ausblenden als letzter Fallback
-                                    for r in batch:
-                                        parts = r.split(':')
-                                        for rn in range(int(parts[0]), int(parts[1]) + 1):
-                                            try:
-                                                self.worksheet.range(f'A{rn}').api.entire_row.hidden.set(True)
-                                            except:
-                                                pass
-                        
-                        self._log(f"macOS: {len(rows_to_hide)} Zeilen ausgeblendet")
+                                    rng = self.worksheet.range(f'A{start_row}:A{end_row}')
+                                    rng.api.entire_row.hidden.set(True)
+                                    hidden_count += (end_row - start_row + 1)
+                                except Exception as e:
+                                    self._log(f"macOS: Hide {start_row}:{end_row} Fehler: {e}")
+                                    # Einzeln als letzter Fallback
+                                    for rn in range(start_row, end_row + 1):
+                                        try:
+                                            self.worksheet.range(f'A{rn}').api.entire_row.hidden.set(True)
+                                            hidden_count += 1
+                                        except:
+                                            pass
+                            self._log(f"macOS: {hidden_count} Zeilen ausgeblendet")
+                        else:
+                            self._log("macOS: Keine Zeilen auszublenden")
                 else:
                     # ===== AutoFilter entfernen / Alle Zeilen einblenden =====
                     if is_windows:
