@@ -6617,7 +6617,8 @@
             if (checkValue) {
                 const duplicate = checkForDuplicate(checkValue);
                 if (duplicate) {
-                    const errorMsg = `⚠️ Zeile bereits in Zieldatei vorhanden (Zeile ${duplicate.rowIndex})`;
+                    const rowInfo = duplicate.firstMatch ? duplicate.firstMatch.rowIndex : '?';
+                    const errorMsg = `⚠️ Zeile bereits in Zieldatei vorhanden (Zeile ${rowInfo})`;
                     showStatus(elements.transferStatus, errorMsg, 'warning');
                     showStatus(elements.newRowStatus, errorMsg, 'warning');
                     return;
@@ -6696,7 +6697,8 @@
                 if (checkValue) {
                     const duplicate = checkForDuplicate(checkValue);
                     if (duplicate) {
-                        const errorMsg = `⚠️ Zeile bereits in Zieldatei vorhanden (Zeile ${duplicate.rowIndex})`;
+                        const rowInfo = duplicate.firstMatch ? duplicate.firstMatch.rowIndex : '?';
+                        const errorMsg = `⚠️ Zeile bereits in Zieldatei vorhanden (Zeile ${rowInfo})`;
                         showStatus(elements.transferStatus, errorMsg, 'warning');
                         showStatus(elements.newRowStatus, errorMsg, 'warning');
                         return;

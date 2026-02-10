@@ -7,13 +7,10 @@
   "scripts": {
     "start": "electron --max-old-space-size=4096 --expose-gc .",
     "dev": "electron --max-old-space-size=4096 --expose-gc . --dev",
-    "build": "electron-builder --win portable --x64",
     "build:mac": "electron-builder --mac",
-    "build:mac-arm": "electron-builder --mac --arm64",
     "build:win": "electron-builder --win nsis --x64",
-    "build:arm64": "electron-builder --win portable --arm64",
-    "build:all": "electron-builder --win --mac",
-    "build:installer": "electron-builder --win nsis --x64"
+    "build:win-arm64": "electron-builder --win nsis --arm64",
+    "build:all": "electron-builder --win --mac"
   },
   "build": {
     "appId": "de.excelsync.pro",
@@ -86,7 +83,7 @@
       "installerIcon": "assets/icon.ico",
       "uninstallerIcon": "assets/icon.ico",
       "installerHeaderIcon": "assets/icon.ico",
-      "artifactName": "Excel-Data-Sync-Pro-${version}-Setup.exe",
+      "artifactName": "Excel-Data-Sync-Pro-${version}-Setup-${arch}.exe",
       "shortcutName": "Excel Data Sync Pro",
       "perMachine": false,
       "runAfterFinish": false
