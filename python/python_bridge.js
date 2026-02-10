@@ -10,17 +10,10 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
-// Sichere Log-Funktion (verhindert EIO-Fehler wenn keine Konsole vorhanden)
-function safeLog(...args) {
-    try {
-        if (process.stdout && process.stdout.writable) {
-            console.log(...args);
-        }
-    } catch (e) {
-        // Ignoriere Konsolenfehler
-    }
-}
+// Gemeinsames Python-Umgebungsmodul (gecachte Pfad-Ermittlung)
+const { getPythonPath, getPythonBasePath, getPythonEnv, safeLog } = require('./python_env');
 
+// Sichere Error-Log-Funktion
 function safeError(...args) {
     try {
         if (process.stderr && process.stderr.writable) {
@@ -29,153 +22,6 @@ function safeError(...args) {
     } catch (e) {
         // Ignoriere Konsolenfehler
     }
-}
-
-// Globale Variable für PYTHONPATH (wird von getPythonPath gesetzt)
-let _pythonEnvPath = null;
-
-// Python-Pfad ermitteln (embedded oder system)
-function getPythonPath() {
-    const basePath = getPythonBasePath();
-    const isPackaged = basePath.includes('app.asar.unpacked');
-    
-    // Im gepackten Modus: Plattform-spezifische Logik
-    if (isPackaged) {
-        const resourcesPath = process.resourcesPath;
-        
-        if (process.platform === 'darwin') {
-            // macOS: System-Python verwenden da venv nur Symlinks enthält
-            // Das venv kann auf anderen Macs nicht funktionieren
-            // Aber wir brauchen das venv für die Python-Pakete (xlwings, openpyxl)
-            const venvPath = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'mac-arm64', 'python-venv');
-            const sitePackages = path.join(venvPath, 'lib', 'python3.14', 'site-packages');
-            
-            // System-Python mit venv site-packages verwenden
-            const macPythonPaths = [
-                '/opt/homebrew/bin/python3',        // Homebrew Apple Silicon
-                '/usr/local/bin/python3',           // Homebrew Intel
-                '/usr/bin/python3',                 // System Python
-                '/Library/Frameworks/Python.framework/Versions/Current/bin/python3'
-            ];
-            
-            for (const pyPath of macPythonPaths) {
-                if (fs.existsSync(pyPath)) {
-                    safeLog(`[Python] macOS: System-Python gefunden: ${pyPath}`);
-                    // Site-packages für späteren Gebrauch speichern
-                    if (fs.existsSync(sitePackages)) {
-                        _pythonEnvPath = sitePackages;
-                        safeLog(`[Python] macOS: PYTHONPATH wird gesetzt auf: ${sitePackages}`);
-                    }
-                    return pyPath;
-                }
-            }
-            
-            safeLog('[Python] WARNUNG: Kein Python auf macOS gefunden');
-        } else if (process.platform === 'win32') {
-            // Windows: Eingebettetes Python in python-embed/win-x64
-            const embeddedPython = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'win-x64', 'python.exe');
-            if (fs.existsSync(embeddedPython)) {
-                safeLog(`[Python] Eingebettetes Python gefunden: ${embeddedPython}`);
-                return embeddedPython;
-            }
-        }
-        
-        safeLog('[Python] WARNUNG: Eingebettetes Python nicht gefunden, versuche System-Python');
-    }
-    
-    // Dev-Modus: Prüfe ob venv existiert
-    if (!isPackaged) {
-        const venvPath = path.join(basePath, '..', '.venv');
-        if (fs.existsSync(venvPath)) {
-            if (process.platform === 'win32') {
-                return path.join(venvPath, 'Scripts', 'python.exe');
-            } else {
-                return path.join(venvPath, 'bin', 'python3');
-            }
-        }
-    }
-    
-    // Fallback: System-Python suchen
-    if (process.platform === 'darwin') {
-        const macPythonPaths = [
-            '/opt/homebrew/bin/python3',        // Homebrew Apple Silicon
-            '/usr/local/bin/python3',           // Homebrew Intel
-            '/usr/bin/python3',                 // System Python
-            '/Library/Frameworks/Python.framework/Versions/Current/bin/python3'
-        ];
-        
-        for (const pyPath of macPythonPaths) {
-            if (fs.existsSync(pyPath)) {
-                safeLog(`[Python] System-Python gefunden: ${pyPath}`);
-                return pyPath;
-            }
-        }
-    }
-    
-    if (process.platform === 'win32') {
-        const winPythonPaths = [
-            'C:\\Python312\\python.exe',
-            'C:\\Python311\\python.exe',
-            'C:\\Python310\\python.exe',
-            'C:\\Python39\\python.exe',
-            (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python312\\python.exe',
-            (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python311\\python.exe',
-            (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python310\\python.exe'
-        ];
-        
-        for (const pyPath of winPythonPaths) {
-            if (fs.existsSync(pyPath)) {
-                safeLog(`[Python] System-Python gefunden: ${pyPath}`);
-                return pyPath;
-            }
-        }
-    }
-    
-    // Letzter Fallback
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
-    safeLog(`[Python] Fallback auf PATH-Python: ${pythonCmd}`);
-    return pythonCmd;
-}
-
-/**
- * Gibt die Umgebungsvariablen für Python-Prozesse zurück
- */
-function getPythonEnv() {
-    const env = { ...process.env };
-    if (_pythonEnvPath) {
-        // Für macOS: aeosa.pth wird nicht verarbeitet, daher aeosa-Verzeichnis explizit hinzufügen
-        // damit 'from appscript import ...' funktioniert (benötigt von xlwings)
-        const aeosaPath = path.join(_pythonEnvPath, 'aeosa');
-        let pythonPath = _pythonEnvPath;
-        if (fs.existsSync(aeosaPath)) {
-            pythonPath = _pythonEnvPath + path.delimiter + aeosaPath;
-        }
-        env.PYTHONPATH = pythonPath + (env.PYTHONPATH ? path.delimiter + env.PYTHONPATH : '');
-    }
-    return env;
-}
-
-// Liefert den Basis-Pfad für Python-Skripte (entpackt im Produktionsmodus)
-function getPythonBasePath() {
-    // Prüfe ob wir in einer gepackten App laufen
-    // process.mainModule ist deprecated, nutze require.main oder app.isPackaged
-    const isPackaged = process.mainModule 
-        ? process.mainModule.filename.includes('app.asar')
-        : (require.main && require.main.filename.includes('app.asar'));
-    
-    // Alternative: Prüfe ob resourcesPath auf app.asar zeigt
-    const hasAsar = process.resourcesPath && fs.existsSync(path.join(process.resourcesPath, 'app.asar'));
-    
-    if (isPackaged || hasAsar) {
-        // In Electron production build: Python-Skripte liegen in app.asar.unpacked/python
-        const unpackedPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'python');
-        safeLog(`[Python] Gepackter Modus - Python-Pfad: ${unpackedPath}`);
-        safeLog(`[Python] Existiert: ${fs.existsSync(unpackedPath)}`);
-        return unpackedPath;
-    }
-    // Im Dev-Modus: wie gehabt
-    safeLog(`[Python] Dev-Modus - Python-Pfad: ${__dirname}`);
-    return __dirname;
 }
 
 // Cache für Excel-Verfügbarkeit
@@ -315,8 +161,11 @@ function resetExcelCache() {
 
 /**
  * Führt ein Python-Script aus und gibt das JSON-Ergebnis zurück
+ * @param {string} scriptName - Name des Python-Scripts
+ * @param {string[]} args - Argumente
+ * @param {number} timeoutMs - Timeout in Millisekunden (Standard: 120s, 0 = kein Timeout)
  */
-async function callPython(scriptName, args = []) {
+async function callPython(scriptName, args = [], timeoutMs = 120000) {
     const pythonPath = getPythonPath();
     const basePath = getPythonBasePath();
     const scriptPath = path.resolve(basePath, scriptName);
@@ -336,9 +185,27 @@ async function callPython(scriptName, args = []) {
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
         const proc = spawn(pythonPath, [scriptPath, ...args], { env });
+        let isSettled = false;
         
         let stdout = '';
         let stderr = '';
+        
+        // Timeout: Prozess nach Ablauf killen
+        let timeoutHandle = null;
+        if (timeoutMs > 0) {
+            timeoutHandle = setTimeout(() => {
+                if (!isSettled) {
+                    isSettled = true;
+                    safeError(`[Python] Timeout nach ${timeoutMs}ms - Prozess wird beendet`);
+                    proc.kill('SIGTERM');
+                    // Falls SIGTERM nicht wirkt, nach 5s SIGKILL
+                    setTimeout(() => {
+                        try { proc.kill('SIGKILL'); } catch (e) { /* already dead */ }
+                    }, 5000);
+                    reject(new Error(`Python-Skript Timeout nach ${timeoutMs / 1000}s`));
+                }
+            }, timeoutMs);
+        }
         
         proc.stdout.on('data', (data) => {
             stdout += data.toString();
@@ -349,6 +216,10 @@ async function callPython(scriptName, args = []) {
         });
         
         proc.on('close', (code) => {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            if (isSettled) return; // Timeout hat bereits rejected
+            isSettled = true;
+            
             const duration = Date.now() - startTime;
             safeLog(`[Python] Script beendet in ${duration}ms, code=${code}`);
             
@@ -358,7 +229,8 @@ async function callPython(scriptName, args = []) {
             
             if (code !== 0) {
                 safeError(`[Python] Error:`, stderr);
-                reject(new Error(stderr || `Python script exited with code ${code}`));
+                // Generische Fehlermeldung ans Frontend, Details nur im Log
+                reject(new Error(`Python-Skript fehlgeschlagen (Code ${code})`));
                 return;
             }
             
@@ -373,6 +245,9 @@ async function callPython(scriptName, args = []) {
         });
         
         proc.on('error', (error) => {
+            if (timeoutHandle) clearTimeout(timeoutHandle);
+            if (isSettled) return;
+            isSettled = true;
             safeError(`[Python] Spawn error:`, error.message);
             reject(error);
         });

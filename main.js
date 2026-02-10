@@ -7,8 +7,8 @@ const fs = require('fs');
 const os = require('os');
 
 // Erhöhe V8 Heap-Größe für große Dateien (muss vor app.ready gesetzt werden)
-// 16GB für sehr große Excel-Dateien
-app.commandLine.appendSwitch('js-flags', '--max-old-space-size=16384');
+// 4GB - ausreichend für große Excel-Dateien, schont den Arbeitsspeicher
+app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 
 // WORKBOOK-CACHE: Halte geladene Workbooks im Speicher für schnelleren Sheet-Wechsel
 const workbookCache = new Map();
@@ -1499,13 +1499,13 @@ app.on('activate', () => {
 });
 
 // ============================================
-// DATEI-DIALOGE - Windows-Workaround f�r Dialog-Problem
+// DATEI-DIALOGE - Windows-Workaround für Dialog-Problem
 // ============================================
 
 // Datei oeffnen Dialog
 ipcMain.handle('dialog:openFile', async (event, options) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
-        console.error('mainWindow nicht verf�gbar f�r Dialog');
+        console.error('mainWindow nicht verfügbar für Dialog');
         return null;
     }
 
@@ -1516,7 +1516,7 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
     mainWindow.focus();
 
     try {
-        // Standard-Pfad setzen (hilft bei Dialog-Gr��enproblemen unter Windows)
+        // Standard-Pfad setzen (hilft bei Dialog-Größenproblemen unter Windows)
         const defaultPath = options.defaultPath || app.getPath('documents');
 
         const result = await dialog.showOpenDialog({
@@ -1547,7 +1547,7 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
 // Datei speichern Dialog
 ipcMain.handle('dialog:saveFile', async (event, options) => {
     if (!mainWindow || mainWindow.isDestroyed()) {
-        console.error('mainWindow nicht verf�gbar f�r Dialog');
+        console.error('mainWindow nicht verfügbar für Dialog');
         return null;
     }
 
@@ -2371,13 +2371,13 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                 return { value: value, isDate: false };
             }
 
-            // Pr�fe ob es ein deutsches Datum ist
+            // Prüfe ob es ein deutsches Datum ist
             const excelDate = parseGermanDateToExcel(value);
             if (excelDate !== null) {
                 return { value: excelDate, isDate: true };
             }
 
-            // Pr�fe ob es eine Zahl ist (mit deutschen Dezimaltrennzeichen)
+            // Prüfe ob es eine Zahl ist (mit deutschen Dezimaltrennzeichen)
             if (typeof value === 'string') {
                 // Deutsche Zahlen: 1.234,56 -> 1234.56
                 const germanNumberMatch = value.match(/^-?\d{1,3}(\.\d{3})*(,\d+)?$/);
@@ -2409,7 +2409,7 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             const usedRange = worksheet.usedRange();
             if (!usedRange) return null;
 
-            const endRow = Math.min(usedRange.endCell().rowNumber(), 100); // Max 100 Zeilen pr�fen
+            const endRow = Math.min(usedRange.endCell().rowNumber(), 100); // Max 100 Zeilen prüfen
 
             for (let row = 2; row <= endRow; row++) {
                 const cell = worksheet.cell(row, colNumber);
@@ -2431,7 +2431,7 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
         if (usedRange) {
             const endRow = usedRange.endCell().rowNumber();
 
-            // Pr�fe ab Zeile 2, ob es Daten gibt
+            // Prüfe ab Zeile 2, ob es Daten gibt
             for (let row = 2; row <= endRow; row++) {
                 // Prüfe Flag-Spalte (wenn aktiviert) oder Datenspalte
                 const checkCol = enableFlag ? flagColumn : startColumn;
@@ -2616,7 +2616,7 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             startRow: insertRow
         };
     } catch (error) {
-        console.error('Fehler beim Einf�gen:', error);
+        console.error('Fehler beim Einfügen:', error);
         return { success: false, error: error.message };
     }
 });
@@ -2653,7 +2653,7 @@ ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetNa
             return { success: false, error: `Kopieren fehlgeschlagen: ${copyErr.message}` };
         }
 
-        // Jetzt die kopierte Datei �ffnen und nur die Datenwerte l�schen
+        // Jetzt die kopierte Datei öffnen und nur die Datenwerte löschen
         const workbook = await XlsxPopulate.fromFileAsync(targetPath);
 
         // Wenn sheetName angegeben und existiert, nutze dieses Sheet
@@ -2671,14 +2671,14 @@ ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetNa
             return { success: false, error: 'Keine Worksheets in der Template-Datei gefunden' };
         }
 
-        // Nur die Werte ab Zeile 2 l�schen (Header in Zeile 1 bleibt)
+        // Nur die Werte ab Zeile 2 löschen (Header in Zeile 1 bleibt)
         // Formatierung bleibt erhalten!
         const usedRange = worksheet.usedRange();
         if (usedRange) {
             const endRow = usedRange.endCell().rowNumber();
             const endCol = usedRange.endCell().columnNumber();
 
-            // Alle Datenwerte ab Zeile 2 l�schen
+            // Alle Datenwerte ab Zeile 2 löschen
             for (let row = 2; row <= endRow; row++) {
                 for (let col = 1; col <= endCol; col++) {
                     worksheet.cell(row, col).value(undefined);

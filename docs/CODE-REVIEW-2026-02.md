@@ -50,8 +50,8 @@
 ### 7. stderr-Inhalte in Fehlermeldungen
 - **Datei:** `python/python_bridge.js` Zeile 276
 - **Problem:** Python-Stacktraces mit internen Pfaden könnten ans Frontend gelangen.
-- **Fix:** Generische Fehlermeldung an Frontend, Details nur in Security-Log.
-- **Status:** ⬜ Offen
+- **Fix:** Generische Fehlermeldung an Frontend implementiert, Details nur im Log.
+- **Status:** ✅ Behoben
 
 ---
 
@@ -90,20 +90,20 @@
 ### 13. `getPythonPath()` ohne Cache
 - **Dateien:** `python/python_bridge.js` Zeile 39–120, `python/excel_live_bridge.js`
 - **Problem:** ~10× `fs.existsSync` bei jedem Aufruf. Wird bei jeder Python-Operation aufgerufen.
-- **Fix:** Ergebnis nach erstem Aufruf cachen.
-- **Status:** ⬜ Offen
+- **Fix:** Ergebnis wird nach erstem Aufruf gecacht (in `python/python_env.js`).
+- **Status:** ✅ Behoben
 
 ### 14. ~100 Zeilen duplizierter Python-Pfad-Code
 - **Dateien:** `python/python_bridge.js` + `python/excel_live_bridge.js`
 - **Problem:** `getPythonPath`, `getPythonBasePath`, `getPythonEnv` sind fast identisch kopiert.
-- **Fix:** Gemeinsames Modul `python/python_env.js` extrahieren.
-- **Status:** ⬜ Offen (Architektur-Refactoring)
+- **Fix:** Gemeinsames Modul `python/python_env.js` extrahiert. Beide Dateien nutzen es.
+- **Status:** ✅ Behoben
 
 ### 15. V8 Heap auf 16GB gesetzt
 - **Datei:** `main.js` Zeile 9, `package.json` Scripts
 - **Problem:** `--max-old-space-size=16384` ist überdimensioniert für die meisten Maschinen.
-- **Fix:** Auf 4–8 GB reduzieren.
-- **Status:** ⬜ Offen
+- **Fix:** Auf 4 GB (`--max-old-space-size=4096`) reduziert.
+- **Status:** ✅ Behoben
 
 ---
 
@@ -124,12 +124,14 @@
 ### 18. Python-Timeout fehlt
 - **Datei:** `python/python_bridge.js` Zeile 254
 - **Problem:** `callPython` hat keinen Timeout. Hängendes Script blockiert die App ewig.
-- **Fix:** `setTimeout` + `proc.kill()` mit konfigurierbarem Timeout.
+- **Fix:** `setTimeout` + `proc.kill()` mit konfigurierbarem Timeout (Standard: 120s) implementiert.
+- **Status:** ✅ Behoben
 
 ### 19. Encoding-Probleme
 - **Datei:** `main.js` (z.B. Zeile 2272)
 - **Problem:** Mehrere Stellen mit `�` statt Umlauten (z.B. `Pr�fen`, `l�schen`).
-- **Fix:** Datei in UTF-8 re-kodieren.
+- **Fix:** 16 kaputte Umlaute (ü, ö, ß) manuell repariert. Null offene übrig.
+- **Status:** ✅ Behoben
 
 ### 20. xlsx-populate ohne Maintainer
 - **Dependency:** `xlsx-populate ^1.21.0`
@@ -159,17 +161,17 @@
 | 4 | P1 | callPython Pfad-Validierung | ✅ |
 | 5 | P1 | Command-Queue Live Bridge | ✅ |
 | 6 | P1 | deleteRecoveryFile Pfad-Check | ✅ |
-| 7 | P1 | stderr in Fehlermeldungen | ⬜ |
+| 7 | P1 | stderr in Fehlermeldungen | ✅ |
 | 8 | P2 | Temp-Datei randomUUID | ✅ |
 | 9 | P2 | DevTools nur Dev-Modus | ✅ |
 | 10 | P2 | Doppelte Funktionen | ✅ |
 | 11 | P2 | Toten Code entfernen | ✅ |
 | 12 | P2 | Redundante require | ✅ |
-| 13 | P2 | getPythonPath Cache | ⬜ |
-| 14 | P2 | Python-Pfad-Code dupliziert | ⬜ |
-| 15 | P2 | V8 Heap 16GB | ⬜ |
+| 13 | P2 | getPythonPath Cache | ✅ |
+| 14 | P2 | Python-Pfad-Code dupliziert | ✅ |
+| 15 | P2 | V8 Heap 16GB → 4GB | ✅ |
 | 16 | P3 | App-Cleanup bei Quit | ✅ |
-| 17 | P3 | main.js aufteilen | ⬜ |
-| 18 | P3 | Python-Timeout | ⬜ |
-| 19 | P3 | Encoding-Probleme | ⬜ |
-| 20 | P3 | xlsx-populate Ablösung | ⬜ |
+| 17 | P3 | main.js aufteilen | ⬜ (Architektur-Refactoring, separat) |
+| 18 | P3 | Python-Timeout | ✅ |
+| 19 | P3 | Encoding-Probleme | ✅ |
+| 20 | P3 | xlsx-populate Ablösung | ⬜ (langfristig) |
