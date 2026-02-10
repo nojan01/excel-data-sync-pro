@@ -10469,8 +10469,20 @@
             // Live-Session: Spalte sofort in Excel einfügen
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 try {
-                    // insertIndex ist 0-basiert, Python erwartet 0-basiert und rechnet selbst +1 für Excel
-                    const result = await window.electronAPI.liveSessionInsertColumn(insertIndex, 1, [uniqueHeaderName]);
+                    // Bei geänderter Spaltenreihenfolge: Excel-physische Position verwenden
+                    let excelInsertIndex = insertIndex;
+                    if (explorerState.columnOrder.length > 0) {
+                        // insertIndex ist logisch - finde die physische Position
+                        // Die Spalte vor der eingefügt wird, gibt die physische Position
+                        const pos = explorerState.columnOrder.indexOf(insertIndex);
+                        if (pos !== -1) excelInsertIndex = pos;
+                        else {
+                            // Falls insertIndex am Ende ist (nach letzter Spalte)
+                            const prevPos = explorerState.columnOrder.indexOf(insertIndex - 1);
+                            if (prevPos !== -1) excelInsertIndex = prevPos + 1;
+                        }
+                    }
+                    const result = await window.electronAPI.liveSessionInsertColumn(excelInsertIndex, 1, [uniqueHeaderName]);
                     if (!result || !result.success) {
                         console.error('[LiveSession] insertColumn failed:', result);
                         showFloatingStatus('❌ Fehler beim Einfügen der Spalte in Excel', 'error');
@@ -10627,8 +10639,15 @@
             
             // LIVE SESSION: Lösche Spalte sofort in Excel
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                await liveSessionExecute('deleteColumn', colIndex);
-                console.log(`[LiveSession] Spalte ${colIndex} in Excel gelöscht`);
+                // Bei geänderter Spaltenreihenfolge: Excel-physische Position verwenden
+                // columnOrder spiegelt die physische Reihenfolge in Excel wider (nach moveColumn)
+                let excelColIndex = colIndex;
+                if (explorerState.columnOrder.length > 0) {
+                    const pos = explorerState.columnOrder.indexOf(colIndex);
+                    if (pos !== -1) excelColIndex = pos;
+                }
+                await liveSessionExecute('deleteColumn', excelColIndex);
+                console.log(`[LiveSession] Spalte ${colIndex} (Excel-Position ${excelColIndex}) gelöscht`);
             }
             
             // Header entfernen
