@@ -14129,40 +14129,37 @@
             }
             
             // LIVE SESSION: Verschiebe Zeilen sofort in Excel
-            // WICHTIG: Bei mehreren Zeilen müssen wir die Reihenfolge beachten!
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                // Berechne Zielposition
-                let liveTargetIndex = movePosition === 'before' ? targetIndex : targetIndex + 1;
+                // Berechne Zielposition (gleiche Logik wie die Daten-Manipulation unten)
+                let liveNewTarget = targetIndex;
+                selectedIndices.forEach(idx => {
+                    if (idx < targetIndex) liveNewTarget--;
+                });
+                if (movePosition === 'after') liveNewTarget++;
                 
-                // Bei Verschiebung nach oben: von oben nach unten verschieben (kleinster Index zuerst)
-                // Bei Verschiebung nach unten: von unten nach oben verschieben (größter Index zuerst)
-                const movingUp = selectedIndices[0] > liveTargetIndex;
-                const sortedForMove = movingUp 
-                    ? [...selectedIndices].sort((a, b) => a - b)  // Nach oben: kleinster Index zuerst
-                    : [...selectedIndices].sort((a, b) => b - a);  // Nach unten: größter Index zuerst
+                const bundleCount = selectedIndices.length;
+                const movingUp = selectedIndices[0] > liveNewTarget;
                 
-                // Tracke wie viele Zeilen bereits verschoben wurden (für Index-Anpassung)
-                let movedCount = 0;
-                
-                for (const originalIdx of sortedForMove) {
-                    // Berechne den aktuellen Index nach vorherigen Verschiebungen
-                    let currentFromIdx = originalIdx;
-                    let currentTargetIdx = liveTargetIndex;
-                    
-                    if (movingUp) {
-                        // Nach oben verschieben: Quellindex bleibt, Ziel rutscht nach jeder Verschiebung eins runter
-                        currentTargetIdx = liveTargetIndex + movedCount;
-                    } else {
-                        // Nach unten verschieben: Nach jeder Verschiebung rutschen alle Indizes oberhalb eins hoch
-                        // Da wir von unten nach oben arbeiten, müssen wir den Quellindex anpassen
-                        currentFromIdx = originalIdx - movedCount;
-                        // Zielindex bleibt gleich (wir fügen immer an der gleichen Stelle ein)
+                if (movingUp) {
+                    // Aufsteigend verarbeiten (niedrigster Index zuerst)
+                    for (let i = 0; i < bundleCount; i++) {
+                        const fromIdx = selectedIndices[i];
+                        const toIdx = liveNewTarget + i;
+                        if (fromIdx !== toIdx) {
+                            await liveSessionExecute('moveRow', fromIdx, toIdx);
+                        }
                     }
-                    
-                    await liveSessionExecute('moveRow', currentFromIdx, currentTargetIdx);
-                    movedCount++;
+                } else {
+                    // Absteigend verarbeiten (höchster Index zuerst)
+                    for (let i = bundleCount - 1; i >= 0; i--) {
+                        const fromIdx = selectedIndices[i];
+                        const toIdx = liveNewTarget + i;
+                        if (fromIdx !== toIdx) {
+                            await liveSessionExecute('moveRow', fromIdx, toIdx);
+                        }
+                    }
                 }
-                console.log(`[LiveSession] ${selectedIndices.length} Zeilen verschoben`);
+                console.log(`[LiveSession] ${bundleCount} Zeile(n) verschoben (target=${liveNewTarget})`);
             }
             
             // Speichere den aktuellen Zustand für Undo - EFFIZIENT: nur betroffene Zeilen
@@ -14321,7 +14318,12 @@
             });
             
             // WICHTIG: rowMapping aktualisieren - trackt welche Original-Excel-Zeile an welcher neuen Position ist
-            explorerState.rowMapping = rowBundles.map(bundle => bundle.originalExcelRow);
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                // Live Session: Daten und Excel sind synchron, kein Mapping nötig
+                explorerState.rowMapping = null;
+            } else {
+                explorerState.rowMapping = rowBundles.map(bundle => bundle.originalExcelRow);
+            }
             
             // Speichere Undo-Aktion (keine tiefen Kopien mehr - Undo wird vereinfacht)
             pushExplorerUndo({
