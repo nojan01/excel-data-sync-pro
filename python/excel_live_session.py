@@ -880,7 +880,8 @@ class ExcelLiveSession:
             return {'success': False, 'error': str(e)}
     
     def move_column(self, from_index: int, to_index: int) -> Dict[str, Any]:
-        """Verschiebt eine Spalte"""
+        """Verschiebt eine Spalte via Cut+Insert (statt Copy+Delete).
+        Verwendet Cut, damit Excel bei Tabellen keine doppelten Header-Namen erzeugt."""
         try:
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
@@ -893,31 +894,37 @@ class ExcelLiveSession:
             
             self._log(f"Verschiebe Spalte {source_letter} nach {target_letter}")
             
-            last_row = self.worksheet.used_range.last_cell.row if self.worksheet.used_range else 1000
+            source_range = self.worksheet.range(f'{source_letter}:{source_letter}')
             
-            if from_index > to_index:
-                # Nach links verschieben
-                self.worksheet.range(f'{target_letter}:{target_letter}').insert(shift='right')
-                new_source_col = excel_from + 1
-                new_source_letter = self._get_column_letter(new_source_col)
-                source_rng = self.worksheet.range(f'{new_source_letter}1:{new_source_letter}{last_row}')
-                dest_rng = self.worksheet.range(f'{target_letter}1')
-                if platform.system() == 'Windows':
-                    source_rng.api.Copy(Destination=dest_rng.api)
+            if platform.system() == 'Windows':
+                # Windows: Cut + Insert Paste
+                source_range.api.Cut()
+                if from_index > to_index:
+                    # Nach links: Einfügen an Zielposition
+                    insert_range = self.worksheet.range(f'{target_letter}:{target_letter}')
+                    insert_range.api.Insert(Shift=-4161)  # xlShiftToRight
                 else:
-                    source_rng.api.copy_range(destination=dest_rng.api)
-                self.worksheet.range(f'{new_source_letter}:{new_source_letter}').delete()
+                    # Nach rechts: Einfügen nach Zielposition
+                    after_letter = self._get_column_letter(excel_to + 1)
+                    insert_range = self.worksheet.range(f'{after_letter}:{after_letter}')
+                    insert_range.api.Insert(Shift=-4161)  # xlShiftToRight
             else:
-                # Nach rechts verschieben
-                after_target_letter = self._get_column_letter(excel_to + 1)
-                self.worksheet.range(f'{after_target_letter}:{after_target_letter}').insert(shift='right')
-                source_rng = self.worksheet.range(f'{source_letter}1:{source_letter}{last_row}')
-                dest_rng = self.worksheet.range(f'{after_target_letter}1')
-                if platform.system() == 'Windows':
-                    source_rng.api.Copy(Destination=dest_rng.api)
+                # macOS: Cut + Insert mit appscript
+                source_range.api.cut()
+                if from_index > to_index:
+                    insert_range = self.worksheet.range(f'{target_letter}:{target_letter}')
+                    insert_range.api.insert(shift='right')
                 else:
-                    source_rng.api.copy_range(destination=dest_rng.api)
-                self.worksheet.range(f'{source_letter}:{source_letter}').delete()
+                    after_letter = self._get_column_letter(excel_to + 1)
+                    insert_range = self.worksheet.range(f'{after_letter}:{after_letter}')
+                    insert_range.api.insert(shift='right')
+            
+            # Screen refresh erzwingen
+            self._force_screen_refresh()
+            
+            # Journal-Eintrag
+            self._journal_add('moveColumn', {'fromIndex': from_index, 'toIndex': to_index})
+            self._check_auto_save()
             
             return {'success': True, 'movedFrom': from_index, 'movedTo': to_index}
             
