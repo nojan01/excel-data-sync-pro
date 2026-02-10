@@ -25,6 +25,7 @@
       "exceljs-writer.js",
       "src/**/*",
       "python/**/*",
+      "!python/__pycache__",
       "python-embed/**/*",
       "node_modules/**/*"
     ],
