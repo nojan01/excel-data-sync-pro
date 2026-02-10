@@ -9582,28 +9582,28 @@
             });
             
             // Neue Zeilen-Aktionen
-            menuEl.querySelector('[data-action="insert-row-above"]')?.addEventListener('click', () => {
+            menuEl.querySelector('[data-action="insert-row-above"]')?.addEventListener('click', async () => {
                 const row = parseInt(menuEl.querySelector('[data-action="insert-row-above"]').dataset.row);
-                insertExplorerRow(row, 'above');
                 menuEl.remove();
+                await insertExplorerRow(row, 'above');
             });
             
-            menuEl.querySelector('[data-action="insert-row-below"]')?.addEventListener('click', () => {
+            menuEl.querySelector('[data-action="insert-row-below"]')?.addEventListener('click', async () => {
                 const row = parseInt(menuEl.querySelector('[data-action="insert-row-below"]').dataset.row);
-                insertExplorerRow(row, 'below');
                 menuEl.remove();
+                await insertExplorerRow(row, 'below');
             });
             
-            menuEl.querySelector('[data-action="delete-row"]')?.addEventListener('click', () => {
+            menuEl.querySelector('[data-action="delete-row"]')?.addEventListener('click', async () => {
                 const row = parseInt(menuEl.querySelector('[data-action="delete-row"]').dataset.row);
-                deleteExplorerRow(row);
                 menuEl.remove();
+                await deleteExplorerRow(row);
             });
             
-            menuEl.querySelector('[data-action="hide-row"]')?.addEventListener('click', () => {
+            menuEl.querySelector('[data-action="hide-row"]')?.addEventListener('click', async () => {
                 const row = parseInt(menuEl.querySelector('[data-action="hide-row"]').dataset.row);
-                hideExplorerRow(row);
                 menuEl.remove();
+                await hideExplorerRow(row);
             });
             
             // Menü bei Klick außerhalb schließen
@@ -9811,20 +9811,9 @@
             
             // Live-Session: Zeile sofort in Excel löschen
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                try {
-                    const excelRowPos = getExcelRowPosition(rowIndex);
-                    const result = await liveSessionExecute('deleteRow', excelRowPos);
-                    if (!result || !result.success) {
-                        console.error('[LiveSession] deleteRow failed:', result);
-                        showFloatingStatus('❌ Fehler beim Löschen in Excel', 'error');
-                        return;
-                    }
-                    console.log(`[LiveSession] Row deleted: dataIndex=${rowIndex}, excelPos=${excelRowPos}`);
-                } catch (error) {
-                    console.error('[LiveSession] deleteRow error:', error);
-                    showFloatingStatus('❌ Fehler beim Löschen in Excel', 'error');
-                    return;
-                }
+                const excelRowPos = getExcelRowPosition(rowIndex);
+                await liveSessionExecute('deleteRow', excelRowPos);
+                console.log(`[LiveSession] Row deleted: dataIndex=${rowIndex}, excelPos=${excelRowPos}`);
             }
             
             // Zeile aus data entfernen
