@@ -14351,28 +14351,14 @@
                 explorerState.affectedRows.add(i + 1); // +1 für Style-Index
             }
             
-            // FilteredData neu erstellen
-            explorerState.filteredData = explorerState.data.map((row, idx) => ({
-                row: row,
-                originalIndex: idx
-            }));
-            
-            // Suchfilter erneut anwenden wenn aktiv
-            const searchTerm = elements.explorerSearch?.value?.trim().toLowerCase();
-            if (searchTerm) {
-                explorerState.filteredData = explorerState.filteredData.filter(item => 
-                    item.row.some(cell => String(cell ?? '').toLowerCase().includes(searchTerm))
-                );
-            }
+            // FilteredData neu erstellen (mit allen Filtern: hidden rows, Suche, Spaltenfilter, Sortierung)
+            filterExplorerData();
             
             // Markierung, dass Zeilen neu angeordnet wurden (strukturelle Änderung)
             explorerState.editedCells.set('_rowsReordered', true);
             
             // Markiere als geändert
             explorerState.hasUnsavedChanges = true;
-            
-            // Tabelle neu rendern
-            renderExplorerTable();
             
             showNotification(`${selectedCount} Zeile(n) ${movePosition === 'before' ? 'vor' : 'nach'} Zeile ${targetRow} verschoben`, 'success');
             
