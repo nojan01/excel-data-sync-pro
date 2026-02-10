@@ -10,6 +10,7 @@
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const { getPythonPath, getPythonBasePath, getPythonEnv } = require('./python_env');
 
 // Globaler Handler für EPIPE-Fehler (verhindert Crash beim Beenden)
 process.on('uncaughtException', (err) => {
@@ -21,109 +22,6 @@ process.on('uncaughtException', (err) => {
     // Andere Fehler loggen statt re-throw (verhindert Electron Main Process Crash)
     console.error('[LiveSession] Unbehandelter Fehler:', err.message || err);
 });
-
-// Python-Pfad ermitteln (übernommen von python_bridge.js)
-function getPythonBasePath() {
-    const isPackaged = process.mainModule 
-        ? process.mainModule.filename.includes('app.asar')
-        : (require.main && require.main.filename.includes('app.asar'));
-    
-    const hasAsar = process.resourcesPath && fs.existsSync(path.join(process.resourcesPath, 'app.asar'));
-    
-    if (isPackaged || hasAsar) {
-        return path.join(process.resourcesPath, 'app.asar.unpacked', 'python');
-    }
-    return __dirname;
-}
-
-// Globale Variable für PYTHONPATH (wird von getPythonPath gesetzt)
-let _pythonEnvPath = null;
-
-function getPythonPath() {
-    const basePath = getPythonBasePath();
-    const isPackaged = basePath.includes('app.asar.unpacked');
-    
-    if (isPackaged) {
-        const resourcesPath = process.resourcesPath;
-        
-        if (process.platform === 'darwin') {
-            // macOS: System-Python verwenden da venv nur Symlinks enthält
-            // Das venv kann auf anderen Macs nicht funktionieren
-            // Aber wir brauchen das venv für die Python-Pakete (xlwings, openpyxl)
-            const venvPath = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'mac-arm64', 'python-venv');
-            const sitePackages = path.join(venvPath, 'lib', 'python3.14', 'site-packages');
-            
-            // System-Python mit venv site-packages verwenden
-            const macPythonPaths = [
-                '/opt/homebrew/bin/python3',        // Homebrew Apple Silicon
-                '/usr/local/bin/python3',           // Homebrew Intel
-                '/usr/bin/python3',                 // System Python
-                '/Library/Frameworks/Python.framework/Versions/Current/bin/python3'
-            ];
-            
-            for (const pyPath of macPythonPaths) {
-                if (fs.existsSync(pyPath)) {
-                    console.log(`[LiveSession] macOS: System-Python gefunden: ${pyPath}`);
-                    // Site-packages für späteren Gebrauch speichern
-                    if (fs.existsSync(sitePackages)) {
-                        _pythonEnvPath = sitePackages;
-                        console.log(`[LiveSession] macOS: PYTHONPATH wird gesetzt auf: ${sitePackages}`);
-                    }
-                    return pyPath;
-                }
-            }
-            
-            console.log('[LiveSession] WARNUNG: Kein Python auf macOS gefunden');
-        } else if (process.platform === 'win32') {
-            const embeddedPython = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'win-x64', 'python.exe');
-            if (fs.existsSync(embeddedPython)) return embeddedPython;
-        }
-    }
-    
-    // Dev-Modus: venv
-    if (!isPackaged) {
-        const venvPath = path.join(basePath, '..', '.venv');
-        if (fs.existsSync(venvPath)) {
-            if (process.platform === 'win32') {
-                return path.join(venvPath, 'Scripts', 'python.exe');
-            } else {
-                return path.join(venvPath, 'bin', 'python3');
-            }
-        }
-    }
-    
-    // macOS System-Python
-    if (process.platform === 'darwin') {
-        const macPythonPaths = [
-            '/opt/homebrew/bin/python3',
-            '/usr/local/bin/python3',
-            '/usr/bin/python3'
-        ];
-        for (const pyPath of macPythonPaths) {
-            if (fs.existsSync(pyPath)) return pyPath;
-        }
-    }
-    
-    return process.platform === 'win32' ? 'python' : 'python3';
-}
-
-/**
- * Gibt die Umgebungsvariablen für Python-Prozesse zurück
- */
-function getPythonEnv() {
-    const env = { ...process.env };
-    if (_pythonEnvPath) {
-        // Für macOS: aeosa.pth wird nicht verarbeitet, daher aeosa-Verzeichnis explizit hinzufügen
-        // damit 'from appscript import ...' funktioniert
-        const aeosaPath = path.join(_pythonEnvPath, 'aeosa');
-        let pythonPath = _pythonEnvPath;
-        if (fs.existsSync(aeosaPath)) {
-            pythonPath = _pythonEnvPath + path.delimiter + aeosaPath;
-        }
-        env.PYTHONPATH = pythonPath + (env.PYTHONPATH ? path.delimiter + env.PYTHONPATH : '');
-    }
-    return env;
-}
 
 class ExcelLiveSession {
     constructor() {
