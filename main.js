@@ -4184,7 +4184,20 @@ ipcMain.handle('liveSession:saveFile', async (event, outputPath, password) => {
         
         // Python speichert die Datei
         // Wenn password === undefined, soll Python das Original-Passwort beibehalten (keine Entschlüsselung)
-        const result = await session.saveFile(outputPath, password === undefined ? 'KEEP' : null);
+        // Wenn password === null, soll Python das Passwort entfernen (Datei entschlüsseln)
+        // Wenn password === 'xxx', müssen wir erst das alte Passwort entfernen, dann das neue setzen
+        let pythonPasswordArg;
+        if (password === undefined) {
+            pythonPasswordArg = 'KEEP'; // Altes Passwort beibehalten
+        } else if (password === null || password === '') {
+            pythonPasswordArg = null; // Passwort entfernen
+        } else {
+            // Neues Passwort: Python soll erst entschlüsseln (null), 
+            // dann wird xlsx-populate das neue Passwort setzen
+            pythonPasswordArg = null;
+        }
+        
+        const result = await session.saveFile(outputPath, pythonPasswordArg);
         
         if (!result.success) {
             return result;
@@ -4194,21 +4207,23 @@ ipcMain.handle('liveSession:saveFile', async (event, outputPath, password) => {
         // - password === undefined: altes Passwort beibehalten (nichts tun, Datei ist noch verschlüsselt)
         // - password === null: Passwort entfernen (Datei wurde entschlüsselt, nichts weiter tun)
         // - password === 'xxx': neues Passwort setzen
-        if (password && outputPath) {
+        if (password && password !== '' && outputPath) {
             try {
                 const XlsxPopulate = require('xlsx-populate');
                 
                 // Kurze Pause um sicherzustellen dass die Datei vollständig geschrieben wurde
                 await new Promise(resolve => setTimeout(resolve, 100));
                 
+                // Datei ist jetzt unverschlüsselt, wir können sie öffnen und mit neuem Passwort speichern
                 const pwWorkbook = await XlsxPopulate.fromFileAsync(outputPath);
                 await pwWorkbook.toFileAsync(outputPath, { password: password });
                 result.hasPassword = true;
+                console.log('[LiveSession] Neues Passwort erfolgreich gesetzt');
             } catch (pwError) {
                 console.error('[LiveSession] Fehler beim Passwort-Setzen:', pwError.message);
                 result.passwordError = pwError.message;
             }
-        } else if (password === null) {
+        } else if (password === null || password === '') {
             result.hasPassword = false;
         } else {
             // password === undefined: altes Passwort beibehalten

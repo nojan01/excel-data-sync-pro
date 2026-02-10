@@ -144,6 +144,7 @@ Die App wurde auf xlwings umgestellt für perfekte Excel-Kompatibilität:
 
 | Datum | Version | Änderung |
 |-------|---------|----------|
+| 2026-02-06 | 1.0.17 | **Bugfix Passwortschutz**: Passwortänderung beim Speichern funktioniert jetzt korrekt - altes Passwort wird entfernt bevor neues gesetzt wird |
 | 2026-01-14 | 1.0.16 | **Spalten-Operationen abgeschlossen**: Löschen, Verschieben, Ausblenden, Einfügen mit vollständiger Style/CF/Formel-Unterstützung |
 | 2026-01-14 | 1.0.16 | **Filter-Export**: Nur gefilterte Zeilen exportieren, überschüssige Zeilen löschen, kompakte Filter-UI |
 | 2026-01-12 | 1.0.15 | **Performance-Fix**: Speichern/Exportieren großer Dateien optimiert - Buffer+Streaming für Dateien > 10MB, Garbage Collection, 2x schnelleres Schreiben |
