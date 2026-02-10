@@ -10447,6 +10447,19 @@
             return basePattern + (maxSuffix + 1);
         }
         
+        /**
+         * Berechnet die physische Excel-Position aus dem logischen colIndex.
+         * Nach moveColumn weichen logischer Index (headers[]) und physische Excel-Position ab.
+         * columnOrder spiegelt die physische Reihenfolge wider.
+         */
+        function getExcelColumnPosition(colIndex) {
+            if (explorerState.columnOrder.length > 0) {
+                const pos = explorerState.columnOrder.indexOf(colIndex);
+                if (pos !== -1) return pos;
+            }
+            return colIndex;
+        }
+        
         // Neue Spalte einfügen
         async function insertExplorerColumn(colIndex, position = 'after') {
             const insertIndex = position === 'before' ? colIndex : colIndex + 1;
@@ -10469,19 +10482,7 @@
             // Live-Session: Spalte sofort in Excel einfügen
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 try {
-                    // Bei geänderter Spaltenreihenfolge: Excel-physische Position verwenden
-                    let excelInsertIndex = insertIndex;
-                    if (explorerState.columnOrder.length > 0) {
-                        // insertIndex ist logisch - finde die physische Position
-                        // Die Spalte vor der eingefügt wird, gibt die physische Position
-                        const pos = explorerState.columnOrder.indexOf(insertIndex);
-                        if (pos !== -1) excelInsertIndex = pos;
-                        else {
-                            // Falls insertIndex am Ende ist (nach letzter Spalte)
-                            const prevPos = explorerState.columnOrder.indexOf(insertIndex - 1);
-                            if (prevPos !== -1) excelInsertIndex = prevPos + 1;
-                        }
-                    }
+                    const excelInsertIndex = getExcelColumnPosition(insertIndex);
                     const result = await window.electronAPI.liveSessionInsertColumn(excelInsertIndex, 1, [uniqueHeaderName]);
                     if (!result || !result.success) {
                         console.error('[LiveSession] insertColumn failed:', result);
@@ -10639,13 +10640,7 @@
             
             // LIVE SESSION: Lösche Spalte sofort in Excel
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                // Bei geänderter Spaltenreihenfolge: Excel-physische Position verwenden
-                // columnOrder spiegelt die physische Reihenfolge in Excel wider (nach moveColumn)
-                let excelColIndex = colIndex;
-                if (explorerState.columnOrder.length > 0) {
-                    const pos = explorerState.columnOrder.indexOf(colIndex);
-                    if (pos !== -1) excelColIndex = pos;
-                }
+                const excelColIndex = getExcelColumnPosition(colIndex);
                 await liveSessionExecute('deleteColumn', excelColIndex);
                 console.log(`[LiveSession] Spalte ${colIndex} (Excel-Position ${excelColIndex}) gelöscht`);
             }
@@ -13276,9 +13271,9 @@
             
             // LIVE SESSION: Verschiebe Spalte sofort in Excel
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                // Async ausführen ohne await (Spalten-Drag sollte schnell sein)
-                liveSessionExecute('moveColumn', fromColIndex, toColIndex).then(() => {
-                    console.log(`[LiveSession] Spalte ${fromColIndex} nach ${toColIndex} verschoben`);
+                // fromPos/toPos sind bereits die physischen Excel-Positionen (positions in columnOrder)
+                liveSessionExecute('moveColumn', fromPos, toPos).then(() => {
+                    console.log(`[LiveSession] Spalte ${fromColIndex} (Excel-Pos ${fromPos}) nach ${toColIndex} (Excel-Pos ${toPos}) verschoben`);
                 });
             }
             
@@ -14836,7 +14831,8 @@
             // Live-Session: Spalte in Excel ein-/ausblenden
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 try {
-                    await window.electronAPI.liveSessionHideColumn(colIndex, !visible);
+                    const excelColIndex = getExcelColumnPosition(colIndex);
+                    await window.electronAPI.liveSessionHideColumn(excelColIndex, !visible);
                 } catch (error) {
                     console.error('[LiveSession] Spalten-Sichtbarkeit Fehler:', error);
                 }
@@ -14861,7 +14857,8 @@
                         .filter(i => !explorerState.visibleColumns.includes(i));
                     
                     for (const colIndex of hiddenColumns) {
-                        await window.electronAPI.liveSessionHideColumn(colIndex, false);
+                        const excelColIndex = getExcelColumnPosition(colIndex);
+                        await window.electronAPI.liveSessionHideColumn(excelColIndex, false);
                     }
                     console.log('[LiveSession] All columns shown');
                 } catch (error) {
@@ -14885,7 +14882,8 @@
                 try {
                     // Alle sichtbaren Spalten ausblenden
                     for (const colIndex of explorerState.visibleColumns) {
-                        await window.electronAPI.liveSessionHideColumn(colIndex, true);
+                        const excelColIndex = getExcelColumnPosition(colIndex);
+                        await window.electronAPI.liveSessionHideColumn(excelColIndex, true);
                     }
                     console.log('[LiveSession] All columns hidden');
                 } catch (error) {
