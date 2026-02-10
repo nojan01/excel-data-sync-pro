@@ -10722,6 +10722,54 @@
             }
             explorerState.richTextCells = newRichTextCells;
             
+            // ColumnOrder anpassen (wenn aktiv)
+            if (explorerState.columnOrder.length > 0) {
+                explorerState.columnOrder = explorerState.columnOrder
+                    .filter(idx => idx !== colIndex)
+                    .map(idx => idx > colIndex ? idx - 1 : idx);
+            }
+            
+            // SortColumn anpassen
+            if (explorerState.sortColumn !== null) {
+                if (explorerState.sortColumn === colIndex) {
+                    explorerState.sortColumn = null;
+                    explorerState.sortDirection = null;
+                    explorerState.sortType = 'auto';
+                } else if (explorerState.sortColumn > colIndex) {
+                    explorerState.sortColumn--;
+                }
+            }
+            
+            // DataValidations anpassen (Index-basiert)
+            if (explorerState.dataValidations) {
+                const newValidations = {};
+                for (const [key, value] of Object.entries(explorerState.dataValidations)) {
+                    const idx = parseInt(key);
+                    if (idx > colIndex) {
+                        newValidations[idx - 1] = value;
+                    } else if (idx < colIndex) {
+                        newValidations[key] = value;
+                    }
+                    // idx === colIndex wird nicht übernommen
+                }
+                explorerState.dataValidations = newValidations;
+            }
+            
+            // Filter anpassen (Spalten-Referenzen)
+            if (explorerState.filters && explorerState.filters.length > 0) {
+                explorerState.filters = explorerState.filters.filter(f => {
+                    if (!f.column) return true;
+                    return parseInt(f.column) !== colIndex;
+                }).map(f => {
+                    if (!f.column) return f;
+                    const col = parseInt(f.column);
+                    if (col > colIndex) {
+                        return { ...f, column: String(col - 1) };
+                    }
+                    return f;
+                });
+            }
+            
             // Markierung dass Spalte gelöscht wurde - speichere als Array für mehrere Löschungen
             // WICHTIG: Wir speichern die ORIGINAL-Spaltenindizes (bezogen auf die ursprüngliche Datei)
             // colIndex ist der aktuelle Index nach vorherigen Löschungen im Frontend
