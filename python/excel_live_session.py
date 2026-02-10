@@ -570,9 +570,22 @@ class ExcelLiveSession:
                         self.workbook.api.Close(SaveChanges=False)
                         self._log("Windows: Workbook geschlossen ohne Speichern")
                     else:
-                        # macOS: Nutze xlwings close() - speichert nicht automatisch
-                        self.workbook.close()
-                        self._log("macOS: Workbook geschlossen")
+                        # macOS: AppleScript "close saving no" um Save-Dialog zu vermeiden.
+                        # workbook.close() zeigt auf macOS einen Save-Dialog wenn Änderungen
+                        # vorliegen (z.B. ausgeblendete Zeilen durch Filter), was den
+                        # Prozess blockiert und zu einem Timeout führt.
+                        import subprocess
+                        wb_name = self.workbook.name
+                        script = f'tell application "Microsoft Excel" to close workbook "{wb_name}" saving no'
+                        try:
+                            subprocess.run(['osascript', '-e', script], capture_output=True, timeout=10)
+                            self._log(f"macOS: Workbook '{wb_name}' geschlossen ohne Speichern (AppleScript)")
+                        except Exception as e2:
+                            self._log(f"macOS: AppleScript close fehlgeschlagen: {e2}, versuche xlwings close()")
+                            try:
+                                self.workbook.close()
+                            except:
+                                pass
                 except Exception as e:
                     self._log(f"Fehler beim Schließen des Workbooks: {e}")
                 self.workbook = None

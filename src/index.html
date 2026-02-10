@@ -12066,6 +12066,21 @@
             
             // Live-Session beenden wenn aktiv
             if (explorerState.liveSessionActive) {
+                // AutoFilter in Excel zurücksetzen vor dem Schließen.
+                // Nur auf Windows nötig, da dort native AutoFilter verwendet werden.
+                // Auf macOS werden Filter durch Zeilen-Ausblendung simuliert - das
+                // wäre zu langsam. Stattdessen wird das Workbook dort per
+                // "close saving no" (AppleScript) ohne Speichern geschlossen.
+                try {
+                    const isWin = navigator.platform.startsWith('Win');
+                    if (isWin && explorerState.filters.length > 0) {
+                        await window.electronAPI.liveSessionClearAutoFilter();
+                        console.log('[CloseExplorer] AutoFilter in Excel zurückgesetzt');
+                    }
+                } catch (e) {
+                    console.warn('[CloseExplorer] AutoFilter-Reset fehlgeschlagen:', e);
+                }
+                
                 await stopLiveSession();
                 updateLiveSessionIndicator();
             }
