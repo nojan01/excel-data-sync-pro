@@ -558,10 +558,6 @@ class ExcelLiveSession:
         try:
             self._log(f"Schließe Session... (save={save})")
             
-            # Display Alerts deaktivieren BEVOR wir schließen.
-            # Verhindert den "Speichern?"-Dialog wenn das Workbook
-            # Änderungen hat (z.B. ausgeblendete Zeilen durch Filter).
-            # Ohne das blockiert close() auf macOS den ganzen Prozess.
             if self.app:
                 try:
                     self.app.display_alerts = False
@@ -574,14 +570,25 @@ class ExcelLiveSession:
                     if save:
                         self.workbook.save()
                         self._log("Datei gespeichert vor dem Schließen")
+                    else:
+                        # Workbook als "gespeichert" markieren BEVOR close() aufgerufen wird.
+                        # Das ist die zuverlässigste Methode um den "Speichern?"-Dialog
+                        # zu verhindern - besonders auf macOS wo display_alerts=False
+                        # bei close() nicht immer greift.
+                        try:
+                            if platform.system() == 'Windows':
+                                self.workbook.api.Saved = True
+                            else:
+                                self.workbook.api.saved.set(True)
+                            self._log("Workbook als saved markiert")
+                        except Exception as e:
+                            self._log(f"Saved-Flag konnte nicht gesetzt werden: {e}")
                     
-                    # Schließen ohne Speichern - plattformspezifisch
+                    # Schließen - plattformspezifisch
                     if platform.system() == 'Windows':
-                        # Windows: Nutze native Excel API mit SaveChanges=False
                         self.workbook.api.Close(SaveChanges=False)
                         self._log("Windows: Workbook geschlossen ohne Speichern")
                     else:
-                        # macOS: close() ist sicher weil display_alerts=False
                         self.workbook.close()
                         self._log("macOS: Workbook geschlossen ohne Speichern")
                 except Exception as e:

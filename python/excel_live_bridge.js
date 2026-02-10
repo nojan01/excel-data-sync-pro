@@ -218,6 +218,7 @@ class ExcelLiveSession {
      */
     async openFile(filePath, sheetName, password = null) {
         console.log('[LiveSession] Öffne:', filePath, sheetName, password ? '(mit Passwort)' : '');
+        this._openedFilePath = filePath;  // Merken für Cleanup bei force-close
         return this._sendCommand({
             action: 'open',
             filePath: filePath,
@@ -267,21 +268,91 @@ class ExcelLiveSession {
             return { success: true };
         }
         
-        // Kürzerer Timeout: close sollte schnell gehen (display_alerts=False)
-        // Falls es trotzdem hängt, nach 10s abbrechen statt 30s warten
+        if (this.isBusy) {
+            // Ein vorheriger Command (z.B. setAutoFilter mit langsamer
+            // Zeilen-Ausblendung auf macOS) läuft noch.
+            // Nicht warten (könnte 30+ Sekunden dauern!) - sofort beenden.
+            console.log('[LiveSession] Close: Prozess ist beschäftigt, force-close');
+            
+            // Queue leeren
+            for (const { reject } of this.commandQueue) {
+                try { reject(new Error('Session wird geschlossen')); } catch(e) {}
+            }
+            this.commandQueue = [];
+            
+            // Laufenden Command abbrechen
+            this.isBusy = false;
+            this.currentResolve = null;
+            this.currentReject = null;
+            
+            // Python-Prozess sofort beenden
+            this._forceKillProcess();
+            
+            // Excel separat beenden (Python konnte app.quit() nicht mehr aufrufen)
+            this._forceCloseExcel();
+            
+            return { success: true };
+        }
+        
+        // Normaler Close: Prozess ist idle, close-Command senden
         try {
             await this._sendCommand({ action: 'close' }, 10000);
         } catch (e) {
             console.error('[LiveSession] Fehler beim Schließen:', e);
+            // Timeout oder Fehler: Excel separat beenden
+            this._forceCloseExcel();
         }
         
+        this._forceKillProcess();
+        return { success: true };
+    }
+    
+    /**
+     * Beendet den Python-Prozess sofort
+     */
+    _forceKillProcess() {
         if (this.pythonProcess) {
-            this.pythonProcess.kill();
+            try {
+                this.pythonProcess.kill();
+            } catch(e) {}
             this.pythonProcess = null;
         }
-        
         this.isReady = false;
-        return { success: true };
+        this.isBusy = false;
+    }
+    
+    /**
+     * Beendet Excel separat über OS-Mechanismen
+     * (wenn Python-Prozess gekillt wurde bevor app.quit() lief)
+     */
+    _forceCloseExcel() {
+        if (process.platform === 'darwin') {
+            // macOS: Workbook über AppleScript schließen
+            const { exec } = require('child_process');
+            const fileName = this._openedFilePath 
+                ? path.basename(this._openedFilePath) 
+                : null;
+            
+            if (fileName) {
+                // Erst versuchen nur das spezifische Workbook zu schließen
+                const script = `tell application "Microsoft Excel"
+                    try
+                        close workbook "${fileName}" saving no
+                    end try
+                    if (count of workbooks) is 0 then quit
+                end tell`;
+                exec(`osascript -e '${script}'`, { timeout: 5000 }, (err) => {
+                    if (err) console.log('[LiveSession] macOS Excel-Cleanup Fehler:', err.message);
+                    else console.log('[LiveSession] macOS: Excel Workbook geschlossen');
+                });
+            } else {
+                // Fallback: Excel beenden wenn kein Dateiname bekannt
+                exec(`osascript -e 'tell application "Microsoft Excel" to quit saving no'`, 
+                    { timeout: 5000 });
+            }
+        }
+        // Windows: COM-Verbindung stirbt mit Python-Prozess,
+        // Excel-Instanz (visible=False) beendet sich selbst
     }
 
     /**
