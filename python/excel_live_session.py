@@ -880,8 +880,9 @@ class ExcelLiveSession:
             return {'success': False, 'error': str(e)}
     
     def move_column(self, from_index: int, to_index: int) -> Dict[str, Any]:
-        """Verschiebt eine Spalte via Cut+Insert (statt Copy+Delete).
-        Verwendet Cut, damit Excel bei Tabellen keine doppelten Header-Namen erzeugt."""
+        """Verschiebt eine Spalte via Copy+Delete.
+        Stellt danach den Original-Header-Namen wieder her, falls Excel in Tabellen
+        eine '2' angehängt hat."""
         try:
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
@@ -894,30 +895,45 @@ class ExcelLiveSession:
             
             self._log(f"Verschiebe Spalte {source_letter} nach {target_letter}")
             
-            source_range = self.worksheet.range(f'{source_letter}:{source_letter}')
+            # Original-Header-Name merken (für Korrektur nach Copy bei Tabellen)
+            original_header = self.worksheet.range((1, excel_from)).value
             
-            if platform.system() == 'Windows':
-                # Windows: Cut + Insert Paste
-                source_range.api.Cut()
-                if from_index > to_index:
-                    # Nach links: Einfügen an Zielposition
-                    insert_range = self.worksheet.range(f'{target_letter}:{target_letter}')
-                    insert_range.api.Insert(Shift=-4161)  # xlShiftToRight
+            last_row = self.worksheet.used_range.last_cell.row if self.worksheet.used_range else 1000
+            
+            if from_index > to_index:
+                # Nach links verschieben
+                self.worksheet.range(f'{target_letter}:{target_letter}').insert(shift='right')
+                new_source_col = excel_from + 1
+                new_source_letter = self._get_column_letter(new_source_col)
+                source_rng = self.worksheet.range(f'{new_source_letter}1:{new_source_letter}{last_row}')
+                dest_rng = self.worksheet.range(f'{target_letter}1')
+                if platform.system() == 'Windows':
+                    source_rng.api.Copy(Destination=dest_rng.api)
                 else:
-                    # Nach rechts: Einfügen nach Zielposition
-                    after_letter = self._get_column_letter(excel_to + 1)
-                    insert_range = self.worksheet.range(f'{after_letter}:{after_letter}')
-                    insert_range.api.Insert(Shift=-4161)  # xlShiftToRight
+                    source_rng.api.copy_range(destination=dest_rng.api)
+                self.worksheet.range(f'{new_source_letter}:{new_source_letter}').delete()
+                # Header-Name korrigieren (Excel hängt ggf. "2" an bei Tabellen)
+                final_col = excel_to
             else:
-                # macOS: Cut + Insert mit appscript
-                source_range.api.cut()
-                if from_index > to_index:
-                    insert_range = self.worksheet.range(f'{target_letter}:{target_letter}')
-                    insert_range.api.insert(shift='right')
+                # Nach rechts verschieben
+                after_target_letter = self._get_column_letter(excel_to + 1)
+                self.worksheet.range(f'{after_target_letter}:{after_target_letter}').insert(shift='right')
+                source_rng = self.worksheet.range(f'{source_letter}1:{source_letter}{last_row}')
+                dest_rng = self.worksheet.range(f'{after_target_letter}1')
+                if platform.system() == 'Windows':
+                    source_rng.api.Copy(Destination=dest_rng.api)
                 else:
-                    after_letter = self._get_column_letter(excel_to + 1)
-                    insert_range = self.worksheet.range(f'{after_letter}:{after_letter}')
-                    insert_range.api.insert(shift='right')
+                    source_rng.api.copy_range(destination=dest_rng.api)
+                self.worksheet.range(f'{source_letter}:{source_letter}').delete()
+                # Nach Delete ist die Zielspalte um 1 nach links gerutscht
+                final_col = excel_to
+            
+            # Header-Name wiederherstellen (falls Excel "2" angehängt hat)
+            if original_header:
+                current_header = self.worksheet.range((1, final_col)).value
+                if current_header != original_header:
+                    self._log(f"Header korrigiert: '{current_header}' → '{original_header}'")
+                    self.worksheet.range((1, final_col)).value = original_header
             
             # Screen refresh erzwingen
             self._force_screen_refresh()
