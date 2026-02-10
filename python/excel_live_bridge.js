@@ -134,6 +134,7 @@ class ExcelLiveSession {
         this.isReady = false;
         this.responseBuffer = '';
         this.isBusy = false;  // true wenn gerade ein Befehl verarbeitet wird
+        this._currentTimeoutId = null;
     }
 
     /**
@@ -249,7 +250,9 @@ class ExcelLiveSession {
     }
 
     /**
-     * Sendet einen Befehl an Python und wartet auf Antwort
+     * Sendet einen Befehl an Python und wartet auf Antwort.
+     * Bei parallelen Aufrufen werden Befehle in einer Queue gehalten
+     * und sequenziell abgearbeitet.
      * @param {Object} command - Der Befehl
      * @param {number} timeout - Timeout in ms (default: 30000)
      */
@@ -260,30 +263,103 @@ class ExcelLiveSession {
                 return;
             }
 
-            this.isBusy = true;
-            this.currentResolve = (result) => {
-                this.isBusy = false;
-                resolve(result);
-            };
-            this.currentReject = (error) => {
-                this.isBusy = false;
-                reject(error);
-            };
+            const entry = { command, resolve, reject, timeout };
 
-            const cmdJson = JSON.stringify(command) + '\n';
-            this.pythonProcess.stdin.write(cmdJson);
+            if (this.isBusy) {
+                // Befehl in Queue einreihen — wird nach aktuellem Befehl ausgeführt
+                this.commandQueue.push(entry);
+                return;
+            }
 
-            // Timeout
-            const timeoutReject = reject;
-            setTimeout(() => {
-                if (this.currentReject && this.isBusy) {
-                    this.isBusy = false;
-                    timeoutReject(new Error('Timeout waiting for response'));
-                    this.currentResolve = null;
-                    this.currentReject = null;
-                }
-            }, timeout);
+            this._executeCommand(entry);
         });
+    }
+
+    /**
+     * Führt einen einzelnen Befehl aus (intern)
+     */
+    _executeCommand(entry) {
+        const { command, resolve, reject, timeout } = entry;
+
+        this.isBusy = true;
+
+        this._currentTimeoutId = setTimeout(() => {
+            if (this.isBusy) {
+                this.isBusy = false;
+                this.currentResolve = null;
+                this.currentReject = null;
+                this._currentTimeoutId = null;
+                reject(new Error('Timeout waiting for response'));
+                this._processNextCommand();
+            }
+        }, timeout);
+
+        this.currentResolve = (result) => {
+            if (this._currentTimeoutId) clearTimeout(this._currentTimeoutId);
+            this._currentTimeoutId = null;
+            this.isBusy = false;
+            this.currentResolve = null;
+            this.currentReject = null;
+            resolve(result);
+            this._processNextCommand();
+        };
+        this.currentReject = (error) => {
+            if (this._currentTimeoutId) clearTimeout(this._currentTimeoutId);
+            this._currentTimeoutId = null;
+            this.isBusy = false;
+            this.currentResolve = null;
+            this.currentReject = null;
+            reject(error);
+            this._processNextCommand();
+        };
+
+        const cmdJson = JSON.stringify(command) + '\n';
+        try {
+            this.pythonProcess.stdin.write(cmdJson);
+        } catch (e) {
+            if (this._currentTimeoutId) clearTimeout(this._currentTimeoutId);
+            this._currentTimeoutId = null;
+            this.isBusy = false;
+            this.currentResolve = null;
+            this.currentReject = null;
+            reject(e);
+            this._processNextCommand();
+        }
+    }
+
+    /**
+     * Verarbeitet den nächsten Befehl aus der Queue
+     */
+    _processNextCommand() {
+        if (this.commandQueue.length > 0 && !this.isBusy && this.pythonProcess) {
+            const next = this.commandQueue.shift();
+            this._executeCommand(next);
+        }
+    }
+
+    /**
+     * Bricht alle wartenden und laufenden Befehle ab.
+     * Wird von close() aufgerufen um sofort beenden zu können.
+     */
+    _cancelAllPending() {
+        // Queue leeren — alle wartenden Befehle ablehnen
+        const queue = this.commandQueue;
+        this.commandQueue = [];
+        for (const entry of queue) {
+            try { entry.reject(new Error('Session closing')); } catch(e) {}
+        }
+
+        // Laufenden Befehl abbrechen
+        if (this._currentTimeoutId) {
+            clearTimeout(this._currentTimeoutId);
+            this._currentTimeoutId = null;
+        }
+        if (this.currentReject) {
+            try { this.currentReject(new Error('Session closing')); } catch(e) {}
+        }
+        this.currentResolve = null;
+        this.currentReject = null;
+        this.isBusy = false;
     }
 
     /**
@@ -344,12 +420,13 @@ class ExcelLiveSession {
             return { success: true };
         }
         
-        if (this.isBusy) {
-            // Ein vorheriger Command läuft noch - sofort beenden.
-            console.log('[LiveSession] Close: Prozess ist beschäftigt, force-close');
-            this.isBusy = false;
-            this.currentResolve = null;
-            this.currentReject = null;
+        // Wenn Befehle laufen oder in der Queue sind: alles abbrechen und force-kill
+        if (this.isBusy || this.commandQueue.length > 0) {
+            console.log('[LiveSession] Close: Offene Commands (' + 
+                (this.isBusy ? 'busy' : '') + 
+                (this.commandQueue.length > 0 ? ' queue:' + this.commandQueue.length : '') + 
+                '), force-close');
+            this._cancelAllPending();
             this._forceKillProcess();
             this._forceCloseExcel();
             return { success: true };
@@ -378,6 +455,11 @@ class ExcelLiveSession {
         }
         this.isReady = false;
         this.isBusy = false;
+        this.commandQueue = [];
+        if (this._currentTimeoutId) {
+            clearTimeout(this._currentTimeoutId);
+            this._currentTimeoutId = null;
+        }
     }
     
     /**

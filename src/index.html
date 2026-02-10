@@ -12046,7 +12046,14 @@
             }
         }
         
+        let _isClosingExplorer = false;  // Verhindert mehrfaches Schließen
+        
         async function closeDataExplorer() {
+            // Verhindere mehrfaches Aufrufen (z.B. durch schnelles Doppelklicken)
+            if (_isClosingExplorer) return;
+            _isClosingExplorer = true;
+            
+            try {
             // Prüfe auf ungespeicherte Änderungen ODER aktive Filter im Live-Modus
             const totalChanges = countAllChanges();
             const hasActiveFilters = explorerState.liveSessionActive && 
@@ -12076,16 +12083,21 @@
                 );
                 
                 if (!confirmed) {
+                    _isClosingExplorer = false;
                     return; // Abbruch - Datenexplorer bleibt offen
                 }
             }
             
             // Live-Session beenden wenn aktiv
             if (explorerState.liveSessionActive) {
-                // Filter vor dem Schließen zurücksetzen (Windows: COM AutoFilter, macOS: Zeilen einblenden)
+                // Filter vor dem Schließen zurücksetzen — mit Timeout damit Close nicht hängt
                 try {
                     if (explorerState.filters.some(f => f.column && f.value)) {
-                        await window.electronAPI.liveSessionClearAutoFilter();
+                        const timeout = new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000));
+                        await Promise.race([
+                            window.electronAPI.liveSessionClearAutoFilter(),
+                            timeout
+                        ]);
                         console.log('[CloseExplorer] AutoFilter in Excel zurückgesetzt');
                     }
                 } catch (e) {
@@ -12104,6 +12116,9 @@
             
             elements.dataExplorerModal.classList.add('hidden');
             document.body.classList.remove('modal-open');
+            } finally {
+                _isClosingExplorer = false;
+            }
         }
         
         // Explorer-Vorschau zeigen (zeigt genau das was exportiert wird)
