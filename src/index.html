@@ -8986,7 +8986,7 @@
                     try {
                         console.log(`[LiveSession] DataJoin - Markiere ${notFoundRows.length} nicht gefundene Zeilen`);
                         for (const rowIndex of notFoundRows) {
-                            await window.electronAPI.liveSessionHighlightRow(rowIndex, 'yellow');
+                            await window.electronAPI.liveSessionHighlightRow(getExcelRowPosition(rowIndex), 'yellow');
                         }
                     } catch (error) {
                         console.error('[LiveSession] DataJoin highlightRow error:', error);
@@ -9625,7 +9625,7 @@
             
             // LIVE SESSION: Markiere Zeile sofort in Excel
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                liveSessionExecute('highlightRow', rowIndex, color);
+                liveSessionExecute('highlightRow', getExcelRowPosition(rowIndex), color);
             }
             
             explorerState.rowHighlights.set(rowIndex, color);
@@ -9637,7 +9637,7 @@
         function clearRowHighlight(rowIndex) {
             // LIVE SESSION: Entferne Markierung sofort in Excel
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                liveSessionExecute('highlightRow', rowIndex, null);
+                liveSessionExecute('highlightRow', getExcelRowPosition(rowIndex), null);
             }
             
             explorerState.rowHighlights.delete(rowIndex);
@@ -9686,13 +9686,15 @@
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 // insertIndex ist 0-basiert, Python rechnet selbst +2 für Excel
                 try {
-                    const result = await window.electronAPI.liveSessionInsertRow(insertIndex, 1);
+                    const excelInsertPos = getExcelRowPosition(insertIndex < explorerState.data.length ? insertIndex : rowIndex);
+                    const excelPos = position === 'above' ? excelInsertPos : excelInsertPos + 1;
+                    const result = await window.electronAPI.liveSessionInsertRow(excelPos, 1);
                     if (!result || !result.success) {
                         console.error('[LiveSession] insertRow failed:', result);
                         showFloatingStatus('❌ Fehler beim Einfügen in Excel', 'error');
                         return;
                     }
-                    console.log('[LiveSession] Row inserted at index:', insertIndex);
+                    console.log(`[LiveSession] Row inserted: dataIndex=${insertIndex}, excelPos=${excelPos}`);
                 } catch (error) {
                     console.error('[LiveSession] insertRow error:', error);
                     showFloatingStatus('❌ Fehler beim Einfügen in Excel', 'error');
@@ -9806,6 +9808,24 @@
             );
             
             if (!confirmed) return;
+            
+            // Live-Session: Zeile sofort in Excel löschen
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                try {
+                    const excelRowPos = getExcelRowPosition(rowIndex);
+                    const result = await liveSessionExecute('deleteRow', excelRowPos);
+                    if (!result || !result.success) {
+                        console.error('[LiveSession] deleteRow failed:', result);
+                        showFloatingStatus('❌ Fehler beim Löschen in Excel', 'error');
+                        return;
+                    }
+                    console.log(`[LiveSession] Row deleted: dataIndex=${rowIndex}, excelPos=${excelRowPos}`);
+                } catch (error) {
+                    console.error('[LiveSession] deleteRow error:', error);
+                    showFloatingStatus('❌ Fehler beim Löschen in Excel', 'error');
+                    return;
+                }
+            }
             
             // Zeile aus data entfernen
             explorerState.data.splice(rowIndex, 1);
@@ -9971,11 +9991,12 @@
             // Live-Session: Zeile sofort in Excel ausblenden
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 try {
-                    const result = await window.electronAPI.liveSessionHideRow(rowIndex, true);
+                    const excelRowPos = getExcelRowPosition(rowIndex);
+                    const result = await window.electronAPI.liveSessionHideRow(excelRowPos, true);
                     if (!result || !result.success) {
                         console.error('[LiveSession] hideRow failed:', result);
                     } else {
-                        console.log('[LiveSession] Row hidden:', rowIndex);
+                        console.log(`[LiveSession] Row hidden: dataIndex=${rowIndex}, excelPos=${excelRowPos}`);
                     }
                 } catch (error) {
                     console.error('[LiveSession] hideRow error:', error);
@@ -9996,11 +10017,12 @@
             // Live-Session: Zeile sofort in Excel einblenden
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 try {
-                    const result = await window.electronAPI.liveSessionHideRow(rowIndex, false);
+                    const excelRowPos = getExcelRowPosition(rowIndex);
+                    const result = await window.electronAPI.liveSessionHideRow(excelRowPos, false);
                     if (!result || !result.success) {
                         console.error('[LiveSession] showRow failed:', result);
                     } else {
-                        console.log('[LiveSession] Row shown:', rowIndex);
+                        console.log(`[LiveSession] Row shown: dataIndex=${rowIndex}, excelPos=${excelRowPos}`);
                     }
                 } catch (error) {
                     console.error('[LiveSession] showRow error:', error);
@@ -10020,7 +10042,7 @@
         function showAllHiddenRows() {
             // LIVE SESSION: Zeilen in Excel wieder einblenden (Batch für Performance)
             if (explorerState.liveSessionActive && explorerState.liveSessionReady && explorerState.hiddenRows.size > 0) {
-                const indicesToShow = Array.from(explorerState.hiddenRows);
+                const indicesToShow = Array.from(explorerState.hiddenRows).map(idx => getExcelRowPosition(idx));
                 window.electronAPI.liveSessionHideRowsBatch(indicesToShow, false)
                     .then(result => {
                         if (result && result.success) {
@@ -10458,6 +10480,20 @@
                 if (pos !== -1) return pos;
             }
             return colIndex;
+        }
+        
+        /**
+         * Übersetzt einen Daten-Array-Index in die physische Excel-Zeilenposition.
+         * Nach Zeilen-Verschiebungen (moveRows) kann der Index in explorerState.data
+         * von der physischen Position in Excel abweichen.
+         * @param {number} rowIndex - Index in explorerState.data (0-basiert)
+         * @returns {number} Physische Zeilenposition (0-basiert, ohne Header)
+         */
+        function getExcelRowPosition(rowIndex) {
+            if (explorerState.rowMapping && explorerState.rowMapping.length > rowIndex) {
+                return explorerState.rowMapping[rowIndex];
+            }
+            return rowIndex;
         }
         
         // Neue Spalte einfügen
@@ -14382,11 +14418,17 @@
             
             // LIVE SESSION: Lösche Zeilen sofort in Excel (von hinten nach vorne)
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                const sortedForLive = Array.from(explorerState.selectedRows).sort((a, b) => b - a);
-                for (const idx of sortedForLive) {
-                    await liveSessionExecute('deleteRow', idx);
+                // Übersetze data-array-Indizes in physische Excel-Positionen
+                const indicesWithExcelPos = Array.from(explorerState.selectedRows).map(idx => ({
+                    dataIndex: idx,
+                    excelPos: getExcelRowPosition(idx)
+                }));
+                // Sortiere nach Excel-Position absteigend (von hinten nach vorne löschen)
+                indicesWithExcelPos.sort((a, b) => b.excelPos - a.excelPos);
+                for (const item of indicesWithExcelPos) {
+                    await liveSessionExecute('deleteRow', item.excelPos);
                 }
-                console.log(`[LiveSession] ${sortedForLive.length} Zeilen in Excel gelöscht`);
+                console.log(`[LiveSession] ${indicesWithExcelPos.length} Zeilen in Excel gelöscht`);
             }
             
             // Speichere den aktuellen Zustand für Undo
@@ -14698,7 +14740,7 @@
             
             // LIVE SESSION: Verstecke Zeilen sofort in Excel (Batch für Performance)
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                const indicesToHide = Array.from(explorerState.selectedRows);
+                const indicesToHide = Array.from(explorerState.selectedRows).map(idx => getExcelRowPosition(idx));
                 // Verwende Batch-Funktion statt einzelner Aufrufe
                 window.electronAPI.liveSessionHideRowsBatch(indicesToHide, true)
                     .then(result => {
