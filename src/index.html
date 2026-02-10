@@ -8912,89 +8912,18 @@
                 totalCount: totalInsertCount
             });
             
-            // Live-Session: Spalten in Excel einfügen und Werte setzen
-            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                try {
-                    console.log('[LiveSession] DataJoin - Füge Spalten in Excel ein...');
-                    
-                    // Wir müssen die Operationen in aufsteigender Reihenfolge durchführen,
-                    // dabei aber den Index-Offset beachten weil jede Einfügung die Indizes verschiebt
-                    const sortedOps = insertOperations.sort((a, b) => a.position - b.position);
-                    let insertOffset = 0;
-                    
-                    for (const op of sortedOps) {
-                        const actualInsertPos = op.position + insertOffset;
-                        
-                        // Spalten einfügen mit Headers
-                        const insertResult = await window.electronAPI.liveSessionInsertColumn(
-                            actualInsertPos, 
-                            op.count, 
-                            op.headers
-                        );
-                        
-                        if (!insertResult || !insertResult.success) {
-                            console.error('[LiveSession] DataJoin insertColumn failed:', insertResult);
-                            continue;
-                        }
-                        
-                        console.log(`[LiveSession] DataJoin - ${op.count} Spalte(n) eingefügt an Position ${actualInsertPos}`);
-                        
-                        // Werte für jede eingefügte Spalte setzen
-                        // Wir müssen die Daten aus explorerState.data extrahieren
-                        for (let i = 0; i < op.count; i++) {
-                            const targetColIndex = actualInsertPos + i;
-                            const columnValues = explorerState.data.map(row => row[targetColIndex] || '');
-                            
-                            if (columnValues.length > 0) {
-                                const valuesResult = await window.electronAPI.liveSessionSetColumnValues(
-                                    targetColIndex,
-                                    columnValues,
-                                    0 // Start bei Zeile 0
-                                );
-                                
-                                if (!valuesResult || !valuesResult.success) {
-                                    console.error(`[LiveSession] DataJoin setColumnValues failed for col ${targetColIndex}:`, valuesResult);
-                                }
-                            }
-                        }
-                        
-                        // Offset für nachfolgende Einfügungen anpassen
-                        insertOffset += op.count;
-                    }
-                    
-                    console.log('[LiveSession] DataJoin - Alle Spalten eingefügt');
-                } catch (error) {
-                    console.error('[LiveSession] DataJoin error:', error);
-                    showFloatingStatus('⚠️ Fehler beim Synchronisieren mit Excel', 'warning');
-                }
-            }
-            
             // Markierung für nicht gefundene Zeilen
             // WICHTIG: currentKeyIndex enthält den korrekten Index nach allen Einfügungen!
             if (markNotFound) {
-                const notFoundRows = [];
                 explorerState.data.forEach((row, rowIndex) => {
                     const keyValue = String(row[currentKeyIndex] || '').trim();
                     if (keyValue && !sourceMap.has(keyValue)) {
                         explorerState.rowHighlights.set(rowIndex, 'yellow');
-                        notFoundRows.push(rowIndex);
                     }
                 });
-                
-                // Live-Session: Nicht gefundene Zeilen in Excel markieren
-                if (explorerState.liveSessionActive && explorerState.liveSessionReady && notFoundRows.length > 0) {
-                    try {
-                        console.log(`[LiveSession] DataJoin - Markiere ${notFoundRows.length} nicht gefundene Zeilen`);
-                        for (const rowIndex of notFoundRows) {
-                            await window.electronAPI.liveSessionHighlightRow(getExcelRowPosition(rowIndex), 'yellow');
-                        }
-                    } catch (error) {
-                        console.error('[LiveSession] DataJoin highlightRow error:', error);
-                    }
-                }
             }
             
-            // UI aktualisieren
+            // UI SOFORT aktualisieren (vor Live-Session-Sync)
             filterExplorerData();
             closeDataJoinModal();
             
@@ -9010,6 +8939,73 @@
                 'success',
                 5000
             );
+            
+            // Live-Session: Spalten in Excel im Hintergrund synchronisieren
+            // (blockiert nicht die UI — Fehler werden als Warnung angezeigt)
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                _syncDataJoinToLiveSession(insertOperations, explorerState, sourceMap, currentKeyIndex, markNotFound).catch(err => {
+                    console.error('[LiveSession] DataJoin sync error:', err);
+                    showFloatingStatus('⚠️ Excel-Sync fehlgeschlagen — bitte manuell speichern', 'warning');
+                });
+            }
+        }
+        
+        /**
+         * Synchronisiert DataJoin-Ergebnis im Hintergrund mit der Live-Session.
+         * Läuft asynchron NACH der UI-Aktualisierung.
+         */
+        async function _syncDataJoinToLiveSession(insertOperations, state, sourceMap, currentKeyIndex, markNotFound) {
+            const sortedOps = insertOperations.sort((a, b) => a.position - b.position);
+            let insertOffset = 0;
+            
+            showFloatingStatus('🔄 Synchronisiere mit Excel...', 'info');
+            
+            for (const op of sortedOps) {
+                const actualInsertPos = op.position + insertOffset;
+                
+                const insertResult = await window.electronAPI.liveSessionInsertColumn(
+                    actualInsertPos, 
+                    op.count, 
+                    op.headers
+                );
+                
+                if (!insertResult || !insertResult.success) {
+                    console.error('[LiveSession] DataJoin insertColumn failed:', insertResult);
+                    continue;
+                }
+                
+                for (let i = 0; i < op.count; i++) {
+                    const targetColIndex = actualInsertPos + i;
+                    const columnValues = state.data.map(row => row[targetColIndex] || '');
+                    
+                    if (columnValues.length > 0) {
+                        await window.electronAPI.liveSessionSetColumnValues(
+                            targetColIndex,
+                            columnValues,
+                            0
+                        );
+                    }
+                }
+                
+                insertOffset += op.count;
+            }
+            
+            // Nicht gefundene Zeilen markieren
+            if (markNotFound) {
+                const notFoundRows = [];
+                state.data.forEach((row, rowIndex) => {
+                    const keyValue = String(row[currentKeyIndex] || '').trim();
+                    if (keyValue && !sourceMap.has(keyValue)) {
+                        notFoundRows.push(rowIndex);
+                    }
+                });
+                
+                for (const rowIndex of notFoundRows) {
+                    await window.electronAPI.liveSessionHighlightRow(getExcelRowPosition(rowIndex), 'yellow');
+                }
+            }
+            
+            showFloatingStatus('✓ Excel synchronisiert', 'success');
         }
         
         // ==================== Sheet Management Functions ====================
