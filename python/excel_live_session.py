@@ -1289,85 +1289,105 @@ class ExcelLiveSession:
                                 self._log(f"Windows: Fehler bei Filter Spalte {col_idx}: {e}")
                     else:
                         # ===== macOS =====
-                        # AutoFilter via AppleScript ist auf macOS sehr eingeschränkt.
-                        # Stattdessen: Zeilen ausblenden, die nicht dem Filter entsprechen.
-                        import subprocess
+                        # Nutze Excels native AutoFilter-Engine (schnell, ~1-2 API-Aufrufe).
+                        # Die appscript API auf macOS verwendet auto_filter() statt AutoFilter().
+                        self._log(f"macOS: Verwende native AutoFilter-Engine")
                         
-                        self._log(f"macOS: Verwende Zeilen-Ausblendung statt AutoFilter")
-                        
-                        last_row = used_range.last_cell.row
-                        wb_name = self.workbook.name
-                        ws_name = self.worksheet.name
-                        
-                        # Erst alle Daten der Filter-Spalten einlesen (performant)
-                        rows_to_hide = set()
-                        
-                        for f in filters:
-                            col_idx = f.get('colIndex', 0) + 1  # 1-basiert für Excel
-                            criteria = f.get('criteria', '').lower()
-                            operator = f.get('operator', 'equals')
-                            
-                            self._log(f"macOS: Filter Spalte {col_idx}, Operator '{operator}', Kriterium '{criteria}'")
-                            
-                            # Ganze Spalte auf einmal lesen (viel schneller!)
-                            col_letter = self._get_column_letter(col_idx)
-                            col_range = self.worksheet.range(f'{col_letter}2:{col_letter}{last_row}')
-                            col_values = col_range.value
-                            
-                            # Wenn nur ein Wert, in Liste umwandeln
-                            if not isinstance(col_values, list):
-                                col_values = [col_values]
-                            
-                            for idx, cell_value in enumerate(col_values):
-                                row_num = idx + 2  # Zeile 2, 3, 4, ...
-                                cell_str = str(cell_value).lower() if cell_value is not None else ''
-                                
-                                # Prüfe ob Zeile dem Filter entspricht
-                                matches = False
-                                if operator == 'contains':
-                                    matches = criteria in cell_str
-                                elif operator == 'startsWith':
-                                    matches = cell_str.startswith(criteria)
-                                elif operator == 'endsWith':
-                                    matches = cell_str.endswith(criteria)
-                                elif operator == 'equals':
-                                    matches = cell_str == criteria
-                                else:
-                                    matches = criteria in cell_str  # Fallback
-                                
-                                if not matches:
-                                    rows_to_hide.add(row_num)
-                        
-                        self._log(f"macOS: {len(rows_to_hide)} Zeilen werden ausgeblendet")
-                        
-                        # Zeilen ausblenden via xlwings direkt (nicht AppleScript)
-                        # Erst alle Zeilen einblenden
                         try:
-                            self._log(f"macOS: Blende alle Zeilen ein...")
-                            # Nutze xlwings direkt für einzelne Zeilen (langsamer aber funktioniert)
-                            for row_num in range(2, min(last_row + 1, 100)):  # Erstmal nur erste 100
+                            # AutoFilter aktivieren falls noch nicht aktiv
+                            try:
+                                if not self.worksheet.api.auto_filter_mode():
+                                    used_range.api.auto_filter()
+                                    self._log("macOS: AutoFilter aktiviert")
+                            except Exception as e:
+                                self._log(f"macOS: AutoFilter-Modus Check: {e}, versuche direkt")
                                 try:
-                                    row_range = self.worksheet.range(f'A{row_num}')
-                                    row_range.api.entire_row.hidden.set(False)
+                                    used_range.api.auto_filter()
                                 except:
                                     pass
                             
-                            # Zeilen ausblenden
-                            hidden_count = 0
-                            self._log(f"macOS: Blende {len(rows_to_hide)} Zeilen aus...")
-                            for row_num in rows_to_hide:
+                            # Filter-Kriterien setzen (je 1 API-Aufruf pro Spalte)
+                            for f in filters:
+                                col_idx = f.get('colIndex', 0) + 1  # 1-basiert
+                                criteria = f.get('criteria', '')
+                                operator = f.get('operator', 'equals')
+                                
+                                if operator == 'contains':
+                                    criteria = f'*{criteria}*'
+                                elif operator == 'startsWith':
+                                    criteria = f'{criteria}*'
+                                elif operator == 'endsWith':
+                                    criteria = f'*{criteria}'
+                                
+                                self._log(f"macOS: Setze Filter Spalte {col_idx}: '{criteria}'")
+                                
                                 try:
-                                    row_range = self.worksheet.range(f'A{row_num}')
-                                    row_range.api.entire_row.hidden.set(True)
-                                    hidden_count += 1
+                                    used_range.api.auto_filter(field=col_idx, criteria1=criteria)
+                                    self._log(f"macOS: Filter gesetzt für Spalte {col_idx}")
                                 except Exception as e:
-                                    if hidden_count == 0:
-                                        self._log(f"macOS: Fehler bei Zeile {row_num}: {e}")
-                            
-                            self._log(f"macOS: {hidden_count} Zeilen ausgeblendet")
-                            
+                                    self._log(f"macOS: Fehler bei Filter Spalte {col_idx}: {e}")
+                        
                         except Exception as e:
-                            self._log(f"macOS: Fehler bei Zeilen-Ausblendung: {e}")
+                            self._log(f"macOS: Native AutoFilter fehlgeschlagen: {e}")
+                            # Fallback: Batch-Zeilen-Ausblendung (langsamer, aber funktioniert immer)
+                            self._log(f"macOS: Fallback auf Zeilen-Ausblendung")
+                            last_row = used_range.last_cell.row
+                            rows_to_hide = set()
+                            
+                            for f in filters:
+                                col_idx = f.get('colIndex', 0) + 1
+                                criteria_lower = f.get('criteria', '').lower()
+                                operator = f.get('operator', 'equals')
+                                col_letter = self._get_column_letter(col_idx)
+                                col_range = self.worksheet.range(f'{col_letter}2:{col_letter}{last_row}')
+                                col_values = col_range.value
+                                if not isinstance(col_values, list):
+                                    col_values = [col_values]
+                                
+                                for idx, cell_value in enumerate(col_values):
+                                    row_num = idx + 2
+                                    cell_str = str(cell_value).lower() if cell_value is not None else ''
+                                    matches = False
+                                    if operator == 'contains':
+                                        matches = criteria_lower in cell_str
+                                    elif operator == 'startsWith':
+                                        matches = cell_str.startswith(criteria_lower)
+                                    elif operator == 'endsWith':
+                                        matches = cell_str.endswith(criteria_lower)
+                                    elif operator == 'equals':
+                                        matches = cell_str == criteria_lower
+                                    else:
+                                        matches = criteria_lower in cell_str
+                                    if not matches:
+                                        rows_to_hide.add(row_num)
+                            
+                            # Batch: Alle einblenden, dann zu versteckende ausblenden
+                            all_rows = self.worksheet.range(f'A2:A{last_row}')
+                            all_rows.api.entire_row.hidden.set(False)
+                            if rows_to_hide:
+                                sorted_rows = sorted(rows_to_hide)
+                                ranges = []
+                                start = end = sorted_rows[0]
+                                for row in sorted_rows[1:]:
+                                    if row == end + 1:
+                                        end = row
+                                    else:
+                                        ranges.append(f'{start}:{end}')
+                                        start = end = row
+                                ranges.append(f'{start}:{end}')
+                                for batch_start in range(0, len(ranges), 50):
+                                    batch = ranges[batch_start:batch_start+50]
+                                    try:
+                                        self.worksheet.range(','.join(batch)).api.entire_row.hidden.set(True)
+                                    except:
+                                        for r in batch:
+                                            parts = r.split(':')
+                                            for rn in range(int(parts[0]), int(parts[1]) + 1):
+                                                try:
+                                                    self.worksheet.range(f'A{rn}').api.entire_row.hidden.set(True)
+                                                except:
+                                                    pass
+                            self._log(f"macOS: Fallback abgeschlossen, {len(rows_to_hide)} Zeilen ausgeblendet")
                 else:
                     # ===== AutoFilter entfernen / Alle Zeilen einblenden =====
                     if is_windows:
@@ -1389,26 +1409,34 @@ class ExcelLiveSession:
                         except Exception as e:
                             self._log(f"Windows: Fehler beim Entfernen: {e}")
                     else:
-                        # macOS: Alle Zeilen wieder einblenden via AppleScript
-                        import subprocess
-                        
-                        self._log("macOS: Alle Zeilen einblenden")
-                        last_row = used_range.last_cell.row
-                        
+                        # macOS: Native AutoFilter entfernen
+                        self._log("macOS: AutoFilter entfernen")
                         try:
-                            # Nutze xlwings direkt
-                            shown_count = 0
-                            for row_num in range(2, last_row + 1):
+                            if self.worksheet.api.auto_filter_mode():
                                 try:
-                                    row_range = self.worksheet.range(f'A{row_num}')
-                                    if row_range.api.entire_row.hidden.get():
-                                        row_range.api.entire_row.hidden.set(False)
-                                        shown_count += 1
-                                except:
-                                    pass
-                            self._log(f"macOS: {shown_count} Zeilen eingeblendet")
+                                    # ShowAllData-Äquivalent: Filter-Kriterien entfernen
+                                    self.worksheet.api.show_all_data()
+                                    self._log("macOS: ShowAllData - alle Zeilen sichtbar")
+                                except Exception as e:
+                                    self._log(f"macOS: ShowAllData Fehler: {e}")
+                                    # Fallback: AutoFilter komplett deaktivieren
+                                    try:
+                                        self.worksheet.api.auto_filter_mode.set(False)
+                                        self._log("macOS: AutoFilter deaktiviert (Fallback)")
+                                    except Exception as e2:
+                                        self._log(f"macOS: auto_filter_mode Fehler: {e2}")
+                            else:
+                                self._log("macOS: Kein AutoFilter aktiv")
                         except Exception as e:
-                            self._log(f"macOS: Fehler beim Einblenden: {e}")
+                            self._log(f"macOS: Fehler beim Entfernen: {e}")
+                            # Letzter Fallback: Alle Zeilen einblenden (Batch)
+                            try:
+                                last_row = used_range.last_cell.row
+                                all_rows = self.worksheet.range(f'A2:A{last_row}')
+                                all_rows.api.entire_row.hidden.set(False)
+                                self._log("macOS: Alle Zeilen eingeblendet (Batch-Fallback)")
+                            except Exception as e3:
+                                self._log(f"macOS: Batch-Einblendung Fehler: {e3}")
                         
             except Exception as api_error:
                 self._log(f"AutoFilter API Fehler: {api_error}")
