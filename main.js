@@ -1318,6 +1318,7 @@ function createWindow() {
     mainWindow.loadFile('src/index.html');
 
     // Anwendungsmenü mit Edit-Befehlen (für Ctrl+C, Ctrl+V, Ctrl+X, Ctrl+A)
+    const isDevMode = process.argv.includes('--dev') || !app.isPackaged;
     const appMenuTemplate = [
         {
             label: 'Edit',
@@ -1334,10 +1335,13 @@ function createWindow() {
         {
             label: 'View',
             submenu: [
-                { role: 'reload', accelerator: 'CmdOrCtrl+R' },
-                { role: 'forceReload', accelerator: 'CmdOrCtrl+Shift+R' },
-                { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Shift+I' },
-                { type: 'separator' },
+                // Reload/DevTools nur im Entwicklungsmodus
+                ...(isDevMode ? [
+                    { role: 'reload', accelerator: 'CmdOrCtrl+R' },
+                    { role: 'forceReload', accelerator: 'CmdOrCtrl+Shift+R' },
+                    { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Shift+I' },
+                    { type: 'separator' },
+                ] : []),
                 { role: 'resetZoom' },
                 { role: 'zoomIn' },
                 { role: 'zoomOut' },
@@ -1470,6 +1474,20 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
     if (process.platform !== 'darwin') {
         app.quit();
+    }
+});
+
+// Cleanup: Live Session beenden beim Schließen der App
+app.on('before-quit', async () => {
+    try {
+        const { getLiveSession } = require('./python/excel_live_bridge');
+        const session = getLiveSession();
+        if (session && session.isRunning) {
+            console.log('[App] Beende Live Session vor dem Schließen...');
+            await session.close();
+        }
+    } catch (e) {
+        console.error('[App] Fehler beim Beenden der Live Session:', e.message);
     }
 });
 
@@ -1615,7 +1633,6 @@ ipcMain.handle('fs:checkFileExists', async (event, filePath) => {
     }
 
     try {
-        const fs = require('fs');
         const exists = fs.existsSync(filePath);
         return { exists };
     } catch (err) {
@@ -1632,9 +1649,6 @@ ipcMain.handle('fs:findFiles', async (event, { directory, pattern }) => {
     }
 
     try {
-        const fs = require('fs');
-        const path = require('path');
-        
         if (!fs.existsSync(directory)) {
             return { success: false, error: 'Verzeichnis nicht gefunden', files: [] };
         }
@@ -2143,666 +2157,6 @@ ipcMain.handle('excel:checkAvailable', async () => {
         return { success: false, excelAvailable: false, error: error.message };
     }
 });
-
-/*
-// ======================================================================
-// ALTE XLSX-POPULATE VERSION - BACKUP (wird nicht mehr verwendet)
-// ======================================================================
-// Sheet-Daten lesen (xlsx-populate - Standard)
-ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = null, quickLoad = false) => {
-    // Sicherheitsprüfung: Pfad validieren
-    if (!isValidFilePath(filePath)) {
-        return { success: false, error: 'Ungültiger Dateipfad' };
-    }
-
-    try {
-        console.log(`[Load] Sheet "${sheetName}" - Quick Load: ${quickLoad}`);
-        const loadStart = Date.now();
-        
-        // Versuche Workbook aus Cache zu laden
-        let workbook = getCachedWorkbook(filePath, password);
-        
-        if (!workbook) {
-            // Nicht im Cache - neu laden
-            console.log('[Load] Workbook von Datei laden...');
-            const parseStart = Date.now();
-            const options = password ? { password } : {};
-            workbook = await XlsxPopulate.fromFileAsync(filePath, options);
-            const parseTime = Date.now() - parseStart;
-            console.log(`[Load] Workbook geparst in ${parseTime}ms`);
-            
-            // Im Cache speichern
-            setCachedWorkbook(filePath, password, workbook);
-        }
-        
-        const worksheet = workbook.sheet(sheetName);
-
-        if (!worksheet) {
-            return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
-        }
-
-        // Benutzte Range ermitteln
-        const usedRange = worksheet.usedRange();
-        if (!usedRange) {
-            return { success: true, headers: [], data: [] };
-        }
-
-        const startRow = usedRange.startCell().rowNumber();
-        const endRow = usedRange.endCell().rowNumber();
-        const startCol = usedRange.startCell().columnNumber();
-        const endCol = usedRange.endCell().columnNumber();
-
-        const data = [];
-        const headers = [];
-        const hiddenColumns = []; // Indices der versteckten Spalten
-        const hiddenRows = []; // Indices der versteckten Zeilen (0-basiert, ohne Header)
-        const cellStyles = {}; // Styles für jede Zelle: "row-col" -> { bold, italic, fill, fontColor, ... }
-        const cellFormulas = {}; // Formeln für jede Zelle: "row-col" -> "=FORMULA"
-        const cellHyperlinks = {}; // Hyperlinks für jede Zelle: "row-col" -> "https://..."
-        const richTextCells = {}; // Rich Text für Zellen: "row-col" -> [{ text, styles: { bold, italic, ... } }, ...]
-        let autoFilterRange = null; // AutoFilter-Bereich falls vorhanden
-
-        // Hilfsfunktion: Farbe zu CSS konvertieren
-        function colorToCSS(color) {
-            if (!color) return null;
-
-            // xlsx-populate gibt Farben in verschiedenen Formaten zurück
-            if (typeof color === 'string') {
-                // Bereits ein Hex-String
-                if (color.match(/^[0-9A-Fa-f]{6,8}$/)) {
-                    // ARGB oder RGB Format
-                    if (color.length === 8) {
-                        // ARGB - ignoriere Alpha
-                        return '#' + color.substring(2);
-                    }
-                    return '#' + color;
-                }
-                return color;
-            }
-
-            if (typeof color === 'object') {
-                // Objekt mit rgb oder theme
-                if (color.rgb) {
-                    const rgb = color.rgb;
-                    if (rgb.length === 8) {
-                        return '#' + rgb.substring(2);
-                    }
-                    return '#' + rgb;
-                }
-                if (color.theme !== undefined) {
-                    // Theme-Farben - verwende Standard-Farben
-                    const themeColors = [
-                        '#000000', // 0 - dark1
-                        '#FFFFFF', // 1 - light1
-                        '#44546A', // 2 - dark2
-                        '#E7E6E6', // 3 - light2
-                        '#4472C4', // 4 - accent1
-                        '#ED7D31', // 5 - accent2
-                        '#A5A5A5', // 6 - accent3
-                        '#FFC000', // 7 - accent4
-                        '#5B9BD5', // 8 - accent5
-                        '#70AD47'  // 9 - accent6
-                    ];
-                    return themeColors[color.theme] || null;
-                }
-            }
-
-            return null;
-        }
-
-        // Hilfsfunktion: Excel-Datum zu lesbarem String konvertieren
-        function excelDateToString(excelDate) {
-            // Excel-Datum: Tage seit 1.1.1900 (mit falschem Schaltjahr 1900)
-            // JavaScript: Millisekunden seit 1.1.1970
-            const excelEpoch = new Date(Date.UTC(1899, 11, 30)); // 30.12.1899 UTC
-            const jsDate = new Date(excelEpoch.getTime() + excelDate * 86400000);
-
-            // Pr�fen ob es ein reines Datum oder Datum mit Uhrzeit ist
-            const hasTime = (excelDate % 1) !== 0;
-
-            if (hasTime) {
-                // Datum mit Uhrzeit
-                const day = String(jsDate.getUTCDate()).padStart(2, '0');
-                const month = String(jsDate.getUTCMonth() + 1).padStart(2, '0');
-                const year = jsDate.getUTCFullYear();
-                const hours = String(jsDate.getUTCHours()).padStart(2, '0');
-                const minutes = String(jsDate.getUTCMinutes()).padStart(2, '0');
-                return `${day}.${month}.${year} ${hours}:${minutes}`;
-            } else {
-                // Nur Datum
-                const day = String(jsDate.getUTCDate()).padStart(2, '0');
-                const month = String(jsDate.getUTCMonth() + 1).padStart(2, '0');
-                const year = jsDate.getUTCFullYear();
-                return `${day}.${month}.${year}`;
-            }
-        }
-
-        // Hilfsfunktion: Prüfen ob ein Zellwert ein Datum ist
-        function isExcelDate(cell, value) {
-            if (typeof value !== 'number') return false;
-
-            // Prüfe das Zahlenformat der Zelle
-            let numFmt;
-            try {
-                numFmt = cell.style('numberFormat');
-            } catch (e) {
-                numFmt = null;
-            }
-
-            if (numFmt && typeof numFmt === 'string') {
-                // Standard-Excel-Datumsformate (Format-IDs als Strings)
-                // Diese werden von xlsx-populate oft als Strings zur�ckgegeben
-                const dateFormatIds = [
-                    '14', '15', '16', '17', '18', '19', '20', '21', '22',
-                    '45', '46', '47', '27', '30', '36', '50', '57'
-                ];
-
-                // Pr�fe auf numerische Format-ID
-                if (dateFormatIds.includes(String(numFmt))) {
-                    return true;
-                }
-
-                // Explizite Nicht-Datum-Formate
-                const nonDatePatterns = [
-                    /^General$/i,
-                    /^[#0,]+(\.[#0]+)?$/,        // Zahlenformat wie #,##0.00
-                    /^[#0,]+(\.[#0]+)?%$/,       // Prozent
-                    /%/,                          // Prozentzeichen
-                    /�|EUR|\$/,                   // W�hrung
-                    /^@$/,                        // Text
-                    /^\[.*?\][#0]/,               // Buchhaltungsformat
-                ];
-
-                for (const pattern of nonDatePatterns) {
-                    if (pattern.test(numFmt)) {
-                        return false;
-                    }
-                }
-
-                // Typische Datumsformate erkennen (Strings)
-                const datePatterns = [
-                    /d+[\/\-.\s]m+[\/\-.\s]y+/i,     // d.m.y, d/m/y, d-m-y, d m y
-                    /m+[\/\-.\s]d+[\/\-.\s]y+/i,     // m/d/y (US-Format)
-                    /y+[\/\-.\s]m+[\/\-.\s]d+/i,     // y-m-d (ISO-Format)
-                    /dd\.mm\.yyyy/i,                  // Deutsches Format
-                    /dd\/mm\/yyyy/i,                  // Britisches Format
-                    /mm\/dd\/yyyy/i,                  // US-Format
-                    /yyyy-mm-dd/i,                    // ISO-Format
-                    /\[.*?\]dd/i,                     // Benutzerdefinierte Formate
-                    /mmm/i,                           // Monatsname (mmm, mmmm)
-                    /^d+$/i,                          // Nur "d" oder "dd"
-                    /^[$-].*d.*m.*y/i,                // Locale-spezifische Formate
-                    /[$-F800]/,                       // Windows Locale Format
-                    /[$-407]/,                        // Deutsches Locale
-                ];
-
-                for (const pattern of datePatterns) {
-                    if (pattern.test(numFmt)) {
-                        return true;
-                    }
-                }
-            }
-
-            // Heuristik f�r Werte ohne explizites Format oder mit "General"
-            // Excel-Datum: 1 = 1.1.1900, 44197 = 1.1.2021, 47848 = 1.1.2031
-            // Typischer Bereich f�r aktuelle Daten: 35000 (1995) bis 55000 (2050)
-            if (value >= 1 && value <= 73050) {
-                // Nur ganzzahlige Werte oder Werte mit Zeitanteil pr�fen
-                // Sehr kleine Zahlen (< 365) sind wahrscheinlich keine Daten
-                if (value < 365) {
-                    return false; // Wahrscheinlich eine normale Zahl (Tage im Jahr etc.)
-                }
-
-                // Pr�fe ob es vern�nftig aussieht
-                // Moderne Daten liegen zwischen 30000 (1982) und 55000 (2050)
-                if (value >= 30000 && value <= 55000) {
-                    // Wenn kein explizites Nicht-Datum-Format, k�nnte es ein Datum sein
-                    if (!numFmt || numFmt === 'General' || numFmt === 'general') {
-                        // Zus�tzliche Heuristik: Ganzzahlige Werte in diesem Bereich
-                        // sind sehr wahrscheinlich Daten
-                        if (Number.isInteger(value)) {
-                            return true;
-                        }
-                    }
-                }
-            }
-
-            return false;
-        }
-
-        const rowCount = endRow - startRow + 1;
-        const colCount = endCol - startCol + 1;
-        console.log(`[Load] Sheet-Größe: ${rowCount} Zeilen x ${colCount} Spalten`);
-        
-        const loopStart = Date.now();
-        
-        for (let row = startRow; row <= endRow; row++) {
-            const rowData = [];
-
-            // Prüfe ob die Zeile in Excel versteckt ist (nur für Datenzeilen, nicht Header)
-            if (row > startRow) {
-                try {
-                    const rowObj = worksheet.row(row);
-                    if (rowObj && rowObj.hidden()) {
-                        // Zeilen-Index 0-basiert, ohne Header
-                        hiddenRows.push(row - startRow - 1);
-                    }
-                } catch (e) {
-                    // Zeile existiert möglicherweise nicht explizit
-                }
-            }
-
-            for (let col = startCol; col <= endCol; col++) {
-                const cell = worksheet.cell(row, col);
-                const value = cell.value();
-
-                let textValue = '';
-                if (value !== undefined && value !== null) {
-                    // Prüfe ob es ein RichText-Objekt ist
-                    if (value && typeof value === 'object' && value.constructor && value.constructor.name === 'RichText') {
-                        // RichText: Extrahiere Fragmente mit Styles
-                        textValue = value.text(); // Gesamttext für die Anzeige
-
-                        // Speichere Fragmente für Datenzeilen (row > startRow)
-                        // SKIP bei quickLoad für Performance
-                        if (!quickLoad && row > startRow) {
-                            const fragments = [];
-                            for (let i = 0; i < value.length; i++) {
-                                const fragment = value.get(i);
-                                const fragmentStyles = {};
-
-                                // Styles aus dem Fragment extrahieren
-                                try {
-                                    if (fragment.style('bold')) fragmentStyles.bold = true;
-                                    if (fragment.style('italic')) fragmentStyles.italic = true;
-                                    if (fragment.style('underline')) fragmentStyles.underline = true;
-                                    if (fragment.style('strikethrough')) fragmentStyles.strikethrough = true;
-                                    if (fragment.style('subscript')) fragmentStyles.subscript = true;
-                                    if (fragment.style('superscript')) fragmentStyles.superscript = true;
-
-                                    const fontColor = fragment.style('fontColor');
-                                    if (fontColor) {
-                                        const cssColor = colorToCSS(fontColor);
-                                        if (cssColor && cssColor !== '#000000') {
-                                            fragmentStyles.fontColor = cssColor;
-                                        }
-                                    }
-
-                                    const fontSize = fragment.style('fontSize');
-                                    if (fontSize && fontSize !== 11) {
-                                        fragmentStyles.fontSize = fontSize;
-                                    }
-                                } catch (e) {
-                                    // Style nicht verfügbar
-                                }
-
-                                fragments.push({
-                                    text: fragment.value(),
-                                    styles: Object.keys(fragmentStyles).length > 0 ? fragmentStyles : null
-                                });
-                            }
-
-                            // Nur speichern wenn es tatsächlich unterschiedliche Formatierungen gibt
-                            const hasVariedStyles = fragments.some(f => f.styles !== null);
-                            if (hasVariedStyles) {
-                                const richTextKey = `${row - startRow}-${col - 1}`;
-                                richTextCells[richTextKey] = fragments;
-                            }
-                        }
-                    } else if (value instanceof Date) {
-                        // Falls xlsx-populate bereits ein Date-Objekt zurückgibt
-                        const day = String(value.getDate()).padStart(2, '0');
-                        const month = String(value.getMonth() + 1).padStart(2, '0');
-                        const year = value.getFullYear();
-                        textValue = `${day}.${month}.${year}`;
-                    } else if (isExcelDate(cell, value)) {
-                        textValue = excelDateToString(value);
-                    } else {
-                        textValue = String(value);
-                    }
-                }
-
-                // Styles auslesen (nur für Datenzeilen, nicht für Header)
-                // SKIP bei quickLoad für Performance
-                if (!quickLoad && row > startRow) {
-                    try {
-                        const style = {};
-                        let hasStyle = false;
-
-                        // Bold
-                        const bold = cell.style('bold');
-                        if (bold) {
-                            style.bold = true;
-                            hasStyle = true;
-                        }
-
-                        // Italic
-                        const italic = cell.style('italic');
-                        if (italic) {
-                            style.italic = true;
-                            hasStyle = true;
-                        }
-
-                        // Underline
-                        const underline = cell.style('underline');
-                        if (underline) {
-                            style.underline = true;
-                            hasStyle = true;
-                        }
-
-                        // Strikethrough
-                        const strikethrough = cell.style('strikethrough');
-                        if (strikethrough) {
-                            style.strikethrough = true;
-                            hasStyle = true;
-                        }
-
-                        // Font Color
-                        const fontColor = cell.style('fontColor');
-                        if (fontColor) {
-                            const cssColor = colorToCSS(fontColor);
-                            if (cssColor && cssColor !== '#000000') {
-                                style.fontColor = cssColor;
-                                hasStyle = true;
-                            }
-                        }
-
-                        // Fill/Background Color
-                        const fill = cell.style('fill');
-                        if (fill) {
-                            if (typeof fill === 'object') {
-                                // xlsx-populate fill Struktur: { type: "solid", color: { rgb: "AARRGGBB" } }
-                                let fillColor = null;
-
-                                if (fill.color) {
-                                    // color ist ein Objekt mit rgb Property
-                                    fillColor = colorToCSS(fill.color);
-                                } else if (fill.foreground) {
-                                    // Foreground bei manchen Patterns
-                                    fillColor = colorToCSS(fill.foreground);
-                                }
-
-                                if (fillColor && fillColor !== '#FFFFFF') {
-                                    style.fill = fillColor;
-                                    hasStyle = true;
-                                }
-                            }
-                        }
-
-                        // Font Size
-                        const fontSize = cell.style('fontSize');
-                        if (fontSize && fontSize !== 11) { // 11 ist Standard
-                            style.fontSize = fontSize;
-                            hasStyle = true;
-                        }
-
-                        // Horizontal Alignment
-                        const hAlign = cell.style('horizontalAlignment');
-                        if (hAlign && hAlign !== 'general') {
-                            style.textAlign = hAlign;
-                            hasStyle = true;
-                        }
-
-                        // Speichere nur wenn Style vorhanden
-                        if (hasStyle) {
-                            const rowIndex = row - startRow; // 0-basiert, inkl. Header
-                            cellStyles[`${rowIndex}-${col - 1}`] = style;
-                        }
-                    } catch (e) {
-                        // Style konnte nicht gelesen werden
-                    }
-
-                    // Formel auslesen (nur für Datenzeilen)
-                    // SKIP bei quickLoad
-                    if (!quickLoad) {
-                        try {
-                            const formula = cell.formula();
-                            if (formula) {
-                                const rowIndex = row - startRow; // 0-basiert, inkl. Header
-                                cellFormulas[`${rowIndex}-${col - 1}`] = formula;
-                            }
-                        } catch (e) {
-                            // Formel konnte nicht gelesen werden
-                        }
-
-                        // Hyperlink auslesen (nur für Datenzeilen)
-                        try {
-                            const hyperlink = cell.hyperlink();
-                            if (hyperlink) {
-                                const rowIndex = row - startRow; // 0-basiert, inkl. Header
-                                cellHyperlinks[`${rowIndex}-${col - 1}`] = hyperlink;
-                            }
-                        } catch (e) {
-                            // Hyperlink konnte nicht gelesen werden
-                        }
-                    }
-                }
-
-                // Header-Zeile (erste Zeile)
-                if (row === startRow) {
-                    headers[col - 1] = textValue || `Spalte ${col}`;
-                    // Prüfe ob die Spalte in Excel versteckt ist
-                    try {
-                        const column = worksheet.column(col);
-                        if (column && column.hidden()) {
-                            hiddenColumns.push(col - 1); // 0-basierter Index
-                        }
-                    } catch (e) {
-                        // Spalte existiert möglicherweise nicht explizit
-                    }
-                }
-                rowData[col - 1] = textValue;
-            }
-
-            // Zeilen auffuellen bis zur maximalen Spaltenanzahl
-            while (rowData.length < headers.length) {
-                rowData.push('');
-            }
-
-            data.push(rowData);
-        }
-
-        // Data Validations (Dropdown-Listen) auslesen
-        const dataValidations = {};
-        try {
-            // xlsx-populate speichert Data Validations im Sheet-Objekt
-            // Wir iterieren über alle Zellen und prüfen auf dataValidation
-            for (let col = startCol; col <= endCol; col++) {
-                const colValidations = [];
-                let hasValidation = false;
-
-                for (let row = startRow; row <= endRow; row++) {
-                    const cell = worksheet.cell(row, col);
-                    try {
-                        const validation = cell.dataValidation();
-                        if (validation && validation.type === 'list') {
-                            hasValidation = true;
-                            let allowedValues = [];
-
-                            // Explizite Werte-Liste
-                            if (validation.formula1) {
-                                const formula = validation.formula1;
-                                // Prüfe ob es eine Referenz oder eine Liste ist
-                                if (formula.startsWith('"') && formula.endsWith('"')) {
-                                    // Explizite Liste: "Wert1,Wert2,Wert3"
-                                    allowedValues = formula.slice(1, -1).split(',').map(v => v.trim());
-                                } else if (formula.includes(':')) {
-                                    // Bereichsreferenz: Sheet1!$A$1:$A$10 oder $A$1:$A$10
-                                    try {
-                                        // Versuche den Bereich aufzulösen
-                                        const rangeValues = [];
-                                        let targetSheet = worksheet;
-                                        let rangeRef = formula;
-
-                                        // Prüfe auf Sheet-Referenz
-                                        if (formula.includes('!')) {
-                                            const parts = formula.split('!');
-                                            const refSheetName = parts[0].replace(/'/g, ''); // Entferne Anführungszeichen
-                                            rangeRef = parts[1];
-                                            targetSheet = workbook.sheet(refSheetName);
-                                        }
-
-                                        if (targetSheet) {
-                                            // Entferne $ Zeichen und parse den Bereich
-                                            const cleanRef = rangeRef.replace(/\$/g, '');
-                                            const range = targetSheet.range(cleanRef);
-                                            if (range) {
-                                                range.forEach(c => {
-                                                    const val = c.value();
-                                                    if (val !== undefined && val !== null && val !== '') {
-                                                        rangeValues.push(String(val));
-                                                    }
-                                                });
-                                            }
-                                        }
-                                        allowedValues = rangeValues;
-                                    } catch (e) {
-                                        // Bereich konnte nicht aufgelöst werden
-                                    }
-                                } else {
-                                    // Einfache Formel oder Liste ohne Anführungszeichen
-                                    allowedValues = formula.split(',').map(v => v.trim());
-                                }
-                            }
-
-                            if (allowedValues.length > 0) {
-                                // Speichere für diese Zeile (0-basiert, -1 weil startRow = Header)
-                                const rowIndex = row - startRow;
-                                colValidations.push({
-                                    row: rowIndex,
-                                    values: allowedValues,
-                                    allowBlank: validation.allowBlank !== false
-                                });
-                            }
-                        }
-                    } catch (e) {
-                        // Zelle hat keine Validation oder Fehler beim Lesen
-                    }
-                }
-
-                if (hasValidation && colValidations.length > 0) {
-                    // Prüfe ob alle Zeilen die gleichen Werte haben (spaltenweite Validation)
-                    const firstValues = JSON.stringify(colValidations[0].values);
-                    const allSame = colValidations.every(v => JSON.stringify(v.values) === firstValues);
-
-                    if (allSame && colValidations.length > 1) {
-                        // Spaltenweite Validation - alle Zeilen haben gleiche Optionen
-                        dataValidations[col - 1] = {
-                            type: 'column',
-                            values: colValidations[0].values,
-                            allowBlank: colValidations[0].allowBlank
-                        };
-                    } else {
-                        // Zeilenspezifische Validations
-                        dataValidations[col - 1] = {
-                            type: 'rows',
-                            rows: colValidations.reduce((acc, v) => {
-                                acc[v.row] = { values: v.values, allowBlank: v.allowBlank };
-                                return acc;
-                            }, {})
-                        };
-                    }
-                }
-            }
-        } catch (e) {
-            // Data Validations konnten nicht gelesen werden
-        }
-
-        // AutoFilter auslesen
-        try {
-            const sheetNode = worksheet._node;
-            if (sheetNode && sheetNode.children) {
-                for (const child of sheetNode.children) {
-                    if (child && child.name === 'autoFilter' && child.attributes && child.attributes.ref) {
-                        autoFilterRange = child.attributes.ref;
-                        break;
-                    }
-                }
-            }
-        } catch (e) {
-            // AutoFilter konnte nicht gelesen werden
-        }
-
-        // Merged Cells auslesen
-        const mergedCells = [];
-        try {
-            // xlsx-populate speichert mergeCells in sheet._mergeCells
-            const mergeCellsMap = worksheet._mergeCells;
-            if (mergeCellsMap && typeof mergeCellsMap === 'object') {
-                // Konvertiere Excel-Referenzen zu 0-basierten Indizes
-                const parseRef = (cellRef) => {
-                    const match = cellRef.match(/^([A-Z]+)(\d+)$/);
-                    if (match) {
-                        let col = 0;
-                        for (let i = 0; i < match[1].length; i++) {
-                            col = col * 26 + (match[1].charCodeAt(i) - 64);
-                        }
-                        return { row: parseInt(match[2]), col: col };
-                    }
-                    return null;
-                };
-
-                for (const ref of Object.keys(mergeCellsMap)) {
-                    // ref ist z.B. "A1:C3"
-                    const parts = ref.split(':');
-                    if (parts.length === 2) {
-                        const start = parseRef(parts[0]);
-                        const end = parseRef(parts[1]);
-
-                        if (start && end) {
-                            // Speichere als 0-basierte Excel-Zeilen-Indizes
-                            // Excel-Zeile 1 → Index 0, Excel-Zeile 2 → Index 1, etc.
-                            mergedCells.push({
-                                startRow: start.row - 1, // Excel 1-basiert → 0-basiert
-                                startCol: start.col - 1, // 0-basiert
-                                endRow: end.row - 1,     // Excel 1-basiert → 0-basiert
-                                endCol: end.col - 1,
-                                rowSpan: end.row - start.row + 1,
-                                colSpan: end.col - start.col + 1
-                            });
-                        }
-                    }
-                }
-            }
-        } catch (e) {
-            // Merged Cells konnten nicht gelesen werden
-        }
-
-        const loopTime = Date.now() - loopStart;
-        console.log(`[Load] Zellen-Loop: ${loopTime}ms`);
-
-        const loadTime = Date.now() - loadStart;
-        console.log(`[Load] GESAMT: ${loadTime}ms (${data.length} Zeilen, QuickLoad: ${quickLoad})`);
-
-        return {
-            success: true,
-            headers: headers,
-            data: data,
-            hiddenColumns: hiddenColumns,
-            hiddenRows: hiddenRows,
-            dataValidations: dataValidations,
-            cellStyles: cellStyles,
-            cellFormulas: cellFormulas,
-            cellHyperlinks: cellHyperlinks,
-            richTextCells: richTextCells,
-            autoFilterRange: autoFilterRange,
-            mergedCells: mergedCells
-        };
-    } catch (error) {
-        // Prüfe ob es sich um eine passwortgeschützte Datei handelt
-        if (error.message.includes("Can't find end of central directory") ||
-            error.message.includes("Encrypted file")) {
-            return {
-                success: false,
-                error: 'Passwort erforderlich',
-                isPasswordProtected: true,
-                needsPassword: true
-            };
-        }
-        return { success: false, error: error.message };
-    }
-});
-*/
 
 // ==================== SHEET-VERWALTUNG ====================
 
@@ -3848,29 +3202,7 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
 // TEMPLATE AUS QUELLDATEI ERSTELLEN
 // ============================================
 
-/**
- * Hilfsfunktion: Konvertiert Spaltennummer zu Spaltenbuchstabe (1=A, 2=B, 27=AA, etc.)
- */
-function numberToColumnLetter(num) {
-    let result = '';
-    while (num > 0) {
-        num--;
-        result = String.fromCharCode(65 + (num % 26)) + result;
-        num = Math.floor(num / 26);
-    }
-    return result;
-}
-
-/**
- * Hilfsfunktion: Konvertiert Spaltenbuchstabe zu Nummer (A=1, B=2, AA=27, etc.)
- */
-function columnLetterToNumber(col) {
-    let result = 0;
-    for (let i = 0; i < col.length; i++) {
-        result = result * 26 + (col.charCodeAt(i) - 64);
-    }
-    return result;
-}
+// numberToColumnLetter und columnLetterToNumber sind oben bereits definiert (Zeile ~184 / ~1893)
 
 /**
  * Hilfsfunktion: Verschiebt alle Spaltenreferenzen in einer Zellreferenz um n Spalten
@@ -4478,6 +3810,24 @@ ipcMain.handle('liveSession:getRecoveryFiles', async (event) => {
 // Recovery-Datei löschen
 ipcMain.handle('liveSession:deleteRecoveryFile', async (event, filePath) => {
     try {
+        // Sicherheitsprüfung: Pfad muss im Recovery-Verzeichnis liegen
+        let recoveryDir;
+        if (process.platform === 'darwin') {
+            recoveryDir = path.join(os.homedir(), 'Library', 'Application Support', 'ExcelDataSyncPro', 'recovery');
+        } else if (process.platform === 'win32') {
+            recoveryDir = path.join(process.env.APPDATA || '', 'ExcelDataSyncPro', 'recovery');
+        } else {
+            recoveryDir = path.join(os.homedir(), '.exceldatasyncpro', 'recovery');
+        }
+        const resolvedPath = path.resolve(filePath);
+        if (!resolvedPath.startsWith(path.resolve(recoveryDir))) {
+            securityLog.log('SECURITY', 'RECOVERY_DELETE_BLOCKED', {
+                path: filePath.substring(0, 100),
+                reason: 'Pfad liegt nicht im Recovery-Verzeichnis'
+            });
+            return { success: false, error: 'Ungültiger Dateipfad' };
+        }
+
         const session = getLiveSession();
         return await session.deleteRecoveryFile(filePath);
     } catch (error) {

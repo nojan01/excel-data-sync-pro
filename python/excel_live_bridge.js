@@ -18,8 +18,8 @@ process.on('uncaughtException', (err) => {
         console.error('[LiveSession] EPIPE ignoriert (Shutdown)');
         return;
     }
-    // Andere Fehler weiterleiten
-    throw err;
+    // Andere Fehler loggen statt re-throw (verhindert Electron Main Process Crash)
+    console.error('[LiveSession] Unbehandelter Fehler:', err.message || err);
 });
 
 // Python-Pfad ermitteln (übernommen von python_bridge.js)
@@ -196,6 +196,8 @@ class ExcelLiveSession {
                                     this.currentResolve(response);
                                     this.currentResolve = null;
                                     this.currentReject = null;
+                                    // Nächsten Command aus Queue verarbeiten
+                                    this._processNextCommand();
                                 }
                             } catch (e) {
                                 console.error('[LiveSession] JSON Parse Error:', e, 'Line:', line);
@@ -249,7 +251,45 @@ class ExcelLiveSession {
     }
 
     /**
-     * Sendet einen Befehl an Python und wartet auf Antwort
+     * Verarbeitet den nächsten Command aus der Queue
+     */
+    _processNextCommand() {
+        if (this.commandQueue.length === 0 || this.isBusy) return;
+
+        const { command, resolve, reject, timeout } = this.commandQueue.shift();
+        this.isBusy = true;
+        let timeoutTimer = null;
+
+        this.currentResolve = (result) => {
+            if (timeoutTimer) clearTimeout(timeoutTimer);
+            this.isBusy = false;
+            resolve(result);
+            // Nächster Command wird vom stdout-Handler getriggert
+        };
+        this.currentReject = (error) => {
+            if (timeoutTimer) clearTimeout(timeoutTimer);
+            this.isBusy = false;
+            reject(error);
+            this._processNextCommand();
+        };
+
+        const cmdJson = JSON.stringify(command) + '\n';
+        this.pythonProcess.stdin.write(cmdJson);
+
+        // Timeout mit clearTimeout-Cleanup
+        timeoutTimer = setTimeout(() => {
+            if (this.isBusy) {
+                this.isBusy = false;
+                this.currentResolve = null;
+                this.currentReject = null;
+                reject(new Error('Timeout waiting for response'));
+                this._processNextCommand();
+            }
+        }, timeout);
+    }
+
+    /**
+     * Sendet einen Befehl an Python und wartet auf Antwort (Queue-basiert)
      * @param {Object} command - Der Befehl
      * @param {number} timeout - Timeout in ms (default: 30000)
      */
@@ -260,29 +300,13 @@ class ExcelLiveSession {
                 return;
             }
 
-            this.isBusy = true;
-            this.currentResolve = (result) => {
-                this.isBusy = false;
-                resolve(result);
-            };
-            this.currentReject = (error) => {
-                this.isBusy = false;
-                reject(error);
-            };
+            // Command in Queue einreihen
+            this.commandQueue.push({ command, resolve, reject, timeout });
 
-            const cmdJson = JSON.stringify(command) + '\n';
-            this.pythonProcess.stdin.write(cmdJson);
-
-            // Timeout
-            const timeoutReject = reject;
-            setTimeout(() => {
-                if (this.currentReject && this.isBusy) {
-                    this.isBusy = false;
-                    timeoutReject(new Error('Timeout waiting for response'));
-                    this.currentResolve = null;
-                    this.currentReject = null;
-                }
-            }, timeout);
+            // Wenn nicht beschäftigt, sofort verarbeiten
+            if (!this.isBusy) {
+                this._processNextCommand();
+            }
         });
     }
 

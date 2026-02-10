@@ -8,6 +8,7 @@ const ExcelJS = require('exceljs');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const crypto = require('crypto');
 const AdmZip = require('adm-zip');
 let XlsxPopulate = null; // Lazy-load für Passwort-Entschlüsselung
 
@@ -314,7 +315,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 const pwWorkbook = await XlsxPopulate.fromFileAsync(filePath, { password });
                 
                 // Als temporäre Datei ohne Passwort speichern
-                tempFilePath = path.join(os.tmpdir(), `mvms_decrypt_${Date.now()}_${path.basename(filePath)}`);
+                tempFilePath = path.join(os.tmpdir(), `mvms_decrypt_${crypto.randomUUID()}.xlsx`);
                 await pwWorkbook.toFileAsync(tempFilePath);
                 
                 actualFilePath = tempFilePath;

@@ -14,7 +14,7 @@ const fs = require('fs');
 function safeLog(...args) {
     try {
         if (process.stdout && process.stdout.writable) {
-            safeLog(...args);
+            console.log(...args);
         }
     } catch (e) {
         // Ignoriere Konsolenfehler
@@ -24,7 +24,7 @@ function safeLog(...args) {
 function safeError(...args) {
     try {
         if (process.stderr && process.stderr.writable) {
-            safeError(...args);
+            console.error(...args);
         }
     } catch (e) {
         // Ignoriere Konsolenfehler
@@ -319,8 +319,13 @@ function resetExcelCache() {
 async function callPython(scriptName, args = []) {
     const pythonPath = getPythonPath();
     const basePath = getPythonBasePath();
-    const scriptPath = path.join(basePath, scriptName);
+    const scriptPath = path.resolve(basePath, scriptName);
     const env = getPythonEnv();
+    
+    // Sicherheitsprüfung: Script muss innerhalb von basePath liegen
+    if (!scriptPath.startsWith(path.resolve(basePath))) {
+        throw new Error('Ungültiger Script-Pfad: Path Traversal erkannt');
+    }
     
     safeLog(`[Python] callPython: ${scriptName} ${args.join(' ')}`);
     safeLog(`[Python]   pythonPath: ${pythonPath}`);
