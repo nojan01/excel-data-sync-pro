@@ -9946,7 +9946,10 @@
             });
             
             // rowMapping aktualisieren
-            if (explorerState.rowMapping && explorerState.rowMapping.length > 0) {
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                // Live Session: Daten und Excel sind synchron, kein Mapping nötig
+                explorerState.rowMapping = null;
+            } else if (explorerState.rowMapping && explorerState.rowMapping.length > 0) {
                 // Bestehendes Mapping: Element an rowIndex entfernen
                 const newRowMapping = [...explorerState.rowMapping];
                 newRowMapping.splice(rowIndex, 1);
@@ -14584,9 +14587,10 @@
             explorerState.hiddenRows = newHiddenRows;
             
             // WICHTIG: rowMapping aktualisieren nach Löschen
-            // Bestehendes Mapping: Entferne die Elemente an den gelöschten Indizes
-            // selectedIndices ist absteigend sortiert, also von hinten nach vorne entfernen
-            if (explorerState.rowMapping && explorerState.rowMapping.length > 0) {
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                // Live Session: Daten und Excel sind synchron, kein Mapping nötig
+                explorerState.rowMapping = null;
+            } else if (explorerState.rowMapping && explorerState.rowMapping.length > 0) {
                 const newRowMapping = [...explorerState.rowMapping];
                 // Von hinten nach vorne löschen (selectedIndices ist bereits absteigend sortiert)
                 for (const delIdx of selectedIndices) {
