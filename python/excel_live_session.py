@@ -1069,8 +1069,12 @@ class ExcelLiveSession:
             
             self._log(f"set_row_values: Zeile {excel_row}, {num_cols} Spalten ({start_col_letter}-{end_col_letter})")
             
-            # Werte als horizontale Liste (eine Zeile) schreiben
-            self.worksheet.range(range_addr).value = values
+            if platform.system() == 'Darwin':
+                # macOS: Direkt über AppleScript für zuverlässigen Display-Refresh
+                self._set_row_values_applescript(excel_row, values)
+            else:
+                # Windows: xlwings Range-Write funktioniert zuverlässig
+                self.worksheet.range(range_addr).value = values
             
             self._log(f"set_row_values: Zeile {excel_row} geschrieben ✓")
             
@@ -1087,6 +1091,59 @@ class ExcelLiveSession:
         except Exception as e:
             self._log(f"Fehler beim Setzen der Zeilenwerte: {e}")
             return {'success': False, 'error': str(e)}
+    
+    def _set_row_values_applescript(self, excel_row: int, values: list):
+        """Setzt Zeilenwerte über AppleScript (macOS) - garantiert Display-Refresh
+        
+        Args:
+            excel_row: 1-basierte Excel-Zeile
+            values: Liste von Werten
+        """
+        import subprocess
+        
+        # AppleScript-Befehle generieren, die jede Zelle direkt setzen
+        set_commands = []
+        for col_idx, value in enumerate(values):
+            col = col_idx + 1
+            # Wert für AppleScript vorbereiten
+            if value is None or value == '' or value == 'None':
+                set_commands.append(f'set value of cell {col} of row {excel_row} of active sheet to ""')
+            elif isinstance(value, (int, float)):
+                set_commands.append(f'set value of cell {col} of row {excel_row} of active sheet to {value}')
+            else:
+                # Strings escapen für AppleScript (Backslash und Anführungszeichen)
+                escaped = str(value).replace('\\', '\\\\').replace('"', '\\"')
+                set_commands.append(f'set value of cell {col} of row {excel_row} of active sheet to "{escaped}"')
+        
+        # In Batches aufteilen (AppleScript hat Längenlimits)
+        batch_size = 50
+        for i in range(0, len(set_commands), batch_size):
+            batch = set_commands[i:i + batch_size]
+            commands_str = '\n'.join(batch)
+            
+            script = f'''tell application "Microsoft Excel"
+{commands_str}
+end tell'''
+            
+            try:
+                result = subprocess.run(
+                    ['osascript', '-e', script],
+                    capture_output=True, text=True, timeout=30
+                )
+                if result.returncode != 0:
+                    self._log(f"AppleScript Fehler: {result.stderr.strip()}")
+                    # Fallback auf xlwings
+                    self._log("Fallback auf xlwings Range-Write")
+                    start_col = self._get_column_letter(1)
+                    end_col = self._get_column_letter(len(values))
+                    self.worksheet.range(f'{start_col}{excel_row}:{end_col}{excel_row}').value = values
+                    return
+            except subprocess.TimeoutExpired:
+                self._log("AppleScript Timeout - Fallback auf xlwings")
+                start_col = self._get_column_letter(1)
+                end_col = self._get_column_letter(len(values))
+                self.worksheet.range(f'{start_col}{excel_row}:{end_col}{excel_row}').value = values
+                return
     
     def set_cells_batch(self, cells: list) -> Dict[str, Any]:
         """Setzt mehrere Zellen auf einmal (für Suchen & Ersetzen)
