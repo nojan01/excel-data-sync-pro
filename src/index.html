@@ -13939,11 +13939,30 @@
                     
                     // Status aktualisieren
                     updateExplorerEditStatus();
+                    
+                    // Live-Session Sync (debounced): Änderung an Excel übertragen
+                    if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                        if (this._liveSyncTimer) clearTimeout(this._liveSyncTimer);
+                        const syncRow = rowIndex;
+                        const syncCol = colIndex;
+                        const syncValue = current;
+                        this._liveSyncTimer = setTimeout(() => {
+                            window.electronAPI.liveSessionSetCellsBatch([
+                                { row: syncRow, col: syncCol, value: syncValue }
+                            ]).catch(err => console.error('[CellEdit] Live-Sync fehlgeschlagen:', err));
+                        }, 300); // 300ms Debounce
+                    }
                 });
                 
-                // Blur: Undo-Aktion speichern
-                td.addEventListener('blur', function() {
+                // Blur: Undo-Aktion speichern + Live-Session Sync (Sicherheitsnetz)
+                td.addEventListener('blur', async function() {
                     this.parentElement.classList.remove('editing-row');
+                    
+                    // Laufenden Debounce-Timer abbrechen - wir syncen jetzt sofort
+                    if (this._liveSyncTimer) {
+                        clearTimeout(this._liveSyncTimer);
+                        this._liveSyncTimer = null;
+                    }
                     
                     const rowIndex = parseInt(this.dataset.row);
                     const colIndex = parseInt(this.dataset.col);
@@ -13961,6 +13980,17 @@
                             originalValue: original
                         });
                         this.dataset.lastValue = current;
+                        
+                        // Live-Session Sync: Änderung sofort an Excel übertragen
+                        if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                            try {
+                                await window.electronAPI.liveSessionSetCellsBatch([
+                                    { row: rowIndex, col: colIndex, value: current }
+                                ]);
+                            } catch (error) {
+                                console.error('[CellEdit] Live-Sync fehlgeschlagen:', error);
+                            }
+                        }
                     }
                 });
                 
@@ -13978,26 +14008,71 @@
                     document.execCommand('insertText', false, text);
                 });
                 
-                // Enter-Taste: Zur nächsten Zeile springen
+                // Enter-Taste: Live-Sync + zur nächsten Zeile springen
                 td.addEventListener('keydown', function(e) {
                     if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
+                        
+                        // Debounce-Timer abbrechen (blur wird sofort syncen)
+                        if (this._liveSyncTimer) {
+                            clearTimeout(this._liveSyncTimer);
+                            this._liveSyncTimer = null;
+                        }
+                        
+                        // Sofort Live-Sync an Excel bevor zur nächsten Zeile gesprungen wird
+                        const rowIndex = parseInt(this.dataset.row);
+                        const colIndex = parseInt(this.dataset.col);
+                        const current = this.textContent;
+                        const lastValue = this.dataset.lastValue;
+                        
+                        if (lastValue !== current && explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                            window.electronAPI.liveSessionSetCellsBatch([
+                                { row: rowIndex, col: colIndex, value: current }
+                            ]).catch(err => console.error('[CellEdit] Enter-Sync fehlgeschlagen:', err));
+                        }
+                        
+                        // Undo speichern + lastValue aktualisieren (blur macht das auch, aber sicherheitshalber)
+                        if (lastValue !== current) {
+                            pushExplorerUndo({
+                                rowIndex,
+                                colIndex,
+                                oldValue: lastValue,
+                                newValue: current,
+                                originalValue: this.dataset.original
+                            });
+                            this.dataset.lastValue = current;
+                        }
+                        
                         const nextRow = this.parentElement.nextElementSibling;
                         if (nextRow) {
-                            const colIndex = parseInt(this.dataset.col);
                             const nextCell = nextRow.querySelector(`td[data-col="${colIndex}"]`);
                             if (nextCell) nextCell.focus();
                         }
                     } else if (e.key === 'Escape') {
                         // Escape: Änderung verwerfen
-                        this.textContent = this.dataset.original;
                         const rowIndex = parseInt(this.dataset.row);
                         const colIndex = parseInt(this.dataset.col);
+                        const original = this.dataset.original;
+                        this.textContent = original;
                         const cellKey = `${rowIndex}-${colIndex}`;
                         explorerState.editedCells.delete(cellKey);
-                        explorerState.data[rowIndex][colIndex] = this.dataset.original;
+                        explorerState.data[rowIndex][colIndex] = original;
                         this.classList.remove('edited');
-                        this.dataset.lastValue = this.dataset.original;
+                        this.dataset.lastValue = original;
+                        
+                        // Debounce-Timer abbrechen
+                        if (this._liveSyncTimer) {
+                            clearTimeout(this._liveSyncTimer);
+                            this._liveSyncTimer = null;
+                        }
+                        
+                        // Live-Session: Original-Wert zurücksetzen in Excel
+                        if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                            window.electronAPI.liveSessionSetCellsBatch([
+                                { row: rowIndex, col: colIndex, value: original }
+                            ]).catch(err => console.error('[CellEdit] Escape-Sync fehlgeschlagen:', err));
+                        }
+                        
                         this.blur();
                         updateExplorerEditStatus();
                     } else if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -14058,7 +14133,7 @@
                 // Speichere den initialen Wert für Undo
                 select.dataset.lastValue = select.value;
                 
-                select.addEventListener('change', function() {
+                select.addEventListener('change', async function() {
                     const rowIndex = parseInt(this.dataset.row);
                     const colIndex = parseInt(this.dataset.col);
                     const td = this.closest('td');
@@ -14088,6 +14163,17 @@
                             originalValue: original
                         });
                         this.dataset.lastValue = current;
+                        
+                        // Live-Session Sync: Änderung sofort an Excel übertragen
+                        if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                            try {
+                                await window.electronAPI.liveSessionSetCellsBatch([
+                                    { row: rowIndex, col: colIndex, value: current }
+                                ]);
+                            } catch (error) {
+                                console.error('[Dropdown] Live-Sync fehlgeschlagen:', error);
+                            }
+                        }
                     }
                     
                     // Status aktualisieren
@@ -15814,7 +15900,24 @@
                     console.log('[Export] Live-Session aktiv - verwende Excel direkt zum Speichern...');
                     
                     try {
-                        // Im Live-Modus sind alle Änderungen bereits in Excel
+                        // Sicherheitsnetz: Alle ausstehenden Zell-Änderungen an Excel übertragen
+                        // (falls blur-Handler nicht gefeuert hat oder Sync fehlgeschlagen ist)
+                        const pendingCells = [];
+                        for (const cellKey of explorerState.editedCells.keys()) {
+                            if (cellKey.startsWith('_')) continue;
+                            const [rowStr, colStr] = cellKey.split('-');
+                            const rowIdx = parseInt(rowStr);
+                            const colIdx = parseInt(colStr);
+                            if (rowIdx >= 0 && colIdx >= 0 && explorerState.data[rowIdx]) {
+                                pendingCells.push({ row: rowIdx, col: colIdx, value: explorerState.data[rowIdx][colIdx] });
+                            }
+                        }
+                        if (pendingCells.length > 0) {
+                            console.log(`[Export] Sync ${pendingCells.length} ausstehende Zell-Änderungen an Excel...`);
+                            await window.electronAPI.liveSessionSetCellsBatch(pendingCells);
+                        }
+                        
+                        // Im Live-Modus sind jetzt alle Änderungen in Excel
                         // Wir müssen nur noch speichern (mit optionalem Passwort)
                         // exportPassword ist: undefined (Checkbox nicht aktiviert), '' (aktiviert aber leer), oder 'xxx' (neues Passwort)
                         // passwordToUse: undefined = beibehalten, null = entfernen, 'xxx' = neues Passwort
