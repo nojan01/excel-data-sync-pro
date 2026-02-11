@@ -8523,6 +8523,7 @@
                 
                 checkbox.onchange = () => {
                     positionSelect.disabled = !checkbox.checked;
+                    refreshPositionDropdowns();
                     updateSelectedJoinColumns();
                     dataJoinState.previewCalculated = false;
                     elements.joinPreviewContainer.style.display = 'none';
@@ -8530,6 +8531,7 @@
                 };
                 
                 positionSelect.onchange = () => {
+                    refreshPositionDropdowns();
                     updateSelectedJoinColumns();
                     dataJoinState.previewCalculated = false;
                     elements.joinPreviewContainer.style.display = 'none';
@@ -8541,7 +8543,6 @@
         
         function updateSelectedJoinColumns() {
             const checkboxes = document.querySelectorAll('.join-column-checkbox:checked');
-            const positionSelects = document.querySelectorAll('.join-target-position');
             
             // Speichere ausgewählte Spalten mit ihren Zielpositionen
             dataJoinState.selectedColumns = [];
@@ -8550,13 +8551,124 @@
             checkboxes.forEach(cb => {
                 const sourceIndex = parseInt(cb.dataset.index);
                 const positionSelect = document.querySelector(`.join-target-position[data-source-index="${sourceIndex}"]`);
-                const targetPosition = positionSelect ? positionSelect.value : 'end';
+                const rawValue = positionSelect ? positionSelect.value : 'end';
+                
+                // Parse zusammengesetzte Werte: "end", "end+3", "2", "2+5" → Basis-Position extrahieren
+                const basePos = rawValue.split('+')[0];
+                const targetPosition = basePos === 'end' ? 'end' : parseInt(basePos);
                 
                 dataJoinState.selectedColumns.push(sourceIndex);
                 dataJoinState.columnPositions.push({
                     sourceIndex: sourceIndex,
-                    targetPosition: targetPosition === 'end' ? 'end' : parseInt(targetPosition)
+                    targetPosition: targetPosition
                 });
+            });
+        }
+        
+        /**
+         * Aktualisiert die Positions-Dropdowns aller Spalten, um bereits ausgewählte
+         * neue Spalten in der Positionsliste anzuzeigen.
+         */
+        function refreshPositionDropdowns() {
+            // Sammle alle aktuell ausgewählten Quellspalten und ihre Positionen
+            const selectedCols = [];
+            document.querySelectorAll('.join-column-checkbox:checked').forEach(cb => {
+                const sourceIndex = parseInt(cb.dataset.index);
+                const posSelect = document.querySelector(`.join-target-position[data-source-index="${sourceIndex}"]`);
+                if (!posSelect) return;
+                const rawValue = posSelect.value;
+                const basePos = rawValue.split('+')[0]; // "end" oder z.B. "3"
+                const name = dataJoinState.sourceHeaders[sourceIndex] || `Spalte ${getColumnLetter(sourceIndex)}`;
+                selectedCols.push({ sourceIndex, basePos, name });
+            });
+            
+            // Erstelle virtuelle Header-Liste: Original-Header + ausgewählte neue Spalten
+            let virtualItems = explorerState.headers.map((h, idx) => ({
+                label: h || '(leer)',
+                value: String(idx),
+                isNew: false
+            }));
+            
+            // Gruppiere ausgewählte Spalten nach Basis-Position
+            const groups = new Map();
+            selectedCols.forEach(sc => {
+                if (!groups.has(sc.basePos)) groups.set(sc.basePos, []);
+                groups.get(sc.basePos).push(sc);
+            });
+            
+            // Positionierte Spalten einfügen (von hinten nach vorne für korrekte Indizes)
+            const numericKeys = Array.from(groups.keys())
+                .filter(k => k !== 'end')
+                .map(Number)
+                .sort((a, b) => b - a);
+            
+            numericKeys.forEach(pos => {
+                const cols = groups.get(String(pos));
+                const insertAt = Math.min(pos + 1, virtualItems.length);
+                // Umgekehrt einfügen, damit erste Spalte oben steht
+                [...cols].reverse().forEach(sc => {
+                    virtualItems.splice(insertAt, 0, {
+                        label: `${sc.name} (neu)`,
+                        value: `${pos}+${sc.sourceIndex}`,
+                        isNew: true,
+                        sourceIndex: sc.sourceIndex
+                    });
+                });
+            });
+            
+            // "Am Ende"-Spalten anhängen
+            if (groups.has('end')) {
+                groups.get('end').forEach(sc => {
+                    virtualItems.push({
+                        label: `${sc.name} (neu)`,
+                        value: `end+${sc.sourceIndex}`,
+                        isNew: true,
+                        sourceIndex: sc.sourceIndex
+                    });
+                });
+            }
+            
+            // Aktualisiere alle Position-Dropdowns
+            document.querySelectorAll('.join-target-position').forEach(select => {
+                const currentSourceIndex = parseInt(select.dataset.sourceIndex);
+                const currentValue = select.value;
+                
+                let optionsHtml = '<option value="end">Am Ende einfügen</option>';
+                
+                virtualItems.forEach((item, vIdx) => {
+                    // Eigenen Eintrag überspringen
+                    if (item.isNew && item.sourceIndex === currentSourceIndex) return;
+                    
+                    const letter = getColumnLetter(vIdx);
+                    const style = item.isNew ? 'color: #4ec9b0; font-style: italic;' : '';
+                    optionsHtml += `<option value="${item.value}" style="${style}">nach ${letter}: ${item.label}</option>`;
+                });
+                
+                select.innerHTML = optionsHtml;
+                
+                // Auswahl wiederherstellen
+                let found = false;
+                for (const opt of select.options) {
+                    if (opt.value === currentValue) {
+                        select.value = currentValue;
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    // Fallback: Basis-Position versuchen
+                    const basePos = currentValue.split('+')[0];
+                    for (const opt of select.options) {
+                        if (opt.value === basePos) {
+                            select.value = basePos;
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        select.value = 'end';
+                    }
+                }
             });
         }
         
