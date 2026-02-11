@@ -3523,9 +3523,11 @@ ipcMain.handle('liveSession:saveFile', async (event, outputPath, password) => {
             pythonPasswordArg = 'KEEP'; // Altes Passwort beibehalten
         } else if (password === null || password === '') {
             pythonPasswordArg = null; // Passwort entfernen
+        } else if (process.platform === 'win32') {
+            // Windows: COM-API setzt das Passwort direkt (Excel sperrt die Datei für xlsx-populate)
+            pythonPasswordArg = password;
         } else {
-            // Neues Passwort: Python soll erst entschlüsseln (null), 
-            // dann wird xlsx-populate das neue Passwort setzen
+            // macOS: Python entschlüsselt zuerst, xlsx-populate verschlüsselt danach
             pythonPasswordArg = null;
         }
         
@@ -3535,25 +3537,32 @@ ipcMain.handle('liveSession:saveFile', async (event, outputPath, password) => {
             return result;
         }
         
-        // Passwort-Schutz mit xlsx-populate:
+        // Passwort-Schutz mit xlsx-populate (nur macOS - auf Windows erledigt COM-API das direkt):
         // - password === undefined: altes Passwort beibehalten (nichts tun, Datei ist noch verschlüsselt)
         // - password === null: Passwort entfernen (Datei wurde entschlüsselt, nichts weiter tun)
         // - password === 'xxx': neues Passwort setzen
         if (password && password !== '' && outputPath) {
-            try {
-                const XlsxPopulate = require('xlsx-populate');
-                
-                // Kurze Pause um sicherzustellen dass die Datei vollständig geschrieben wurde
-                await new Promise(resolve => setTimeout(resolve, 100));
-                
-                // Datei ist jetzt unverschlüsselt, wir können sie öffnen und mit neuem Passwort speichern
-                const pwWorkbook = await XlsxPopulate.fromFileAsync(outputPath);
-                await pwWorkbook.toFileAsync(outputPath, { password: password });
+            if (process.platform === 'win32') {
+                // Windows: COM-API hat das Passwort bereits direkt gesetzt
                 result.hasPassword = true;
-                console.log('[LiveSession] Neues Passwort erfolgreich gesetzt');
-            } catch (pwError) {
-                console.error('[LiveSession] Fehler beim Passwort-Setzen:', pwError.message);
-                result.passwordError = pwError.message;
+                console.log('[LiveSession] Neues Passwort via COM-API gesetzt');
+            } else {
+                // macOS: xlsx-populate verschlüsselt die Datei
+                try {
+                    const XlsxPopulate = require('xlsx-populate');
+                    
+                    // Kurze Pause um sicherzustellen dass die Datei vollständig geschrieben wurde
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    
+                    // Datei ist jetzt unverschlüsselt, wir können sie öffnen und mit neuem Passwort speichern
+                    const pwWorkbook = await XlsxPopulate.fromFileAsync(outputPath);
+                    await pwWorkbook.toFileAsync(outputPath, { password: password });
+                    result.hasPassword = true;
+                    console.log('[LiveSession] Neues Passwort erfolgreich gesetzt');
+                } catch (pwError) {
+                    console.error('[LiveSession] Fehler beim Passwort-Setzen:', pwError.message);
+                    result.passwordError = pwError.message;
+                }
             }
         } else if (password === null || password === '') {
             result.hasPassword = false;
