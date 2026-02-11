@@ -457,7 +457,7 @@ class ExcelLiveSession:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
             
             # Debug: Zeige was wir bekommen haben
-            self._log(f"save_file aufgerufen: output_path={output_path}")
+            self._log(f"save_file aufgerufen: output_path={output_path}, password={'KEEP' if password == 'KEEP' else ('***' if password else repr(password))}")
             
             # Passwort-Logik: 
             # 'KEEP' = altes Passwort beibehalten
@@ -474,21 +474,21 @@ class ExcelLiveSession:
             else:
                 effective_password = None
             
+            is_windows = platform.system() == 'Windows'
+            
             if output_path and output_path != self.file_path:
                 self._log(f"Speichere unter: {output_path}")
                 
-                # Auf macOS: SaveAs über Speichern + Kopieren
                 if platform.system() == 'Darwin':
-                    # Erst aktuelle Änderungen speichern
+                    # macOS: SaveAs über Speichern + Kopieren
                     self.workbook.save()
                     self._log(f"Original gespeichert")
                     
-                    # Datei kopieren
                     shutil.copy2(self.file_path, output_path)
                     self._log(f"Kopiert nach: {output_path}")
                     
                     # Wenn Quelldatei verschlüsselt war UND wir das Passwort NICHT behalten wollen,
-                    # müssen wir die Kopie entschlüsseln damit xlsx-populate sie öffnen kann
+                    # müssen wir die Kopie entschlüsseln
                     if self.file_password and not keep_password:
                         try:
                             import msoffcrypto
@@ -506,17 +506,36 @@ class ExcelLiveSession:
                         except Exception as decrypt_err:
                             self._log(f"Fehler beim Entschlüsseln: {decrypt_err}")
                 else:
-                    # Windows: Normales save(path) funktioniert als SaveAs
+                    # Windows: COM-API für SaveAs mit Passwort
                     if effective_password:
-                        self.workbook.save(output_path, password=effective_password)
+                        self._log(f"Windows SaveAs mit Passwort")
+                        self.workbook.api.SaveAs(output_path, FileFormat=51, Password=effective_password)
+                    elif not keep_password and self.file_password:
+                        # Passwort entfernen: Erst Password leeren, dann SaveAs
+                        self._log(f"Windows SaveAs ohne Passwort (entferne Schutz)")
+                        self.workbook.api.Password = ''
+                        self.workbook.api.SaveAs(output_path, FileFormat=51)
                     else:
-                        self.workbook.save(output_path)
+                        self.workbook.api.SaveAs(output_path, FileFormat=51)
                     self.file_path = output_path
             else:
                 self._log(f"Speichere... Password: {'***' if effective_password else 'None'}")
-                if effective_password:
-                    self.workbook.save(password=effective_password)
+                
+                if is_windows:
+                    # Windows: COM-API für Passwort-Änderungen
+                    if effective_password:
+                        self._log(f"Windows: Setze Passwort via COM API")
+                        self.workbook.api.Password = effective_password
+                        self.workbook.api.Save()
+                    elif not keep_password and password is not None:
+                        # password == '' → Passwort entfernen
+                        self._log(f"Windows: Entferne Passwort via COM API")
+                        self.workbook.api.Password = ''
+                        self.workbook.api.Save()
+                    else:
+                        self.workbook.save()
                 else:
+                    # macOS: xlwings save funktioniert direkt
                     self.workbook.save()
             
             # Passwort aktualisieren
@@ -544,12 +563,22 @@ class ExcelLiveSession:
             
             if password:
                 self._log("Setze Passwort...")
-                self.workbook.save(password=password)
+                if platform.system() == 'Windows':
+                    # Windows: COM-API direkt verwenden
+                    self.workbook.api.Password = password
+                    self.workbook.api.Save()
+                else:
+                    self.workbook.save(password=password)
                 self.file_password = password
             else:
                 self._log("Entferne Passwort...")
-                # Speichern ohne Passwort entfernt das Passwort
-                self.workbook.save()
+                if platform.system() == 'Windows':
+                    # Windows: Passwort über COM-API leeren
+                    self.workbook.api.Password = ''
+                    self.workbook.api.Save()
+                else:
+                    # macOS: Speichern ohne Passwort entfernt das Passwort
+                    self.workbook.save()
                 self.file_password = None
             
             return {'success': True, 'hasPassword': bool(self.file_password)}
