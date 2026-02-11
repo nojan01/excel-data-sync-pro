@@ -1057,14 +1057,24 @@ class ExcelLiveSession:
                     value = cell.get('value')
                     
                     if row_index is None or col_index is None:
+                        self._log(f"  SKIP: row={row_index}, col={col_index} (None)")
                         continue
                     
                     excel_row = row_index + 2  # +2 für Header
                     excel_col = col_index + 1
                     
+                    self._log(f"  Schreibe Zelle ({excel_row}, {excel_col}) = '{value}' [worksheet={self.worksheet.name}]")
                     self.worksheet.range((excel_row, excel_col)).value = value
+                    
+                    # Verifikation: Wert zurücklesen
+                    verify = self.worksheet.range((excel_row, excel_col)).value
+                    self._log(f"  Verifiziert: ({excel_row}, {excel_col}) = '{verify}'")
+                    
                     updated_count += 1
-                    self._log(f"  Zelle ({excel_row}, {excel_col}) = '{value}'")
+                
+                # macOS: Screen-Refresh erzwingen damit Änderung sichtbar wird
+                if platform.system() == 'Darwin':
+                    self._force_screen_refresh()
             else:
                 # Performance-Optimierung nur für große Batches
                 app = self.app

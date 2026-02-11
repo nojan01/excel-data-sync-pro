@@ -13984,11 +13984,12 @@
                         // Live-Session Sync: Änderung sofort an Excel übertragen
                         if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                             try {
-                                await window.electronAPI.liveSessionSetCellsBatch([
+                                const syncResult = await window.electronAPI.liveSessionSetCellsBatch([
                                     { row: rowIndex, col: colIndex, value: current }
                                 ]);
+                                console.log('[CellEdit] Blur-Sync Ergebnis:', JSON.stringify(syncResult));
                             } catch (error) {
-                                console.error('[CellEdit] Live-Sync fehlgeschlagen:', error);
+                                console.error('[CellEdit] Blur-Sync fehlgeschlagen:', error);
                             }
                         }
                     }
@@ -14025,10 +14026,12 @@
                         const current = this.textContent;
                         const lastValue = this.dataset.lastValue;
                         
+                        console.log('[CellEdit] Enter: row=' + rowIndex + ' col=' + colIndex + ' value="' + current + '" lastValue="' + lastValue + '" liveActive=' + explorerState.liveSessionActive + ' liveReady=' + explorerState.liveSessionReady);
                         if (lastValue !== current && explorerState.liveSessionActive && explorerState.liveSessionReady) {
                             window.electronAPI.liveSessionSetCellsBatch([
                                 { row: rowIndex, col: colIndex, value: current }
-                            ]).catch(err => console.error('[CellEdit] Enter-Sync fehlgeschlagen:', err));
+                            ]).then(res => console.log('[CellEdit] Enter-Sync Ergebnis:', JSON.stringify(res)))
+                              .catch(err => console.error('[CellEdit] Enter-Sync fehlgeschlagen:', err));
                         }
                         
                         // Undo speichern + lastValue aktualisieren (blur macht das auch, aber sicherheitshalber)
