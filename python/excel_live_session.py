@@ -1046,16 +1046,11 @@ class ExcelLiveSession:
             
             self._log(f"set_cells_batch: Setze {len(cells)} Zellen")
             
-            # Performance-Optimierung: Screen-Updating und Calculation pausieren
-            app = self.app
-            original_screen_updating = app.screen_updating
-            original_calculation = app.calculation
+            updated_count = 0
             
-            try:
-                app.screen_updating = False
-                app.calculation = 'manual'
-                
-                updated_count = 0
+            # Für kleine Batches (≤5 Zellen): Direkt schreiben ohne screen_updating-Tricks
+            # Screen-Updating deaktivieren verursacht auf macOS Probleme bei Einzel-Edits
+            if len(cells) <= 5:
                 for cell in cells:
                     row_index = cell.get('row')
                     col_index = cell.get('col')
@@ -1069,14 +1064,38 @@ class ExcelLiveSession:
                     
                     self.worksheet.range((excel_row, excel_col)).value = value
                     updated_count += 1
+                    self._log(f"  Zelle ({excel_row}, {excel_col}) = '{value}'")
+            else:
+                # Performance-Optimierung nur für große Batches
+                app = self.app
+                original_screen_updating = app.screen_updating
+                original_calculation = app.calculation
                 
-                # Am Ende: Formeln neu berechnen
-                app.calculate()
-                
-            finally:
-                # Ursprüngliche Einstellungen wiederherstellen
-                app.screen_updating = original_screen_updating
-                app.calculation = original_calculation
+                try:
+                    app.screen_updating = False
+                    app.calculation = 'manual'
+                    
+                    for cell in cells:
+                        row_index = cell.get('row')
+                        col_index = cell.get('col')
+                        value = cell.get('value')
+                        
+                        if row_index is None or col_index is None:
+                            continue
+                        
+                        excel_row = row_index + 2  # +2 für Header
+                        excel_col = col_index + 1
+                        
+                        self.worksheet.range((excel_row, excel_col)).value = value
+                        updated_count += 1
+                    
+                    # Am Ende: Formeln neu berechnen
+                    app.calculate()
+                    
+                finally:
+                    # Ursprüngliche Einstellungen wiederherstellen
+                    app.screen_updating = original_screen_updating
+                    app.calculation = original_calculation
             
             # Änderungen im Journal protokollieren (vereinfacht)
             self._journal_add('setCellsBatch', {
