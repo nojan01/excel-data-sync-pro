@@ -327,16 +327,30 @@ class ExcelLiveSession:
             if not self.app:
                 return
             
-            # Toggle screen_updating um Refresh zu erzwingen
-            self.app.screen_updating = False
+            self._log("_force_screen_refresh aufgerufen")
+            
+            # Screen-Updating sicherstellen
             self.app.screen_updating = True
             
-            # Auf macOS: Zusätzlich calculate aufrufen für besseren Refresh
-            if platform.system() == 'Darwin' and self.app:
+            # Auf macOS: Aggressiveres Refresh nötig
+            if platform.system() == 'Darwin':
                 try:
-                    self.app.api.calculate()
-                except:
-                    pass
+                    # Workbook und Worksheet aktivieren, damit Excel die Änderung anzeigt
+                    if self.workbook:
+                        self.workbook.activate()
+                    if self.worksheet:
+                        self.worksheet.activate()
+                    
+                    # Formeln neu berechnen (erzwingt auch Display-Update)
+                    self.app.calculate()
+                    self._log("_force_screen_refresh: macOS refresh erfolgreich")
+                except Exception as mac_err:
+                    self._log(f"_force_screen_refresh macOS-Fehler: {mac_err}")
+            else:
+                # Windows: Toggle screen_updating reicht normalerweise
+                self.app.screen_updating = False
+                self.app.screen_updating = True
+                
         except Exception as e:
             self._log(f"Fehler bei screen refresh: {e}")
     
@@ -1031,6 +1045,49 @@ class ExcelLiveSession:
             self._log(f"Fehler beim Setzen der Spaltenwerte: {e}")
             return {'success': False, 'error': str(e)}
     
+    def set_row_values(self, row_index: int, values: list) -> Dict[str, Any]:
+        """Setzt alle Werte einer Zeile auf einmal (komplette Zeile übertragen)
+        
+        Args:
+            row_index: 0-basierter Zeilenindex (Datenzeile, ohne Header)
+            values: Liste von Werten (für jede Spalte ein Wert)
+        """
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            if not values:
+                return {'success': True, 'rowIndex': row_index, 'count': 0}
+            
+            excel_row = row_index + 2  # +2 weil Header in Zeile 1
+            num_cols = len(values)
+            
+            # Range: A{row}:{lastCol}{row} - komplette Zeile als horizontale Liste
+            start_col_letter = self._get_column_letter(1)
+            end_col_letter = self._get_column_letter(num_cols)
+            range_addr = f'{start_col_letter}{excel_row}:{end_col_letter}{excel_row}'
+            
+            self._log(f"set_row_values: Zeile {excel_row}, {num_cols} Spalten ({start_col_letter}-{end_col_letter})")
+            
+            # Werte als horizontale Liste (eine Zeile) schreiben
+            self.worksheet.range(range_addr).value = values
+            
+            self._log(f"set_row_values: Zeile {excel_row} geschrieben ✓")
+            
+            # Journal
+            self._journal_add('setRowValues', {
+                'row': row_index,
+                'count': num_cols
+            })
+            
+            self._check_auto_save()
+            
+            return {'success': True, 'rowIndex': row_index, 'count': num_cols}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Setzen der Zeilenwerte: {e}")
+            return {'success': False, 'error': str(e)}
+    
     def set_cells_batch(self, cells: list) -> Dict[str, Any]:
         """Setzt mehrere Zellen auf einmal (für Suchen & Ersetzen)
         
@@ -1470,6 +1527,7 @@ class ExcelLiveSession:
             # Zellen
             'setCellValue': lambda: self.set_cell_value(cmd.get('rowIndex'), cmd.get('colIndex'), cmd.get('value')),
             'setColumnValues': lambda: self.set_column_values(cmd.get('colIndex'), cmd.get('values', []), cmd.get('startRow', 0)),
+            'setRowValues': lambda: self.set_row_values(cmd.get('rowIndex'), cmd.get('values', [])),
             'setCellsBatch': lambda: self.set_cells_batch(cmd.get('cells', [])),
             'findReplace': lambda: self.find_replace(
                 cmd.get('searchText', ''),

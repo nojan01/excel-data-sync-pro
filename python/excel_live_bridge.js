@@ -594,6 +594,19 @@ class ExcelLiveSession {
             cells: cells
         }, timeout);
     }
+
+    /**
+     * Setzt alle Werte einer Zeile auf einmal
+     * @param {number} rowIndex - 0-basierter Zeilenindex
+     * @param {Array} values - Array von Werten (ein Wert pro Spalte)
+     */
+    async setRowValues(rowIndex, values) {
+        return this._sendCommand({
+            action: 'setRowValues',
+            rowIndex: rowIndex,
+            values: values
+        });
+    }
     
     /**
      * Nutzt Excel's native Suchen & Ersetzen - extrem schnell!

@@ -101,6 +101,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     liveSessionSetCellValue: (rowIndex, colIndex, value) => ipcRenderer.invoke('liveSession:setCellValue', rowIndex, colIndex, value),
     liveSessionSetColumnValues: (colIndex, values, startRow) => ipcRenderer.invoke('liveSession:setColumnValues', colIndex, values, startRow || 0),
     liveSessionSetCellsBatch: (cells) => ipcRenderer.invoke('liveSession:setCellsBatch', cells),
+    liveSessionSetRowValues: (rowIndex, values) => ipcRenderer.invoke('liveSession:setRowValues', rowIndex, values),
     liveSessionFindReplace: (searchText, replaceText, matchCase, wholeWord) => 
         ipcRenderer.invoke('liveSession:findReplace', searchText, replaceText, matchCase, wholeWord),
     

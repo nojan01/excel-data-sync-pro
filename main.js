@@ -3746,6 +3746,15 @@ ipcMain.handle('liveSession:setCellsBatch', async (event, cells) => {
     }
 });
 
+ipcMain.handle('liveSession:setRowValues', async (event, rowIndex, values) => {
+    try {
+        const session = getLiveSession();
+        return await session.setRowValues(rowIndex, values);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 ipcMain.handle('liveSession:findReplace', async (event, searchText, replaceText, matchCase, wholeWord) => {
     console.log('[LiveSession] IPC: findReplace', searchText, '->', replaceText);
     try {

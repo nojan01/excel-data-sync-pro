@@ -13854,6 +13854,19 @@
             // Zeilen-Highlights anwenden
             applyRowHighlights();
             
+            // Hilfsfunktion: Komplette Zeile an Excel übertragen (für Cell-Edit + Dropdown)
+            function syncRowToExcel(rowIndex) {
+                if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) return;
+                const rowData = explorerState.data[rowIndex];
+                if (!rowData) return;
+                // Alle Werte der Zeile als Array (null/undefined → '')
+                const values = rowData.map(v => (v === null || v === undefined) ? '' : v);
+                console.log('[CellEdit] syncRowToExcel: Zeile', rowIndex, '→', values.length, 'Spalten');
+                window.electronAPI.liveSessionSetRowValues(rowIndex, values)
+                    .then(res => console.log('[CellEdit] Row-Sync Ergebnis:', JSON.stringify(res)))
+                    .catch(err => console.error('[CellEdit] Row-Sync fehlgeschlagen:', err));
+            }
+            
             // Event-Listener für Zeilen-Checkboxen
             document.querySelectorAll('.row-select-checkbox').forEach(checkbox => {
                 checkbox.addEventListener('change', function() {
@@ -13940,16 +13953,12 @@
                     // Status aktualisieren
                     updateExplorerEditStatus();
                     
-                    // Live-Session Sync (debounced): Änderung an Excel übertragen
+                    // Live-Session Sync (debounced): Komplette Zeile an Excel übertragen
                     if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                         if (this._liveSyncTimer) clearTimeout(this._liveSyncTimer);
                         const syncRow = rowIndex;
-                        const syncCol = colIndex;
-                        const syncValue = current;
                         this._liveSyncTimer = setTimeout(() => {
-                            window.electronAPI.liveSessionSetCellsBatch([
-                                { row: syncRow, col: syncCol, value: syncValue }
-                            ]).catch(err => console.error('[CellEdit] Live-Sync fehlgeschlagen:', err));
+                            syncRowToExcel(syncRow);
                         }, 300); // 300ms Debounce
                     }
                 });
@@ -13981,17 +13990,8 @@
                         });
                         this.dataset.lastValue = current;
                         
-                        // Live-Session Sync: Änderung sofort an Excel übertragen
-                        if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                            try {
-                                const syncResult = await window.electronAPI.liveSessionSetCellsBatch([
-                                    { row: rowIndex, col: colIndex, value: current }
-                                ]);
-                                console.log('[CellEdit] Blur-Sync Ergebnis:', JSON.stringify(syncResult));
-                            } catch (error) {
-                                console.error('[CellEdit] Blur-Sync fehlgeschlagen:', error);
-                            }
-                        }
+                        // Live-Session: Komplette Zeile an Excel übertragen
+                        syncRowToExcel(rowIndex);
                     }
                 });
                 
@@ -14014,27 +14014,18 @@
                     if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         
-                        // Debounce-Timer abbrechen (blur wird sofort syncen)
+                        // Debounce-Timer abbrechen
                         if (this._liveSyncTimer) {
                             clearTimeout(this._liveSyncTimer);
                             this._liveSyncTimer = null;
                         }
                         
-                        // Sofort Live-Sync an Excel bevor zur nächsten Zeile gesprungen wird
                         const rowIndex = parseInt(this.dataset.row);
                         const colIndex = parseInt(this.dataset.col);
                         const current = this.textContent;
                         const lastValue = this.dataset.lastValue;
                         
-                        console.log('[CellEdit] Enter: row=' + rowIndex + ' col=' + colIndex + ' value="' + current + '" lastValue="' + lastValue + '" liveActive=' + explorerState.liveSessionActive + ' liveReady=' + explorerState.liveSessionReady);
-                        if (lastValue !== current && explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                            window.electronAPI.liveSessionSetCellsBatch([
-                                { row: rowIndex, col: colIndex, value: current }
-                            ]).then(res => console.log('[CellEdit] Enter-Sync Ergebnis:', JSON.stringify(res)))
-                              .catch(err => console.error('[CellEdit] Enter-Sync fehlgeschlagen:', err));
-                        }
-                        
-                        // Undo speichern + lastValue aktualisieren (blur macht das auch, aber sicherheitshalber)
+                        // Undo speichern + lastValue aktualisieren
                         if (lastValue !== current) {
                             pushExplorerUndo({
                                 rowIndex,
@@ -14044,6 +14035,9 @@
                                 originalValue: this.dataset.original
                             });
                             this.dataset.lastValue = current;
+                            
+                            // Komplette Zeile an Excel übertragen
+                            syncRowToExcel(rowIndex);
                         }
                         
                         const nextRow = this.parentElement.nextElementSibling;
@@ -14069,12 +14063,8 @@
                             this._liveSyncTimer = null;
                         }
                         
-                        // Live-Session: Original-Wert zurücksetzen in Excel
-                        if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                            window.electronAPI.liveSessionSetCellsBatch([
-                                { row: rowIndex, col: colIndex, value: original }
-                            ]).catch(err => console.error('[CellEdit] Escape-Sync fehlgeschlagen:', err));
-                        }
+                        // Komplette Zeile (mit Original-Wert) an Excel zurücksetzen
+                        syncRowToExcel(rowIndex);
                         
                         this.blur();
                         updateExplorerEditStatus();
@@ -14167,16 +14157,8 @@
                         });
                         this.dataset.lastValue = current;
                         
-                        // Live-Session Sync: Änderung sofort an Excel übertragen
-                        if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                            try {
-                                await window.electronAPI.liveSessionSetCellsBatch([
-                                    { row: rowIndex, col: colIndex, value: current }
-                                ]);
-                            } catch (error) {
-                                console.error('[Dropdown] Live-Sync fehlgeschlagen:', error);
-                            }
-                        }
+                        // Live-Session: Komplette Zeile an Excel übertragen
+                        syncRowToExcel(rowIndex);
                     }
                     
                     // Status aktualisieren
