@@ -279,9 +279,7 @@ class ExcelLiveSession:
         return result
     
     def _hide_excel(self):
-        """Versteckt Excel - DEAKTIVIERT für Debugging"""
-        # DEBUGGING: Excel sichtbar lassen um Operationen zu beobachten
-        return
+        """Versteckt Excel"""
         import subprocess
         if platform.system() == 'Darwin':
             try:
@@ -327,8 +325,6 @@ class ExcelLiveSession:
             if not self.app:
                 return
             
-            self._log("_force_screen_refresh aufgerufen")
-            
             # Screen-Updating sicherstellen
             self.app.screen_updating = True
             
@@ -343,7 +339,6 @@ class ExcelLiveSession:
                     
                     # Formeln neu berechnen (erzwingt auch Display-Update)
                     self.app.calculate()
-                    self._log("_force_screen_refresh: macOS refresh erfolgreich")
                 except Exception as mac_err:
                     self._log(f"_force_screen_refresh macOS-Fehler: {mac_err}")
             else:
@@ -356,7 +351,6 @@ class ExcelLiveSession:
                     self.app.screen_updating = False
                     self.app.screen_updating = True
                     self.app.calculate()
-                    self._log("_force_screen_refresh: Windows refresh erfolgreich")
                 except Exception as win_err:
                     self._log(f"_force_screen_refresh Windows-Fehler: {win_err}")
                 
@@ -457,7 +451,7 @@ class ExcelLiveSession:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
             
             # Debug: Zeige was wir bekommen haben
-            self._log(f"save_file aufgerufen: output_path={output_path}, password={'KEEP' if password == 'KEEP' else ('***' if password else repr(password))}")
+            self._log(f"save_file: output_path={output_path}, password={'KEEP' if password == 'KEEP' else ('***' if password else repr(password))}")
             
             # Passwort-Logik: 
             # 'KEEP' = altes Passwort beibehalten
@@ -482,10 +476,8 @@ class ExcelLiveSession:
                 if platform.system() == 'Darwin':
                     # macOS: SaveAs über Speichern + Kopieren
                     self.workbook.save()
-                    self._log(f"Original gespeichert")
                     
                     shutil.copy2(self.file_path, output_path)
-                    self._log(f"Kopiert nach: {output_path}")
                     
                     # Wenn Quelldatei verschlüsselt war UND wir das Passwort NICHT behalten wollen,
                     # müssen wir die Kopie entschlüsseln
@@ -508,28 +500,22 @@ class ExcelLiveSession:
                 else:
                     # Windows: COM-API für SaveAs mit Passwort
                     if effective_password:
-                        self._log(f"Windows SaveAs mit Passwort")
                         self.workbook.api.SaveAs(output_path, FileFormat=51, Password=effective_password)
                     elif not keep_password and self.file_password:
                         # Passwort entfernen: Erst Password leeren, dann SaveAs
-                        self._log(f"Windows SaveAs ohne Passwort (entferne Schutz)")
                         self.workbook.api.Password = ''
                         self.workbook.api.SaveAs(output_path, FileFormat=51)
                     else:
                         self.workbook.api.SaveAs(output_path, FileFormat=51)
                     self.file_path = output_path
             else:
-                self._log(f"Speichere... Password: {'***' if effective_password else 'None'}")
-                
                 if is_windows:
                     # Windows: COM-API für Passwort-Änderungen
                     if effective_password:
-                        self._log(f"Windows: Setze Passwort via COM API")
                         self.workbook.api.Password = effective_password
                         self.workbook.api.Save()
                     elif not keep_password and password is not None:
                         # password == '' → Passwort entfernen
-                        self._log(f"Windows: Entferne Passwort via COM API")
                         self.workbook.api.Password = ''
                         self.workbook.api.Save()
                     else:
@@ -607,15 +593,13 @@ class ExcelLiveSession:
             if self.app:
                 try:
                     self.app.display_alerts = False
-                    self._log("Display Alerts deaktiviert")
                 except Exception as e:
-                    self._log(f"display_alerts konnte nicht gesetzt werden: {e}")
+                    self._log(f"display_alerts Fehler: {e}")
             
             if self.workbook:
                 try:
                     if save:
                         self.workbook.save()
-                        self._log("Datei gespeichert vor dem Schließen")
                     else:
                         # Workbook als "gespeichert" markieren BEVOR close() aufgerufen wird.
                         # Verhindert den "Speichern?"-Dialog auf macOS.
@@ -624,17 +608,14 @@ class ExcelLiveSession:
                                 self.workbook.api.Saved = True
                             else:
                                 self.workbook.api.saved.set(True)
-                            self._log("Workbook als saved markiert")
                         except Exception as e:
-                            self._log(f"Saved-Flag konnte nicht gesetzt werden: {e}")
+                            self._log(f"Saved-Flag Fehler: {e}")
                     
                     # Schließen - plattformspezifisch
                     if platform.system() == 'Windows':
                         self.workbook.api.Close(SaveChanges=False)
-                        self._log("Windows: Workbook geschlossen ohne Speichern")
                     else:
                         self.workbook.close()
-                        self._log("macOS: Workbook geschlossen ohne Speichern")
                 except Exception as e:
                     self._log(f"Fehler beim Schließen des Workbooks: {e}")
                 self.workbook = None
@@ -1105,8 +1086,6 @@ class ExcelLiveSession:
             end_col_letter = self._get_column_letter(num_cols)
             range_addr = f'{start_col_letter}{excel_row}:{end_col_letter}{excel_row}'
             
-            self._log(f"set_row_values: Zeile {excel_row}, {num_cols} Spalten ({start_col_letter}-{end_col_letter})")
-            
             if platform.system() == 'Darwin':
                 # macOS: Direkt über AppleScript für zuverlässigen Display-Refresh
                 self._set_row_values_applescript(excel_row, values)
@@ -1115,8 +1094,6 @@ class ExcelLiveSession:
                 self.app.screen_updating = True
                 self.worksheet.range(range_addr).value = values
                 self._force_screen_refresh()
-            
-            self._log(f"set_row_values: Zeile {excel_row} geschrieben ✓")
             
             # Journal
             self._journal_add('setRowValues', {
@@ -1211,18 +1188,12 @@ end tell'''
                     value = cell.get('value')
                     
                     if row_index is None or col_index is None:
-                        self._log(f"  SKIP: row={row_index}, col={col_index} (None)")
                         continue
                     
                     excel_row = row_index + 2  # +2 für Header
                     excel_col = col_index + 1
                     
-                    self._log(f"  Schreibe Zelle ({excel_row}, {excel_col}) = '{value}' [worksheet={self.worksheet.name}]")
                     self.worksheet.range((excel_row, excel_col)).value = value
-                    
-                    # Verifikation: Wert zurücklesen
-                    verify = self.worksheet.range((excel_row, excel_col)).value
-                    self._log(f"  Verifiziert: ({excel_row}, {excel_col}) = '{verify}'")
                     
                     updated_count += 1
                 
@@ -1405,8 +1376,7 @@ end tell'''
             if not used_range:
                 return {'success': False, 'error': 'Keine Daten vorhanden'}
             
-            self._log(f"set_autofilter aufgerufen mit: {filters}")
-            self._log(f"Platform: {platform.system()}")
+            self._log(f"set_autofilter: {len(filters) if filters else 0} Filter")
             
             is_windows = platform.system() == 'Windows'
             
@@ -1418,9 +1388,8 @@ end tell'''
                         try:
                             if not self.worksheet.api.AutoFilterMode:
                                 used_range.api.AutoFilter()
-                                self._log("Windows: AutoFilter aktiviert")
                         except Exception as e:
-                            self._log(f"Windows: AutoFilter-Aktivierung Fehler: {e}")
+                            self._log(f"AutoFilter-Aktivierung Fehler: {e}")
                             # Versuche es trotzdem
                             try:
                                 used_range.api.AutoFilter()
@@ -1445,16 +1414,14 @@ end tell'''
                             try:
                                 # AutoFilter mit Kriterien setzen
                                 used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria)
-                                self._log(f"Windows: Filter gesetzt für Spalte {col_idx}")
                             except Exception as e:
-                                self._log(f"Windows: Fehler bei Filter Spalte {col_idx}: {e}")
+                                self._log(f"Fehler bei Filter Spalte {col_idx}: {e}")
                     else:
                         # ===== macOS =====
                         # Auf macOS funktioniert weder appscript auto_filter()
                         # noch VBA via AppleScript zuverlässig.
                         # Batch-Zeilen-Ausblendung: Spalten-Daten in einem Aufruf
                         # lesen, zusammenhängende Bereiche gruppiert ausblenden.
-                        self._log(f"macOS: Verwende Batch-Zeilen-Ausblendung")
                         
                         last_row = used_range.last_cell.row
                         rows_to_hide = set()
@@ -1488,14 +1455,14 @@ end tell'''
                                 if not matches:
                                     rows_to_hide.add(row_num)
                         
-                        self._log(f"macOS: {len(rows_to_hide)} von {last_row - 1} Zeilen ausblenden")
+                        self._log(f"Filter: {len(rows_to_hide)} von {last_row - 1} Zeilen ausblenden")
                         
                         # Alle Zeilen einblenden (1 API-Aufruf)
                         try:
                             all_rows = self.worksheet.range(f'A2:A{last_row}')
                             all_rows.api.entire_row.hidden.set(False)
                         except Exception as e:
-                            self._log(f"macOS: Einblenden-Fehler: {e}")
+                            self._log(f"Einblenden-Fehler: {e}")
                         
                         # Zusammenhängende Bereiche gruppiert ausblenden
                         if rows_to_hide:
@@ -1517,8 +1484,8 @@ end tell'''
                                     rng.api.entire_row.hidden.set(True)
                                     hidden_count += (end_row - start_row + 1)
                                 except Exception as e:
-                                    self._log(f"macOS: Hide {start_row}:{end_row} Fehler: {e}")
-                            self._log(f"macOS: {hidden_count} Zeilen in {len(ranges)} Bereichen ausgeblendet")
+                                    self._log(f"Hide {start_row}:{end_row} Fehler: {e}")
+                            self._log(f"{hidden_count} Zeilen in {len(ranges)} Bereichen ausgeblendet")
                 else:
                     # ===== AutoFilter entfernen / Alle Zeilen einblenden =====
                     if is_windows:
@@ -1529,12 +1496,10 @@ end tell'''
                                     # ShowAllData entfernt die Filter-Kriterien, behält aber AutoFilter
                                     if self.worksheet.api.AutoFilter.FilterMode:
                                         self.worksheet.api.AutoFilter.ShowAllData()
-                                        self._log("Windows: ShowAllData ausgeführt - alle Zeilen sichtbar")
                                 except Exception as e:
-                                    self._log(f"Windows: ShowAllData Fehler: {e}")
+                                    self._log(f"ShowAllData Fehler: {e}")
                                     # Fallback: AutoFilterMode komplett entfernen
                                     self.worksheet.api.AutoFilterMode = False
-                                    self._log("Windows: AutoFilter komplett entfernt (Fallback)")
                             else:
                                 self._log("Windows: Kein AutoFilter aktiv")
                         except Exception as e:
