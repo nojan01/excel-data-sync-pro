@@ -3746,6 +3746,16 @@ ipcMain.handle('liveSession:setCellsBatch', async (event, cells) => {
     }
 });
 
+ipcMain.handle('liveSession:switchSheet', async (event, sheetName) => {
+    console.log('[LiveSession] IPC: switchSheet', sheetName);
+    try {
+        const session = getLiveSession();
+        return await session.switchSheet(sheetName);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 ipcMain.handle('liveSession:setRowValues', async (event, rowIndex, values) => {
     try {
         const session = getLiveSession();

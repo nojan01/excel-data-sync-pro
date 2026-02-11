@@ -1536,6 +1536,31 @@ end tell'''
         """Entfernt alle AutoFilter"""
         return self.set_autofilter(None)
     
+    def switch_sheet(self, sheet_name: str) -> Dict[str, Any]:
+        """Wechselt das aktive Arbeitsblatt in der Live Session
+        
+        Args:
+            sheet_name: Name des Zielblatts
+        """
+        try:
+            if not self.workbook:
+                return {'success': False, 'error': 'Keine Datei ge\u00f6ffnet'}
+            
+            sheet_names = [s.name for s in self.workbook.sheets]
+            if sheet_name not in sheet_names:
+                return {'success': False, 'error': f'Sheet "{sheet_name}" nicht gefunden'}
+            
+            self.worksheet = self.workbook.sheets[sheet_name]
+            self.sheet_name = sheet_name
+            self.worksheet.activate()
+            
+            self._log(f"Sheet gewechselt zu: {sheet_name}")
+            return {'success': True, 'sheetName': sheet_name}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Sheet-Wechsel: {e}")
+            return {'success': False, 'error': str(e)}
+    
     def get_data(self) -> Dict[str, Any]:
         """Liest alle Daten aus dem aktuellen Sheet"""
         try:
@@ -1573,6 +1598,7 @@ end tell'''
             'save': lambda: self.save_file(cmd.get('outputPath'), cmd.get('password')),
             'close': lambda: self.close_session(save=cmd.get('save', False)),
             'getData': lambda: self.get_data(),
+            'switchSheet': lambda: self.switch_sheet(cmd.get('sheetName')),
             
             # Passwort
             'setPassword': lambda: self.set_password(cmd.get('password')),

@@ -12530,6 +12530,20 @@
                 saveCurrentSheetToCache();
             }
             
+            // Live-Session: Arbeitsblatt in Excel synchron wechseln
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                try {
+                    const switchResult = await window.electronAPI.liveSessionSwitchSheet(sheetName);
+                    if (switchResult.success) {
+                        console.log('[LiveSession] Sheet gewechselt zu:', sheetName);
+                    } else {
+                        console.error('[LiveSession] Sheet-Wechsel fehlgeschlagen:', switchResult.error);
+                    }
+                } catch (err) {
+                    console.error('[LiveSession] Sheet-Wechsel Fehler:', err);
+                }
+            }
+            
             // Loading-Status anzeigen
             elements.explorerStatus.textContent = t('loadingData');
             

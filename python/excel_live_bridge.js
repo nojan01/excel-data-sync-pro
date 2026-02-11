@@ -596,6 +596,17 @@ class ExcelLiveSession {
     }
 
     /**
+     * Wechselt das aktive Arbeitsblatt in der Live Session
+     * @param {string} sheetName - Name des Zielblatts
+     */
+    async switchSheet(sheetName) {
+        return this._sendCommand({
+            action: 'switchSheet',
+            sheetName: sheetName
+        });
+    }
+
+    /**
      * Setzt alle Werte einer Zeile auf einmal
      * @param {number} rowIndex - 0-basierter Zeilenindex
      * @param {Array} values - Array von Werten (ein Wert pro Spalte)
