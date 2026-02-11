@@ -347,9 +347,18 @@ class ExcelLiveSession:
                 except Exception as mac_err:
                     self._log(f"_force_screen_refresh macOS-Fehler: {mac_err}")
             else:
-                # Windows: Toggle screen_updating reicht normalerweise
-                self.app.screen_updating = False
-                self.app.screen_updating = True
+                # Windows: Aggressiveres Refresh - Toggle allein reicht nicht immer
+                try:
+                    if self.workbook:
+                        self.workbook.activate()
+                    if self.worksheet:
+                        self.worksheet.activate()
+                    self.app.screen_updating = False
+                    self.app.screen_updating = True
+                    self.app.calculate()
+                    self._log("_force_screen_refresh: Windows refresh erfolgreich")
+                except Exception as win_err:
+                    self._log(f"_force_screen_refresh Windows-Fehler: {win_err}")
                 
         except Exception as e:
             self._log(f"Fehler bei screen refresh: {e}")
@@ -1073,8 +1082,10 @@ class ExcelLiveSession:
                 # macOS: Direkt über AppleScript für zuverlässigen Display-Refresh
                 self._set_row_values_applescript(excel_row, values)
             else:
-                # Windows: xlwings Range-Write funktioniert zuverlässig
+                # Windows: xlwings Range-Write + expliziter Screen-Refresh
+                self.app.screen_updating = True
                 self.worksheet.range(range_addr).value = values
+                self._force_screen_refresh()
             
             self._log(f"set_row_values: Zeile {excel_row} geschrieben ✓")
             
