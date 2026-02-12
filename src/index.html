@@ -7977,12 +7977,18 @@
             if (!indicator) return;
             
             const isActive = explorerState.liveSessionActive && explorerState.liveSessionReady;
+            const isExcelReady = explorerState.engineMode === 'live';
             
             if (isActive) {
-                // Grüner Punkt = Live aktiv
+                // Grüner Punkt = Live aktiv (Datei geöffnet)
                 indicator.style.background = 'rgba(76, 175, 80, 0.2)';
                 indicator.style.border = '1px solid #4CAF50';
                 indicator.innerHTML = `<span style="color: #4CAF50;">🟢</span> <span style="color: #4CAF50;">${t('liveReady')}</span>`;
+            } else if (isExcelReady) {
+                // Grüner Punkt = Excel bereit (keine Datei geladen)
+                indicator.style.background = 'rgba(76, 175, 80, 0.15)';
+                indicator.style.border = '1px solid #4CAF50';
+                indicator.innerHTML = `<span style="color: #4CAF50;">🟢</span> <span style="color: #4CAF50;">Online</span>`;
             } else {
                 // Grauer Punkt = Offline/openpyxl
                 indicator.style.background = 'var(--bg-lighter)';
@@ -12193,6 +12199,9 @@
             
             elements.dataExplorerModal.classList.remove('hidden');
             document.body.classList.add('modal-open');
+            
+            // Live-Indikator sofort aktualisieren
+            updateLiveModeIndicator();
             
             // Prüfe auf Recovery-Daten (von vorherigem Crash)
             if (recoveryData && !explorerState.filePath) {
@@ -16997,6 +17006,7 @@
                     if (result && result.success) {
                         explorerState.engineMode = 'live';
                         console.log('[Engine] Excel-App beim Start vorinitialisiert');
+                        updateLiveModeIndicator();
                     } else {
                         explorerState.engineMode = 'openpyxl';
                         console.log('[Engine] Excel nicht verfügbar, openpyxl Modus');
