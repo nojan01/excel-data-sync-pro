@@ -1980,10 +1980,7 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
 
     try {
         const options = password ? { password } : {};
-        // Buffer lesen statt File-Handle, damit die Datei sofort freigegeben wird
-        // und xlwings sie danach ohne Locking-Konflikt öffnen kann (Windows)
-        const fileBuffer = fs.readFileSync(filePath);
-        const workbook = await XlsxPopulate.fromDataAsync(fileBuffer, options);
+        const workbook = await XlsxPopulate.fromFileAsync(filePath, options);
         const sheets = workbook.sheets().map(ws => ws.name());
 
         return {

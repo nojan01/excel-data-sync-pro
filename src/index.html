@@ -8017,18 +8017,30 @@
                 const startResult = await window.electronAPI.liveSessionStart();
                 if (!startResult.success) {
                     console.error('[LiveSession] Start fehlgeschlagen:', startResult.error);
+                    showFloatingStatus('Live-Session Start fehlgeschlagen: ' + startResult.error, true);
                     return false;
                 }
                 
-                // Datei öffnen (mit Passwort falls vorhanden)
-                const openResult = await window.electronAPI.liveSessionOpenFile(
+                // Datei öffnen - bei Fehlschlag Retry nach kurzer Pause (Windows File-Locking)
+                let openResult = await window.electronAPI.liveSessionOpenFile(
                     explorerState.filePath, 
                     explorerState.selectedSheet,
                     explorerState.filePassword || null
                 );
                 
                 if (!openResult.success) {
+                    console.log('[LiveSession] Erster Versuch fehlgeschlagen, warte 2s und versuche erneut...');
+                    await new Promise(r => setTimeout(r, 2000));
+                    openResult = await window.electronAPI.liveSessionOpenFile(
+                        explorerState.filePath, 
+                        explorerState.selectedSheet,
+                        explorerState.filePassword || null
+                    );
+                }
+                
+                if (!openResult.success) {
                     console.error('[LiveSession] Datei öffnen fehlgeschlagen:', openResult.error);
+                    showFloatingStatus('Excel konnte Datei nicht öffnen: ' + openResult.error, true);
                     return false;
                 }
                 
@@ -8045,6 +8057,7 @@
                 return true;
             } catch (error) {
                 console.error('[LiveSession] Fehler:', error);
+                showFloatingStatus('Live-Session Fehler: ' + error.message, true);
                 explorerState.liveSessionActive = false;
                 explorerState.liveSessionReady = false;
                 return false;
@@ -12572,9 +12585,15 @@
                                       (engineSetting === 'auto' && status && status.excelAvailable);
                 
                 if (shouldUseLive && status && status.excelAvailable) {
-                    await startLiveSession();
-                    explorerState.engineMode = 'live';
-                    console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
+                    const liveOk = await startLiveSession();
+                    if (liveOk) {
+                        explorerState.engineMode = 'live';
+                        console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
+                    } else {
+                        explorerState.engineMode = 'openpyxl';
+                        console.log('[Engine] Live-Session fehlgeschlagen, fallback openpyxl');
+                        updateLiveModeIndicator();
+                    }
                 } else {
                     explorerState.engineMode = 'openpyxl';
                     console.log(`[Engine] openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
@@ -12682,9 +12701,15 @@
                                       (engineSetting === 'auto' && status && status.excelAvailable);
                 
                 if (shouldUseLive && status && status.excelAvailable) {
-                    await startLiveSession();
-                    explorerState.engineMode = 'live';
-                    console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
+                    const liveOk = await startLiveSession();
+                    if (liveOk) {
+                        explorerState.engineMode = 'live';
+                        console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
+                    } else {
+                        explorerState.engineMode = 'openpyxl';
+                        console.log('[Engine] Live-Session fehlgeschlagen, fallback openpyxl');
+                        updateLiveModeIndicator();
+                    }
                 } else {
                     explorerState.engineMode = 'openpyxl';
                     console.log(`[Engine] openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
