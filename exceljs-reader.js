@@ -523,8 +523,12 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         // ============================================================
         // STREAMING READER: Liest Zeilen einzeln, blockiert Event-Loop NICHT
         // Bei 10000+ Zeilen verhindert das UI-Freezes und Timeout-Probleme
+        // WICHTIG: Buffer statt createReadStream, damit der File-Handle sofort
+        // freigegeben wird und xlwings/Excel die Datei parallel öffnen kann
         // ============================================================
-        const readStream = fs.createReadStream(actualFilePath);
+        const fileBuffer = await fs.promises.readFile(actualFilePath);
+        const { Readable } = require('stream');
+        const readStream = Readable.from(fileBuffer);
         const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(readStream, {
             sharedStrings: 'cache',
             hyperlinks: 'cache',
@@ -856,9 +860,6 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         
             break; // Sheet gefunden, keine weiteren Sheets verarbeiten
         } // Ende for-await worksheetReader
-        
-        // Stream aufräumen
-        readStream.destroy();
         
         if (!sheetFound) {
             return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
