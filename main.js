@@ -3755,6 +3755,15 @@ ipcMain.handle('liveSession:setCellsBatch', async (event, cells) => {
     }
 });
 
+ipcMain.handle('liveSession:copyCells', async (event, sourceCells, targetRow, targetCol) => {
+    try {
+        const session = getLiveSession();
+        return await session.copyCells(sourceCells, targetRow, targetCol);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 ipcMain.handle('liveSession:switchSheet', async (event, sheetName) => {
     console.log('[LiveSession] IPC: switchSheet', sheetName);
     try {

@@ -452,25 +452,56 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                         if (cell.font.italic) style.italic = true;
                         if (cell.font.underline) style.underline = true;
                         if (cell.font.strike) style.strikethrough = true;
-                        if (cell.font.size && cell.font.size !== 11) {
+                        if (cell.font.size) {
                             style.fontSize = cell.font.size;
+                        }
+                        if (cell.font.name && cell.font.name !== 'Calibri') {
+                            style.fontName = cell.font.name;
                         }
                         if (cell.font.color?.argb) {
                             const colorHex = cell.font.color.argb.substring(2);
-                            // Ignoriere Standard-Schwarz (000000)
                             if (colorHex !== '000000') {
                                 style.fontColor = `#${colorHex}`;
                             }
                         }
                     }
                     
-                    // Fill extrahieren - prüfe auch pattern === 'solid'
+                    // Alignment extrahieren
+                    if (cell.alignment) {
+                        if (cell.alignment.horizontal && cell.alignment.horizontal !== 'general') {
+                            style.textAlign = cell.alignment.horizontal;
+                        }
+                        if (cell.alignment.vertical && cell.alignment.vertical !== 'bottom') {
+                            style.verticalAlign = cell.alignment.vertical;
+                        }
+                        if (cell.alignment.wrapText) {
+                            style.wrapText = true;
+                        }
+                    }
+                    
+                    // Fill extrahieren
                     if (cell.fill) {
                         if (cell.fill.type === 'pattern' && cell.fill.pattern === 'solid' && cell.fill.fgColor?.argb) {
                             const fillHex = cell.fill.fgColor.argb.substring(2);
                             if (fillHex !== 'FFFFFF') {
                                 style.fill = `#${fillHex}`;
                             }
+                        }
+                    }
+                    
+                    // Borders extrahieren
+                    if (cell.border) {
+                        const borders = {};
+                        for (const side of ['top', 'bottom', 'left', 'right']) {
+                            if (cell.border[side] && cell.border[side].style) {
+                                borders[side] = {
+                                    style: cell.border[side].style,
+                                    color: cell.border[side].color?.argb ? `#${cell.border[side].color.argb.substring(2)}` : null
+                                };
+                            }
+                        }
+                        if (Object.keys(borders).length > 0) {
+                            style.borders = borders;
                         }
                     }
                     
@@ -605,29 +636,58 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 if (cell.font) {
                     if (cell.font.bold) style.bold = true;
                     if (cell.font.italic) style.italic = true;
-                    // ExcelJS verwendet underline: "single", "double", etc. statt true
                     if (cell.font.underline) style.underline = true;
                     if (cell.font.strike) style.strikethrough = true;
-                    if (cell.font.size && cell.font.size !== 11) {
+                    if (cell.font.size) {
                         style.fontSize = cell.font.size;
+                    }
+                    if (cell.font.name && cell.font.name !== 'Calibri') {
+                        style.fontName = cell.font.name;
                     }
                     if (cell.font.color?.argb) {
                         const colorHex = cell.font.color.argb.substring(2);
-                        // Ignoriere Standard-Schwarz (000000)
                         if (colorHex !== '000000') {
                             style.fontColor = `#${colorHex}`;
                         }
                     }
                 }
                 
-                // Fill extrahieren - prüfe auch pattern === 'solid'
+                // Alignment extrahieren
+                if (cell.alignment) {
+                    if (cell.alignment.horizontal && cell.alignment.horizontal !== 'general') {
+                        style.textAlign = cell.alignment.horizontal;
+                    }
+                    if (cell.alignment.vertical && cell.alignment.vertical !== 'bottom') {
+                        style.verticalAlign = cell.alignment.vertical;
+                    }
+                    if (cell.alignment.wrapText) {
+                        style.wrapText = true;
+                    }
+                }
+                
+                // Fill extrahieren
                 if (cell.fill) {
                     if (cell.fill.type === 'pattern' && cell.fill.pattern === 'solid' && cell.fill.fgColor?.argb) {
                         const fillHex = cell.fill.fgColor.argb.substring(2);
-                        // Ignoriere Weiß (FFFFFF)
                         if (fillHex !== 'FFFFFF') {
                             style.fill = `#${fillHex}`;
                         }
+                    }
+                }
+                
+                // Borders extrahieren
+                if (cell.border) {
+                    const borders = {};
+                    for (const side of ['top', 'bottom', 'left', 'right']) {
+                        if (cell.border[side] && cell.border[side].style) {
+                            borders[side] = {
+                                style: cell.border[side].style,
+                                color: cell.border[side].color?.argb ? `#${cell.border[side].color.argb.substring(2)}` : null
+                            };
+                        }
+                    }
+                    if (Object.keys(borders).length > 0) {
+                        style.borders = borders;
                     }
                 }
                 

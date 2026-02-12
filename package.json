@@ -1,6 +1,6 @@
 {
   "name": "excel-data-sync-pro",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Excel Data Sync Pro - Daten zwischen Excel-Dateien synchronisieren",
   "main": "main.js",
   "license": "MIT",
@@ -47,7 +47,13 @@
       ],
       "icon": "assets/icon.icns",
       "category": "public.app-category.productivity",
-      "identity": null
+      "identity": null,
+      "forceCodeSigning": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSAppleEventsUsageDescription": "Excel Data Sync Pro benötigt Zugriff auf Microsoft Excel für die Live-Synchronisation."
+      }
     },
     "dmg": {
       "contents": [
@@ -92,7 +98,9 @@
       "artifactName": "Excel-Data-Sync-Pro-${version}-Setup-${arch}.exe",
       "shortcutName": "Excel Data Sync Pro",
       "perMachine": false,
-      "runAfterFinish": false
+      "runAfterFinish": false,
+      "include": "build/installer.nsh",
+      "deleteAppDataOnUninstall": true
     },
     "portable": {
       "artifactName": "Excel-Data-Sync-Pro-${arch}.exe"

@@ -413,10 +413,12 @@ class ExcelLiveSession:
                 self.app.screen_updating = True
             
             # Workbook öffnen (mit optionalem Passwort)
+            # update_links=False verhindert, dass Excel externe Datenverbindungen/Pivot-Caches
+            # aktualisiert, was sonst auf Windows zu einem blockierenden Dialog führen kann
             if password:
-                self.workbook = self.app.books.open(file_path, password=password)
+                self.workbook = self.app.books.open(file_path, update_links=False, password=password)
             else:
-                self.workbook = self.app.books.open(file_path)
+                self.workbook = self.app.books.open(file_path, update_links=False)
             self.file_path = file_path
             
             # Sheet finden
@@ -1246,6 +1248,148 @@ end tell'''
             self._log(f"Fehler beim Batch-Setzen der Zellwerte: {e}")
             return {'success': False, 'error': str(e)}
     
+    def copy_cells(self, source_cells: list, target_row: int, target_col: int) -> Dict[str, Any]:
+        """Kopiert Zellen in Excel mit nativer copy()-Funktion.
+        
+        Nutzt xlwings range.copy(destination=...) - kopiert ALLES:
+        Werte, Formatierung, Formeln, Rahmen, Schriftart, Größe, etc.
+        Merged Cells werden erkannt und am Ziel explizit mit merge() angelegt.
+        
+        source_cells: Liste von {row, col} (0-basierte Daten-Indizes)
+        target_row: 0-basierter Ziel-Zeilen-Index
+        target_col: 0-basierter Ziel-Spalten-Index
+        """
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            if not source_cells or len(source_cells) == 0:
+                return {'success': True, 'count': 0}
+            
+            self._log(f"copy_cells: {len(source_cells)} Zellen kopieren nach ({target_row},{target_col})")
+            
+            app = self.app
+            original_screen_updating = app.screen_updating
+            merged_regions = []
+            
+            try:
+                if len(source_cells) > 5:
+                    app.screen_updating = False
+                
+                # Ermittle zusammenhängenden Quellbereich (Rechteck)
+                rows = [c.get('row') for c in source_cells if c.get('row') is not None]
+                cols = [c.get('col') for c in source_cells if c.get('col') is not None]
+                
+                if not rows or not cols:
+                    return {'success': False, 'error': 'Keine gültigen Zell-Koordinaten'}
+                
+                min_row, max_row = min(rows), max(rows)
+                min_col, max_col = min(cols), max(cols)
+                
+                # Excel-Koordinaten (1-basiert, +2 für Header-Zeile)
+                src_start_row = min_row + 2
+                src_start_col = min_col + 1
+                src_end_row = max_row + 2
+                src_end_col = max_col + 1
+                
+                dst_start_row = target_row + 2
+                dst_start_col = target_col + 1
+                
+                row_offset = dst_start_row - src_start_row
+                col_offset = dst_start_col - src_start_col
+                
+                # Quellbereich
+                source_range = self.worksheet.range(
+                    (src_start_row, src_start_col),
+                    (src_end_row, src_end_col)
+                )
+                
+                # Merged Cells im Quellbereich erkennen BEVOR wir kopieren
+                seen_merges = set()
+                for r in range(src_start_row, src_end_row + 1):
+                    for c in range(src_start_col, src_end_col + 1):
+                        cell = self.worksheet.range((r, c))
+                        if cell.merge_cells:
+                            ma = cell.merge_area
+                            merge_key = ma.address
+                            if merge_key not in seen_merges:
+                                seen_merges.add(merge_key)
+                                merged_regions.append({
+                                    'src_start_row': ma.row,
+                                    'src_start_col': ma.column,
+                                    'src_end_row': ma.row + ma.shape[0] - 1,
+                                    'src_end_col': ma.column + ma.shape[1] - 1,
+                                    'row_span': ma.shape[0],
+                                    'col_span': ma.shape[1]
+                                })
+                
+                self._log(f"copy_cells: {len(merged_regions)} Merged-Bereiche im Quellbereich gefunden")
+                
+                # Zielbereich: bestehende Merges aufheben
+                dest_end_row = dst_start_row + (src_end_row - src_start_row)
+                dest_end_col = dst_start_col + (src_end_col - src_start_col)
+                dest_full_range = self.worksheet.range(
+                    (dst_start_row, dst_start_col),
+                    (dest_end_row, dest_end_col)
+                )
+                try:
+                    dest_full_range.unmerge()
+                except Exception:
+                    pass
+                
+                # Zielbereich (obere linke Ecke reicht für copy)
+                dest_range = self.worksheet.range((dst_start_row, dst_start_col))
+                
+                # Native xlwings copy - kopiert Werte + alle Formatierungen
+                source_range.copy(destination=dest_range)
+                
+                # Merged Cells am Ziel explizit anlegen
+                for merge in merged_regions:
+                    try:
+                        dst_r1 = merge['src_start_row'] + row_offset
+                        dst_c1 = merge['src_start_col'] + col_offset
+                        dst_r2 = merge['src_end_row'] + row_offset
+                        dst_c2 = merge['src_end_col'] + col_offset
+                        merge_range = self.worksheet.range((dst_r1, dst_c1), (dst_r2, dst_c2))
+                        merge_range.merge()
+                        self._log(f"  Merge angelegt: ({dst_r1},{dst_c1}):({dst_r2},{dst_c2})")
+                    except Exception as me:
+                        self._log(f"  Merge fehlgeschlagen: {me}")
+                
+                self._log(f"copy_cells: Kopiert ({src_start_row},{src_start_col}):({src_end_row},{src_end_col}) → ({dst_start_row},{dst_start_col})")
+                
+                count = (max_row - min_row + 1) * (max_col - min_col + 1)
+                
+            finally:
+                if len(source_cells) > 5:
+                    app.screen_updating = original_screen_updating
+                
+                if platform.system() == 'Darwin':
+                    self._force_screen_refresh()
+            
+            self._journal_add('copyCells', {'count': count, 'merges': len(merged_regions)})
+            self._check_auto_save()
+            
+            # Merge-Info zurückgeben für GUI-Update (0-basierte Daten-Indizes)
+            merge_info = []
+            for merge in merged_regions:
+                row_offset_data = target_row - min_row
+                col_offset_data = target_col - min_col
+                merge_info.append({
+                    'startRow': (merge['src_start_row'] - 2 + row_offset_data) + 1,  # Excel-0-basiert (wie in mergedCells)
+                    'startCol': merge['src_start_col'] - 1 + col_offset_data,
+                    'endRow': (merge['src_end_row'] - 2 + row_offset_data) + 1,
+                    'endCol': merge['src_end_col'] - 1 + col_offset_data,
+                    'rowSpan': merge['row_span'],
+                    'colSpan': merge['col_span']
+                })
+            
+            return {'success': True, 'count': count, 'mergedCells': merge_info}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Kopieren der Zellen: {e}")
+            return {'success': False, 'error': str(e)}
+    
     def find_replace(self, search_text: str, replace_text: str, 
                      match_case: bool = False, whole_word: bool = False) -> Dict[str, Any]:
         """Nutzt Excel's native Suchen & Ersetzen Funktion - extrem schnell!
@@ -1617,6 +1761,7 @@ end tell'''
             'setColumnValues': lambda: self.set_column_values(cmd.get('colIndex'), cmd.get('values', []), cmd.get('startRow', 0)),
             'setRowValues': lambda: self.set_row_values(cmd.get('rowIndex'), cmd.get('values', [])),
             'setCellsBatch': lambda: self.set_cells_batch(cmd.get('cells', [])),
+            'copyCells': lambda: self.copy_cells(cmd.get('sourceCells', []), cmd.get('targetRow'), cmd.get('targetCol')),
             'findReplace': lambda: self.find_replace(
                 cmd.get('searchText', ''),
                 cmd.get('replaceText', ''),

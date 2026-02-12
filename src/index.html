@@ -876,6 +876,7 @@
         .results-table td.merged-cell-master {
             border: 2px solid var(--primary);
             z-index: 1;
+            vertical-align: middle;
         }
         
         .results-table td.merged-cell-hidden {
@@ -1816,7 +1817,7 @@
     
     <!-- Footer -->
     <footer style="background: var(--bg-medium); border-top: 1px solid var(--border); padding: 8px 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
-        © Norbert Jander 2025 · v1.2.0
+        © Norbert Jander 2026 · v1.2.1
     </footer>
     
     <!-- Mapping Modal -->
@@ -2130,7 +2131,9 @@
                 </p>
                 <div style="display: grid; grid-template-columns: auto 1fr; gap: 4px 15px; margin: 0 0 10px 15px; font-size: 13px;">
                     <code>🗑️ Inhalte löschen</code><span>Löscht alle ausgewählten Zellinhalte</span>
-                    <code>📋 Kopieren</code><span>Kopiert Zellinhalte in die Zwischenablage</span>
+                    <code>📋 Kopieren</code><span>Kopiert Zellinhalte inkl. Formatierung in die Zwischenablage</span>
+                    <code>📥 Einfügen (nur Werte)</code><span>Fügt nur die Werte aus der Zwischenablage ein</span>
+                    <code>🎨 Einfügen mit Formatierung</code><span>Fügt Werte inkl. Formatierung ein</span>
                     <code>❌ Auswahl aufheben</code><span>Hebt die aktuelle Auswahl auf</span>
                 </div>
                 
@@ -3684,7 +3687,7 @@
                 createAndLoad: '📅 Erstellen & Laden',
                 
                 // Footer
-                copyright: '© Norbert Jander 2025 · v1.2.0',
+                copyright: '© Norbert Jander 2026 · v1.2.1',
                 
                 // Extra Columns
                 extraColumns: 'Extra-Spalten',
@@ -4012,7 +4015,7 @@
                 createAndLoad: '📅 Create & Load',
                 
                 // Footer
-                copyright: '© Norbert Jander 2025 · v1.2.0',
+                copyright: '© Norbert Jander 2026 · v1.2.1',
                 
                 // Extra Columns
                 extraColumns: 'Extra Columns',
@@ -11134,9 +11137,8 @@
             menuHtml += `<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">📋 ${cellLabel} ausgewählt</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
             menuHtml += `<div class="context-menu-item" data-action="copy-content">📋 Kopieren</div>`;
-            menuHtml += `<div class="context-menu-item" data-action="copy-with-format">🎨 Kopieren mit Formatierung</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
-            menuHtml += `<div class="context-menu-item" data-action="paste-content">📥 Einfügen</div>`;
+            menuHtml += `<div class="context-menu-item" data-action="paste-content">📥 Einfügen (nur Werte)</div>`;
             const hasFormatClipboard = copiedCellsWithFormat !== null;
             menuHtml += `<div class="context-menu-item${hasFormatClipboard ? '' : ' disabled'}" data-action="paste-with-format" style="${hasFormatClipboard ? '' : 'opacity: 0.5; cursor: not-allowed;'}">🎨 Einfügen mit Formatierung${hasFormatClipboard ? '' : ' (leer)'}</div>`;
             menuHtml += '<div class="context-menu-divider"></div>';
@@ -11173,19 +11175,13 @@
                 menuEl.remove();
             });
             
-            // Event-Handler: Kopieren
+            // Event-Handler: Kopieren (immer mit Formatierung)
             menuEl.querySelector('[data-action="copy-content"]').addEventListener('click', () => {
-                copySelectedCellsContent();
-                menuEl.remove();
-            });
-            
-            // Event-Handler: Kopieren mit Formatierung
-            menuEl.querySelector('[data-action="copy-with-format"]').addEventListener('click', () => {
                 copySelectedCellsWithFormat();
                 menuEl.remove();
             });
             
-            // Event-Handler: Einfügen
+            // Event-Handler: Einfügen (nur Werte)
             menuEl.querySelector('[data-action="paste-content"]').addEventListener('click', async () => {
                 await pasteToSelectedCells();
                 menuEl.remove();
@@ -11268,64 +11264,72 @@
             showFloatingStatus(`${undoActions.length} Zelle(n) gelöscht`);
         }
         
-        // Ausgewählte Zelleninhalte kopieren
-        function copySelectedCellsContent() {
-            if (explorerState.selectedCells.size === 0) return;
-            
-            // Zellen nach Position sortieren
-            const cells = Array.from(explorerState.selectedCells).map(key => {
-                const [row, col] = key.split('-').map(Number);
-                return { row, col, value: explorerState.data[row][col] ?? '' };
-            }).sort((a, b) => a.row - b.row || a.col - b.col);
-            
-            // Nach Zeilen gruppieren
-            const rows = new Map();
-            cells.forEach(cell => {
-                if (!rows.has(cell.row)) {
-                    rows.set(cell.row, []);
-                }
-                rows.get(cell.row).push(String(cell.value));
-            });
-            
-            // Als Tab-getrennten Text formatieren
-            const text = Array.from(rows.values())
-                .map(rowCells => rowCells.join('\t'))
-                .join('\n');
-            
-            navigator.clipboard.writeText(text).then(() => {
-                showFloatingStatus(`${explorerState.selectedCells.size} Zelle(n) kopiert`);
-            }).catch(err => {
-                console.error('Kopieren fehlgeschlagen:', err);
-                showFloatingStatus('Kopieren fehlgeschlagen', true);
-            });
-        }
-        
-        // Ausgewählte Zelleninhalte MIT Formatierung kopieren
+        // Ausgewählte Zelleninhalte kopieren (immer inkl. Formatierung)
         function copySelectedCellsWithFormat() {
             if (explorerState.selectedCells.size === 0) return;
             
+            // Auswahl erweitern: Wenn ein Merge-Bereich berührt wird, alle Zellen einschließen
+            const expandedSelection = new Set(explorerState.selectedCells);
+            for (const key of explorerState.selectedCells) {
+                const [row, col] = key.split('-').map(Number);
+                const excelRow0 = row + 1;  // Daten-Index → Excel-0-basiert
+                for (const merge of explorerState.mergedCells) {
+                    if (excelRow0 >= merge.startRow && excelRow0 <= merge.endRow &&
+                        col >= merge.startCol && col <= merge.endCol) {
+                        // Diese Zelle ist Teil eines Merges → alle Zellen des Merges einschließen
+                        for (let r = merge.startRow; r <= merge.endRow; r++) {
+                            for (let c = merge.startCol; c <= merge.endCol; c++) {
+                                const dataRow = r - 1;  // Excel-0-basiert → Daten-Index
+                                if (dataRow >= 0 && dataRow < explorerState.data.length) {
+                                    expandedSelection.add(`${dataRow}-${c}`);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
             // Zellen nach Position sortieren und mit Formatierung erfassen
-            const cells = Array.from(explorerState.selectedCells).map(key => {
+            const cells = Array.from(expandedSelection).map(key => {
                 const [row, col] = key.split('-').map(Number);
                 // WICHTIG: cellStyles, cellFormulas etc. verwenden "originalIndex+1"-Format (1-basiert wegen Header)
                 const styleKey = `${row + 1}-${col}`;
+                let style = explorerState.cellStyles[styleKey] ? { ...explorerState.cellStyles[styleKey] } : null;
+                const richText = explorerState.richTextCells[styleKey] || null;
+                
+                // Wenn kein cellStyle vorhanden aber richText, dann Style aus richText ableiten
+                // (ExcelJS speichert Font-Infos bei Rich Text nur in den Runs, nicht im cellStyles)
+                if (!style && richText && richText.length > 0) {
+                    // Dominanten Style ermitteln (längster Text-Run oder erster Run mit Styles)
+                    const dominantRun = richText.reduce((best, run) => 
+                        (run.text || '').length > (best.text || '').length ? run : best
+                    , richText[0]);
+                    
+                    if (dominantRun && dominantRun.styles) {
+                        const s = dominantRun.styles;
+                        style = {};
+                        if (s.bold) style.bold = true;
+                        if (s.italic) style.italic = true;
+                        if (s.underline) style.underline = true;
+                        if (s.strikethrough) style.strikethrough = true;
+                        if (s.color && s.color !== '#000000') style.fontColor = s.color;
+                        if (s.fontSize) style.fontSize = s.fontSize;
+                        if (s.fontName) style.fontName = s.fontName;
+                        // Nur wenn mindestens eine Style-Eigenschaft gefunden wurde
+                        if (Object.keys(style).length === 0) style = null;
+                    }
+                }
+                
                 return {
                     row,
                     col,
                     value: explorerState.data[row][col] ?? '',
-                    style: explorerState.cellStyles[styleKey] || null,
+                    style,
                     formula: explorerState.cellFormulas[styleKey] || null,
                     hyperlink: explorerState.cellHyperlinks[styleKey] || null,
-                    richText: explorerState.richTextCells[styleKey] || null
+                    richText
                 };
             }).sort((a, b) => a.row - b.row || a.col - b.col);
-            
-            // Debug: Ausgabe was kopiert wurde
-            const stylesFound = cells.filter(c => c.style !== null).length;
-            console.log(`Kopiert: ${cells.length} Zellen, davon ${stylesFound} mit Style`);
-            if (stylesFound > 0) {
-                console.log('Gefundene Styles:', cells.filter(c => c.style).map(c => ({ key: `${c.row+1}-${c.col}`, style: c.style })));
-            }
             
             // Minimale Position ermitteln (für relatives Einfügen)
             const minRow = Math.min(...cells.map(c => c.row));
@@ -11340,7 +11344,27 @@
                 })),
                 minRow,
                 minCol,
-                sourceSheet: explorerState.selectedSheet
+                sourceSheet: explorerState.selectedSheet,
+                // Merged Cells im kopierten Bereich erfassen (relativ zur Auswahl)
+                mergedCells: explorerState.mergedCells
+                    .filter(m => {
+                        // mergedCells.startRow ist 0-basierter Excel-Index (0 = Zeile 1 = Header)
+                        // Daten-Zeile 0 = Excel-Index 1
+                        const mDataStartRow = m.startRow - 1;
+                        const mDataEndRow = m.endRow - 1;
+                        const maxRow = Math.max(...cells.map(c => c.row));
+                        const maxCol = Math.max(...cells.map(c => c.col));
+                        return mDataStartRow >= minRow && mDataEndRow <= maxRow &&
+                               m.startCol >= minCol && m.endCol <= maxCol;
+                    })
+                    .map(m => ({
+                        relStartRow: (m.startRow - 1) - minRow,
+                        relStartCol: m.startCol - minCol,
+                        relEndRow: (m.endRow - 1) - minRow,
+                        relEndCol: m.endCol - minCol,
+                        rowSpan: m.rowSpan,
+                        colSpan: m.colSpan
+                    }))
             };
             
             // Auch als Text in Zwischenablage kopieren
@@ -11357,7 +11381,7 @@
                 .join('\n');
             
             navigator.clipboard.writeText(text).then(() => {
-                showFloatingStatus(`${explorerState.selectedCells.size} Zelle(n) mit Formatierung kopiert 🎨`);
+                showFloatingStatus(`${explorerState.selectedCells.size} Zelle(n) kopiert`);
             }).catch(err => {
                 console.error('Kopieren fehlgeschlagen:', err);
                 showFloatingStatus('Kopieren fehlgeschlagen', true);
@@ -11455,8 +11479,30 @@
                 }
             });
             
-            // Debug
-            console.log(`Eingefügt: ${pastedCount} Zellen mit Formatierung`);
+            // Merged Cells am Ziel anlegen (GUI-seitig)
+            // Alte Merges im Zielbereich entfernen
+            const maxRelRow = Math.max(...copiedCellsWithFormat.cells.map(c => c.relRow));
+            const maxRelCol = Math.max(...copiedCellsWithFormat.cells.map(c => c.relCol));
+            explorerState.mergedCells = explorerState.mergedCells.filter(m => {
+                const mDataStartRow = m.startRow - 1;
+                const mDataEndRow = m.endRow - 1;
+                const overlaps = mDataStartRow <= targetRow + maxRelRow && mDataEndRow >= targetRow &&
+                                 m.startCol <= targetCol + maxRelCol && m.endCol >= targetCol;
+                return !overlaps;
+            });
+            // Kopierte Merges am Ziel einfügen (aus der Kopier-Quelle)
+            if (copiedCellsWithFormat.mergedCells && copiedCellsWithFormat.mergedCells.length > 0) {
+                copiedCellsWithFormat.mergedCells.forEach(rm => {
+                    explorerState.mergedCells.push({
+                        startRow: (targetRow + rm.relStartRow) + 1,
+                        startCol: targetCol + rm.relStartCol,
+                        endRow: (targetRow + rm.relEndRow) + 1,
+                        endCol: targetCol + rm.relEndCol,
+                        rowSpan: rm.rowSpan,
+                        colSpan: rm.colSpan
+                    });
+                });
+            }
             
             // Undo speichern
             if (undoActions.length > 0) {
@@ -11464,6 +11510,34 @@
                     type: 'multi-format',
                     actions: undoActions
                 });
+            }
+            
+            // Live Session Sync - Native Excel Copy + Merged Cells
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady && pastedCount > 0) {
+                const sourceCells = copiedCellsWithFormat.cells.map(c => ({ row: c.row, col: c.col }));
+                window.electronAPI.liveSessionCopyCells(sourceCells, targetRow, targetCol)
+                    .then(res => {
+                        if (res && res.success) {
+                            // Excel hat die Merges nativ angelegt - GUI-Merges mit Excel-Antwort aktualisieren
+                            if (res.mergedCells && res.mergedCells.length > 0) {
+                                // Entferne vorherige GUI-Merges im Zielbereich (wurden oben schon bereinigt)
+                                // und ersetze mit den tatsächlichen Excel-Merges
+                                explorerState.mergedCells = explorerState.mergedCells.filter(m => {
+                                    const mDataStartRow = m.startRow - 1;
+                                    const mDataEndRow = m.endRow - 1;
+                                    const overlaps = mDataStartRow <= targetRow + maxRelRow && mDataEndRow >= targetRow &&
+                                                     m.startCol <= targetCol + maxRelCol && m.endCol >= targetCol;
+                                    return !overlaps;
+                                });
+                                res.mergedCells.forEach(em => {
+                                    explorerState.mergedCells.push(em);
+                                });
+                                renderExplorerTable();
+                            }
+                            showFloatingStatus(`Excel-Sync: ${res.count} Zellen kopiert, ${res.mergedCells ? res.mergedCells.length : 0} Merges ✓`);
+                        }
+                    })
+                    .catch(err => console.error('[Paste+Format] Copy fehlgeschlagen:', err));
             }
             
             // Tabelle neu rendern um Formatierung anzuzeigen
@@ -11519,12 +11593,25 @@
                             originalValue: original
                         });
                         
+                        // Live Session Sync (wenn aktiv)
+                        if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                            console.log(`[Paste] Live-Sync: Zeile ${rowIndex}, Spalte ${colIndex}`);
+                            window.electronAPI.liveSessionSetCellsBatch([{
+                                row: rowIndex,
+                                col: colIndex,
+                                value: text
+                            }])
+                                .then(res => console.log('[Paste] Sync Ergebnis:', JSON.stringify(res)))
+                                .catch(err => console.error('[Paste] Sync fehlgeschlagen:', err));
+                        }
+                        
                         updateExplorerEditStatus();
                         showFloatingStatus('Eingefügt');
                     }
                 } else if (explorerState.selectedCells.size > 1) {
                     // Bei mehreren Zellen: gleichen Wert in alle einfügen
                     let count = 0;
+                    const cellsToSync = [];
                     explorerState.selectedCells.forEach(cellKey => {
                         const [rowIndex, colIndex] = cellKey.split('-').map(Number);
                         const td = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
@@ -11544,9 +11631,18 @@
                             if (text !== original) {
                                 td.classList.add('edited');
                             }
+                            cellsToSync.push({ row: rowIndex, col: colIndex, value: text });
                             count++;
                         }
                     });
+                    
+                    // Live Session Sync (wenn aktiv)
+                    if (explorerState.liveSessionActive && explorerState.liveSessionReady && cellsToSync.length > 0) {
+                        console.log(`[Paste] Live-Sync: ${cellsToSync.length} Zellen`);
+                        window.electronAPI.liveSessionSetCellsBatch(cellsToSync)
+                            .then(res => console.log('[Paste] Batch-Sync Ergebnis:', JSON.stringify(res)))
+                            .catch(err => console.error('[Paste] Batch-Sync fehlgeschlagen:', err));
+                    }
                     
                     updateExplorerEditStatus();
                     showFloatingStatus(`In ${count} Zelle(n) eingefügt`);
@@ -12456,16 +12552,9 @@
             explorerState.sheets = result.sheets;
             explorerState.hasPivotTables = result.hasPivotTables || false;
             
-            // Warnung bei Pivot-Tabellen
-            if (result.hasPivotTables) {
-                await showConfirmDialog(
-                    '⚠️ Pivot-Tabellen erkannt',
-                    'Diese Datei enthält Pivot-Tabellen!\n\n' +
-                    'Pivot-Tabellen können beim Speichern verloren gehen oder beschädigt werden.\n\n' +
-                    'Empfehlung: Erstellen Sie eine Sicherheitskopie der Datei.',
-                    'Verstanden',
-                    null
-                );
+            // Info bei Pivot-Tabellen anzeigen (nicht-blockierend)
+            if (explorerState.hasPivotTables) {
+                showFloatingStatus('📊 Pivot-Tabellen erkannt – Live Modus empfohlen', 'warning');
             }
             
             // UI aktualisieren
@@ -12583,16 +12672,9 @@
             explorerState.sheets = result.sheets;
             explorerState.hasPivotTables = result.hasPivotTables || false;
             
-            // Warnung bei Pivot-Tabellen
-            if (result.hasPivotTables) {
-                await showConfirmDialog(
-                    '⚠️ Pivot-Tabellen erkannt',
-                    'Diese Datei enthält Pivot-Tabellen!\n\n' +
-                    'Pivot-Tabellen können beim Speichern verloren gehen oder beschädigt werden.\n\n' +
-                    'Empfehlung: Erstellen Sie eine Sicherheitskopie der Datei.',
-                    'Verstanden',
-                    null  // Kein Abbrechen-Button
-                );
+            // Info bei Pivot-Tabellen anzeigen (nicht-blockierend)
+            if (explorerState.hasPivotTables) {
+                showFloatingStatus('📊 Pivot-Tabellen erkannt – Live Modus empfohlen', 'warning');
             }
             
             // Element frisch abfragen (kann durch setLanguage ersetzt worden sein)
@@ -13676,6 +13758,11 @@
                     if (headerStyle.italic) styles.push('font-style: italic');
                     if (headerStyle.fontColor) styles.push(`color: ${headerStyle.fontColor}`);
                     if (headerStyle.fill) styles.push(`background-color: ${headerStyle.fill}`);
+                    if (headerStyle.textAlign) styles.push(`text-align: ${headerStyle.textAlign}`);
+                    if (headerStyle.verticalAlign) {
+                        const vAlign = headerStyle.verticalAlign === 'middle' ? 'middle' : headerStyle.verticalAlign === 'top' ? 'top' : 'bottom';
+                        styles.push(`vertical-align: ${vAlign}`);
+                    }
                     if (styles.length > 0) {
                         inlineStyle = ` style="${styles.join('; ')}"`;
                     }
@@ -13906,6 +13993,7 @@
                                 const fragmentColor = fragment.styles.fontColor || fragment.styles.color;
                                 if (fragmentColor) styles.push(`color: ${fragmentColor}`);
                                 if (fragment.styles.fontSize) styles.push(`font-size: ${fragment.styles.fontSize}px`);
+                                if (fragment.styles.fontName) styles.push(`font-family: '${fragment.styles.fontName}', sans-serif`);
                             }
                             const styleAttr = styles.length > 0 ? ` style="${styles.join('; ')}"` : '';
                             return `<span${styleAttr}>${escapeHtml(fragment.text)}</span>`;
@@ -13923,7 +14011,13 @@
                         if (cellStyle.fontColor) styles.push(`color: ${cellStyle.fontColor}`);
                         if (cellStyle.fill) styles.push(`background-color: ${cellStyle.fill}`);
                         if (cellStyle.fontSize && cellStyle.fontSize !== 11) styles.push(`font-size: ${cellStyle.fontSize}px`);
+                        if (cellStyle.fontName) styles.push(`font-family: '${cellStyle.fontName}', sans-serif`);
                         if (cellStyle.textAlign) styles.push(`text-align: ${cellStyle.textAlign}`);
+                        if (cellStyle.verticalAlign) {
+                            const vAlign = cellStyle.verticalAlign === 'middle' ? 'middle' : cellStyle.verticalAlign === 'top' ? 'top' : 'bottom';
+                            styles.push(`vertical-align: ${vAlign}`);
+                        }
+                        if (cellStyle.wrapText) styles.push('white-space: pre-wrap');
                         if (styles.length > 0) {
                             inlineStyle = ` style="${styles.join('; ')}"`;
                         }
@@ -16059,6 +16153,22 @@
                 } else {
                     // FALLBACK MODUS: xlwings/Python für Export verwenden (CF-Erhaltung)
                     console.log('[Export] Fallback-Modus - verwende xlwings/Python für CF-Erhaltung...');
+                    
+                    // Warnung bei Pivot-Tabellen im Fallback-Modus (ohne Live-Session können Pivot-Tabellen beschädigt werden)
+                    if (explorerState.hasPivotTables) {
+                        const confirmed = await showConfirmDialog(
+                            '⚠️ Pivot-Tabellen erkannt',
+                            'Diese Datei enthält Pivot-Tabellen!\n\n' +
+                            'Ohne Live-Modus können Pivot-Tabellen beim Speichern verloren gehen oder beschädigt werden.\n\n' +
+                            'Empfehlung: Verwenden Sie den Live Modus oder erstellen Sie eine Sicherheitskopie.',
+                            'Trotzdem speichern',
+                            'Abbrechen'
+                        );
+                        if (!confirmed) {
+                            elements.explorerStatus.textContent = 'Speichern abgebrochen (Pivot-Tabellen).';
+                            return;
+                        }
+                    }
                     
                     result = await window.electronAPI.pythonExportMultipleSheets({
                         sourcePath: explorerState.filePath,

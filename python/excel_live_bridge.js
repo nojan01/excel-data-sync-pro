@@ -596,6 +596,22 @@ class ExcelLiveSession {
     }
 
     /**
+     * Kopiert Zellen in Excel mit nativer copy()-Funktion (Werte + alle Formatierungen)
+     * @param {Array} sourceCells - Array von {row, col} (0-basierte Daten-Indizes)
+     * @param {number} targetRow - 0-basierter Ziel-Zeilen-Index
+     * @param {number} targetCol - 0-basierter Ziel-Spalten-Index
+     */
+    async copyCells(sourceCells, targetRow, targetCol) {
+        const timeout = Math.max(30000, sourceCells.length * 50);
+        return this._sendCommand({
+            action: 'copyCells',
+            sourceCells: sourceCells,
+            targetRow: targetRow,
+            targetCol: targetCol
+        }, timeout);
+    }
+
+    /**
      * Wechselt das aktive Arbeitsblatt in der Live Session
      * @param {string} sheetName - Name des Zielblatts
      */
