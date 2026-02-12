@@ -7962,9 +7962,6 @@
         const EXPLORER_RECOVERY_KEY = 'excelSyncExplorerRecovery';
         let explorerAutoSaveInterval = null;
         
-        // Promise für die Excel-Initialisierung (wird in initApp gesetzt)
-        let _excelInitPromise = null;
-        
         // Zwischenspeicher für kopierte Zellen mit Formatierung
         let copiedCellsWithFormat = null;  // { cells: [{row, col, value, style, formula, hyperlink}], minRow, minCol }
         
@@ -8014,21 +8011,16 @@
             }
             
             try {
-                // Warten bis Excel-App bereit ist (initApp vom Programmstart)
-                if (_excelInitPromise) {
-                    console.log('[LiveSession] Warte auf Excel-Initialisierung...');
-                    const initResult = await _excelInitPromise;
-                    if (!initResult || !initResult.success) {
-                        console.log('[LiveSession] Excel nicht verfügbar');
-                        explorerState.engineMode = 'openpyxl';
-                        return false;
-                    }
-                    explorerState.engineMode = 'live';
+                console.log('[LiveSession] Starte Session...');
+                
+                // Python-Prozess starten
+                const startResult = await window.electronAPI.liveSessionStart();
+                if (!startResult.success) {
+                    console.error('[LiveSession] Start fehlgeschlagen:', startResult.error);
+                    return false;
                 }
                 
-                console.log('[LiveSession] Öffne Datei in vorinitialisierter Excel-App...');
-                
-                // Datei öffnen (Excel-App läuft bereits seit Programmstart)
+                // Datei öffnen (mit Passwort falls vorhanden)
                 const openResult = await window.electronAPI.liveSessionOpenFile(
                     explorerState.filePath, 
                     explorerState.selectedSheet,
@@ -8042,7 +8034,7 @@
                 
                 explorerState.liveSessionActive = true;
                 explorerState.liveSessionReady = true;
-                explorerState.excelVisible = false;  // Excel startet versteckt
+                explorerState.excelVisible = false;
                 console.log('[LiveSession] ✓ Session aktiv (Excel versteckt)');
                 showFloatingStatus(t('liveSessionActive'), 'success');
                 
@@ -12571,17 +12563,26 @@
                 await loadExplorerSheet(explorerState.sheets[0]);
             }
             
-            // Live-Session: Datei in bereits laufender Excel-App öffnen
-            // (wartet automatisch auf initApp falls noch nicht fertig)
-            if (explorerState.engineMode === 'live' || _excelInitPromise) {
-                try {
+            // Live-Session starten (basierend auf Engine-Einstellung)
+            try {
+                const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
+                const status = await window.electronAPI.checkExcelAvailable();
+                
+                const shouldUseLive = (engineSetting === 'xlwings') || 
+                                      (engineSetting === 'auto' && status && status.excelAvailable);
+                
+                if (shouldUseLive && status && status.excelAvailable) {
                     await startLiveSession();
-                    console.log('[Engine] Datei in Live-Session geöffnet');
-                } catch (e) {
-                    console.log('[Engine] Live-Session Datei öffnen fehlgeschlagen', e);
+                    explorerState.engineMode = 'live';
+                    console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
+                } else {
+                    explorerState.engineMode = 'openpyxl';
+                    console.log(`[Engine] openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
                     updateLiveModeIndicator();
                 }
-            } else {
+            } catch (e) {
+                explorerState.engineMode = 'openpyxl';
+                console.log('[Engine] Fallback: openpyxl (Fehler)', e);
                 updateLiveModeIndicator();
             }
             
@@ -12672,17 +12673,26 @@
             
             await loadExplorerSheet(result.sheets[0]);
 
-            // Live-Session: Datei in bereits laufender Excel-App öffnen
-            // (wartet automatisch auf initApp falls noch nicht fertig)
-            if (explorerState.engineMode === 'live' || _excelInitPromise) {
-                try {
+            // Live-Session starten (basierend auf Engine-Einstellung)
+            try {
+                const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
+                const status = await window.electronAPI.checkExcelAvailable();
+                
+                const shouldUseLive = (engineSetting === 'xlwings') || 
+                                      (engineSetting === 'auto' && status && status.excelAvailable);
+                
+                if (shouldUseLive && status && status.excelAvailable) {
                     await startLiveSession();
-                    console.log('[Engine] Datei in Live-Session geöffnet');
-                } catch (e) {
-                    console.log('[Engine] Live-Session Datei öffnen fehlgeschlagen', e);
+                    explorerState.engineMode = 'live';
+                    console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
+                } else {
+                    explorerState.engineMode = 'openpyxl';
+                    console.log(`[Engine] openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
                     updateLiveModeIndicator();
                 }
-            } else {
+            } catch (e) {
+                explorerState.engineMode = 'openpyxl';
+                console.log('[Engine] Fallback: openpyxl (Fehler)', e);
                 updateLiveModeIndicator();
             }
 
@@ -17016,30 +17026,25 @@
             // Initial Engine-Status laden
             updateEngineStatus();
             
-            // Excel-App beim Programmstart initialisieren (ohne Datei)
-            const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
-            if (engineSetting !== 'openpyxl') {
-                _excelInitPromise = window.electronAPI.liveSessionInitApp().then(result => {
-                    if (result && result.success) {
-                        explorerState.engineMode = 'live';
-                        console.log('[Engine] Excel-App beim Start vorinitialisiert');
-                        updateLiveModeIndicator();
-                        return result;
+            // Engine-Modus früh setzen (checkExcelAvailable ist schnell, kein COM)
+            (async () => {
+                try {
+                    const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
+                    if (engineSetting !== 'openpyxl') {
+                        const status = await window.electronAPI.checkExcelAvailable();
+                        if (status && status.excelAvailable) {
+                            explorerState.engineMode = 'live';
+                            updateLiveModeIndicator();
+                        } else {
+                            explorerState.engineMode = 'openpyxl';
+                        }
                     } else {
                         explorerState.engineMode = 'openpyxl';
-                        console.log('[Engine] Excel nicht verfügbar, openpyxl Modus');
-                        return result;
                     }
-                }).catch(err => {
+                } catch (e) {
                     explorerState.engineMode = 'openpyxl';
-                    console.log('[Engine] Excel-Init fehlgeschlagen, openpyxl Modus', err);
-                    return { success: false };
-                });
-                });
-            } else {
-                explorerState.engineMode = 'openpyxl';
-                console.log('[Engine] openpyxl manuell gewählt');
-            }
+                }
+            })();
             
             // Flag/Comment Column Options
             const flagCheckbox = document.getElementById('enableFlagColumn');
