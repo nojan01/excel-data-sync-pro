@@ -288,7 +288,7 @@ function extractFillsFromXLSX(filePath, sheetName) {
  * Schnell (~10ms), kein Zell-Parsing, blockiert den Event-Loop nicht nennenswert.
  * Liefert: Spaltenanzahl, versteckte Spalten, verbundene Zellen, AutoFilter.
  */
-function extractSheetMetadata(filePath, sheetName) {
+function extractSheetMetadata(fileBufferOrPath, sheetName) {
     const result = {
         columnCount: 1,
         hiddenColumns: [],
@@ -297,7 +297,8 @@ function extractSheetMetadata(filePath, sheetName) {
     };
     
     try {
-        const zip = new AdmZip(filePath);
+        // Akzeptiert Buffer oder Dateipfad
+        const zip = Buffer.isBuffer(fileBufferOrPath) ? new AdmZip(fileBufferOrPath) : new AdmZip(fileBufferOrPath);
         
         // workbook.xml lesen um Sheet-rId zu finden
         const workbookEntry = zip.getEntry('xl/workbook.xml');
@@ -485,14 +486,17 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             }
         }
         
-        // Sheet-Metadaten aus ZIP extrahieren (schnell, ~10ms, kein Zell-Parsing)
-        const metadata = extractSheetMetadata(actualFilePath, sheetName);
-        let actualColumnCount = metadata.columnCount || 1;
+        // Datei EINMAL async lesen — dieser Buffer wird für ALLES verwendet:
+        // 1. Passwort-Check (AdmZip)
+        // 2. Sheet-Metadaten (AdmZip)
+        // 3. Streaming Reader (Readable.from)
+        // Danach ist der File-Handle sofort frei für xlwings/Excel
+        const fileBuffer = await fs.promises.readFile(actualFilePath);
         
-        // Prüfe ob die Datei passwortgeschützt ist (schneller Test via ZIP-Zugriff)
+        // Prüfe ob die Datei passwortgeschützt ist
         if (!password) {
             try {
-                new AdmZip(actualFilePath);
+                new AdmZip(fileBuffer);
             } catch (zipError) {
                 if (zipError.message.includes('password') || zipError.message.includes('Password') ||
                     zipError.message.includes('encrypted') || zipError.message.includes('Encrypted') ||
@@ -505,6 +509,10 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 }
             }
         }
+        
+        // Sheet-Metadaten aus Buffer extrahieren (kein erneuter Dateizugriff!)
+        const metadata = extractSheetMetadata(fileBuffer, sheetName);
+        let actualColumnCount = metadata.columnCount || 1;
         
         // Daten-Strukturen initialisieren
         const headers = [];
@@ -522,11 +530,8 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         
         // ============================================================
         // STREAMING READER: Liest Zeilen einzeln, blockiert Event-Loop NICHT
-        // Bei 10000+ Zeilen verhindert das UI-Freezes und Timeout-Probleme
-        // WICHTIG: Buffer statt createReadStream, damit der File-Handle sofort
-        // freigegeben wird und xlwings/Excel die Datei parallel öffnen kann
+        // Buffer wird wiederverwendet (kein erneuter Dateizugriff!)
         // ============================================================
-        const fileBuffer = await fs.promises.readFile(actualFilePath);
         const { Readable } = require('stream');
         const readStream = Readable.from(fileBuffer);
         const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(readStream, {
