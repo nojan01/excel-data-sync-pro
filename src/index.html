@@ -8005,16 +8005,9 @@
             }
             
             try {
-                console.log('[LiveSession] Starte Session...');
+                console.log('[LiveSession] Öffne Datei in vorinitialisierter Excel-App...');
                 
-                // Session starten
-                const startResult = await window.electronAPI.liveSessionStart();
-                if (!startResult.success) {
-                    console.error('[LiveSession] Start fehlgeschlagen:', startResult.error);
-                    return false;
-                }
-                
-                // Datei öffnen (mit Passwort falls vorhanden)
+                // Datei öffnen (Excel-App läuft bereits seit Programmstart)
                 const openResult = await window.electronAPI.liveSessionOpenFile(
                     explorerState.filePath, 
                     explorerState.selectedSheet,
@@ -12554,27 +12547,16 @@
                 await loadExplorerSheet(explorerState.sheets[0]);
             }
             
-            // Nach dem Laden prüfen, ob Excel verfügbar ist und Live-Session starten (basierend auf Einstellung)
-            try {
-                const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
-                const status = await window.electronAPI.checkExcelAvailable();
-                
-                // Live-Session nur starten wenn: (auto + Excel verfügbar) ODER (explizit xlwings)
-                const shouldUseLive = (engineSetting === 'xlwings') || 
-                                      (engineSetting === 'auto' && status && status.excelAvailable);
-                
-                if (shouldUseLive && status && status.excelAvailable) {
+            // Live-Session: Datei in bereits laufender Excel-App öffnen
+            if (explorerState.engineMode === 'live') {
+                try {
                     await startLiveSession();
-                    explorerState.engineMode = 'live';
-                    console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
-                } else {
-                    explorerState.engineMode = 'openpyxl';
-                    console.log(`[Engine] openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
+                    console.log('[Engine] Datei in Live-Session geöffnet');
+                } catch (e) {
+                    console.log('[Engine] Live-Session Datei öffnen fehlgeschlagen', e);
                     updateLiveModeIndicator();
                 }
-            } catch (e) {
-                explorerState.engineMode = 'openpyxl';
-                console.log('[Engine] Fallback: openpyxl (Fehler)', e);
+            } else {
                 updateLiveModeIndicator();
             }
             
@@ -12665,28 +12647,17 @@
             
             await loadExplorerSheet(result.sheets[0]);
 
-            // Nach dem Laden prüfen, ob Excel verfügbar ist und Live-Session starten (basierend auf Einstellung)
-            try {
-                const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
-                const status = await window.electronAPI.checkExcelAvailable();
-                
-                // Live-Session nur starten wenn: (auto + Excel verfügbar) ODER (explizit xlwings)
-                const shouldUseLive = (engineSetting === 'xlwings') || 
-                                      (engineSetting === 'auto' && status && status.excelAvailable);
-                
-                if (shouldUseLive && status && status.excelAvailable) {
+            // Live-Session: Datei in bereits laufender Excel-App öffnen
+            if (explorerState.engineMode === 'live') {
+                try {
                     await startLiveSession();
-                    explorerState.engineMode = 'live';
-                    console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
-                } else {
-                    explorerState.engineMode = 'openpyxl';
-                    console.log(`[Engine] openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
-                    updateLiveModeIndicator(); // Offline-Status anzeigen
+                    console.log('[Engine] Datei in Live-Session geöffnet');
+                } catch (e) {
+                    console.log('[Engine] Live-Session Datei öffnen fehlgeschlagen', e);
+                    updateLiveModeIndicator();
                 }
-            } catch (e) {
-                explorerState.engineMode = 'openpyxl';
-                console.log('[Engine] Fallback: openpyxl (Fehler)', e);
-                updateLiveModeIndicator(); // Offline-Status anzeigen
+            } else {
+                updateLiveModeIndicator();
             }
 
             // Auto-Save für Crash-Recovery starten
@@ -17018,6 +16989,26 @@
             
             // Initial Engine-Status laden
             updateEngineStatus();
+            
+            // Excel-App beim Programmstart initialisieren (ohne Datei)
+            const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
+            if (engineSetting !== 'openpyxl') {
+                window.electronAPI.liveSessionInitApp().then(result => {
+                    if (result && result.success) {
+                        explorerState.engineMode = 'live';
+                        console.log('[Engine] Excel-App beim Start vorinitialisiert');
+                    } else {
+                        explorerState.engineMode = 'openpyxl';
+                        console.log('[Engine] Excel nicht verfügbar, openpyxl Modus');
+                    }
+                }).catch(err => {
+                    explorerState.engineMode = 'openpyxl';
+                    console.log('[Engine] Excel-Init fehlgeschlagen, openpyxl Modus', err);
+                });
+            } else {
+                explorerState.engineMode = 'openpyxl';
+                console.log('[Engine] openpyxl manuell gewählt');
+            }
             
             // Flag/Comment Column Options
             const flagCheckbox = document.getElementById('enableFlagColumn');

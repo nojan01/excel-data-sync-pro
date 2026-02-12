@@ -261,6 +261,16 @@ class ExcelLiveSession {
     }
 
     /**
+     * Initialisiert die Excel-App ohne Datei (beim Programmstart)
+     */
+    async initApp() {
+        console.log('[LiveSession] Initialisiere Excel-App...');
+        return this._sendCommand({
+            action: 'initApp'
+        });
+    }
+
+    /**
      * Öffnet eine Excel-Datei
      * @param {string} filePath - Pfad zur Datei
      * @param {string} sheetName - Name des Sheets

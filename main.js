@@ -699,23 +699,22 @@ const networkLog = {
             const { execSync } = require('child_process');
             this.networkDrives = new Set();
 
-            // Methode 1: wmic für DriveType=4 (klassische Netzlaufwerke)
+            // Methode 1: PowerShell Get-CimInstance für DriveType=4 (klassische Netzlaufwerke)
             try {
-                const wmicOutput = execSync('wmic logicaldisk where drivetype=4 get deviceid', {
-                    encoding: 'utf8',
-                    timeout: 5000,
-                    windowsHide: true
-                });
+                const psOutput = execSync(
+                    'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=4\" | Select-Object -ExpandProperty DeviceID"',
+                    { encoding: 'utf8', timeout: 5000, windowsHide: true }
+                );
 
-                const wmicLines = wmicOutput.split('\n');
-                for (const line of wmicLines) {
+                const psLines = psOutput.split('\n');
+                for (const line of psLines) {
                     const match = line.trim().match(/^([A-Z]):?$/i);
                     if (match) {
                         this.networkDrives.add(match[1].toUpperCase());
                     }
                 }
             } catch (e) {
-                // wmic fehlgeschlagen, ignorieren
+                // PowerShell fehlgeschlagen, ignorieren
             }
 
             // Methode 2: net use für gemappte Netzlaufwerke (inkl. VMware Shared Folders)
@@ -738,21 +737,21 @@ const networkLog = {
                 // net use fehlgeschlagen, ignorieren
             }
 
-            // Methode 3: Prüfe alle Laufwerke auf Remote-Eigenschaft
+            // Methode 3: Prüfe alle Laufwerke auf Remote-Eigenschaft (VMware, VirtualBox etc.)
             try {
-                const allDrivesOutput = execSync('wmic logicaldisk get deviceid,drivetype,providername', {
-                    encoding: 'utf8',
-                    timeout: 5000,
-                    windowsHide: true
-                });
+                const allDrivesOutput = execSync(
+                    'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID,DriveType,ProviderName | ForEach-Object { \"$($_.DeviceID)|$($_.DriveType)|$($_.ProviderName)\" }"',
+                    { encoding: 'utf8', timeout: 5000, windowsHide: true }
+                );
 
                 const driveLines = allDrivesOutput.split('\n');
                 for (const line of driveLines) {
+                    const lower = line.toLowerCase();
                     // Prüfe auf VMware, VirtualBox oder andere Netzwerk-Provider
-                    if (line.toLowerCase().includes('vmware') ||
-                        line.toLowerCase().includes('virtualbox') ||
-                        line.toLowerCase().includes('vboxsvr') ||
-                        line.toLowerCase().includes('\\\\')) {
+                    if (lower.includes('vmware') ||
+                        lower.includes('virtualbox') ||
+                        lower.includes('vboxsvr') ||
+                        lower.includes('\\\\')) {
                         const match = line.match(/([A-Z]):/i);
                         if (match) {
                             this.networkDrives.add(match[1].toUpperCase());
@@ -3457,7 +3456,7 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
 
 const { getLiveSession } = require('./python/excel_live_bridge');
 
-// Live-Session starten
+// Live-Session starten (Python-Prozess)
 ipcMain.handle('liveSession:start', async () => {
     console.log('[LiveSession] IPC: start');
     try {
@@ -3465,6 +3464,22 @@ ipcMain.handle('liveSession:start', async () => {
         return await session.start();
     } catch (error) {
         console.error('[LiveSession] start error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Excel-App initialisieren (ohne Datei - beim Programmstart)
+ipcMain.handle('liveSession:initApp', async () => {
+    console.log('[LiveSession] IPC: initApp');
+    try {
+        const session = getLiveSession();
+        // Python-Prozess starten falls nötig
+        const startResult = await session.start();
+        if (!startResult.success) return startResult;
+        // Excel-App starten (ohne Datei)
+        return await session.initApp();
+    } catch (error) {
+        console.error('[LiveSession] initApp error:', error);
         return { success: false, error: error.message };
     }
 });

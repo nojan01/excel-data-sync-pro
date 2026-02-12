@@ -76,6 +76,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     // Session-Management
     liveSessionStart: () => ipcRenderer.invoke('liveSession:start'),
+    liveSessionInitApp: () => ipcRenderer.invoke('liveSession:initApp'),
     liveSessionOpenFile: (filePath, sheetName, password) => ipcRenderer.invoke('liveSession:openFile', filePath, sheetName, password),
     liveSessionSaveFile: (outputPath, password) => ipcRenderer.invoke('liveSession:saveFile', outputPath, password),
     liveSessionClose: () => ipcRenderer.invoke('liveSession:close'),

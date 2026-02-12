@@ -384,6 +384,24 @@ class ExcelLiveSession:
     # SESSION-MANAGEMENT
     # =========================================================================
     
+    def init_app(self) -> Dict[str, Any]:
+        """Startet die Excel-App ohne eine Datei zu öffnen.
+        Wird beim Programmstart aufgerufen, damit Excel bereit ist."""
+        try:
+            if self.app:
+                self._log("Excel-App bereits gestartet")
+                return {'success': True, 'already_running': True}
+            
+            self._log("Starte Excel-App (ohne Datei)...")
+            self.app = xw.App(visible=False, add_book=False)
+            self.app.display_alerts = False
+            self.app.screen_updating = True
+            self._log("Excel-App bereit")
+            return {'success': True}
+        except Exception as e:
+            self._log(f"Fehler beim Starten der Excel-App: {e}")
+            return {'success': False, 'error': str(e)}
+    
     def open_file(self, file_path: str, sheet_name: str, password: Optional[str] = None) -> Dict[str, Any]:
         """Öffnet eine Excel-Datei und hält sie offen
         
@@ -1775,6 +1793,7 @@ end tell'''
             # Session
             'ping': lambda: {'success': True, 'pong': True},
             'checkAlive': lambda: self.check_alive(),
+            'initApp': lambda: self.init_app(),
             'quit': lambda: self._quit(),
             'setVisible': lambda: self.set_visible(cmd.get('visible', True)),
             
