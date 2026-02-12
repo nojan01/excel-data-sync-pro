@@ -413,8 +413,7 @@ class ExcelLiveSession:
                 self.app.screen_updating = True
             
             # Workbook öffnen (mit optionalem Passwort)
-            # update_links=False verhindert, dass Excel externe Datenverbindungen/Pivot-Caches
-            # aktualisiert, was sonst auf Windows zu einem blockierenden Dialog führen kann
+            # update_links=False verhindert blockierende Dialoge auf Windows
             if password:
                 self.workbook = self.app.books.open(file_path, update_links=False, password=password)
             else:

@@ -2337,11 +2337,7 @@
                     Bedingte Formatierung kann in der App <strong>nicht angezeigt oder bearbeitet</strong> werden.<br>
                     Sie bleibt jedoch beim Laden und Speichern <strong>vollständig erhalten</strong>.
                 </p>
-                <p style="color: var(--text-muted); line-height: 1.6;">
-                    <strong style="color: var(--error);">❌ Pivot-Tabellen:</strong><br>
-                    Pivot-Tabellen werden <strong>nicht unterstützt</strong> und können beim Speichern beschädigt werden.<br>
-                    Bei Dateien mit Pivot-Tabellen erscheint eine Warnung vor dem Speichern.
-                </p>
+
                 </div>
                 
                 <!-- English Help Content -->
@@ -2627,11 +2623,7 @@
                     Conditional formatting <strong>cannot be displayed or edited</strong> in the app.<br>
                     However, it is <strong>fully preserved</strong> when loading and saving.
                 </p>
-                <p style="color: var(--text-muted); line-height: 1.6;">
-                    <strong style="color: var(--error);">❌ Pivot Tables:</strong><br>
-                    Pivot tables are <strong>not supported</strong> and may be corrupted when saving.<br>
-                    A warning appears before saving files with pivot tables.
-                </p>
+
                 </div>
             </div>
             <div class="modal-footer">
@@ -8288,8 +8280,6 @@
             mergedCells: [],  // Array von { startRow, startCol, endRow, endCol, rowSpan, colSpan }
             // Passwort für passwortgeschützte Dateien
             filePassword: null,
-            // Pivot-Tabellen Warnung (wird nur beim Speichern geprüft)
-            hasPivotTables: false,
             // Operations Queues für serielle Abarbeitung
             columnOperationsQueue: [],  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X, headerName: ''}]
             rowOperationsQueue: [],  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X}]
@@ -12550,12 +12540,6 @@
             explorerState.originalFilePath = filePath;  // Ursprüngliche Datei merken (für Export)
             explorerState.fileName = result.fileName;
             explorerState.sheets = result.sheets;
-            explorerState.hasPivotTables = result.hasPivotTables || false;
-            
-            // Info bei Pivot-Tabellen anzeigen (nicht-blockierend)
-            if (explorerState.hasPivotTables) {
-                showFloatingStatus('📊 Pivot-Tabellen erkannt – Live Modus empfohlen', 'warning');
-            }
             
             // UI aktualisieren
             document.getElementById('explorerFileName').textContent = explorerState.fileName;
@@ -12670,12 +12654,6 @@
             explorerState.filePath = filePath;
             explorerState.fileName = result.fileName;
             explorerState.sheets = result.sheets;
-            explorerState.hasPivotTables = result.hasPivotTables || false;
-            
-            // Info bei Pivot-Tabellen anzeigen (nicht-blockierend)
-            if (explorerState.hasPivotTables) {
-                showFloatingStatus('📊 Pivot-Tabellen erkannt – Live Modus empfohlen', 'warning');
-            }
             
             // Element frisch abfragen (kann durch setLanguage ersetzt worden sein)
             const explorerFileNameEl = document.getElementById('explorerFileName');
@@ -16153,22 +16131,6 @@
                 } else {
                     // FALLBACK MODUS: xlwings/Python für Export verwenden (CF-Erhaltung)
                     console.log('[Export] Fallback-Modus - verwende xlwings/Python für CF-Erhaltung...');
-                    
-                    // Warnung bei Pivot-Tabellen im Fallback-Modus (ohne Live-Session können Pivot-Tabellen beschädigt werden)
-                    if (explorerState.hasPivotTables) {
-                        const confirmed = await showConfirmDialog(
-                            '⚠️ Pivot-Tabellen erkannt',
-                            'Diese Datei enthält Pivot-Tabellen!\n\n' +
-                            'Ohne Live-Modus können Pivot-Tabellen beim Speichern verloren gehen oder beschädigt werden.\n\n' +
-                            'Empfehlung: Verwenden Sie den Live Modus oder erstellen Sie eine Sicherheitskopie.',
-                            'Trotzdem speichern',
-                            'Abbrechen'
-                        );
-                        if (!confirmed) {
-                            elements.explorerStatus.textContent = 'Speichern abgebrochen (Pivot-Tabellen).';
-                            return;
-                        }
-                    }
                     
                     result = await window.electronAPI.pythonExportMultipleSheets({
                         sourcePath: explorerState.filePath,

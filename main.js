@@ -1721,28 +1721,6 @@ async function saveWorkbookOptimized(workbook, filePath, saveOptions = {}, sourc
     }
 }
 
-// Hilfsfunktion: Prüft ob eine Excel-Datei Pivot-Tabellen enthält
-async function checkForPivotTables(filePath) {
-    const JSZip = require('jszip');
-    try {
-        const fileData = fs.readFileSync(filePath);
-        const zip = await JSZip.loadAsync(fileData);
-
-        // Suche nach Pivot-Tabellen-Dateien im ZIP
-        const pivotFiles = Object.keys(zip.files).filter(name =>
-            name.includes('pivotTable') ||
-            name.includes('pivotCache') ||
-            name.includes('PivotTable') ||
-            name.includes('PivotCache')
-        );
-
-        return pivotFiles.length > 0;
-    } catch (error) {
-        console.error('Fehler beim Prüfen auf Pivot-Tabellen:', error);
-        return false;
-    }
-}
-
 // Hilfsfunktion: Entfernt nicht verwendete Spalten aus dem Worksheet (Formatierung, Breite etc.)
 function removeUnusedColumns(worksheet, usedColumnCount, originalColumnCount) {
     // 1. Zuerst alle Row-Objekte und deren XML-Nodes bereinigen
@@ -2002,9 +1980,6 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
     }
 
     try {
-        // Prüfe auf Pivot-Tabellen
-        const hasPivotTables = await checkForPivotTables(filePath);
-
         const options = password ? { password } : {};
         // Buffer lesen statt File-Handle, damit die Datei sofort freigegeben wird
         // und xlwings sie danach ohne Locking-Konflikt öffnen kann (Windows)
@@ -2017,8 +1992,7 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             fileName: path.basename(filePath),
             filePath: filePath,
             sheets: sheets,
-            isPasswordProtected: !!password,
-            hasPivotTables: hasPivotTables
+            isPasswordProtected: !!password
         };
     } catch (error) {
         // Prüfe ob es sich um eine passwortgeschützte Datei handelt
