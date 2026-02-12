@@ -703,7 +703,7 @@ const networkLog = {
             try {
                 const psOutput = execSync(
                     'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=4\" | Select-Object -ExpandProperty DeviceID"',
-                    { encoding: 'utf8', timeout: 5000, windowsHide: true }
+                    { encoding: 'utf8', timeout: 10000, windowsHide: true }
                 );
 
                 const psLines = psOutput.split('\n');
@@ -740,8 +740,8 @@ const networkLog = {
             // Methode 3: Prüfe alle Laufwerke auf Remote-Eigenschaft (VMware, VirtualBox etc.)
             try {
                 const allDrivesOutput = execSync(
-                    'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk | Select-Object DeviceID,DriveType,ProviderName | ForEach-Object { \"$($_.DeviceID)|$($_.DriveType)|$($_.ProviderName)\" }"',
-                    { encoding: 'utf8', timeout: 5000, windowsHide: true }
+                    'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk | Format-Table DeviceID,DriveType,ProviderName -HideTableHeaders"',
+                    { encoding: 'utf8', timeout: 10000, windowsHide: true }
                 );
 
                 const driveLines = allDrivesOutput.split('\n');
