@@ -2006,7 +2006,10 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
         const hasPivotTables = await checkForPivotTables(filePath);
 
         const options = password ? { password } : {};
-        const workbook = await XlsxPopulate.fromFileAsync(filePath, options);
+        // Buffer lesen statt File-Handle, damit die Datei sofort freigegeben wird
+        // und xlwings sie danach ohne Locking-Konflikt öffnen kann (Windows)
+        const fileBuffer = fs.readFileSync(filePath);
+        const workbook = await XlsxPopulate.fromDataAsync(fileBuffer, options);
         const sheets = workbook.sheets().map(ws => ws.name());
 
         return {
