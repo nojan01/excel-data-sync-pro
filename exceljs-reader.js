@@ -284,7 +284,160 @@ function extractFillsFromXLSX(filePath, sheetName) {
 
 
 /**
- * Liest ein Excel-Sheet mit ExcelJS (Alternative zu xlsx-populate)
+ * Extrahiert Sheet-Metadaten direkt aus der XLSX-Datei (ZIP-Format).
+ * Schnell (~10ms), kein Zell-Parsing, blockiert den Event-Loop nicht nennenswert.
+ * Liefert: Spaltenanzahl, versteckte Spalten, verbundene Zellen, AutoFilter.
+ */
+function extractSheetMetadata(filePath, sheetName) {
+    const result = {
+        columnCount: 1,
+        hiddenColumns: [],
+        mergedCells: [],
+        autoFilterRange: null
+    };
+    
+    try {
+        const zip = new AdmZip(filePath);
+        
+        // workbook.xml lesen um Sheet-rId zu finden
+        const workbookEntry = zip.getEntry('xl/workbook.xml');
+        if (!workbookEntry) return result;
+        
+        const workbookXml = workbookEntry.getData().toString('utf8');
+        const sheetsMatch = workbookXml.match(/<sheets>([\s\S]*?)<\/sheets>/);
+        let sheetRId = 'rId1';
+        
+        if (sheetsMatch) {
+            const sheetPattern = /<sheet[^>]*name="([^"]*)"[^>]*r:id="(rId\d+)"[^>]*\/?>/g;
+            let m;
+            while ((m = sheetPattern.exec(sheetsMatch[1])) !== null) {
+                const name = m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+                if (name === sheetName) {
+                    sheetRId = m[2];
+                    break;
+                }
+            }
+        }
+        
+        // Rels lesen für Sheet-Pfad
+        const relsEntry = zip.getEntry('xl/_rels/workbook.xml.rels');
+        if (!relsEntry) return result;
+        
+        const relsXml = relsEntry.getData().toString('utf8');
+        let sheetPath = null;
+        
+        const relPattern = /<Relationship[^>]*Id="([^"]*)"[^>]*Target="([^"]*)"[^>]*\/?>/g;
+        let relMatch;
+        while ((relMatch = relPattern.exec(relsXml)) !== null) {
+            if (relMatch[1] === sheetRId) {
+                sheetPath = relMatch[2];
+                break;
+            }
+        }
+        
+        if (!sheetPath) return result;
+        
+        const fullSheetPath = sheetPath.startsWith('xl/') ? sheetPath : `xl/${sheetPath}`;
+        const sheetEntry = zip.getEntry(fullSheetPath);
+        if (!sheetEntry) return result;
+        
+        const sheetXml = sheetEntry.getData().toString('utf8');
+        
+        // Dimension (Spaltenanzahl)
+        const dimMatch = sheetXml.match(/<dimension ref="[A-Z]+\d+:([A-Z]+)\d+"/);
+        if (dimMatch) {
+            result.columnCount = colLettersToIndex(dimMatch[1]) + 1;
+        }
+        
+        // Versteckte Spalten aus <cols>
+        const colsMatch = sheetXml.match(/<cols>([\s\S]*?)<\/cols>/);
+        if (colsMatch) {
+            const colPattern = /<col\s([^>]*)\/?\s*>/g;
+            let colM;
+            while ((colM = colPattern.exec(colsMatch[1])) !== null) {
+                const attrs = colM[1];
+                if (/hidden="(1|true)"/i.test(attrs)) {
+                    const minMatch = attrs.match(/min="(\d+)"/);
+                    const maxMatch = attrs.match(/max="(\d+)"/);
+                    if (minMatch && maxMatch) {
+                        for (let i = parseInt(minMatch[1]) - 1; i < parseInt(maxMatch[1]); i++) {
+                            result.hiddenColumns.push(i);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // AutoFilter direkt aus Sheet-XML
+        const afMatch = sheetXml.match(/<autoFilter[^>]*ref="([^"]*)"/);
+        if (afMatch) {
+            result.autoFilterRange = afMatch[1];
+        }
+        
+        // Verbundene Zellen aus <mergeCells>
+        const mcMatch = sheetXml.match(/<mergeCells[^>]*>([\s\S]*?)<\/mergeCells>/);
+        if (mcMatch) {
+            const mcPattern = /<mergeCell\s+ref="([^"]*)"\s*\/?>/g;
+            let mcM;
+            while ((mcM = mcPattern.exec(mcMatch[1])) !== null) {
+                const parsed = parseRangeString(mcM[1]);
+                if (parsed) result.mergedCells.push(parsed);
+            }
+        }
+        
+        // Tables (für AutoFilter, falls kein direkter AutoFilter vorhanden)
+        if (!result.autoFilterRange) {
+            try {
+                const sheetFileName = fullSheetPath.split('/').pop();
+                const sheetDir = fullSheetPath.substring(0, fullSheetPath.lastIndexOf('/'));
+                const sheetRelsPath = `${sheetDir}/_rels/${sheetFileName}.rels`;
+                const sheetRelsEntry = zip.getEntry(sheetRelsPath);
+                
+                if (sheetRelsEntry) {
+                    const sheetRelsXml = sheetRelsEntry.getData().toString('utf8');
+                    const tableRefPattern = /Target="([^"]*table[^"]*)"/g;
+                    let tableRefMatch;
+                    
+                    while ((tableRefMatch = tableRefPattern.exec(sheetRelsXml)) !== null) {
+                        let tablePath = tableRefMatch[1];
+                        if (tablePath.startsWith('../')) {
+                            tablePath = 'xl/' + tablePath.replace('../', '');
+                        } else if (!tablePath.startsWith('xl/')) {
+                            tablePath = `${sheetDir}/${tablePath}`;
+                        }
+                        
+                        const tableEntry = zip.getEntry(tablePath);
+                        if (tableEntry) {
+                            const tableXml = tableEntry.getData().toString('utf8');
+                            const tableAfMatch = tableXml.match(/<autoFilter[^>]*ref="([^"]*)"/);
+                            if (tableAfMatch) {
+                                result.autoFilterRange = tableAfMatch[1];
+                                break;
+                            }
+                            // Fallback: tableRef als AutoFilter
+                            const tableRefAttr = tableXml.match(/<table[^>]*ref="([^"]*)"/);
+                            if (tableRefAttr) {
+                                result.autoFilterRange = tableRefAttr[1];
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch (tableErr) {
+                // Tables sind optional
+            }
+        }
+        
+    } catch (error) {
+        console.error('[SheetMetadata] Fehler:', error.message);
+    }
+    
+    return result;
+}
+
+
+/**
+ * Liest ein Excel-Sheet mit ExcelJS Streaming Reader (nicht-blockierend)
  * 
  * @param {string} filePath - Pfad zur Excel-Datei
  * @param {string} sheetName - Name des zu lesenden Sheets
@@ -296,10 +449,6 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
     let tempFilePath = null; // Für entschlüsselte Dateien
     
     try {
-        const workbook = new ExcelJS.Workbook();
-        
-        const loadStart = Date.now();
-        
         // Bei passwortgeschützten Dateien: xlsx-populate zum Entschlüsseln verwenden
         // ExcelJS hat bekannte Probleme mit Passwort-Entschlüsselung
         let actualFilePath = filePath;
@@ -336,113 +485,86 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             }
         }
         
-        // Datei laden (mit oder ohne vorherige Entschlüsselung)
-        // Async Buffer lesen: File-Handle wird sofort freigegeben (kein Locking-Konflikt mit xlwings)
-        // und Event-Loop wird nicht blockiert (im Gegensatz zu readFileSync)
-        try {
-            const fileBuffer = await fs.promises.readFile(actualFilePath);
-            await workbook.xlsx.load(fileBuffer);
-        } catch (readError) {
-            // Prüfe ob die Datei passwortgeschützt ist (ohne Passwort versucht zu öffnen)
-            if (!password && (
-                readError.message.includes('password') || 
-                readError.message.includes('Password') ||
-                readError.message.includes('encrypted') ||
-                readError.message.includes('Encrypted') ||
-                readError.message.includes('CFB') // Common error for encrypted files
-            )) {
-                return { 
-                    success: false, 
-                    error: 'Diese Datei ist passwortgeschützt. Bitte Passwort eingeben.',
-                    needsPassword: true
-                };
-            }
-            throw readError;
-        }
+        // Sheet-Metadaten aus ZIP extrahieren (schnell, ~10ms, kein Zell-Parsing)
+        const metadata = extractSheetMetadata(actualFilePath, sheetName);
+        let actualColumnCount = metadata.columnCount || 1;
         
-        // Sheet finden
-        const worksheet = workbook.getWorksheet(sheetName);
-        if (!worksheet) {
-            return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
+        // Prüfe ob die Datei passwortgeschützt ist (schneller Test via ZIP-Zugriff)
+        if (!password) {
+            try {
+                new AdmZip(actualFilePath);
+            } catch (zipError) {
+                if (zipError.message.includes('password') || zipError.message.includes('Password') ||
+                    zipError.message.includes('encrypted') || zipError.message.includes('Encrypted') ||
+                    zipError.message.includes('CFB') || zipError.message.includes('Invalid or unsupported zip')) {
+                    return { 
+                        success: false, 
+                        error: 'Diese Datei ist passwortgeschützt. Bitte Passwort eingeben.',
+                        needsPassword: true
+                    };
+                }
+            }
         }
         
         // Daten-Strukturen initialisieren
         const headers = [];
         const data = [];
-        const hiddenColumns = [];
         const hiddenRows = [];
         const cellStyles = {};
         const cellFormulas = {};
         const cellHyperlinks = {};
         const richTextCells = {};
         
-        // AutoFilter-Bereich - kann String oder Objekt sein
-        // Auch aus Excel-Tabellen (Tables) extrahieren
-        let autoFilterRange = null;
-        if (worksheet.autoFilter) {
-            if (typeof worksheet.autoFilter === 'string') {
-                autoFilterRange = worksheet.autoFilter;
-            } else if (worksheet.autoFilter.ref) {
-                autoFilterRange = worksheet.autoFilter.ref;
-            }
-        }
+        // Metadaten aus ZIP (statt aus worksheet-Objekt)
+        const autoFilterRange = metadata.autoFilterRange;
+        const mergedCells = metadata.mergedCells;
+        const hiddenColumns = metadata.hiddenColumns;
         
-        // Falls kein direkter AutoFilter, prüfe Excel-Tabellen
-        if (!autoFilterRange && worksheet.tables) {
-            for (const tableName of Object.keys(worksheet.tables)) {
-                const table = worksheet.tables[tableName];
-                if (table && table.table) {
-                    // Erst autoFilterRef prüfen, dann tableRef als Fallback
-                    // Excel-Tabellen haben immer einen AutoFilter über den gesamten Tabellenbereich
-                    if (table.table.autoFilterRef) {
-                        autoFilterRange = table.table.autoFilterRef;
-                        break;
-                    } else if (table.table.tableRef) {
-                        autoFilterRange = table.table.tableRef;
-                        break;
-                    }
-                }
-            }
-        }
-        
-        // Merged Cells (verbundene Zellen) extrahieren und konvertieren
-        // ExcelJS gibt Strings wie "A1:H1" zurück, Frontend erwartet Objekte
-        const mergedCells = [];
-        if (worksheet.model && worksheet.model.merges) {
-            worksheet.model.merges.forEach(rangeStr => {
-                // Parse "A1:H1" zu { startRow, startCol, endRow, endCol, rowSpan, colSpan }
-                const parsed = parseRangeString(rangeStr);
-                if (parsed) {
-                    mergedCells.push(parsed);
-                }
-            });
-        }
-        
-        // Versteckte Spalten ermitteln
-        worksheet.columns.forEach((col, colIndex) => {
-            if (col.hidden) {
-                hiddenColumns.push(colIndex);
-            }
+        // ============================================================
+        // STREAMING READER: Liest Zeilen einzeln, blockiert Event-Loop NICHT
+        // Bei 10000+ Zeilen verhindert das UI-Freezes und Timeout-Probleme
+        // ============================================================
+        const readStream = fs.createReadStream(actualFilePath);
+        const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(readStream, {
+            sharedStrings: 'cache',
+            hyperlinks: 'cache',
+            styles: 'cache',
+            worksheets: 'emit'
         });
         
-        // Ermittle die tatsächliche Spaltenanzahl (kann mehr sein als in Zeile 1)
-        const actualColumnCount = worksheet.columnCount;
+        let sheetFound = false;
         
-        // Zähler für tatsächliche Daten-Zeilen (ohne Header)
-        // WICHTIG: dataRowCounter ist jetzt gleich rowNumber-2, da wir includeEmpty:true verwenden
-        // Das ist wichtig für mergedCells, die auf echten Excel-Zeilen-Indizes basieren
-        let dataRowCounter = 0;
+        for await (const worksheetReader of workbookReader) {
+            if (worksheetReader.name !== sheetName) continue;
+            sheetFound = true;
+            
+            let dataRowCounter = 0;
         
-        // Zeilen durchgehen - WICHTIG: includeEmpty:true damit Zeilen-Indizes mit mergedCells übereinstimmen!
-        worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
+        for await (const row of worksheetReader) {
+            const rowNumber = row.number;
+            
+            // Leere Zeilen auffüllen (Streaming überspringt Zeilen ohne Zellen im XML)
+            if (rowNumber > 1) {
+                const expectedDataRow = rowNumber - 2;
+                while (dataRowCounter < expectedDataRow) {
+                    data.push(new Array(actualColumnCount).fill(''));
+                    dataRowCounter++;
+                }
+            }
+            
             // Erste Zeile = Header
             if (rowNumber === 1) {
                 // Initialisiere Header-Array mit leeren Strings für alle Spalten
                 for (let i = 0; i < actualColumnCount; i++) {
                     headers.push('');
                 }
-                row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+                row.eachCell((cell, colNumber) => {
                     const colIndex = colNumber - 1;
+                    // Header-Array erweitern falls nötig
+                    while (colIndex >= headers.length) {
+                        headers.push('');
+                        actualColumnCount = Math.max(actualColumnCount, headers.length);
+                    }
                     // Überschreibe den leeren Wert mit dem tatsächlichen Wert
                     headers[colIndex] = cell.value ? String(cell.value) : '';
                     
@@ -512,7 +634,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                         cellStyles[styleKey] = style;
                     }
                 });
-                return; // Weiter zur nächsten Zeile
+                continue; // Weiter zur nächsten Zeile
             }
             
             // Daten-Zeilen
@@ -523,7 +645,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             // Das stellt sicher, dass leere Zeilen nicht zu Index-Mismatches führen
             const currentDataRowIndex = dataRowCounter;
             
-            row.eachCell({ includeEmpty: true }, (cell, colNumber) => {
+            row.eachCell((cell, colNumber) => {
                 const colIndex = colNumber - 1;
                 // WICHTIG: Frontend erwartet 1-basierte Indizes (wie xlsx-populate)
                 const styleKey = `${currentDataRowIndex + 1}-${colIndex}`;
@@ -730,7 +852,17 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             
             data.push(rowData);
             dataRowCounter++; // Zähler für nächste Daten-Zeile erhöhen
-        });
+        } // Ende for-await row
+        
+            break; // Sheet gefunden, keine weiteren Sheets verarbeiten
+        } // Ende for-await worksheetReader
+        
+        // Stream aufräumen
+        readStream.destroy();
+        
+        if (!sheetFound) {
+            return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
+        }
         
         // WICHTIG: Header-Zeile als erste Zeile in data einfügen
         // Das Frontend erwartet data.slice(1) - also Header an Position 0

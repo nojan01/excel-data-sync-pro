@@ -12576,10 +12576,10 @@
                 explorerState.selectedSheet = explorerState.sheets[0];
             }
             
-            // WICHTIG: Live-Session ZUERST starten, BEVOR die schwere ExcelJS-Lesung beginnt!
-            // readExcelSheet (ExcelJS) blockiert den Main-Process Event-Loop bei 10000+ Zeilen.
-            // Wenn die Live-Session danach startet, kann die IPC-Antwort nicht verarbeitet werden.
-            // Reihenfolge: Sheet-Namen (instant via ZIP) → Live-Session → Sheet-Daten
+            // Live-Session und Sheet-Daten PARALLEL starten
+            // Dank ExcelJS Streaming Reader blockiert readExcelSheet den Event-Loop NICHT mehr.
+            // Zwischen den gestreamten Zeilen kann der Event-Loop die Live-Session IPC-Calls verarbeiten.
+            let liveSessionPromise = null;
             try {
                 const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
                 const status = await window.electronAPI.checkExcelAvailable();
@@ -12588,15 +12588,17 @@
                                       (engineSetting === 'auto' && status && status.excelAvailable);
                 
                 if (shouldUseLive && status && status.excelAvailable) {
-                    const liveOk = await startLiveSession();
-                    if (liveOk) {
-                        explorerState.engineMode = 'live';
-                        console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
-                    } else {
-                        explorerState.engineMode = 'openpyxl';
-                        console.log('[Engine] Live-Session fehlgeschlagen, fallback openpyxl');
-                        updateLiveModeIndicator();
-                    }
+                    // Live-Session im Hintergrund starten (nicht await!)
+                    liveSessionPromise = startLiveSession().then(liveOk => {
+                        if (liveOk) {
+                            explorerState.engineMode = 'live';
+                            console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
+                        } else {
+                            explorerState.engineMode = 'openpyxl';
+                            console.log('[Engine] Live-Session fehlgeschlagen, fallback openpyxl');
+                            updateLiveModeIndicator();
+                        }
+                    });
                 } else {
                     explorerState.engineMode = 'openpyxl';
                     console.log(`[Engine] openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
@@ -12608,9 +12610,14 @@
                 updateLiveModeIndicator();
             }
             
-            // DANACH Sheet-Daten laden (ExcelJS — bei grossen Dateien langsam)
+            // Sheet-Daten laden (Streaming, läuft parallel zur Live-Session)
             if (explorerState.sheets.length > 0) {
                 await loadExplorerSheet(explorerState.sheets[0]);
+            }
+            
+            // Auf Live-Session warten (falls gestartet)
+            if (liveSessionPromise) {
+                await liveSessionPromise;
             }
             
             showFloatingStatus(`📂 ${result.fileName} geladen`);
@@ -12701,7 +12708,8 @@
             // selectedSheet VOR dem Laden setzen (für Live-Session-Start)
             explorerState.selectedSheet = result.sheets[0];
             
-            // WICHTIG: Live-Session ZUERST starten, BEVOR die schwere ExcelJS-Lesung beginnt!
+            // Live-Session und Sheet-Daten PARALLEL starten (Streaming ist non-blocking)
+            let liveSessionPromise2 = null;
             try {
                 const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
                 const status = await window.electronAPI.checkExcelAvailable();
@@ -12710,15 +12718,16 @@
                                       (engineSetting === 'auto' && status && status.excelAvailable);
                 
                 if (shouldUseLive && status && status.excelAvailable) {
-                    const liveOk = await startLiveSession();
-                    if (liveOk) {
-                        explorerState.engineMode = 'live';
-                        console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
-                    } else {
-                        explorerState.engineMode = 'openpyxl';
-                        console.log('[Engine] Live-Session fehlgeschlagen, fallback openpyxl');
-                        updateLiveModeIndicator();
-                    }
+                    liveSessionPromise2 = startLiveSession().then(liveOk => {
+                        if (liveOk) {
+                            explorerState.engineMode = 'live';
+                            console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
+                        } else {
+                            explorerState.engineMode = 'openpyxl';
+                            console.log('[Engine] Live-Session fehlgeschlagen, fallback openpyxl');
+                            updateLiveModeIndicator();
+                        }
+                    });
                 } else {
                     explorerState.engineMode = 'openpyxl';
                     console.log(`[Engine] openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
@@ -12730,8 +12739,13 @@
                 updateLiveModeIndicator();
             }
             
-            // DANACH Sheet-Daten laden (ExcelJS — bei grossen Dateien langsam)
+            // Sheet-Daten laden (Streaming, läuft parallel zur Live-Session)
             await loadExplorerSheet(result.sheets[0]);
+            
+            // Auf Live-Session warten
+            if (liveSessionPromise2) {
+                await liveSessionPromise2;
+            }
 
             // Auto-Save für Crash-Recovery starten
             startExplorerAutoSave();
