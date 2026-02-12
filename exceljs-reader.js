@@ -337,8 +337,11 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         }
         
         // Datei laden (mit oder ohne vorherige Entschlüsselung)
+        // Async Buffer lesen: File-Handle wird sofort freigegeben (kein Locking-Konflikt mit xlwings)
+        // und Event-Loop wird nicht blockiert (im Gegensatz zu readFileSync)
         try {
-            await workbook.xlsx.readFile(actualFilePath);
+            const fileBuffer = await fs.promises.readFile(actualFilePath);
+            await workbook.xlsx.load(fileBuffer);
         } catch (readError) {
             // Prüfe ob die Datei passwortgeschützt ist (ohne Passwort versucht zu öffnen)
             if (!password && (
