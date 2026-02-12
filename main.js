@@ -1979,12 +1979,49 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
     }
 
     try {
-        const options = password ? { password } : {};
-        // Async Buffer lesen: File-Handle wird sofort freigegeben (kein Locking-Konflikt mit xlwings)
-        // und Event-Loop wird nicht blockiert (im Gegensatz zu readFileSync)
-        const fileBuffer = await fs.promises.readFile(filePath);
-        const workbook = await XlsxPopulate.fromDataAsync(fileBuffer, options);
-        const sheets = workbook.sheets().map(ws => ws.name());
+        let sheets;
+        
+        if (password) {
+            // Passwortgeschützte Dateien: xlsx-populate zum Entschlüsseln nötig
+            const fileBuffer = await fs.promises.readFile(filePath);
+            const workbook = await XlsxPopulate.fromDataAsync(fileBuffer, { password });
+            sheets = workbook.sheets().map(ws => ws.name());
+        } else {
+            // PERFORMANCE: Sheet-Namen direkt aus ZIP extrahieren (ohne Zell-Parsing)
+            // xlsx-populate parst die GESAMTE Datei (alle Zellen, Formeln, Styles)
+            // nur für Sheet-Namen — bei 10000+ Zeilen blockiert das den Event-Loop 10-30s
+            // Die workbook.xml ist <10KB, unabhängig von der Dateigrösse
+            const AdmZip = require('adm-zip');
+            const fileBuffer = await fs.promises.readFile(filePath);
+            const zip = new AdmZip(fileBuffer);
+            const workbookEntry = zip.getEntry('xl/workbook.xml');
+            
+            if (!workbookEntry) {
+                throw new Error('Keine gültige XLSX-Datei');
+            }
+            
+            const workbookXml = workbookEntry.getData().toString('utf8');
+            sheets = [];
+            // Sheet-Namen aus XML extrahieren (Reihenfolge wird beibehalten)
+            const sheetPattern = /<sheet[^>]+name="([^"]*)"[^/]*\/?>/g;
+            let match;
+            while ((match = sheetPattern.exec(workbookXml)) !== null) {
+                // XML-Entities dekodieren
+                const name = match[1]
+                    .replace(/&amp;/g, '&')
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/&quot;/g, '"')
+                    .replace(/&apos;/g, "'");
+                sheets.push(name);
+            }
+            
+            if (sheets.length === 0) {
+                // Fallback: xlsx-populate wenn Regex nichts findet
+                const workbook = await XlsxPopulate.fromDataAsync(fileBuffer);
+                sheets = workbook.sheets().map(ws => ws.name());
+            }
+        }
 
         return {
             success: true,
@@ -1996,7 +2033,8 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
     } catch (error) {
         // Prüfe ob es sich um eine passwortgeschützte Datei handelt
         if (error.message.includes("Can't find end of central directory") ||
-            error.message.includes("Encrypted file")) {
+            error.message.includes("Encrypted file") ||
+            error.message.includes("Invalid or unsupported zip format")) {
             return {
                 success: false,
                 error: 'Passwort erforderlich',
