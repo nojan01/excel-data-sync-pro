@@ -267,7 +267,7 @@ class ExcelLiveSession {
         console.log('[LiveSession] Initialisiere Excel-App...');
         return this._sendCommand({
             action: 'initApp'
-        });
+        }, 60000);  // 60s Timeout - COM-Start auf Windows kann langsam sein
     }
 
     /**
@@ -284,7 +284,7 @@ class ExcelLiveSession {
             filePath: filePath,
             sheetName: sheetName,
             password: password
-        });
+        }, 120000);  // 120s Timeout - große Dateien brauchen auf Windows länger
     }
 
     /**
