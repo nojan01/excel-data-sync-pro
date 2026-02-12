@@ -739,20 +739,23 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         // ============================================================
         // FALLBACK: Fill-Farben direkt aus XLSX extrahieren
         // ExcelJS erkennt bei manchen Dateien (z.B. SoftMaker) keine Fills
+        // NUR wenn ExcelJS keine einzige Fill-Farbe gefunden hat (Performance!)
+        // Bei 10000+ Zeilen würde das synchrone AdmZip-Lesen den Event-Loop blockieren
         // ============================================================
-        const directFills = extractFillsFromXLSX(filePath, sheetName);
+        const excelJSHasFills = Object.values(cellStyles).some(s => s.fill);
         
-        if (Object.keys(directFills).length > 0) {
-            // Füge fehlende Fills zu cellStyles hinzu
-            for (const [key, fillColor] of Object.entries(directFills)) {
-                if (cellStyles[key]) {
-                    // Style existiert, aber vielleicht fehlt fill
-                    if (!cellStyles[key].fill) {
-                        cellStyles[key].fill = fillColor;
+        if (!excelJSHasFills) {
+            const directFills = extractFillsFromXLSX(filePath, sheetName);
+            
+            if (Object.keys(directFills).length > 0) {
+                for (const [key, fillColor] of Object.entries(directFills)) {
+                    if (cellStyles[key]) {
+                        if (!cellStyles[key].fill) {
+                            cellStyles[key].fill = fillColor;
+                        }
+                    } else {
+                        cellStyles[key] = { fill: fillColor };
                     }
-                } else {
-                    // Neuer Style nur mit fill
-                    cellStyles[key] = { fill: fillColor };
                 }
             }
         }
