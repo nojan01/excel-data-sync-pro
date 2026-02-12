@@ -2002,11 +2002,11 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
     }
 
     try {
+        // Prüfe auf Pivot-Tabellen
+        const hasPivotTables = await checkForPivotTables(filePath);
+
         const options = password ? { password } : {};
-        // Buffer lesen statt File-Handle, damit die Datei sofort freigegeben wird
-        // (verhindert File-Locking auf Windows wenn xlwings die Datei danach öffnet)
-        const fileBuffer = fs.readFileSync(filePath);
-        const workbook = await XlsxPopulate.fromDataAsync(fileBuffer, options);
+        const workbook = await XlsxPopulate.fromFileAsync(filePath, options);
         const sheets = workbook.sheets().map(ws => ws.name());
 
         return {
@@ -2014,7 +2014,8 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             fileName: path.basename(filePath),
             filePath: filePath,
             sheets: sheets,
-            isPasswordProtected: !!password
+            isPasswordProtected: !!password,
+            hasPivotTables: hasPivotTables
         };
     } catch (error) {
         // Prüfe ob es sich um eine passwortgeschützte Datei handelt
@@ -2155,12 +2156,6 @@ ipcMain.handle('excel:checkAvailable', async () => {
     } catch (error) {
         return { success: false, excelAvailable: false, error: error.message };
     }
-});
-
-// Pivot-Tabellen Prüfung (wird nur beim Speichern ohne Live-Session aufgerufen)
-ipcMain.handle('excel:checkForPivotTables', async (event, filePath) => {
-    if (!isValidFilePath(filePath)) return false;
-    return await checkForPivotTables(filePath);
 });
 
 // ==================== SHEET-VERWALTUNG ====================
