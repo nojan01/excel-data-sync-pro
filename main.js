@@ -2002,9 +2002,6 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
     }
 
     try {
-        // Prüfe auf Pivot-Tabellen
-        const hasPivotTables = await checkForPivotTables(filePath);
-
         const options = password ? { password } : {};
         const workbook = await XlsxPopulate.fromFileAsync(filePath, options);
         const sheets = workbook.sheets().map(ws => ws.name());
@@ -2014,8 +2011,7 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             fileName: path.basename(filePath),
             filePath: filePath,
             sheets: sheets,
-            isPasswordProtected: !!password,
-            hasPivotTables: hasPivotTables
+            isPasswordProtected: !!password
         };
     } catch (error) {
         // Prüfe ob es sich um eine passwortgeschützte Datei handelt
@@ -2156,6 +2152,12 @@ ipcMain.handle('excel:checkAvailable', async () => {
     } catch (error) {
         return { success: false, excelAvailable: false, error: error.message };
     }
+});
+
+// Pivot-Tabellen Prüfung (wird nur beim Speichern ohne Live-Session aufgerufen)
+ipcMain.handle('excel:checkForPivotTables', async (event, filePath) => {
+    if (!isValidFilePath(filePath)) return false;
+    return await checkForPivotTables(filePath);
 });
 
 // ==================== SHEET-VERWALTUNG ====================

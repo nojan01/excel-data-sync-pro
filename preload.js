@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     // Excel-Engine Steuerung
     checkExcelAvailable: () => ipcRenderer.invoke('excel:checkAvailable'),
+    checkForPivotTables: (filePath) => ipcRenderer.invoke('excel:checkForPivotTables', filePath),
     
     // Sheet-Verwaltung
     addSheet: (params) => ipcRenderer.invoke('excel:addSheet', params),
