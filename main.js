@@ -2003,7 +2003,10 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
 
     try {
         const options = password ? { password } : {};
-        const workbook = await XlsxPopulate.fromFileAsync(filePath, options);
+        // Buffer lesen statt File-Handle, damit die Datei sofort freigegeben wird
+        // (verhindert File-Locking auf Windows wenn xlwings die Datei danach öffnet)
+        const fileBuffer = fs.readFileSync(filePath);
+        const workbook = await XlsxPopulate.fromDataAsync(fileBuffer, options);
         const sheets = workbook.sheets().map(ws => ws.name());
 
         return {
