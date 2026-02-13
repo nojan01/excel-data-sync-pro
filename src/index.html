@@ -8442,7 +8442,7 @@
             // Button-Farbe umschalten (aktiv)
             const btn = document.getElementById('btnDataJoin');
             if (btn) {
-                btn.classList.remove('btn-success');
+                btn.classList.remove('btn-primary');
                 btn.classList.add('btn-info');
             }
         }
@@ -8455,7 +8455,7 @@
             const btn = document.getElementById('btnDataJoin');
             if (btn) {
                 btn.classList.remove('btn-info');
-                btn.classList.add('btn-success');
+                btn.classList.add('btn-primary');
             }
         }
         
@@ -9530,15 +9530,15 @@
             if (findReplacePanel) findReplacePanel.style.display = 'none';
             findReplaceState.isOpen = false;
             
-            // Button-Farben auf Standard (grün) zurücksetzen
+            // Button-Farben auf Standard (dunkelgrün) zurücksetzen
             const btnFilter = document.getElementById('btnToggleFilterPanel');
-            if (btnFilter) { btnFilter.classList.remove('btn-info'); btnFilter.classList.add('btn-success'); }
+            if (btnFilter) { btnFilter.classList.remove('btn-info'); btnFilter.classList.add('btn-primary'); }
             const btnColumns = document.getElementById('btnToggleColumns');
-            if (btnColumns) { btnColumns.classList.remove('btn-info'); btnColumns.classList.add('btn-success'); }
+            if (btnColumns) { btnColumns.classList.remove('btn-info'); btnColumns.classList.add('btn-primary'); }
             const btnFindReplace = document.getElementById('btnToggleFindReplace');
-            if (btnFindReplace) { btnFindReplace.classList.remove('btn-info'); btnFindReplace.classList.add('btn-success'); }
+            if (btnFindReplace) { btnFindReplace.classList.remove('btn-info'); btnFindReplace.classList.add('btn-primary'); }
             const btnDataJoin = document.getElementById('btnDataJoin');
-            if (btnDataJoin) { btnDataJoin.classList.remove('btn-info'); btnDataJoin.classList.add('btn-success'); }
+            if (btnDataJoin) { btnDataJoin.classList.remove('btn-info'); btnDataJoin.classList.add('btn-primary'); }
             
             // Status zurücksetzen
             if (elements.explorerStatus) {
@@ -11819,7 +11819,7 @@
             // Button-Farbe umschalten
             const btn = document.getElementById('btnToggleFindReplace');
             if (btn) {
-                btn.classList.toggle('btn-success', !findReplaceState.isOpen);
+                btn.classList.toggle('btn-primary', !findReplaceState.isOpen);
                 btn.classList.toggle('btn-info', findReplaceState.isOpen);
             }
             
@@ -15344,7 +15344,7 @@
             // Button-Farbe umschalten
             const btn = document.getElementById('btnToggleColumns');
             if (btn) {
-                btn.classList.toggle('btn-success', !isHidden);
+                btn.classList.toggle('btn-primary', !isHidden);
                 btn.classList.toggle('btn-info', isHidden);
             }
         }
@@ -15607,7 +15607,7 @@
             panel.style.display = isHidden ? 'flex' : 'none';
             
             if (btn) {
-                btn.classList.toggle('btn-success', !isHidden);
+                btn.classList.toggle('btn-primary', !isHidden);
                 btn.classList.toggle('btn-info', isHidden);
             }
         }
