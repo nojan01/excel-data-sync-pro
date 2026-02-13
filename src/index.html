@@ -3108,6 +3108,7 @@
                             <!-- Container für Hidden-Indikatoren (Zeilen/Spalten) -->
                             <div id="hiddenIndicatorsContainer" style="display: flex; gap: 4px;"></div>
                         </div>
+                        <button class="btn btn-secondary btn-sm" id="btnCloseFilterPanel" title="Filter schließen" style="margin-left: auto;">✕</button>
                     </div>
                     <div id="explorerFilters" style="display: flex; flex-direction: column; gap: 8px;"></div>
                 </div>
@@ -3154,9 +3155,10 @@
                 
                 <!-- Column Visibility Panel (initially hidden) -->
                 <div id="columnTogglePanel" style="display: none; flex-direction: column; gap: 10px; padding: 15px; background: var(--bg-light); border-radius: 6px; margin-bottom: 10px; border: 1px solid var(--border); flex-shrink: 0;">
-                    <div style="display: flex; gap: 10px; margin-bottom: 5px;">
+                    <div style="display: flex; gap: 10px; margin-bottom: 5px; align-items: center;">
                         <button class="btn btn-secondary btn-sm" id="btnShowAllColumns" data-i18n="showAllColumns">Alle anzeigen</button>
                         <button class="btn btn-secondary btn-sm" id="btnHideAllColumns" data-i18n="hideAllColumns">Alle ausblenden</button>
+                        <button class="btn btn-secondary btn-sm" id="btnCloseColumnPanel" title="Spalten schließen" style="margin-left: auto;">✕</button>
                     </div>
                     <div id="columnToggles" style="display: flex; flex-wrap: wrap; gap: 8px; max-height: 200px; overflow-y: auto;"></div>
                 </div>
@@ -17602,6 +17604,16 @@
             elements.btnAddExplorerFilter.onclick = addExplorerFilter;
             elements.btnClearExplorerFilters.onclick = clearExplorerFilters;
             elements.btnExplorerExport.onclick = exportExplorerData;
+            
+            // Schließen-Buttons (✕) für Spalten- und Filter-Panel
+            const btnCloseColumnPanel = document.getElementById('btnCloseColumnPanel');
+            if (btnCloseColumnPanel) {
+                btnCloseColumnPanel.onclick = toggleColumnPanel;
+            }
+            const btnCloseFilterPanel = document.getElementById('btnCloseFilterPanel');
+            if (btnCloseFilterPanel) {
+                btnCloseFilterPanel.onclick = toggleFilterPanel;
+            }
             
             // Undo-Button
             const btnUndo = document.getElementById('btnExplorerUndo');
