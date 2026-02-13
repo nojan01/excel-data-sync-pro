@@ -824,34 +824,52 @@ class ExcelLiveSession:
                 # Screen refresh
                 self._force_screen_refresh()
                 
-                # Nach Undo: Workbook speichern, damit ExcelJS den korrekten
-                # Stand von der Festplatte lesen kann.
-                try:
-                    self.workbook.save()
-                    self._log("Undo: Workbook gespeichert")
-                except Exception as save_err:
-                    self._log(f"Undo: Speichern fehlgeschlagen: {save_err}")
-                
-                # Daten direkt aus xlwings zurückgeben, damit Frontend nicht
-                # nochmal von Platte lesen muss (File-Lock-Problem auf Windows)
+                # Daten VOR dem Speichern lesen — nach save() kann die
+                # COM-Referenz stale sein und used_range liefert nichts.
                 undo_data = None
                 try:
+                    # Worksheet-Referenz sicherheitshalber erneuern
+                    if self.sheet_name:
+                        self.worksheet = self.workbook.sheets[self.sheet_name]
+                    
                     used = self.worksheet.used_range
                     if used:
                         all_vals = used.value
                         if all_vals:
                             if isinstance(all_vals[0], list):
                                 undo_data = {
-                                    'headers': all_vals[0],
+                                    'headers': [str(h) if h is not None else '' for h in all_vals[0]],
                                     'data': all_vals[1:] if len(all_vals) > 1 else []
                                 }
                             else:
-                                undo_data = {
-                                    'headers': [all_vals[0]] if not isinstance(all_vals, list) else all_vals,
-                                    'data': []
-                                }
+                                # Nur eine Zeile (Header, keine Daten)
+                                if isinstance(all_vals, list):
+                                    undo_data = {
+                                        'headers': [str(h) if h is not None else '' for h in all_vals],
+                                        'data': []
+                                    }
+                                else:
+                                    undo_data = {
+                                        'headers': [str(all_vals)],
+                                        'data': []
+                                    }
+                    self._log(f"Undo: Daten gelesen — {len(undo_data['headers']) if undo_data else 0} Spalten, {len(undo_data['data']) if undo_data else 0} Zeilen")
                 except Exception as data_err:
                     self._log(f"Undo: Daten lesen fehlgeschlagen: {data_err}")
+                
+                # DANN speichern (Datei auf Platte aktualisieren)
+                try:
+                    self.workbook.save()
+                    self._log("Undo: Workbook gespeichert")
+                except Exception as save_err:
+                    self._log(f"Undo: Speichern fehlgeschlagen: {save_err}")
+                
+                # Worksheet-Referenz nach Save erneuern (COM kann stale werden)
+                try:
+                    if self.sheet_name:
+                        self.worksheet = self.workbook.sheets[self.sheet_name]
+                except Exception:
+                    pass
                 
                 self._log(f"Undo erfolgreich: {label}")
                 result = {'success': True, 'undone': label}

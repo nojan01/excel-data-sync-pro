@@ -15542,6 +15542,9 @@
             try {
                 // 1. Undo an Python-Session senden (pop Undo-Stack + reverse)
                 const undoResult = await window.electronAPI.liveSessionUndo();
+                console.log('[Undo] Result:', undoResult?.success, 'sheetData:', !!undoResult?.sheetData,
+                    'headers:', undoResult?.sheetData?.headers?.length, 'rows:', undoResult?.sheetData?.data?.length);
+                
                 if (!undoResult.success) {
                     showFloatingStatus(`❌ Undo: ${undoResult.error}`, 'error');
                     return;
@@ -15552,10 +15555,12 @@
                 explorerState.editedCells.clear();
                 
                 // 3. Daten aktualisieren
-                if (undoResult.sheetData) {
+                if (undoResult.sheetData && undoResult.sheetData.headers && undoResult.sheetData.headers.length > 0) {
                     // Daten direkt aus Python-Session verwenden (kein File-Read nötig)
-                    const headers = undoResult.sheetData.headers || [];
+                    const headers = undoResult.sheetData.headers;
                     const rawData = undoResult.sheetData.data || [];
+                    
+                    console.log('[Undo] Direkt-Update:', headers.length, 'Spalten,', rawData.length, 'Zeilen');
                     
                     explorerState.headers = headers.map(h => h != null ? String(h) : '');
                     explorerState.data = rawData.map(row => {
@@ -15567,17 +15572,23 @@
                     explorerState.columnOrder = [];
                     explorerState.filteredData = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
                     explorerState.currentPage = 1;
+                    explorerState.searchTerm = '';
                     explorerState.sortColumn = null;
                     explorerState.sortDirection = null;
+                    explorerState.hiddenRows = new Set();
+                    explorerState.mergedCells = [];
                     explorerState.rowMapping = explorerState.data.map((_, i) => i);
+                    explorerState.rowHighlights.clear();
                     
                     renderExplorerTable();
                     updateColumnToggles();
                     updateHiddenRowsIndicator();
                     updateHiddenColumnsIndicator();
+                    updateAutoFilterIndicator();
                 } else {
                     // Fallback: Sheet-Daten komplett neu laden (ExcelJS von Platte)
-                    await new Promise(resolve => setTimeout(resolve, 300));
+                    console.log('[Undo] Kein sheetData — Fallback auf loadExplorerSheet');
+                    await new Promise(resolve => setTimeout(resolve, 500));
                     await loadExplorerSheet(explorerState.selectedSheet);
                 }
                 
