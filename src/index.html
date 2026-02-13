@@ -15537,32 +15537,17 @@
                 }
                 
                 // Im Live-Session-Modus: Daten sind bereits in Excel — nur Save-Befehl nötig
-                // Die aufwendige sheetsToExport-Aufbereitung wird komplett übersprungen!
+                // Alle Daten wurden bereits synchronisiert:
+                // - Data Join: via await _syncDataJoinToLiveSession() (insertColumn + setColumnValues)
+                // - Manuelle Edits: via blur-Handler (sofortige Zell-Sync)
+                // Kein erneutes Senden nötig!
                 let result;
+                const _exportStart = performance.now();
                 
                 if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                    const _exportStart = performance.now();
-                    console.log('[Export] Live-Session aktiv - verwende Excel direkt zum Speichern...');
+                    console.log('[Export] Live-Session aktiv - nur Save-Befehl nötig...');
                     
                     try {
-                        // Ausstehende Zell-Änderungen an Excel übertragen
-                        // (falls blur-Handler nicht gefeuert hat)
-                        const pendingCells = [];
-                        for (const cellKey of explorerState.editedCells.keys()) {
-                            if (cellKey.startsWith('_')) continue;
-                            const [rowStr, colStr] = cellKey.split('-');
-                            const rowIdx = parseInt(rowStr);
-                            const colIdx = parseInt(colStr);
-                            if (rowIdx >= 0 && colIdx >= 0 && explorerState.data[rowIdx]) {
-                                pendingCells.push({ row: rowIdx, col: colIdx, value: explorerState.data[rowIdx][colIdx] });
-                            }
-                        }
-                        if (pendingCells.length > 0) {
-                            console.log(`[Export] Sync ${pendingCells.length} ausstehende Zell-Änderungen an Excel...`);
-                            await window.electronAPI.liveSessionSetCellsBatch(pendingCells);
-                        }
-                        console.log(`[Export TIMING] pendingCells: ${(performance.now() - _exportStart).toFixed(0)}ms (${pendingCells.length} Zellen)`);
-                        
                         // Passwort-Logik
                         let passwordToUse;
                         if (exportPassword === undefined) {
@@ -15573,9 +15558,8 @@
                             passwordToUse = exportPassword;
                         }
                         
-                        const _saveStart = performance.now();
                         result = await window.electronAPI.liveSessionSaveFile(savePath, passwordToUse);
-                        console.log(`[Export TIMING] liveSessionSaveFile: ${(performance.now() - _saveStart).toFixed(0)}ms`);
+                        console.log(`[Export TIMING] liveSessionSaveFile: ${(performance.now() - _exportStart).toFixed(0)}ms`);
                         
                         if (result.success) {
                             result.method = 'Live-Session';
