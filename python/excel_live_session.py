@@ -396,7 +396,12 @@ class ExcelLiveSession:
             self.app = xw.App(visible=False, add_book=False)
             self.app.display_alerts = False
             self.app.screen_updating = True
-            self._log("Excel-App bereit")
+            # Berechnung auf manuell — verhindert Pivot-Cache-Neuberechnung beim Öffnen
+            try:
+                self.app.calculation = 'manual'
+            except:
+                pass
+            self._log("Excel-App bereit (calculation=manual)")
             return {'success': True}
         except Exception as e:
             self._log(f"Fehler beim Starten der Excel-App: {e}")
@@ -411,6 +416,8 @@ class ExcelLiveSession:
             password: Optionales Passwort für geschützte Dateien
         """
         try:
+            import time as _time
+            _t0 = _time.time()
             self._log(f"Öffne Datei: {file_path}, Sheet: {sheet_name}, Password: {'***' if password else 'None'}")
             
             # Passwort speichern für spätere Verwendung
@@ -429,14 +436,40 @@ class ExcelLiveSession:
                 self.app = xw.App(visible=False, add_book=False)  # visible=False - Excel startet versteckt
                 self.app.display_alerts = False
                 self.app.screen_updating = True
+                self._log(f"Excel-App gestartet in {_time.time() - _t0:.1f}s")
+            
+            # WICHTIG: Berechnung auf "manuell" setzen BEVOR die Datei geöffnet wird.
+            # Dateien mit Pivot-Tabellen lösen beim Öffnen eine automatische
+            # Neuberechnung des Pivot-Cache aus — bei großen Dateien (10000+ Zeilen)
+            # dauert das auf ARM64 so lange, dass der Timeout greift.
+            try:
+                self.app.calculation = 'manual'
+                self._log("Berechnung auf 'manual' gesetzt (Pivot-Cache-Schutz)")
+            except Exception as calc_err:
+                self._log(f"Konnte Berechnung nicht auf manual setzen: {calc_err}")
+            
+            # Screen-Updates ausschalten für schnelleres Öffnen
+            try:
+                self.app.screen_updating = False
+            except:
+                pass
             
             # Workbook öffnen (mit optionalem Passwort)
             # update_links=False verhindert blockierende Dialoge auf Windows
+            _t1 = _time.time()
+            self._log("books.open aufrufen...")
             if password:
                 self.workbook = self.app.books.open(file_path, update_links=False, password=password)
             else:
                 self.workbook = self.app.books.open(file_path, update_links=False)
+            self._log(f"books.open fertig in {_time.time() - _t1:.1f}s")
             self.file_path = file_path
+            
+            # Screen-Updates wieder einschalten
+            try:
+                self.app.screen_updating = True
+            except:
+                pass
             
             # Sheet finden
             sheet_names = [s.name for s in self.workbook.sheets]
@@ -449,13 +482,14 @@ class ExcelLiveSession:
             # Recovery-System initialisieren
             self.backup_path = self._create_backup(file_path)
             self.journal_path = self._init_journal(file_path)
-            self.last_auto_save = time.time()
+            self.last_auto_save = _time.time()
             
-            self._log(f"Datei geöffnet, Sheet: {sheet_name}")
+            _total = _time.time() - _t0
+            self._log(f"Datei geöffnet in {_total:.1f}s, Sheet: {sheet_name}, Sheets: {sheet_names}")
             return {'success': True, 'sheets': sheet_names, 'backupPath': self.backup_path}
             
         except Exception as e:
-            self._log(f"Fehler beim Öffnen: {e}")
+            self._log(f"Fehler beim Öffnen nach {_time.time() - _t0:.1f}s: {e}")
             return {'success': False, 'error': str(e)}
     
     def save_file(self, output_path: Optional[str] = None, password: Optional[str] = None) -> Dict[str, Any]:
