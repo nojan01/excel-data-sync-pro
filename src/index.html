@@ -15519,7 +15519,8 @@
             // LIVE SESSION: AutoFilter in Excel zurücksetzen
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 try {
-                    console.log('[LiveSession] clearAutoFilter: starte...');
+                    console.log('[LiveSession] clearAutoFilter: starte... (active=true, ready=true)');
+                    showFloatingStatus('⏳ Filter in Excel werden zurückgesetzt...');
                     const result = await window.electronAPI.liveSessionClearAutoFilter();
                     console.log('[LiveSession] clearAutoFilter result:', JSON.stringify(result));
                     if (result && result.success) {
@@ -15533,6 +15534,9 @@
                     console.error('[LiveSession] clearAutoFilter exception:', error);
                     showFloatingStatus('❌ Filter-Reset in Excel fehlgeschlagen', true);
                 }
+            } else {
+                console.log(`[LiveSession] clearAutoFilter: SKIP - active=${explorerState.liveSessionActive}, ready=${explorerState.liveSessionReady}`);
+                showFloatingStatus('🧹 Filter zurückgesetzt (nur lokal, keine Live-Session)');
             }
             
             filterExplorerData();

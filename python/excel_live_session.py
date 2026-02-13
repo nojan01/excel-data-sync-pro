@@ -2029,81 +2029,91 @@ end tell'''
         """Windows: AutoFilter-Kriterien entfernen und alle Zeilen einblenden."""
         try:
             ws = self.worksheet.api
+            app = self.workbook.app.api
             
-            # Schritt 1: Prüfe ob AutoFilter überhaupt aktiv ist
-            has_autofilter = False
+            self._log("Windows: clear_autofilter Start")
+            errors = []
+            
+            # Schritt 1: AutoFilter entfernen — 3 Methoden versuchen
+            autofilter_cleared = False
+            
+            # Methode A: Range.AutoFilter() Toggle (zuverlässigste COM-Methode)
             try:
-                has_autofilter = bool(ws.AutoFilterMode)
-                self._log(f"Windows: AutoFilterMode = {has_autofilter}")
+                auto_filter_active = ws.AutoFilterMode
+                self._log(f"Windows: AutoFilterMode = {auto_filter_active}")
+                
+                if auto_filter_active:
+                    # AutoFilter() ohne Parameter auf UsedRange togglet AutoFilter aus
+                    used_range = self.worksheet.used_range
+                    if used_range:
+                        used_range.api.AutoFilter()
+                        self._log("Windows: used_range.AutoFilter() Toggle OK")
+                        autofilter_cleared = True
+                else:
+                    autofilter_cleared = True
+                    self._log("Windows: Kein AutoFilter aktiv")
             except Exception as e:
-                self._log(f"Windows: AutoFilterMode Abfrage Fehler: {e}")
+                self._log(f"Windows: Methode A (Toggle) Fehler: {e}")
+                errors.append(f"Toggle: {e}")
             
-            if has_autofilter:
-                # Methode 1: Jeden einzelnen Filter-Feld zurücksetzen
-                try:
-                    af = ws.AutoFilter
-                    filter_count = af.Filters.Count
-                    self._log(f"Windows: {filter_count} Filter-Felder gefunden")
-                    
-                    for i in range(1, filter_count + 1):
-                        try:
-                            if af.Filters(i).On:
-                                self._log(f"Windows: Filter Feld {i} aktiv, setze zurück")
-                                af.Range.AutoFilter(Field=i)
-                        except Exception as e:
-                            self._log(f"Windows: Filter Feld {i} Reset Fehler: {e}")
-                    
-                    self._log("Windows: Einzelne Filter zurückgesetzt")
-                except Exception as e:
-                    self._log(f"Windows: Einzelfilter-Reset Fehler: {e}")
-                
-                # Methode 2: ShowAllData
-                try:
-                    if ws.AutoFilterMode and ws.AutoFilter.FilterMode:
-                        ws.AutoFilter.ShowAllData()
-                        self._log("Windows: ShowAllData erfolgreich")
-                except Exception as e:
-                    self._log(f"Windows: ShowAllData Fehler: {e}")
-                
-                # Methode 3: AutoFilterMode komplett aus und wieder ein
+            # Methode B: ShowAllData (zeigt alle Daten, behält Dropdowns)
+            if not autofilter_cleared:
                 try:
                     if ws.AutoFilterMode:
-                        ws.AutoFilterMode = False
-                        self._log("Windows: AutoFilterMode = False")
+                        af = ws.AutoFilter
+                        if af.FilterMode:
+                            ws.ShowAllData
+                            self._log("Windows: ShowAllData OK")
+                            autofilter_cleared = True
                 except Exception as e:
-                    self._log(f"Windows: AutoFilterMode=False Fehler: {e}")
+                    self._log(f"Windows: Methode B (ShowAllData) Fehler: {e}")
+                    errors.append(f"ShowAllData: {e}")
             
-            # Schritt 2: Versteckte Zeilen einblenden (unabhängig von AutoFilter)
+            # Methode C: AutoFilterMode = False (Property-Set)
+            if not autofilter_cleared:
+                try:
+                    ws.AutoFilterMode = False
+                    self._log("Windows: AutoFilterMode = False OK")
+                    autofilter_cleared = True
+                except Exception as e:
+                    self._log(f"Windows: Methode C (AutoFilterMode=False) Fehler: {e}")
+                    errors.append(f"AutoFilterMode: {e}")
+            
+            # Schritt 2: Alle versteckten Zeilen einblenden
             try:
                 used_range = self.worksheet.used_range
                 if used_range:
                     last_row = used_range.last_cell.row
                     if last_row > 1:
-                        # Alle Zeilen im UsedRange einblenden
-                        for row_num in range(2, last_row + 1):
-                            try:
-                                row_obj = ws.Rows(row_num)
-                                if row_obj.Hidden:
-                                    row_obj.Hidden = False
-                            except:
-                                pass
-                        self._log(f"Windows: Versteckte Zeilen 2-{last_row} eingeblendet")
+                        ws.Rows(f"2:{last_row}").Hidden = False
+                        self._log(f"Windows: Rows 2:{last_row} eingeblendet")
             except Exception as e:
-                self._log(f"Windows: Zeilen-Einblendung Fehler: {e}")
+                self._log(f"Windows: Rows-Unhide Fehler: {e}")
+                try:
+                    ws.Cells.EntireRow.Hidden = False
+                    self._log("Windows: Cells.EntireRow.Hidden=False (Fallback)")
+                except Exception as e2:
+                    self._log(f"Windows: EntireRow Fallback Fehler: {e2}")
             
-            # Schritt 3: Bildschirm aktualisieren
+            # Schritt 3: Screen-Refresh erzwingen
             try:
-                app = self.workbook.app.api
+                app.ScreenUpdating = False
                 app.ScreenUpdating = True
                 app.Calculate()
-                self._log("Windows: ScreenUpdating + Calculate erzwungen")
             except Exception as e:
                 self._log(f"Windows: ScreenUpdate Fehler: {e}")
+            
+            if errors and not autofilter_cleared:
+                return {'success': False, 'error': '; '.join(errors)}
             
             self._log("Windows: clear_autofilter OK")
             return {'success': True, 'filterCount': 0}
             
         except Exception as e:
+            try:
+                self.workbook.app.api.ScreenUpdating = True
+            except:
+                pass
             self._log(f"Windows: clear_autofilter Fehler: {e}")
             return {'success': False, 'error': str(e)}
     
