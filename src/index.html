@@ -17235,6 +17235,38 @@
                     }
                 }
                 
+                // Strg+C → Zellen kopieren (im Explorer mit Zell-Auswahl)
+                if ((e.ctrlKey || e.metaKey) && e.key === 'c') {
+                    const explorerOpen = !elements.dataExplorerModal.classList.contains('hidden');
+                    if (explorerOpen && explorerState.selectedCells.size > 0) {
+                        // Nicht verhindern wenn Text in einem contentEditable selektiert ist
+                        const activeEl = document.activeElement;
+                        if (activeEl && activeEl.isContentEditable) {
+                            const sel = window.getSelection();
+                            if (sel && sel.toString().length > 0) return; // Browser-Copy erlauben
+                        }
+                        e.preventDefault();
+                        copySelectedCellsWithFormat();
+                    }
+                }
+                
+                // Strg+V → Zellen einfügen (im Explorer mit Zell-Auswahl)
+                if ((e.ctrlKey || e.metaKey) && e.key === 'v') {
+                    const explorerOpen = !elements.dataExplorerModal.classList.contains('hidden');
+                    if (explorerOpen && explorerState.selectedCells.size > 0) {
+                        // Nicht verhindern wenn in contentEditable
+                        const activeEl = document.activeElement;
+                        if (activeEl && activeEl.isContentEditable) return;
+                        e.preventDefault();
+                        // Wenn Format-Clipboard vorhanden, mit Formatierung einfügen
+                        if (copiedCellsWithFormat) {
+                            pasteSelectedCellsWithFormat();
+                        } else {
+                            pasteToSelectedCells();
+                        }
+                    }
+                }
+                
                 // Strg+S → Warteschlange exportieren
                 if ((e.ctrlKey || e.metaKey) && e.key === 's') {
                     e.preventDefault();
