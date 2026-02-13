@@ -2045,8 +2045,120 @@ end tell'''
             return {'success': False, 'error': str(e)}
     
     def clear_autofilter(self) -> Dict[str, Any]:
-        """Entfernt alle AutoFilter"""
-        return self.set_autofilter(None)
+        """Entfernt alle AutoFilter und blendet alle Zeilen wieder ein.
+        
+        Eigenständige Methode (nicht über set_autofilter), damit
+        das Zurücksetzen robust und unabhängig funktioniert.
+        """
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            is_windows = platform.system() == 'Windows'
+            self._log(f"clear_autofilter: Start (platform={platform.system()})")
+            
+            if is_windows:
+                # ===== WINDOWS: AutoFilter entfernen =====
+                try:
+                    if self.worksheet.api.AutoFilterMode:
+                        try:
+                            if self.worksheet.api.AutoFilter.FilterMode:
+                                self.worksheet.api.AutoFilter.ShowAllData()
+                                self._log("Windows: ShowAllData erfolgreich")
+                            else:
+                                self.worksheet.api.AutoFilterMode = False
+                                self._log("Windows: AutoFilterMode entfernt")
+                        except Exception as e:
+                            self._log(f"Windows: ShowAllData Fehler: {e}, versuche AutoFilterMode=False")
+                            try:
+                                self.worksheet.api.AutoFilterMode = False
+                            except Exception as e2:
+                                self._log(f"Windows: AutoFilterMode Fallback fehlgeschlagen: {e2}")
+                                return {'success': False, 'error': str(e2)}
+                    else:
+                        self._log("Windows: Kein AutoFilter aktiv")
+                except Exception as e:
+                    self._log(f"Windows: Fehler: {e}")
+                    return {'success': False, 'error': str(e)}
+            else:
+                # ===== macOS: Alle Zeilen einblenden =====
+                # Auf macOS simuliert set_autofilter Filter durch row.hidden.
+                # Zum Zurücksetzen: alle Zeilen des Sheets einblenden.
+                try:
+                    used_range = self.worksheet.used_range
+                    if used_range:
+                        last_row = used_range.last_cell.row
+                    else:
+                        last_row = 1
+                    
+                    self._log(f"macOS: Einblenden aller Zeilen (last_row={last_row})")
+                    
+                    if last_row <= 1:
+                        self._log("macOS: Nur Header, nichts zum Einblenden")
+                        return {'success': True, 'filterCount': 0}
+                    
+                    # Methode 1: Alle Zeilen des Sheets auf einmal einblenden
+                    unhidden = False
+                    try:
+                        self.worksheet.api.rows.hidden.set(False)
+                        self._log("macOS: Methode 1 (sheet.rows.hidden=False) erfolgreich")
+                        unhidden = True
+                    except Exception as e1:
+                        self._log(f"macOS: Methode 1 fehlgeschlagen: {e1}")
+                    
+                    # Methode 2: Bereich A2:A{last_row} einblenden
+                    if not unhidden:
+                        try:
+                            all_rows = self.worksheet.range(f'A2:A{last_row}')
+                            all_rows.api.entire_row.hidden.set(False)
+                            self._log(f"macOS: Methode 2 (range A2:A{last_row}) erfolgreich")
+                            unhidden = True
+                        except Exception as e2:
+                            self._log(f"macOS: Methode 2 fehlgeschlagen: {e2}")
+                    
+                    # Methode 3: Zeilen einzeln in Blöcken von 100 einblenden
+                    if not unhidden:
+                        self._log("macOS: Methode 3 — blockweise Einblendung")
+                        block_size = 100
+                        error_count = 0
+                        for start in range(2, last_row + 1, block_size):
+                            end = min(start + block_size - 1, last_row)
+                            try:
+                                rng = self.worksheet.range(f'A{start}:A{end}')
+                                rng.api.entire_row.hidden.set(False)
+                            except Exception as e3:
+                                error_count += 1
+                                self._log(f"macOS: Block {start}-{end} Fehler: {e3}")
+                        if error_count == 0:
+                            unhidden = True
+                            self._log("macOS: Methode 3 erfolgreich")
+                        else:
+                            self._log(f"macOS: Methode 3 mit {error_count} Fehlern")
+                    
+                    # Methode 4: Zeile für Zeile (letzter Versuch)
+                    if not unhidden:
+                        self._log("macOS: Methode 4 — zeilenweise Einblendung")
+                        for row_num in range(2, last_row + 1):
+                            try:
+                                self.worksheet.range(f'A{row_num}').api.entire_row.hidden.set(False)
+                            except:
+                                pass
+                        unhidden = True
+                        self._log("macOS: Methode 4 abgeschlossen")
+                    
+                    if not unhidden:
+                        return {'success': False, 'error': 'Konnte Zeilen nicht einblenden'}
+                    
+                except Exception as e:
+                    self._log(f"macOS: Fehler beim Einblenden: {e}")
+                    return {'success': False, 'error': str(e)}
+            
+            self._log("clear_autofilter: OK")
+            return {'success': True, 'filterCount': 0}
+            
+        except Exception as e:
+            self._log(f"clear_autofilter Fehler: {e}")
+            return {'success': False, 'error': str(e)}
     
     def switch_sheet(self, sheet_name: str) -> Dict[str, Any]:
         """Wechselt das aktive Arbeitsblatt in der Live Session
