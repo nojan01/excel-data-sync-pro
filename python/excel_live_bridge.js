@@ -665,6 +665,67 @@ class ExcelLiveSession {
     }
 
     /**
+     * Fügt ein neues Arbeitsblatt hinzu (Live-Session)
+     * @param {string} sheetName - Name des neuen Arbeitsblatts
+     */
+    async addSheet(sheetName) {
+        return this._sendCommand({
+            action: 'addSheet',
+            sheetName: sheetName
+        });
+    }
+
+    /**
+     * Löscht ein Arbeitsblatt (Live-Session)
+     * @param {string} sheetName - Name des zu löschenden Arbeitsblatts
+     */
+    async deleteSheet(sheetName) {
+        return this._sendCommand({
+            action: 'deleteSheet',
+            sheetName: sheetName
+        });
+    }
+
+    /**
+     * Benennt ein Arbeitsblatt um (Live-Session)
+     * @param {string} oldName - Aktueller Name
+     * @param {string} newName - Neuer Name
+     */
+    async renameSheet(oldName, newName) {
+        return this._sendCommand({
+            action: 'renameSheet',
+            oldName: oldName,
+            newName: newName
+        });
+    }
+
+    /**
+     * Kopiert ein Arbeitsblatt (Live-Session)
+     * @param {string} sheetName - Name des zu kopierenden Arbeitsblatts
+     * @param {string} newName - Name der Kopie
+     */
+    async cloneSheet(sheetName, newName) {
+        return this._sendCommand({
+            action: 'cloneSheet',
+            sheetName: sheetName,
+            newName: newName
+        });
+    }
+
+    /**
+     * Verschiebt ein Arbeitsblatt (Live-Session)
+     * @param {string} sheetName - Name des Arbeitsblatts
+     * @param {number} newIndex - Neuer 0-basierter Index
+     */
+    async moveSheet(sheetName, newIndex) {
+        return this._sendCommand({
+            action: 'moveSheet',
+            sheetName: sheetName,
+            newIndex: newIndex
+        });
+    }
+
+    /**
      * Setzt alle Werte einer Zeile auf einmal
      * @param {number} rowIndex - 0-basierter Zeilenindex
      * @param {Array} values - Array von Werten (ein Wert pro Spalte)

@@ -2194,6 +2194,20 @@ ipcMain.handle('excel:addSheet', async (event, { filePath, sheetName }) => {
         return { success: false, error: 'Ungültiger Dateipfad' };
     }
     try {
+        // Bei aktiver Live-Session: über xlwings (Datei ist von Excel gesperrt)
+        const session = getLiveSession();
+        if (session && session.isReady) {
+            const result = await session.addSheet(sheetName);
+            if (result.success) {
+                securityLog.log('INFO', 'SHEET_ADDED', {
+                    file: path.basename(filePath),
+                    sheet: sheetName,
+                    via: 'liveSession'
+                });
+            }
+            return result;
+        }
+        
         const workbook = await XlsxPopulate.fromFileAsync(filePath);
 
         // Prüfe ob Name bereits existiert
@@ -2226,6 +2240,20 @@ ipcMain.handle('excel:deleteSheet', async (event, { filePath, sheetName }) => {
         return { success: false, error: 'Ungültiger Dateipfad' };
     }
     try {
+        // Bei aktiver Live-Session: über xlwings
+        const session = getLiveSession();
+        if (session && session.isReady) {
+            const result = await session.deleteSheet(sheetName);
+            if (result.success) {
+                securityLog.log('INFO', 'SHEET_DELETED', {
+                    file: path.basename(filePath),
+                    sheet: sheetName,
+                    via: 'liveSession'
+                });
+            }
+            return result;
+        }
+        
         const workbook = await XlsxPopulate.fromFileAsync(filePath);
 
         // Mindestens ein Blatt muss bleiben
@@ -2257,6 +2285,12 @@ ipcMain.handle('excel:renameSheet', async (event, { filePath, oldName, newName }
         return { success: false, error: 'Ungültiger Dateipfad' };
     }
     try {
+        // Bei aktiver Live-Session: über xlwings
+        const session = getLiveSession();
+        if (session && session.isReady) {
+            return await session.renameSheet(oldName, newName);
+        }
+        
         const workbook = await XlsxPopulate.fromFileAsync(filePath);
 
         // Prüfe ob neuer Name bereits existiert
@@ -2288,6 +2322,12 @@ ipcMain.handle('excel:cloneSheet', async (event, { filePath, sheetName, newName 
         return { success: false, error: 'Ungültiger Dateipfad' };
     }
     try {
+        // Bei aktiver Live-Session: über xlwings
+        const session = getLiveSession();
+        if (session && session.isReady) {
+            return await session.cloneSheet(sheetName, newName);
+        }
+        
         const workbook = await XlsxPopulate.fromFileAsync(filePath);
 
         // Prüfe ob neuer Name bereits existiert
@@ -2319,6 +2359,12 @@ ipcMain.handle('excel:moveSheet', async (event, { filePath, sheetName, newIndex 
         return { success: false, error: 'Ungültiger Dateipfad' };
     }
     try {
+        // Bei aktiver Live-Session: über xlwings
+        const session = getLiveSession();
+        if (session && session.isReady) {
+            return await session.moveSheet(sheetName, newIndex);
+        }
+        
         const workbook = await XlsxPopulate.fromFileAsync(filePath);
 
         workbook.moveSheet(sheetName, newIndex);

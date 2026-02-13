@@ -2221,6 +2221,146 @@ end tell'''
             self._log(f"Fehler beim Setzen der Sichtbarkeit: {e}")
             return {'success': False, 'error': str(e)}
     
+    def add_sheet(self, sheet_name: str) -> Dict[str, Any]:
+        """F\u00fcgt ein neues Arbeitsblatt hinzu (Live-Session)"""
+        try:
+            if not self.workbook:
+                return {'success': False, 'error': 'Keine Datei ge\u00f6ffnet'}
+            
+            # Pr\u00fcfe ob Name bereits existiert
+            existing = [s.name for s in self.workbook.sheets]
+            if sheet_name in existing:
+                return {'success': False, 'error': 'Ein Arbeitsblatt mit diesem Namen existiert bereits'}
+            
+            self.workbook.sheets.add(name=sheet_name, after=self.workbook.sheets[-1])
+            
+            self._log(f"Sheet '{sheet_name}' hinzugef\u00fcgt")
+            sheets = [s.name for s in self.workbook.sheets]
+            return {'success': True, 'sheets': sheets}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Hinzuf\u00fcgen: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def delete_sheet(self, sheet_name: str) -> Dict[str, Any]:
+        """L\u00f6scht ein Arbeitsblatt (Live-Session)"""
+        try:
+            if not self.workbook:
+                return {'success': False, 'error': 'Keine Datei ge\u00f6ffnet'}
+            
+            if len(self.workbook.sheets) <= 1:
+                return {'success': False, 'error': 'Das letzte Arbeitsblatt kann nicht gel\u00f6scht werden'}
+            
+            sheet_names = [s.name for s in self.workbook.sheets]
+            if sheet_name not in sheet_names:
+                return {'success': False, 'error': f'Sheet "{sheet_name}" nicht gefunden'}
+            
+            # Excel-Warnmeldungen tempor\u00e4r unterdr\u00fccken
+            self.app.display_alerts = False
+            self.workbook.sheets[sheet_name].delete()
+            self.app.display_alerts = True
+            
+            # Falls das aktive Sheet gel\u00f6scht wurde, zum ersten wechseln
+            remaining = [s.name for s in self.workbook.sheets]
+            if self.sheet_name == sheet_name and remaining:
+                self.worksheet = self.workbook.sheets[remaining[0]]
+                self.sheet_name = remaining[0]
+            
+            self._log(f"Sheet '{sheet_name}' gel\u00f6scht")
+            return {'success': True, 'sheets': remaining}
+            
+        except Exception as e:
+            self.app.display_alerts = True
+            self._log(f"Fehler beim L\u00f6schen: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def rename_sheet(self, old_name: str, new_name: str) -> Dict[str, Any]:
+        """Benennt ein Arbeitsblatt um (Live-Session)"""
+        try:
+            if not self.workbook:
+                return {'success': False, 'error': 'Keine Datei ge\u00f6ffnet'}
+            
+            sheet_names = [s.name for s in self.workbook.sheets]
+            if old_name not in sheet_names:
+                return {'success': False, 'error': f'Sheet "{old_name}" nicht gefunden'}
+            if new_name in sheet_names:
+                return {'success': False, 'error': 'Ein Arbeitsblatt mit diesem Namen existiert bereits'}
+            
+            self.workbook.sheets[old_name].name = new_name
+            
+            # Falls das aktive Sheet umbenannt wurde
+            if self.sheet_name == old_name:
+                self.sheet_name = new_name
+                self.worksheet = self.workbook.sheets[new_name]
+            
+            self._log(f"Sheet '{old_name}' umbenannt zu '{new_name}'")
+            sheets = [s.name for s in self.workbook.sheets]
+            return {'success': True, 'sheets': sheets}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Umbenennen: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def clone_sheet(self, sheet_name: str, new_name: str) -> Dict[str, Any]:
+        """Kopiert ein Arbeitsblatt (Live-Session)"""
+        try:
+            if not self.workbook:
+                return {'success': False, 'error': 'Keine Datei ge\u00f6ffnet'}
+            
+            sheet_names = [s.name for s in self.workbook.sheets]
+            if sheet_name not in sheet_names:
+                return {'success': False, 'error': f'Sheet "{sheet_name}" nicht gefunden'}
+            if new_name in sheet_names:
+                return {'success': False, 'error': 'Ein Arbeitsblatt mit diesem Namen existiert bereits'}
+            
+            source = self.workbook.sheets[sheet_name]
+            source.copy(after=self.workbook.sheets[-1], name=new_name)
+            
+            self._log(f"Sheet '{sheet_name}' kopiert als '{new_name}'")
+            sheets = [s.name for s in self.workbook.sheets]
+            return {'success': True, 'sheets': sheets}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Kopieren: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def move_sheet(self, sheet_name: str, new_index: int) -> Dict[str, Any]:
+        """Verschiebt ein Arbeitsblatt an eine neue Position (Live-Session)"""
+        try:
+            if not self.workbook:
+                return {'success': False, 'error': 'Keine Datei ge\u00f6ffnet'}
+            
+            sheet_names = [s.name for s in self.workbook.sheets]
+            if sheet_name not in sheet_names:
+                return {'success': False, 'error': f'Sheet "{sheet_name}" nicht gefunden'}
+            
+            num_sheets = len(self.workbook.sheets)
+            if new_index < 0 or new_index >= num_sheets:
+                return {'success': False, 'error': f'Ung\u00fcltiger Index: {new_index}'}
+            
+            sheet = self.workbook.sheets[sheet_name]
+            
+            if new_index == 0:
+                # An den Anfang: vor das erste Sheet
+                sheet.api.Move(Before=self.workbook.sheets[0].api)
+            else:
+                # Nach dem Sheet an Position new_index-1
+                # Aber wir m\u00fcssen ber\u00fccksichtigen, dass das Sheet selbst verschoben wird
+                target_sheet = self.workbook.sheets[new_index]
+                current_index = sheet_names.index(sheet_name)
+                if current_index < new_index:
+                    sheet.api.Move(After=target_sheet.api)
+                else:
+                    sheet.api.Move(Before=target_sheet.api)
+            
+            self._log(f"Sheet '{sheet_name}' verschoben zu Index {new_index}")
+            sheets = [s.name for s in self.workbook.sheets]
+            return {'success': True, 'sheets': sheets}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Verschieben: {e}")
+            return {'success': False, 'error': str(e)}
+    
     def _format_datetime_values(self, all_data: list, used_range) -> list:
         """Konvertiert datetime-Werte zu Strings (DD.MM.YYYY).
         
@@ -2306,6 +2446,11 @@ end tell'''
             'getData': lambda: self.get_data(),
             'switchSheet': lambda: self.switch_sheet(cmd.get('sheetName')),
             'setSheetVisibility': lambda: self.set_sheet_visibility(cmd.get('sheetName'), cmd.get('visible', True)),
+            'addSheet': lambda: self.add_sheet(cmd.get('sheetName')),
+            'deleteSheet': lambda: self.delete_sheet(cmd.get('sheetName')),
+            'renameSheet': lambda: self.rename_sheet(cmd.get('oldName'), cmd.get('newName')),
+            'cloneSheet': lambda: self.clone_sheet(cmd.get('sheetName'), cmd.get('newName')),
+            'moveSheet': lambda: self.move_sheet(cmd.get('sheetName'), cmd.get('newIndex')),
             
             # Passwort
             'setPassword': lambda: self.set_password(cmd.get('password')),
