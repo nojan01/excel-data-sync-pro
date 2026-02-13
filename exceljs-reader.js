@@ -30,8 +30,32 @@ function formatDateWithNumFmt(dt, numFmt) {
 
     // Nur den Datum/Zeit-Teil verwenden (vor Semikolon = positiver Format-Teil)
     let fmt = numFmt.split(';')[0];
+    
+    // Locale-Code aus [$-XXX] extrahieren BEVOR wir Klammern entfernen
+    // z.B. [$-407] = Deutsch, [$-409] = US-Englisch, [$-809] = UK-Englisch
+    let dateSeparator = '.'; // Standard: deutsch
+    const localeMatch = fmt.match(/\[\$-([0-9A-Fa-f]+)\]/);
+    if (localeMatch) {
+        const localeId = parseInt(localeMatch[1], 16) & 0xFFFF; // Nur Language-ID
+        // US-English (0x409), Filipino (0x464), etc. verwenden /
+        const slashLocales = [0x409, 0x809, 0x0C09, 0x1009, 0x1409, 0x464];
+        // Französisch etc. verwenden /
+        const frenchLocales = [0x40C, 0x80C, 0x100C];
+        if (slashLocales.includes(localeId) || frenchLocales.includes(localeId)) {
+            dateSeparator = '/';
+        } else if (localeId === 0x410) { // Italienisch
+            dateSeparator = '/';
+        }
+        // Deutsch (0x407, 0x807, 0xC07) und die meisten anderen → '.'
+    }
+    
     // Escaped Text in eckigen Klammern entfernen (z.B. [$-407], [$€-de-DE])
     fmt = fmt.replace(/\[([^\]]*)\]/g, '');
+    
+    // In Excel ist '/' ein Platzhalter für den lokalen Datumstrenner — KEIN Literal!
+    // Ersetze '/' durch den erkannten lokalen Separator
+    fmt = fmt.replace(/\//g, dateSeparator);
+    
     // Literal-Strings in Anführungszeichen durch Platzhalter ersetzen
     const literals = [];
     fmt = fmt.replace(/"([^"]*)"/g, (_, text) => {
