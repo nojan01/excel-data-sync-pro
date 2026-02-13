@@ -15536,7 +15536,60 @@
                     console.log('[Memory] Undo/Redo Stack geleert für Export');
                 }
                 
-                // Sammle Daten für alle ausgewählten Sheets
+                // Im Live-Session-Modus: Daten sind bereits in Excel — nur Save-Befehl nötig
+                // Die aufwendige sheetsToExport-Aufbereitung wird komplett übersprungen!
+                let result;
+                
+                if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                    console.log('[Export] Live-Session aktiv - verwende Excel direkt zum Speichern...');
+                    
+                    try {
+                        // Ausstehende Zell-Änderungen an Excel übertragen
+                        // (falls blur-Handler nicht gefeuert hat)
+                        const pendingCells = [];
+                        for (const cellKey of explorerState.editedCells.keys()) {
+                            if (cellKey.startsWith('_')) continue;
+                            const [rowStr, colStr] = cellKey.split('-');
+                            const rowIdx = parseInt(rowStr);
+                            const colIdx = parseInt(colStr);
+                            if (rowIdx >= 0 && colIdx >= 0 && explorerState.data[rowIdx]) {
+                                pendingCells.push({ row: rowIdx, col: colIdx, value: explorerState.data[rowIdx][colIdx] });
+                            }
+                        }
+                        if (pendingCells.length > 0) {
+                            console.log(`[Export] Sync ${pendingCells.length} ausstehende Zell-Änderungen an Excel...`);
+                            await window.electronAPI.liveSessionSetCellsBatch(pendingCells);
+                        }
+                        
+                        // Passwort-Logik
+                        let passwordToUse;
+                        if (exportPassword === undefined) {
+                            passwordToUse = undefined;
+                        } else if (exportPassword === '') {
+                            passwordToUse = null;
+                        } else {
+                            passwordToUse = exportPassword;
+                        }
+                        
+                        result = await window.electronAPI.liveSessionSaveFile(savePath, passwordToUse);
+                        
+                        if (result.success) {
+                            result.method = 'Live-Session';
+                            if (exportPassword) {
+                                explorerState.filePassword = exportPassword;
+                            } else if (exportPassword === '') {
+                                explorerState.filePassword = null;
+                            }
+                        }
+                    } catch (error) {
+                        console.error('[Export] Live-Session save error:', error);
+                        result = { success: false, error: error.message };
+                    }
+                }
+                
+                // FALLBACK MODUS: Daten aufbereiten und über Python/xlwings exportieren
+                if (!result) {
+                
                 const sheetsToExport = [];
                 
                 for (const sheetName of selectedSheets) {
@@ -16170,75 +16223,19 @@
                     sheetsToExport.push(sheetData);
                 }
                 
-                let result;
+                // FALLBACK MODUS: xlwings/Python für Export verwenden (CF-Erhaltung)
+                console.log('[Export] Fallback-Modus - verwende xlwings/Python für CF-Erhaltung...');
                 
-                // LIVE-SESSION MODUS: Direkt über Excel speichern (schneller & keine Konflikte)
-                if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                    console.log('[Export] Live-Session aktiv - verwende Excel direkt zum Speichern...');
-                    
-                    try {
-                        // Strukturelle Änderungen (Spalten-Join) wurden bereits durch
-                        // await _syncDataJoinToLiveSession() in executeDataJoin synchron übertragen.
-                        // Kein erneutes Senden nötig.
-                        
-                        // Sicherheitsnetz: Alle ausstehenden Zell-Änderungen an Excel übertragen
-                        // (falls blur-Handler nicht gefeuert hat oder Sync fehlgeschlagen ist)
-                        const pendingCells = [];
-                        for (const cellKey of explorerState.editedCells.keys()) {
-                            if (cellKey.startsWith('_')) continue;
-                            const [rowStr, colStr] = cellKey.split('-');
-                            const rowIdx = parseInt(rowStr);
-                            const colIdx = parseInt(colStr);
-                            if (rowIdx >= 0 && colIdx >= 0 && explorerState.data[rowIdx]) {
-                                pendingCells.push({ row: rowIdx, col: colIdx, value: explorerState.data[rowIdx][colIdx] });
-                            }
-                        }
-                        if (pendingCells.length > 0) {
-                            console.log(`[Export] Sync ${pendingCells.length} ausstehende Zell-Änderungen an Excel...`);
-                            await window.electronAPI.liveSessionSetCellsBatch(pendingCells);
-                        }
-                        
-                        // Im Live-Modus sind jetzt alle Änderungen in Excel
-                        // Wir müssen nur noch speichern (mit optionalem Passwort)
-                        // exportPassword ist: undefined (Checkbox nicht aktiviert), '' (aktiviert aber leer), oder 'xxx' (neues Passwort)
-                        // passwordToUse: undefined = beibehalten, null = entfernen, 'xxx' = neues Passwort
-                        let passwordToUse;
-                        if (exportPassword === undefined) {
-                            passwordToUse = undefined; // Passwort beibehalten
-                        } else if (exportPassword === '') {
-                            passwordToUse = null; // Passwort entfernen
-                        } else {
-                            passwordToUse = exportPassword; // Neues Passwort
-                        }
-                        
-                        result = await window.electronAPI.liveSessionSaveFile(savePath, passwordToUse);
-                        
-                        if (result.success) {
-                            result.method = 'Live-Session';
-                            // Passwort-Status aktualisieren
-                            if (exportPassword) {
-                                explorerState.filePassword = exportPassword;
-                            } else if (exportPassword === '') {
-                                explorerState.filePassword = null;
-                            }
-                        }
-                    } catch (error) {
-                        console.error('[Export] Live-Session save error:', error);
-                        result = { success: false, error: error.message };
-                    }
-                } else {
-                    // FALLBACK MODUS: xlwings/Python für Export verwenden (CF-Erhaltung)
-                    console.log('[Export] Fallback-Modus - verwende xlwings/Python für CF-Erhaltung...');
-                    
-                    result = await window.electronAPI.pythonExportMultipleSheets({
-                        sourcePath: explorerState.filePath,
-                        originalSourcePath: explorerState.originalFilePath,  // Ursprüngliche Datei für Style-Wiederherstellung
-                        targetPath: savePath,
-                        sheets: sheetsToExport,
-                        password: exportPassword,
-                        sourcePassword: explorerState.filePassword
-                    });
-                }
+                result = await window.electronAPI.pythonExportMultipleSheets({
+                    sourcePath: explorerState.filePath,
+                    originalSourcePath: explorerState.originalFilePath,
+                    targetPath: savePath,
+                    sheets: sheetsToExport,
+                    password: exportPassword,
+                    sourcePassword: explorerState.filePassword
+                });
+                
+                } // Ende if (!result) — Fallback-Block
                 
                 if (result.success) {
                     const pwInfo = exportPassword ? ' (passwortgeschützt)' : '';
