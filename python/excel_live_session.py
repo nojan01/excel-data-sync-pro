@@ -2026,160 +2026,66 @@ end tell'''
             return {'success': False, 'error': str(e)}
     
     def _clear_autofilter_windows(self) -> Dict[str, Any]:
-        """Windows: AutoFilter-Kriterien entfernen und alle Zeilen einblenden."""
+        """Windows: AutoFilter-Kriterien entfernen und alle Zeilen einblenden.
+        
+        Exakter Umkehrweg von set_autofilter:
+        - set benutzt used_range.api.AutoFilter(Field=x, Criteria1=y) zum Setzen
+        - clear benutzt used_range.api.AutoFilter() zum Toggle-Off (gleiches Objekt!)
+        """
         try:
-            ws = self.worksheet.api
-            app = self.workbook.app.api
+            used_range = self.worksheet.used_range
+            if not used_range:
+                return {'success': True, 'filterCount': 0, 'info': 'no used_range'}
             
-            # Diagnose sammeln — wird in der Antwort zurückgegeben
-            diag = {}
-            steps = []
+            self._log("Windows: clear_autofilter Start (exakter Umkehrweg)")
             
-            self._log("Windows: clear_autofilter Start (mit Diagnose)")
-            
-            # === DIAGNOSE VOR dem Clear ===
+            # Schritt 1: AutoFilter über DASSELBE Objekt entfernen wie beim Setzen
+            # set_autofilter benutzt: used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria)
+            # Also clear über:        used_range.api.AutoFilter()  (Toggle OFF)
             try:
-                diag['autoFilterMode_before'] = bool(ws.AutoFilterMode)
-            except Exception as e:
-                diag['autoFilterMode_before'] = f'ERROR: {e}'
-            
-            # Zähle versteckte Zeilen VOR dem Clear
-            hidden_before = 0
-            try:
-                used_range = self.worksheet.used_range
-                if used_range:
-                    last_row = used_range.last_cell.row
-                    diag['last_row'] = last_row
-                    if last_row > 1:
-                        for row_num in range(2, min(last_row + 1, 100)):  # Max 100 Zeilen prüfen
-                            try:
-                                if ws.Rows(row_num).Hidden:
-                                    hidden_before += 1
-                            except:
-                                pass
-                    diag['hidden_rows_before'] = hidden_before
-                    diag['checked_rows'] = min(last_row - 1, 98)
-            except Exception as e:
-                diag['hidden_count_error'] = str(e)
-            
-            # Prüfe ob FilterMode aktiv (= es gibt aktive Filter-Kriterien)
-            try:
-                if diag.get('autoFilterMode_before') == True:
-                    diag['filterMode'] = bool(ws.AutoFilter.FilterMode)
-                    diag['filterCount'] = ws.AutoFilter.Filters.Count
-                    # Prüfe welche Filter aktiv sind
-                    active_filters = []
-                    for i in range(1, ws.AutoFilter.Filters.Count + 1):
-                        try:
-                            if ws.AutoFilter.Filters(i).On:
-                                active_filters.append(i)
-                        except:
-                            pass
-                    diag['activeFilterFields'] = active_filters
-            except Exception as e:
-                diag['filter_inspect_error'] = str(e)
-            
-            self._log(f"Windows: Diagnose VOR Clear: {diag}")
-            
-            # === CLEAR AUSFÜHREN ===
-            
-            # Schritt 1: Wenn AutoFilter aktiv UND Filter-Kriterien gesetzt
-            if diag.get('autoFilterMode_before') == True:
-                # 1a: Einzelne Filter-Felder zurücksetzen
-                active_fields = diag.get('activeFilterFields', [])
-                if active_fields:
-                    for field_idx in active_fields:
-                        try:
-                            ws.AutoFilter.Range.AutoFilter(Field=field_idx)
-                            steps.append(f'Field {field_idx} reset OK')
-                            self._log(f"Windows: Filter Field {field_idx} zurückgesetzt")
-                        except Exception as e:
-                            steps.append(f'Field {field_idx} reset FAIL: {e}')
-                            self._log(f"Windows: Filter Field {field_idx} Fehler: {e}")
+                # Prüfen ob AutoFilter aktiv ist
+                has_autofilter = False
+                try:
+                    has_autofilter = bool(self.worksheet.api.AutoFilterMode)
+                except:
+                    pass
                 
-                # 1b: ShowAllData falls FilterMode noch aktiv
-                try:
-                    if ws.AutoFilterMode and ws.AutoFilter.FilterMode:
-                        ws.ShowAllData()
-                        steps.append('ShowAllData OK')
-                        self._log("Windows: ShowAllData OK")
-                except Exception as e:
-                    steps.append(f'ShowAllData FAIL: {e}')
-                    self._log(f"Windows: ShowAllData Fehler: {e}")
+                self._log(f"Windows: AutoFilterMode = {has_autofilter}")
                 
-                # 1c: AutoFilterMode = False (entfernt AutoFilter komplett)
-                try:
-                    ws.AutoFilterMode = False
-                    steps.append('AutoFilterMode=False OK')
-                    self._log("Windows: AutoFilterMode = False OK")
-                except Exception as e:
-                    steps.append(f'AutoFilterMode=False FAIL: {e}')
-                    self._log(f"Windows: AutoFilterMode=False Fehler: {e}")
-            else:
-                steps.append('Kein AutoFilter aktiv')
-            
-            # Schritt 2: Versteckte Zeilen einblenden
-            try:
-                used_range = self.worksheet.used_range
-                if used_range:
-                    last_row = used_range.last_cell.row
-                    if last_row > 1:
-                        ws.Rows(f"2:{last_row}").Hidden = False
-                        steps.append(f'Rows 2:{last_row} unhidden OK')
-                        self._log(f"Windows: Rows 2:{last_row} eingeblendet")
+                if has_autofilter:
+                    # Exakter Umkehrweg: used_range.api.AutoFilter() togglet AutoFilter AUS
+                    used_range.api.AutoFilter()
+                    self._log("Windows: used_range.api.AutoFilter() Toggle OFF — OK")
             except Exception as e:
-                steps.append(f'Rows unhide FAIL: {e}')
-                self._log(f"Windows: Rows-Unhide Fehler: {e}")
+                self._log(f"Windows: AutoFilter Toggle Fehler: {e}")
+                # Fallback: über Worksheet-API
                 try:
-                    ws.Cells.EntireRow.Hidden = False
-                    steps.append('Cells.EntireRow fallback OK')
+                    self.worksheet.api.AutoFilterMode = False
+                    self._log("Windows: Fallback ws.AutoFilterMode=False — OK")
                 except Exception as e2:
-                    steps.append(f'Cells fallback FAIL: {e2}')
+                    self._log(f"Windows: Fallback Fehler: {e2}")
+            
+            # Schritt 2: Alle versteckten Zeilen einblenden (falls Zeilen manuell versteckt)
+            try:
+                last_row = used_range.last_cell.row
+                if last_row > 1:
+                    self.worksheet.api.Rows(f"2:{last_row}").Hidden = False
+                    self._log(f"Windows: Rows 2:{last_row} eingeblendet")
+            except Exception as e:
+                self._log(f"Windows: Rows-Unhide Fehler: {e}")
             
             # Schritt 3: Screen-Refresh
             try:
-                app.ScreenUpdating = False
+                app = self.workbook.app.api
                 app.ScreenUpdating = True
                 app.Calculate()
-                steps.append('ScreenRefresh OK')
-            except Exception as e:
-                steps.append(f'ScreenRefresh FAIL: {e}')
-            
-            # === DIAGNOSE NACH dem Clear ===
-            try:
-                diag['autoFilterMode_after'] = bool(ws.AutoFilterMode)
-            except Exception as e:
-                diag['autoFilterMode_after'] = f'ERROR: {e}'
-            
-            hidden_after = 0
-            try:
-                if used_range and last_row > 1:
-                    for row_num in range(2, min(last_row + 1, 100)):
-                        try:
-                            if ws.Rows(row_num).Hidden:
-                                hidden_after += 1
-                        except:
-                            pass
-                diag['hidden_rows_after'] = hidden_after
-            except Exception as e:
-                diag['hidden_after_error'] = str(e)
-            
-            diag['steps'] = steps
-            
-            self._log(f"Windows: Diagnose NACH Clear: autoFilterMode={diag.get('autoFilterMode_after')}, hidden={hidden_after}")
-            self._log(f"Windows: clear_autofilter FERTIG, steps={steps}")
-            
-            return {
-                'success': True,
-                'filterCount': 0,
-                'diag': diag
-            }
-            
-        except Exception as e:
-            try:
-                self.workbook.app.api.ScreenUpdating = True
             except:
                 pass
+            
+            self._log("Windows: clear_autofilter OK")
+            return {'success': True, 'filterCount': 0}
+            
+        except Exception as e:
             self._log(f"Windows: clear_autofilter Fehler: {e}")
             return {'success': False, 'error': str(e)}
     
