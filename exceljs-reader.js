@@ -449,6 +449,100 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
             console.log(`[SheetMetadata] ${result.imageCells.length} Bild-Zellen erkannt: ${result.imageCells.map(c => c.ref).join(', ')}`);
         }
         
+        // DEBUG: Diagnose für Bild-Erkennung
+        // Suche nach #VALUE!-Zellen und prüfe ob DISPIMG/IMAGE irgendwo vorkommt
+        const debugInfo = [];
+        const hasDispimg = /DISPIMG/i.test(sheetXml);
+        const hasImage = /IMAGE/i.test(sheetXml);
+        debugInfo.push(`DISPIMG im XML: ${hasDispimg}, IMAGE im XML: ${hasImage}`);
+        debugInfo.push(`Gefundene Bild-Zellen: ${result.imageCells.length}`);
+        
+        // Alle ZIP-Einträge auflisten (suche nach richData, drawings, media)
+        const allEntries = zip.getEntries().map(e => e.entryName);
+        const relevantEntries = allEntries.filter(e => 
+            /richData|drawing|media|image|picture/i.test(e)
+        );
+        debugInfo.push(`Relevante ZIP-Einträge: ${relevantEntries.join(', ') || 'keine'}`);
+        
+        // Suche nach Zellen mit error/VALUE im XML
+        const valueCells = [];
+        for (const block of cellBlocks) {
+            if (/<v>[^<]*#VALUE![^<]*<\/v>/.test(block) || /t="e"/.test(block)) {
+                const refM = block.match(/<c\s[^>]*?r="([A-Z]+\d+)"/);
+                if (refM) {
+                    // Zeige den <c>-Block (gekürzt)
+                    const cStart = block.lastIndexOf('<c ');
+                    const snippet = cStart >= 0 ? block.substring(cStart).substring(0, 300) : block.substring(0, 300);
+                    valueCells.push({ ref: refM[1], xml: snippet });
+                }
+            }
+        }
+        if (valueCells.length > 0) {
+            debugInfo.push(`#VALUE!/Error-Zellen im XML (${valueCells.length}):`);
+            for (const vc of valueCells.slice(0, 10)) {
+                debugInfo.push(`  ${vc.ref}: ${vc.xml}`);
+            }
+        }
+        
+        // Prüfe ob es Drawing-Referenzen gibt
+        const drawingMatch = sheetXml.match(/<drawing\s+r:id="([^"]*)"/);
+        if (drawingMatch) {
+            debugInfo.push(`Drawing-Referenz: ${drawingMatch[1]}`);
+            // Versuche Drawing-XML zu lesen
+            try {
+                const sheetDir2 = fullSheetPath.substring(0, fullSheetPath.lastIndexOf('/'));
+                const sheetFileName2 = fullSheetPath.split('/').pop();
+                const sheetRelsPath2 = `${sheetDir2}/_rels/${sheetFileName2}.rels`;
+                const rels2 = zip.getEntry(sheetRelsPath2);
+                if (rels2) {
+                    const relsXml2 = rels2.getData().toString('utf8');
+                    const drawRel = relsXml2.match(new RegExp(`Id="${drawingMatch[1]}"[^>]*Target="([^"]*)"`));
+                    if (drawRel) {
+                        const drawPath = drawRel[1].startsWith('/') ? drawRel[1].substring(1) : `xl/worksheets/${drawRel[1]}`.replace('/worksheets/../', '/');
+                        const normalizedPath = drawPath.replace(/\/[^/]+\/\.\.\//g, '/');
+                        debugInfo.push(`Drawing-Pfad: ${normalizedPath}`);
+                        const drawEntry = zip.getEntry(normalizedPath);
+                        if (drawEntry) {
+                            const drawXml = drawEntry.getData().toString('utf8');
+                            debugInfo.push(`Drawing-XML (erste 1000 Zeichen): ${drawXml.substring(0, 1000)}`);
+                        }
+                    }
+                }
+            } catch (e) {
+                debugInfo.push(`Drawing-Fehler: ${e.message}`);
+            }
+        }
+        
+        // richData prüfen
+        for (const entry of relevantEntries) {
+            if (/richData/i.test(entry)) {
+                try {
+                    const rdEntry = zip.getEntry(entry);
+                    if (rdEntry) {
+                        const rdXml = rdEntry.getData().toString('utf8');
+                        debugInfo.push(`${entry} (erste 500 Zeichen): ${rdXml.substring(0, 500)}`);
+                    }
+                } catch (e) {
+                    debugInfo.push(`${entry}: Fehler: ${e.message}`);
+                }
+            }
+        }
+        
+        // Debug-Info als Datei speichern
+        if (valueCells.length > 0 || relevantEntries.length > 0) {
+            try {
+                const fs = require('fs');
+                const os = require('os');
+                const debugPath = require('path').join(os.tmpdir(), 'excel-image-debug.txt');
+                fs.writeFileSync(debugPath, debugInfo.join('\n'), 'utf8');
+                console.log(`[SheetMetadata] Debug-Info geschrieben: ${debugPath}`);
+                result._debugImageInfo = debugInfo;
+                result._debugPath = debugPath;
+            } catch (e) {
+                console.log(`[SheetMetadata] Debug-Schreiben fehlgeschlagen: ${e.message}`);
+            }
+        }
+        
         // Tables (für AutoFilter, falls kein direkter AutoFilter vorhanden)
         if (!result.autoFilterRange) {
             try {
@@ -1113,7 +1207,9 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 columns: headers.length,
                 loadTimeMs: totalTime,
                 timings // Detaillierte Zeitmessungen für Diagnose
-            }
+            },
+            _imageDebug: metadata._debugImageInfo || null,
+            _imageDebugPath: metadata._debugPath || null
         };
         
     } catch (error) {
