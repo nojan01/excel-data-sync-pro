@@ -3075,10 +3075,10 @@
                     <button class="btn btn-success" id="btnToggleFindReplace" title="Suchen & Ersetzen (Strg+H)" data-i18n="findReplace" data-i18n-title="findReplaceTitle" style="height: 34px;">
                         🔄 Ersetzen
                     </button>
-                    <button class="btn btn-primary" id="btnToggleFilterPanel" title="Filter-Bereich ein-/ausblenden" style="height: 34px;">
+                    <button class="btn btn-success" id="btnToggleFilterPanel" title="Filter-Bereich ein-/ausblenden" style="height: 34px;">
                         🔍 Filter
                     </button>
-                    <button class="btn btn-primary" id="btnToggleColumns" title="Spalten ein-/ausblenden" style="height: 34px;">
+                    <button class="btn btn-success" id="btnToggleColumns" title="Spalten ein-/ausblenden" style="height: 34px;">
                         ❙❙ Spalten
                     </button>
                     <button class="btn btn-success" id="btnDataJoin" title="Spalten aus einer anderen Excel-Datei hinzufügen (basierend auf gemeinsamer Seriennummer)" disabled data-i18n="addColumns" data-i18n-title="addColumnsTitle" style="height: 34px;">
@@ -15297,7 +15297,7 @@
             // Button-Farbe umschalten
             const btn = document.getElementById('btnToggleColumns');
             if (btn) {
-                btn.classList.toggle('btn-primary', !isHidden);
+                btn.classList.toggle('btn-success', !isHidden);
                 btn.classList.toggle('btn-info', isHidden);
             }
         }
@@ -15551,7 +15551,7 @@
             panel.style.display = isHidden ? 'flex' : 'none';
             
             if (btn) {
-                btn.classList.toggle('btn-primary', !isHidden);
+                btn.classList.toggle('btn-success', !isHidden);
                 btn.classList.toggle('btn-info', isHidden);
             }
         }
