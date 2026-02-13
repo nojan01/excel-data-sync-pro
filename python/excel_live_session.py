@@ -778,6 +778,22 @@ class ExcelLiveSession:
             self._log(f"Undo: {label} — Restore von {os.path.basename(temp_path)}")
             
             try:
+                # 0. Fenster-Zustand sichern (damit Excel nicht minimiert wird)
+                window_state = None
+                app_visible = True
+                try:
+                    if platform.system() == 'Windows':
+                        # xlMaximized=-4137, xlMinimized=-4140, xlNormal=-4143
+                        window_state = self.app.api.WindowState
+                        app_visible = self.app.api.Visible
+                    else:
+                        try:
+                            window_state = self.app.api.bounds.get()
+                        except Exception:
+                            pass
+                except Exception as ws_err:
+                    self._log(f"Undo: WindowState lesen Fehler: {ws_err}")
+                
                 # 1. Workbook schließen (ohne Speichern)
                 try:
                     self.app.display_alerts = False
@@ -824,6 +840,22 @@ class ExcelLiveSession:
                 
                 self.worksheet.activate()
                 self.file_path = original_path
+                
+                # 5. Fenster-Zustand wiederherstellen
+                try:
+                    if platform.system() == 'Windows':
+                        if app_visible:
+                            self.app.api.Visible = True
+                        if window_state is not None:
+                            self.app.api.WindowState = window_state
+                    else:
+                        if window_state is not None:
+                            try:
+                                self.app.api.bounds.set(window_state)
+                            except Exception:
+                                pass
+                except Exception as ws_err:
+                    self._log(f"Undo: WindowState wiederherstellen Fehler: {ws_err}")
                 
                 try:
                     self.app.screen_updating = True
