@@ -20,7 +20,7 @@ import os
 import platform
 import time
 import shutil
-from datetime import datetime
+from datetime import datetime, date, time as dtime
 from typing import Optional, Dict, Any, List
 
 # WICHTIG: UTF-8 für stdin/stdout erzwingen
@@ -102,7 +102,20 @@ class ExcelLiveSession:
     
     def _respond(self, data: Dict[str, Any]):
         """Sendet JSON-Antwort an stdout"""
-        print(json.dumps(data), flush=True)
+        print(json.dumps(data, default=self._json_serialize), flush=True)
+    
+    @staticmethod
+    def _json_serialize(obj):
+        """Custom JSON serializer für datetime, date, time, bytes etc."""
+        if isinstance(obj, (datetime, date, dtime)):
+            return obj.isoformat()
+        if isinstance(obj, bytes):
+            return None
+        if isinstance(obj, float):
+            import math
+            if math.isnan(obj) or math.isinf(obj):
+                return None
+        return str(obj)
     
     # =========================================================================
     # RECOVERY-SYSTEM
