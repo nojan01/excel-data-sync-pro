@@ -685,46 +685,127 @@ class ExcelLiveSession:
         if len(self.undo_stack) > self.MAX_UNDO:
             self.undo_stack.pop(0)
     
-    def _snapshot_row(self, excel_row: int) -> list:
-        """Reads all values in a row (1-based row).  Returns flat list."""
+    def _snapshot_row(self, excel_row: int) -> dict:
+        """Reads all values AND formatting in a row (1-based row).
+        Returns {'values': [...], 'formats': [{'color': ..., 'number_format': ..., 'bold': ..., 'italic': ...}, ...]}"""
         try:
             used = self.worksheet.used_range
             if used is None:
-                return []
+                return {'values': [], 'formats': []}
             last_col = used.column + used.shape[1] - 1
             if last_col < 1:
-                return []
+                return {'values': [], 'formats': []}
             row_range = self.worksheet.range((excel_row, 1), (excel_row, last_col))
             values = row_range.value
             if values is None:
-                return []
-            if not isinstance(values, list):
-                return [values]
-            return values
+                values = []
+            elif not isinstance(values, list):
+                values = [values]
+            
+            # Formatierung lesen
+            formats = []
+            try:
+                for c in range(1, last_col + 1):
+                    cell = self.worksheet.range((excel_row, c))
+                    fmt = {}
+                    try:
+                        fmt['color'] = cell.color  # RGB tuple or None
+                    except Exception:
+                        fmt['color'] = None
+                    try:
+                        fmt['number_format'] = cell.number_format
+                    except Exception:
+                        fmt['number_format'] = None
+                    try:
+                        fmt['bold'] = cell.font.bold
+                    except Exception:
+                        fmt['bold'] = None
+                    try:
+                        fmt['italic'] = cell.font.italic
+                    except Exception:
+                        fmt['italic'] = None
+                    try:
+                        fmt['font_color'] = cell.font.color
+                    except Exception:
+                        fmt['font_color'] = None
+                    try:
+                        fmt['font_size'] = cell.font.size
+                    except Exception:
+                        fmt['font_size'] = None
+                    formats.append(fmt)
+            except Exception as fmt_err:
+                self._log(f"_snapshot_row Formatierung Fehler: {fmt_err}")
+                formats = []
+            
+            return {'values': values, 'formats': formats}
         except Exception as e:
             self._log(f"_snapshot_row Fehler: {e}")
-            return []
+            return {'values': [], 'formats': []}
     
-    def _snapshot_column(self, excel_col: int) -> list:
-        """Reads all values in a column (1-based col, incl. header).  Returns flat list."""
+    def _snapshot_column(self, excel_col: int) -> dict:
+        """Reads all values AND formatting in a column (1-based col, incl. header).
+        Returns {'values': [...], 'formats': [...]}
+        Note: Formatting is only read for columns with <= 200 rows to avoid timeouts."""
         try:
             used = self.worksheet.used_range
             if used is None:
-                return []
+                return {'values': [], 'formats': []}
             last_row = used.row + used.shape[0] - 1
             if last_row < 1:
-                return []
+                return {'values': [], 'formats': []}
             col_range = self.worksheet.range((1, excel_col), (last_row, excel_col))
             values = col_range.value
             if values is None:
-                return []
-            if not isinstance(values, list):
-                return [values]
-            # xlwings returns [[v1],[v2],...] for a column range — flatten
-            return [v[0] if isinstance(v, list) else v for v in values]
+                values = []
+            elif not isinstance(values, list):
+                values = [values]
+            else:
+                # xlwings returns [[v1],[v2],...] for a column range — flatten
+                values = [v[0] if isinstance(v, list) else v for v in values]
+            
+            # Formatierung nur lesen wenn Spalte nicht zu groß ist
+            # (>200 Zeilen = zu viele COM-Aufrufe, würde Timeout verursachen)
+            formats = []
+            if last_row <= 200:
+                try:
+                    for r in range(1, last_row + 1):
+                        cell = self.worksheet.range((r, excel_col))
+                        fmt = {}
+                        try:
+                            fmt['color'] = cell.color
+                        except Exception:
+                            fmt['color'] = None
+                        try:
+                            fmt['number_format'] = cell.number_format
+                        except Exception:
+                            fmt['number_format'] = None
+                        try:
+                            fmt['bold'] = cell.font.bold
+                        except Exception:
+                            fmt['bold'] = None
+                        try:
+                            fmt['italic'] = cell.font.italic
+                        except Exception:
+                            fmt['italic'] = None
+                        try:
+                            fmt['font_color'] = cell.font.color
+                        except Exception:
+                            fmt['font_color'] = None
+                        try:
+                            fmt['font_size'] = cell.font.size
+                        except Exception:
+                            fmt['font_size'] = None
+                        formats.append(fmt)
+                except Exception as fmt_err:
+                    self._log(f"_snapshot_column Formatierung Fehler: {fmt_err}")
+                    formats = []
+            else:
+                self._log(f"_snapshot_column: {last_row} Zeilen — Formatierung übersprungen (zu viele COM-Aufrufe)")
+            
+            return {'values': values, 'formats': formats}
         except Exception as e:
             self._log(f"_snapshot_column Fehler: {e}")
-            return []
+            return {'values': [], 'formats': []}
     
     def _snapshot_cells(self, cell_coords: list) -> list:
         """Reads current values for a list of (excel_row, excel_col) tuples.
@@ -772,13 +853,58 @@ class ExcelLiveSession:
                             pass
                 
                 elif action == 'insert_row_with_data':
-                    # Gelöschte Zeile wiederherstellen
+                    # Gelöschte Zeile wiederherstellen (Werte + Formatierung)
                     excel_row = entry['excel_row']
                     values = entry['values']
+                    formats = entry.get('formats', [])
                     self.worksheet.range(f'{excel_row}:{excel_row}').insert(shift='down')
                     if values:
                         last_col = len(values)
                         self.worksheet.range((excel_row, 1), (excel_row, last_col)).value = values
+                    # Formatierung wiederherstellen
+                    if formats:
+                        try:
+                            self.app.screen_updating = False
+                        except Exception:
+                            pass
+                        try:
+                            for c, fmt in enumerate(formats, start=1):
+                                cell = self.worksheet.range((excel_row, c))
+                                try:
+                                    if fmt.get('color') is not None:
+                                        cell.color = tuple(fmt['color']) if isinstance(fmt['color'], list) else fmt['color']
+                                except Exception:
+                                    pass
+                                try:
+                                    if fmt.get('number_format') is not None:
+                                        cell.number_format = fmt['number_format']
+                                except Exception:
+                                    pass
+                                try:
+                                    if fmt.get('bold') is not None:
+                                        cell.font.bold = fmt['bold']
+                                except Exception:
+                                    pass
+                                try:
+                                    if fmt.get('italic') is not None:
+                                        cell.font.italic = fmt['italic']
+                                except Exception:
+                                    pass
+                                try:
+                                    if fmt.get('font_color') is not None:
+                                        cell.font.color = tuple(fmt['font_color']) if isinstance(fmt['font_color'], list) else fmt['font_color']
+                                except Exception:
+                                    pass
+                                try:
+                                    if fmt.get('font_size') is not None:
+                                        cell.font.size = fmt['font_size']
+                                except Exception:
+                                    pass
+                        finally:
+                            try:
+                                self.app.screen_updating = True
+                            except Exception:
+                                pass
                 
                 elif action == 'delete_rows':
                     # Eingefügte Zeilen löschen
@@ -788,20 +914,56 @@ class ExcelLiveSession:
                     self.worksheet.range(f'{start}:{end}').delete()
                 
                 elif action == 'insert_col_with_data':
-                    # Gelöschte Spalte wiederherstellen
+                    # Gelöschte Spalte wiederherstellen (Werte + Formatierung)
                     excel_col = entry['excel_col']
                     values = entry['values']
+                    formats = entry.get('formats', [])
                     col_letter = self._get_column_letter(excel_col)
                     self.worksheet.range(f'{col_letter}:{col_letter}').insert(shift='right')
-                    if values:
-                        # Batch-Write: gesamte Spalte in EINEM COM-Aufruf
-                        # (statt 2000+ Einzel-Aufrufe die zum Timeout führen)
-                        try:
-                            self.app.screen_updating = False
-                        except Exception:
-                            pass
-                        col_values = [[v] for v in values]  # xlwings braucht [[v1],[v2],...] für Spalte
-                        self.worksheet.range((1, excel_col), (len(values), excel_col)).value = col_values
+                    try:
+                        self.app.screen_updating = False
+                    except Exception:
+                        pass
+                    try:
+                        if values:
+                            # Batch-Write: gesamte Spalte in EINEM COM-Aufruf
+                            col_values = [[v] for v in values]
+                            self.worksheet.range((1, excel_col), (len(values), excel_col)).value = col_values
+                        # Formatierung wiederherstellen
+                        if formats:
+                            for r, fmt in enumerate(formats, start=1):
+                                cell = self.worksheet.range((r, excel_col))
+                                try:
+                                    if fmt.get('color') is not None:
+                                        cell.color = tuple(fmt['color']) if isinstance(fmt['color'], list) else fmt['color']
+                                except Exception:
+                                    pass
+                                try:
+                                    if fmt.get('number_format') is not None:
+                                        cell.number_format = fmt['number_format']
+                                except Exception:
+                                    pass
+                                try:
+                                    if fmt.get('bold') is not None:
+                                        cell.font.bold = fmt['bold']
+                                except Exception:
+                                    pass
+                                try:
+                                    if fmt.get('italic') is not None:
+                                        cell.font.italic = fmt['italic']
+                                except Exception:
+                                    pass
+                                try:
+                                    if fmt.get('font_color') is not None:
+                                        cell.font.color = tuple(fmt['font_color']) if isinstance(fmt['font_color'], list) else fmt['font_color']
+                                except Exception:
+                                    pass
+                                try:
+                                    if fmt.get('font_size') is not None:
+                                        cell.font.size = fmt['font_size']
+                                except Exception:
+                                    pass
+                    finally:
                         try:
                             self.app.screen_updating = True
                         except Exception:
@@ -917,13 +1079,14 @@ class ExcelLiveSession:
             
             excel_row = row_index + 2  # +2 für Header (1-basiert)
             
-            # Undo-Snapshot: Zeileninhalt sichern
-            row_data = self._snapshot_row(excel_row)
+            # Undo-Snapshot: Zeileninhalt + Formatierung sichern
+            row_snapshot = self._snapshot_row(excel_row)
             self._push_undo({
                 'type': 'insert_row_with_data',
                 'label': f'Zeile {row_index + 1} gelöscht',
                 'excel_row': excel_row,
-                'values': row_data
+                'values': row_snapshot['values'],
+                'formats': row_snapshot['formats']
             })
             
             self._log(f"Lösche Zeile {excel_row}")
@@ -1159,13 +1322,14 @@ class ExcelLiveSession:
             excel_col = col_index + 1
             col_letter = self._get_column_letter(excel_col)
             
-            # Undo-Snapshot: Spalteninhalt sichern
-            col_data = self._snapshot_column(excel_col)
+            # Undo-Snapshot: Spalteninhalt + Formatierung sichern
+            col_snapshot = self._snapshot_column(excel_col)
             self._push_undo({
                 'type': 'insert_col_with_data',
                 'label': f'Spalte {col_letter} gelöscht',
                 'excel_col': excel_col,
-                'values': col_data
+                'values': col_snapshot['values'],
+                'formats': col_snapshot['formats']
             })
             
             self._log(f"Lösche Spalte {col_letter} (Index {col_index})")
