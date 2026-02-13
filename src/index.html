@@ -7567,6 +7567,32 @@
             return state.workingDirectory || undefined;
         }
         
+        /**
+         * Bestimmt den Standard-Pfad für den Explorer-Dateidialog.
+         * Priorität: 1) Arbeitsordner  2) Ordner der zuletzt geöffneten Datei  3) Ordner aus config
+         */
+        function getExplorerDefaultPath() {
+            // 1. Arbeitsordner (vom Benutzer explizit gesetzt)
+            if (state.workingDirectory) return state.workingDirectory;
+            
+            // 2. Ordner der aktuell/zuletzt geöffneten Explorer-Datei
+            if (explorerState.filePath) {
+                const sep = explorerState.filePath.includes('\\') ? '\\' : '/';
+                const dir = explorerState.filePath.substring(0, explorerState.filePath.lastIndexOf(sep));
+                if (dir) return dir;
+            }
+            
+            // 3. Ordner der file1 oder file2 aus dem Transfer-Bereich
+            const transferFile = state.file1?.filePath || state.file2?.filePath;
+            if (transferFile) {
+                const sep = transferFile.includes('\\') ? '\\' : '/';
+                const dir = transferFile.substring(0, transferFile.lastIndexOf(sep));
+                if (dir) return dir;
+            }
+            
+            return undefined;
+        }
+        
         // Arbeitsordner beim Start laden
         function loadWorkingDirectoryFromStorage() {
             const savedPath = localStorage.getItem('workingDirectory');
@@ -12744,7 +12770,7 @@
             const filePath = await window.electronAPI.openFileDialog({
                 title: 'Excel-Datei öffnen',
                 filters: [{ name: 'Excel', extensions: ['xlsx', 'xls'] }],
-                defaultPath: getWorkingDirectoryPath()
+                defaultPath: getExplorerDefaultPath()
             });
             if (!filePath) return;
             
