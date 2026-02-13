@@ -10690,6 +10690,20 @@
             newVisibleColumns.sort((a, b) => a - b);
             explorerState.visibleColumns = newVisibleColumns;
             
+            // ColumnOrder anpassen (wenn aktiv)
+            if (explorerState.columnOrder.length > 0) {
+                explorerState.columnOrder = explorerState.columnOrder.map(idx => 
+                    idx >= insertIndex ? idx + 1 : idx
+                );
+                // Neue Spalte an der richtigen Position einfügen
+                let arrayPos = 0;
+                while (arrayPos < explorerState.columnOrder.length && 
+                       explorerState.columnOrder[arrayPos] < insertIndex) {
+                    arrayPos++;
+                }
+                explorerState.columnOrder.splice(arrayPos, 0, insertIndex);
+            }
+            
             // EditedCells anpassen
             const newEditedCells = new Map();
             explorerState.editedCells.forEach((value, key) => {
