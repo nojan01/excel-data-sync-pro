@@ -294,7 +294,8 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
         columnCount: 1,
         hiddenColumns: [],
         mergedCells: [],
-        autoFilterRange: null
+        autoFilterRange: null,
+        imageCells: []  // Zellen die Bild-Formeln enthalten (DISPIMG, IMAGE)
     };
     
     try {
@@ -385,6 +386,61 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
                 const parsed = parseRangeString(mcM[1]);
                 if (parsed) result.mergedCells.push(parsed);
             }
+        }
+        
+        // Bild-Formeln erkennen (DISPIMG, IMAGE)
+        // ExcelJS Streaming erkennt diese Formeln nicht, daher direkt aus XML parsen
+        // Suche nach <f>-Tags die DISPIMG oder IMAGE enthalten
+        const formulaPattern = /<c\s+r="([A-Z]+\d+)"[^>]*>[\s\S]*?<f[^>]*>([\s\S]*?)<\/f>[\s\S]*?<\/c>/g;
+        let fMatch;
+        while ((fMatch = formulaPattern.exec(sheetXml)) !== null) {
+            const cellRef = fMatch[1];
+            const formula = fMatch[2];
+            if (/DISPIMG|IMAGE/i.test(formula)) {
+                // Zellreferenz parsen (z.B. "B5" → { col: 1, row: 4 })
+                const colLetters = cellRef.match(/^([A-Z]+)/)[1];
+                const rowNum = parseInt(cellRef.match(/(\d+)$/)[1]);
+                result.imageCells.push({
+                    col: colLettersToIndex(colLetters),
+                    row: rowNum - 1  // 0-basiert
+                });
+            }
+        }
+        // Auch shared formulas mit DISPIMG/IMAGE erkennen
+        // <f t="shared" si="X">_xlfn.DISPIMG(...)</f> definiert die Formel
+        // <f t="shared" si="X"/> referenziert sie
+        if (result.imageCells.length > 0) {
+            // Suche nach allen Zellen mit shared formula reference die auf eine Image-Formel zeigen
+            const sharedFormulaIds = new Set();
+            const sharedRefPattern = /<c\s+r="([A-Z]+\d+)"[^>]*>[\s\S]*?<f[^>]*t="shared"[^>]*si="(\d+)"[^>]*>([\s\S]*?)<\/f>[\s\S]*?<\/c>/g;
+            let sfMatch;
+            while ((sfMatch = sharedRefPattern.exec(sheetXml)) !== null) {
+                const formula = sfMatch[3];
+                if (/DISPIMG|IMAGE/i.test(formula)) {
+                    sharedFormulaIds.add(sfMatch[2]);
+                }
+            }
+            // Finde alle Zellen die diese shared formula IDs referenzieren
+            if (sharedFormulaIds.size > 0) {
+                const sharedUsagePattern = /<c\s+r="([A-Z]+\d+)"[^>]*>[\s\S]*?<f[^>]*t="shared"[^>]*si="(\d+)"[^>]*\/?>[\s\S]*?<\/c>/g;
+                let suMatch;
+                while ((suMatch = sharedUsagePattern.exec(sheetXml)) !== null) {
+                    if (sharedFormulaIds.has(suMatch[2])) {
+                        const cellRef = suMatch[1];
+                        const colLetters = cellRef.match(/^([A-Z]+)/)[1];
+                        const rowNum = parseInt(cellRef.match(/(\d+)$/)[1]);
+                        const col = colLettersToIndex(colLetters);
+                        const row = rowNum - 1;
+                        // Nur hinzufügen wenn nicht schon vorhanden
+                        if (!result.imageCells.some(ic => ic.col === col && ic.row === row)) {
+                            result.imageCells.push({ col, row });
+                        }
+                    }
+                }
+            }
+        }
+        if (result.imageCells.length > 0) {
+            console.log(`[SheetMetadata] ${result.imageCells.length} Bild-Zellen erkannt`);
         }
         
         // Tables (für AutoFilter, falls kein direkter AutoFilter vorhanden)
@@ -537,6 +593,15 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         const autoFilterRange = metadata.autoFilterRange;
         const mergedCells = metadata.mergedCells;
         const hiddenColumns = metadata.hiddenColumns;
+        
+        // Bild-Zellen als Set für schnellen Lookup (z.B. "1_4" = col 1, row 4)
+        const imageCellSet = new Set();
+        if (metadata.imageCells && metadata.imageCells.length > 0) {
+            for (const ic of metadata.imageCells) {
+                imageCellSet.add(`${ic.col}_${ic.row}`);
+            }
+            console.log(`[ExcelJS] ${imageCellSet.size} Bild-Zellen aus Metadaten geladen`);
+        }
         
         // ============================================================
         // STREAMING READER: Liest Zeilen einzeln, blockiert Event-Loop NICHT
@@ -716,6 +781,9 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     const formula = cellFormulas[styleKey] || '';
                     if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(formula)) {
                         cellValue = '🖼️ Bild';
+                    } else if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
+                        // Bild-Formel aus XML-Metadaten erkannt
+                        cellValue = '🖼️ Bild';
                     } else {
                         console.log(`[ExcelJS] Error-Wert in Zelle ${styleKey}: ${cellValue.error}, Formel: ${formula || 'keine'}`);
                         cellValue = String(cellValue.error);
@@ -725,6 +793,9 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 else if (typeof cellValue === 'string' && cellValue === '#VALUE!') {
                     const formula = cellFormulas[styleKey] || '';
                     if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(formula)) {
+                        cellValue = '🖼️ Bild';
+                    } else if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
+                        // Bild-Formel aus XML-Metadaten erkannt
                         cellValue = '🖼️ Bild';
                     } else {
                         console.log(`[ExcelJS] #VALUE! String in Zelle ${styleKey}, Formel: ${formula || 'keine'}, cell.value Typ: ${typeof cell.value}, Keys: ${cell.value && typeof cell.value === 'object' ? Object.keys(cell.value).join(',') : 'N/A'}`);
@@ -822,7 +893,12 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     }
                     // Error-Objekte erkennen
                     else if (cell.value.error) {
-                        cellValue = cell.value.error; // z.B. #REF!, #VALUE!, #DIV/0!
+                        // Prüfe ob es eine Bild-Zelle ist (aus XML-Metadaten)
+                        if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
+                            cellValue = '🖼️ Bild';
+                        } else {
+                            cellValue = cell.value.error; // z.B. #REF!, #VALUE!, #DIV/0!
+                        }
                     }
                     // Letzter Fallback: Unbekanntes Objekt -> versuche sinnvolle Darstellung
                     else {
