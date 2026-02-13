@@ -696,23 +696,39 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     cellFormulas[styleKey] = cell.formula;
                     // Das Ergebnis ist in cell.result (nicht cell.value!)
                     cellValue = cell.result !== undefined ? cell.result : '';
-                    // IMAGE()-Formel erkennen: Excel 365 Bild-Funktion, ExcelJS kann sie nicht auswerten
-                    if (/^_xlfn\.IMAGE\b|^IMAGE\(|^_xlfn\.DISPIMG\b|^DISPIMG\(/i.test(cell.formula)) {
+                    // Bild-Formeln erkennen: IMAGE, DISPIMG (mit beliebigen Prefixen wie _xlfn._xlws.)
+                    if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(cell.formula)) {
                         cellValue = '🖼️ Bild';
                     }
                 } else if (cell.value && typeof cell.value === 'object' && cell.value.formula) {
                     // Formel als Objekt gespeichert: { formula: '...', result: ... }
                     cellFormulas[styleKey] = cell.value.formula;
                     cellValue = cell.value.result !== undefined ? cell.value.result : '';
-                    // IMAGE()-Formel erkennen
-                    if (/^_xlfn\.IMAGE\b|^IMAGE\(|^_xlfn\.DISPIMG\b|^DISPIMG\(/i.test(cell.value.formula)) {
+                    // Bild-Formeln erkennen
+                    if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(cell.value.formula)) {
                         cellValue = '🖼️ Bild';
                     }
                 }
                 
                 // Error-Werte behandeln (z.B. { error: '#VALUE!' } aus Formel-Ergebnissen)
                 if (cellValue && typeof cellValue === 'object' && cellValue.error) {
-                    cellValue = String(cellValue.error);
+                    // Prüfe ob die zugehörige Formel eine Bild-Formel ist
+                    const formula = cellFormulas[styleKey] || '';
+                    if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(formula)) {
+                        cellValue = '🖼️ Bild';
+                    } else {
+                        console.log(`[ExcelJS] Error-Wert in Zelle ${styleKey}: ${cellValue.error}, Formel: ${formula || 'keine'}`);
+                        cellValue = String(cellValue.error);
+                    }
+                }
+                // String-Error-Werte: #VALUE! ohne Formel = möglicherweise Bild oder nicht-auswertbar
+                else if (typeof cellValue === 'string' && cellValue === '#VALUE!') {
+                    const formula = cellFormulas[styleKey] || '';
+                    if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(formula)) {
+                        cellValue = '🖼️ Bild';
+                    } else {
+                        console.log(`[ExcelJS] #VALUE! String in Zelle ${styleKey}, Formel: ${formula || 'keine'}, cell.value Typ: ${typeof cell.value}, Keys: ${cell.value && typeof cell.value === 'object' ? Object.keys(cell.value).join(',') : 'N/A'}`);
+                    }
                 }
                 
                 // Hyperlink extrahieren
