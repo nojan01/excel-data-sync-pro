@@ -3280,8 +3280,8 @@
                 </div>
                 
                 <!-- Hinweis -->
-                <div style="font-size: 12px; color: var(--text-muted); background: var(--bg-light); padding: 10px; border-radius: 6px;">
-                    <strong>Hinweis:</strong> Änderungen werden sofort in der Datei gespeichert.
+                <div id="sheetManageHint" style="font-size: 12px; color: var(--text-muted); background: var(--bg-light); padding: 10px; border-radius: 6px;">
+                    <strong>Hinweis:</strong> Änderungen werden direkt in Excel ausgeführt.
                 </div>
             </div>
             <div class="modal-footer" style="padding: 15px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end;">
@@ -9223,6 +9223,17 @@
             selectedSheetForManagement = null;
             updateSheetManageList();
             updateSheetManageButtons();
+            
+            // Hinweis je nach Modus anpassen
+            const hint = document.getElementById('sheetManageHint');
+            if (hint) {
+                if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                    hint.innerHTML = '<strong>Hinweis:</strong> Änderungen werden direkt in Excel ausgeführt.';
+                } else {
+                    hint.innerHTML = '<strong>Hinweis:</strong> Änderungen werden sofort in der Datei gespeichert.';
+                }
+            }
+            
             document.getElementById('sheetManageModal').classList.remove('hidden');
         }
         
