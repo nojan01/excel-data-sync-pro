@@ -15547,12 +15547,39 @@
                     return;
                 }
                 
-                // 2. Sheet-Daten neu laden (ExcelJS liest direkt von Platte)
-                const sheetName = explorerState.selectedSheet;
-                explorerState.sheetDataCache.delete(sheetName);
+                // 2. Caches leeren
+                explorerState.sheetDataCache.clear();
                 explorerState.editedCells.clear();
                 
-                await loadExplorerSheet(sheetName);
+                // 3. Daten aktualisieren
+                if (undoResult.sheetData) {
+                    // Daten direkt aus Python-Session verwenden (kein File-Read nötig)
+                    const headers = undoResult.sheetData.headers || [];
+                    const rawData = undoResult.sheetData.data || [];
+                    
+                    explorerState.headers = headers.map(h => h != null ? String(h) : '');
+                    explorerState.data = rawData.map(row => {
+                        if (!Array.isArray(row)) return [row];
+                        return row;
+                    });
+                    explorerState.originalData = explorerState.data.map(row => [...row]);
+                    explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
+                    explorerState.columnOrder = [];
+                    explorerState.filteredData = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
+                    explorerState.currentPage = 1;
+                    explorerState.sortColumn = null;
+                    explorerState.sortDirection = null;
+                    explorerState.rowMapping = explorerState.data.map((_, i) => i);
+                    
+                    renderExplorerTable();
+                    updateColumnToggles();
+                    updateHiddenRowsIndicator();
+                    updateHiddenColumnsIndicator();
+                } else {
+                    // Fallback: Sheet-Daten komplett neu laden (ExcelJS von Platte)
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                    await loadExplorerSheet(explorerState.selectedSheet);
+                }
                 
                 const label = undoResult.undone || 'Letzte Aktion';
                 showFloatingStatus(`↩️ Rückgängig: ${label}`);

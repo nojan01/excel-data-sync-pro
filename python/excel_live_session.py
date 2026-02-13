@@ -819,8 +819,32 @@ class ExcelLiveSession:
                 except Exception as save_err:
                     self._log(f"Undo: Speichern fehlgeschlagen: {save_err}")
                 
+                # Daten direkt aus xlwings zurückgeben, damit Frontend nicht
+                # nochmal von Platte lesen muss (File-Lock-Problem auf Windows)
+                undo_data = None
+                try:
+                    used = self.worksheet.used_range
+                    if used:
+                        all_vals = used.value
+                        if all_vals:
+                            if isinstance(all_vals[0], list):
+                                undo_data = {
+                                    'headers': all_vals[0],
+                                    'data': all_vals[1:] if len(all_vals) > 1 else []
+                                }
+                            else:
+                                undo_data = {
+                                    'headers': [all_vals[0]] if not isinstance(all_vals, list) else all_vals,
+                                    'data': []
+                                }
+                except Exception as data_err:
+                    self._log(f"Undo: Daten lesen fehlgeschlagen: {data_err}")
+                
                 self._log(f"Undo erfolgreich: {label}")
-                return {'success': True, 'undone': label}
+                result = {'success': True, 'undone': label}
+                if undo_data:
+                    result['sheetData'] = undo_data
+                return result
                 
             finally:
                 self._undo_in_progress = False
