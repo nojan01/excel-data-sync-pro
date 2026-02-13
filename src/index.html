@@ -8444,7 +8444,8 @@
             try {
                 const filePath = await window.electronAPI.openFileDialog({
                     title: 'Quelldatei für Spalten-Join auswählen',
-                    filters: [{ name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] }]
+                    filters: [{ name: 'Excel-Dateien', extensions: ['xlsx', 'xls'] }],
+                    defaultPath: getWorkingDirectoryPath()
                 });
                 
                 if (!filePath) {
