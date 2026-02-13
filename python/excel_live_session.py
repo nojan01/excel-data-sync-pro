@@ -83,6 +83,7 @@ class ExcelLiveSession:
         self.sheet_name: Optional[str] = None
         self.file_password: Optional[str] = None  # Passwort für geschützte Dateien
         self._is_running = True
+        self._active_filter_fields: List[int] = []  # Gespeicherte Filter-Felder (1-basiert)
         
         # Undo-Stack
         self.undo_stack: List[Dict] = []
@@ -1897,6 +1898,7 @@ end tell'''
                                 pass
                         
                         # Filter für jede Spalte setzen
+                        self._active_filter_fields = []  # Merken für Clear
                         for f in filters:
                             col_idx = f.get('colIndex', 0) + 1  # 1-basiert
                             criteria = f.get('criteria', '')
@@ -1914,6 +1916,7 @@ end tell'''
                             try:
                                 # AutoFilter mit Kriterien setzen
                                 used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria)
+                                self._active_filter_fields.append(col_idx)
                             except Exception as e:
                                 self._log(f"Fehler bei Filter Spalte {col_idx}: {e}")
                     else:
@@ -2029,50 +2032,39 @@ end tell'''
         """Windows: AutoFilter-Kriterien entfernen und alle Zeilen einblenden.
         
         Exakter Umkehrweg von set_autofilter:
-        - set benutzt used_range.api.AutoFilter(Field=x, Criteria1=y) zum Setzen
-        - clear benutzt used_range.api.AutoFilter() zum Toggle-Off (gleiches Objekt!)
+        SET:   used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria)
+        CLEAR: used_range.api.AutoFilter(Field=col_idx)  ← gleiche Methode, ohne Criteria
         """
         try:
             used_range = self.worksheet.used_range
             if not used_range:
-                return {'success': True, 'filterCount': 0, 'info': 'no used_range'}
+                return {'success': True, 'filterCount': 0}
             
-            self._log("Windows: clear_autofilter Start (exakter Umkehrweg)")
+            self._log(f"Windows: clear_autofilter Start, gespeicherte Felder: {self._active_filter_fields}")
             
-            # Schritt 1: AutoFilter über DASSELBE Objekt entfernen wie beim Setzen
-            # set_autofilter benutzt: used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria)
-            # Also clear über:        used_range.api.AutoFilter()  (Toggle OFF)
-            try:
-                # Prüfen ob AutoFilter aktiv ist
-                has_autofilter = False
+            # Schritt 1: Jedes Filter-Feld einzeln zurücksetzen (exakter Umkehrweg)
+            # SET:   used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria)
+            # CLEAR: used_range.api.AutoFilter(Field=col_idx)  ← ohne Criteria1!
+            cleared_fields = []
+            for col_idx in self._active_filter_fields:
                 try:
-                    has_autofilter = bool(self.worksheet.api.AutoFilterMode)
-                except:
-                    pass
-                
-                self._log(f"Windows: AutoFilterMode = {has_autofilter}")
-                
-                if has_autofilter:
-                    # Exakter Umkehrweg: used_range.api.AutoFilter() togglet AutoFilter AUS
-                    used_range.api.AutoFilter()
-                    self._log("Windows: used_range.api.AutoFilter() Toggle OFF — OK")
-            except Exception as e:
-                self._log(f"Windows: AutoFilter Toggle Fehler: {e}")
-                # Fallback: über Worksheet-API
-                try:
-                    self.worksheet.api.AutoFilterMode = False
-                    self._log("Windows: Fallback ws.AutoFilterMode=False — OK")
-                except Exception as e2:
-                    self._log(f"Windows: Fallback Fehler: {e2}")
+                    used_range.api.AutoFilter(Field=col_idx)
+                    cleared_fields.append(col_idx)
+                    self._log(f"Windows: Filter Feld {col_idx} zurückgesetzt")
+                except Exception as e:
+                    self._log(f"Windows: Filter Feld {col_idx} Fehler: {e}")
             
-            # Schritt 2: Alle versteckten Zeilen einblenden (falls Zeilen manuell versteckt)
+            self._active_filter_fields = []
+            self._log(f"Windows: {len(cleared_fields)} Filter-Felder zurückgesetzt")
+            
+            # Schritt 2: Sicherheitshalber ShowAllData aufrufen
             try:
-                last_row = used_range.last_cell.row
-                if last_row > 1:
-                    self.worksheet.api.Rows(f"2:{last_row}").Hidden = False
-                    self._log(f"Windows: Rows 2:{last_row} eingeblendet")
+                if self.worksheet.api.AutoFilterMode:
+                    if self.worksheet.api.AutoFilter.FilterMode:
+                        self.worksheet.api.ShowAllData()
+                        self._log("Windows: ShowAllData() aufgerufen")
             except Exception as e:
-                self._log(f"Windows: Rows-Unhide Fehler: {e}")
+                self._log(f"Windows: ShowAllData Fehler: {e}")
             
             # Schritt 3: Screen-Refresh
             try:
