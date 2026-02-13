@@ -15542,31 +15542,34 @@
             try {
                 // 1. Undo an Python-Session senden (pop Undo-Stack + reverse)
                 const undoResult = await window.electronAPI.liveSessionUndo();
-                console.log('[Undo] Result:', JSON.stringify({
-                    success: undoResult?.success,
-                    undone: undoResult?.undone,
-                    undoCount: undoResult?.undoCount,
-                    hasSheetData: !!undoResult?.sheetData,
-                    headers: undoResult?.sheetData?.headers?.length,
-                    rows: undoResult?.sheetData?.data?.length,
-                    error: undoResult?.error
-                }));
+                console.log('[Undo] Step 1 - Undo Result:', JSON.stringify(undoResult));
                 
-                if (!undoResult.success) {
-                    showFloatingStatus(`❌ Undo: ${undoResult.error}`, 'error');
+                if (!undoResult || !undoResult.success) {
+                    showFloatingStatus(`❌ Undo: ${undoResult?.error || 'Unbekannter Fehler'}`, 'error');
                     return;
                 }
                 
-                // 2. Caches leeren
+                // 2. Daten separat von der Live-Session lesen
+                //    (getData ist ein separater Befehl — robuster als inline-Daten)
+                console.log('[Undo] Step 2 - getData aufrufen...');
+                const dataResult = await window.electronAPI.liveSessionGetData();
+                console.log('[Undo] Step 2 - getData Result:', JSON.stringify({
+                    success: dataResult?.success,
+                    headers: dataResult?.headers?.length,
+                    rows: dataResult?.data?.length,
+                    error: dataResult?.error
+                }));
+                
+                // 3. Caches leeren
                 explorerState.sheetDataCache.clear();
                 explorerState.editedCells.clear();
                 
-                // 3. Daten aktualisieren
-                if (undoResult.sheetData && undoResult.sheetData.headers && undoResult.sheetData.headers.length > 0) {
-                    const headers = undoResult.sheetData.headers;
-                    const rawData = undoResult.sheetData.data || [];
+                // 4. Daten aktualisieren
+                if (dataResult && dataResult.success && dataResult.headers && dataResult.headers.length > 0) {
+                    const headers = dataResult.headers;
+                    const rawData = dataResult.data || [];
                     
-                    console.log('[Undo] Direkt-Update:', headers.length, 'Spalten,', rawData.length, 'Zeilen');
+                    console.log('[Undo] Step 3 - Update:', headers.length, 'Spalten,', rawData.length, 'Zeilen');
                     
                     explorerState.headers = headers.map(h => h != null ? String(h) : '');
                     explorerState.data = rawData.map(row => {
@@ -15592,10 +15595,8 @@
                     updateHiddenColumnsIndicator();
                     updateAutoFilterIndicator();
                 } else {
-                    // Fallback: Sheet-Daten komplett neu laden (ExcelJS von Platte)
-                    console.log('[Undo] Kein sheetData — Fallback auf loadExplorerSheet');
-                    await new Promise(resolve => setTimeout(resolve, 500));
-                    await loadExplorerSheet(explorerState.selectedSheet);
+                    console.warn('[Undo] getData fehlgeschlagen:', dataResult?.error);
+                    showFloatingStatus('⚠️ Undo ausgeführt, aber Daten konnten nicht gelesen werden', 'warning');
                 }
                 
                 const label = undoResult.undone || 'Letzte Aktion';

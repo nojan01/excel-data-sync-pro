@@ -824,36 +824,13 @@ class ExcelLiveSession:
                 # Screen refresh
                 self._force_screen_refresh()
                 
-                # Daten direkt aus Excel-Speicher lesen und zurückgeben.
-                # KEIN save() — das würde die COM-Referenz stale machen.
-                # Gespeichert wird nur wenn der User explizit speichert.
-                undo_data = None
-                try:
-                    used = self.worksheet.used_range
-                    if used:
-                        all_vals = used.value
-                        if all_vals:
-                            if isinstance(all_vals[0], list):
-                                undo_data = {
-                                    'headers': [str(h) if h is not None else '' for h in all_vals[0]],
-                                    'data': all_vals[1:] if len(all_vals) > 1 else []
-                                }
-                            elif isinstance(all_vals, list):
-                                undo_data = {
-                                    'headers': [str(h) if h is not None else '' for h in all_vals],
-                                    'data': []
-                                }
-                            else:
-                                undo_data = {'headers': [str(all_vals)], 'data': []}
-                    self._log(f"Undo: {len(undo_data['headers']) if undo_data else 0} Spalten, {len(undo_data['data']) if undo_data else 0} Zeilen")
-                except Exception as data_err:
-                    self._log(f"Undo: Daten lesen fehlgeschlagen: {data_err}")
+                # Daten werden NICHT hier gelesen — das Frontend ruft
+                # anschließend getData() als separaten Befehl auf.
+                # Das trennt Undo-Operation von Datenlesen und vermeidet
+                # Probleme mit COM-Objekten / JSON-Serialisierung.
                 
                 self._log(f"Undo erfolgreich: {label}")
-                result = {'success': True, 'undone': label, 'undoCount': len(self.undo_stack)}
-                if undo_data:
-                    result['sheetData'] = undo_data
-                return result
+                return {'success': True, 'undone': label, 'undoCount': len(self.undo_stack)}
                 
             finally:
                 self._undo_in_progress = False

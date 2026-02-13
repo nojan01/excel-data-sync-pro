@@ -108,6 +108,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     liveSessionFindReplace: (searchText, replaceText, matchCase, wholeWord) => 
         ipcRenderer.invoke('liveSession:findReplace', searchText, replaceText, matchCase, wholeWord),
     
+    // Daten lesen
+    liveSessionGetData: () => ipcRenderer.invoke('liveSession:getData'),
+    
     // Undo
     liveSessionUndo: () => ipcRenderer.invoke('liveSession:undo'),
     
