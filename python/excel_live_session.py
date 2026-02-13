@@ -758,14 +758,14 @@ class ExcelLiveSession:
                 if action == 'restore_cells':
                     # Zellwerte zurückschreiben
                     cells = entry['cells']
-                    if len(cells) > 5:
-                        try:
-                            self.app.screen_updating = False
-                        except Exception:
-                            pass
-                    for cell in cells:
-                        self.worksheet.range((cell['row'], cell['col'])).value = cell['value']
-                    if len(cells) > 5:
+                    try:
+                        self.app.screen_updating = False
+                    except Exception:
+                        pass
+                    try:
+                        for cell in cells:
+                            self.worksheet.range((cell['row'], cell['col'])).value = cell['value']
+                    finally:
                         try:
                             self.app.screen_updating = True
                         except Exception:
@@ -794,9 +794,18 @@ class ExcelLiveSession:
                     col_letter = self._get_column_letter(excel_col)
                     self.worksheet.range(f'{col_letter}:{col_letter}').insert(shift='right')
                     if values:
-                        for i, val in enumerate(values):
-                            if val is not None:
-                                self.worksheet.range((i + 1, excel_col)).value = val
+                        # Batch-Write: gesamte Spalte in EINEM COM-Aufruf
+                        # (statt 2000+ Einzel-Aufrufe die zum Timeout führen)
+                        try:
+                            self.app.screen_updating = False
+                        except Exception:
+                            pass
+                        col_values = [[v] for v in values]  # xlwings braucht [[v1],[v2],...] für Spalte
+                        self.worksheet.range((1, excel_col), (len(values), excel_col)).value = col_values
+                        try:
+                            self.app.screen_updating = True
+                        except Exception:
+                            pass
                 
                 elif action == 'delete_columns':
                     # Eingefügte Spalten löschen

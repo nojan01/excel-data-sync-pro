@@ -523,7 +523,7 @@ class ExcelLiveSession {
      */
     async undo() {
         console.log('[LiveSession] undo');
-        return this._sendCommand({ action: 'undo' });
+        return this._sendCommand({ action: 'undo' }, 120000);
     }
 
     async deleteColumn(colIndex) {
