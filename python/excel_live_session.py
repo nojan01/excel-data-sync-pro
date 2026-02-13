@@ -87,7 +87,7 @@ class ExcelLiveSession:
         # Undo-Stack
         self.undo_stack: List[Dict] = []
         self._undo_in_progress = False
-        self.MAX_UNDO = 30
+        self.MAX_UNDO = 10
         
         # Recovery-System
         self.backup_path: Optional[str] = None
@@ -674,333 +674,169 @@ class ExcelLiveSession:
         }
     
     # =========================================================================
-    # UNDO-STACK
+    # UNDO-STACK  (Snapshot-basiert: SaveCopyAs vor jeder Operation)
     # =========================================================================
     
-    def _push_undo(self, entry: Dict):
-        """Pushes an undo entry onto the stack (unless an undo is in progress)."""
+    def _push_undo_snapshot(self, label: str):
+        """Speichert eine komplette Kopie des Workbooks als Undo-Snapshot.
+        
+        Verwendet Workbook.SaveCopyAs (Windows) bzw. shutil.copy2 (macOS)
+        um den KOMPLETTEN Zustand zu sichern — inkl. Formatierung, Formeln,
+        bedingte Formatierung, Datenvalidierung, etc.
+        
+        Args:
+            label: Beschreibung der Operation (wird beim Undo angezeigt)
+        """
         if self._undo_in_progress:
             return
-        self.undo_stack.append(entry)
-        if len(self.undo_stack) > self.MAX_UNDO:
-            self.undo_stack.pop(0)
-    
-    def _snapshot_row(self, excel_row: int) -> dict:
-        """Reads all values AND formatting in a row (1-based row).
-        Returns {'values': [...], 'formats': [{'color': ..., 'number_format': ..., 'bold': ..., 'italic': ...}, ...]}"""
+        if not self.workbook or not self.file_path:
+            return
+        
         try:
-            used = self.worksheet.used_range
-            if used is None:
-                return {'values': [], 'formats': []}
-            last_col = used.column + used.shape[1] - 1
-            if last_col < 1:
-                return {'values': [], 'formats': []}
-            row_range = self.worksheet.range((excel_row, 1), (excel_row, last_col))
-            values = row_range.value
-            if values is None:
-                values = []
-            elif not isinstance(values, list):
-                values = [values]
+            import tempfile
+            # Gleiche Dateiendung wie Original verwenden
+            _, ext = os.path.splitext(self.file_path)
+            if not ext:
+                ext = '.xlsx'
             
-            # Formatierung lesen
-            formats = []
-            try:
-                for c in range(1, last_col + 1):
-                    cell = self.worksheet.range((excel_row, c))
-                    fmt = {}
-                    try:
-                        fmt['color'] = cell.color  # RGB tuple or None
-                    except Exception:
-                        fmt['color'] = None
-                    try:
-                        fmt['number_format'] = cell.number_format
-                    except Exception:
-                        fmt['number_format'] = None
-                    try:
-                        fmt['bold'] = cell.font.bold
-                    except Exception:
-                        fmt['bold'] = None
-                    try:
-                        fmt['italic'] = cell.font.italic
-                    except Exception:
-                        fmt['italic'] = None
-                    try:
-                        fmt['font_color'] = cell.font.color
-                    except Exception:
-                        fmt['font_color'] = None
-                    try:
-                        fmt['font_size'] = cell.font.size
-                    except Exception:
-                        fmt['font_size'] = None
-                    formats.append(fmt)
-            except Exception as fmt_err:
-                self._log(f"_snapshot_row Formatierung Fehler: {fmt_err}")
-                formats = []
+            # Eindeutiger Temp-Dateiname
+            temp_fd, temp_path = tempfile.mkstemp(
+                suffix=ext,
+                prefix=f'_undo_{os.getpid()}_'
+            )
+            os.close(temp_fd)  # Dateihandle schließen, SaveCopyAs braucht nur den Pfad
             
-            return {'values': values, 'formats': formats}
+            if platform.system() == 'Windows':
+                # SaveCopyAs: Speichert eine Kopie OHNE das offene Workbook zu ändern
+                self.workbook.api.SaveCopyAs(temp_path)
+            else:
+                # macOS: Kein SaveCopyAs verfügbar.
+                # Workbook speichern + Datei kopieren
+                self.workbook.save()
+                shutil.copy2(self.file_path, temp_path)
+            
+            # Auf den Stack pushen
+            self.undo_stack.append({
+                'type': 'snapshot',
+                'label': label,
+                'temp_path': temp_path,
+                'sheet_name': self.sheet_name
+            })
+            
+            # Alte Snapshots aufräumen wenn Stack zu groß
+            while len(self.undo_stack) > self.MAX_UNDO:
+                old = self.undo_stack.pop(0)
+                self._cleanup_undo_entry(old)
+            
+            self._log(f"Undo-Snapshot: {label} → {os.path.basename(temp_path)}")
+            
         except Exception as e:
-            self._log(f"_snapshot_row Fehler: {e}")
-            return {'values': [], 'formats': []}
+            self._log(f"Undo-Snapshot Fehler (Operation wird trotzdem ausgeführt): {e}")
     
-    def _snapshot_column(self, excel_col: int) -> dict:
-        """Reads all values AND formatting in a column (1-based col, incl. header).
-        Returns {'values': [...], 'formats': [...]}
-        Note: Formatting is only read for columns with <= 200 rows to avoid timeouts."""
+    def _cleanup_undo_entry(self, entry: Dict):
+        """Löscht die Temp-Datei eines Undo-Eintrags."""
         try:
-            used = self.worksheet.used_range
-            if used is None:
-                return {'values': [], 'formats': []}
-            last_row = used.row + used.shape[0] - 1
-            if last_row < 1:
-                return {'values': [], 'formats': []}
-            col_range = self.worksheet.range((1, excel_col), (last_row, excel_col))
-            values = col_range.value
-            if values is None:
-                values = []
-            elif not isinstance(values, list):
-                values = [values]
-            else:
-                # xlwings returns [[v1],[v2],...] for a column range — flatten
-                values = [v[0] if isinstance(v, list) else v for v in values]
-            
-            # Formatierung nur lesen wenn Spalte nicht zu groß ist
-            # (>200 Zeilen = zu viele COM-Aufrufe, würde Timeout verursachen)
-            formats = []
-            if last_row <= 200:
-                try:
-                    for r in range(1, last_row + 1):
-                        cell = self.worksheet.range((r, excel_col))
-                        fmt = {}
-                        try:
-                            fmt['color'] = cell.color
-                        except Exception:
-                            fmt['color'] = None
-                        try:
-                            fmt['number_format'] = cell.number_format
-                        except Exception:
-                            fmt['number_format'] = None
-                        try:
-                            fmt['bold'] = cell.font.bold
-                        except Exception:
-                            fmt['bold'] = None
-                        try:
-                            fmt['italic'] = cell.font.italic
-                        except Exception:
-                            fmt['italic'] = None
-                        try:
-                            fmt['font_color'] = cell.font.color
-                        except Exception:
-                            fmt['font_color'] = None
-                        try:
-                            fmt['font_size'] = cell.font.size
-                        except Exception:
-                            fmt['font_size'] = None
-                        formats.append(fmt)
-                except Exception as fmt_err:
-                    self._log(f"_snapshot_column Formatierung Fehler: {fmt_err}")
-                    formats = []
-            else:
-                self._log(f"_snapshot_column: {last_row} Zeilen — Formatierung übersprungen (zu viele COM-Aufrufe)")
-            
-            return {'values': values, 'formats': formats}
-        except Exception as e:
-            self._log(f"_snapshot_column Fehler: {e}")
-            return {'values': [], 'formats': []}
+            temp_path = entry.get('temp_path')
+            if temp_path and os.path.exists(temp_path):
+                os.unlink(temp_path)
+        except Exception:
+            pass
     
-    def _snapshot_cells(self, cell_coords: list) -> list:
-        """Reads current values for a list of (excel_row, excel_col) tuples.
-        Returns list of {'row': r, 'col': c, 'value': v} dicts."""
-        result = []
-        for (r, c) in cell_coords:
-            try:
-                val = self.worksheet.range((r, c)).value
-                result.append({'row': r, 'col': c, 'value': val})
-            except Exception:
-                result.append({'row': r, 'col': c, 'value': None})
-        return result
+    def _cleanup_all_undo_files(self):
+        """Löscht alle Undo-Temp-Dateien (beim Beenden der Session)."""
+        for entry in self.undo_stack:
+            self._cleanup_undo_entry(entry)
+        self.undo_stack.clear()
+        self._log("Alle Undo-Temp-Dateien aufgeräumt")
     
     def undo(self) -> Dict[str, Any]:
-        """Macht die letzte Aktion rückgängig (Single-Step Undo)."""
+        """Macht die letzte Aktion rückgängig.
+        
+        Stellt den kompletten Workbook-Zustand aus dem Snapshot wieder her:
+        Schließt das Workbook, kopiert den Snapshot zurück, öffnet es erneut.
+        100% Fidelity: Formatierung, Formeln, bedingte Formatierung — alles.
+        """
         try:
-            if not self.worksheet:
+            if not self.file_path:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
             
             if not self.undo_stack:
                 return {'success': False, 'error': 'Nichts zum Rückgängig machen'}
             
             entry = self.undo_stack.pop()
-            action = entry['type']
-            label = entry.get('label', action)
-            self._undo_in_progress = True
+            label = entry.get('label', 'Unbekannt')
+            temp_path = entry.get('temp_path')
+            sheet_name = entry.get('sheet_name', self.sheet_name)
             
-            self._log(f"Undo: {label} (type={action})")
+            if not temp_path or not os.path.exists(temp_path):
+                return {'success': False, 'error': 'Undo-Snapshot nicht gefunden'}
+            
+            self._undo_in_progress = True
+            original_path = self.file_path
+            password = self.file_password
+            
+            self._log(f"Undo: {label} — Restore von {os.path.basename(temp_path)}")
             
             try:
-                if action == 'restore_cells':
-                    # Zellwerte zurückschreiben
-                    cells = entry['cells']
-                    try:
-                        self.app.screen_updating = False
-                    except Exception:
-                        pass
-                    try:
-                        for cell in cells:
-                            self.worksheet.range((cell['row'], cell['col'])).value = cell['value']
-                    finally:
+                # 1. Workbook schließen (ohne Speichern)
+                try:
+                    self.app.display_alerts = False
+                    if platform.system() == 'Windows':
+                        self.workbook.api.Saved = True  # Verhindert "Speichern?"-Dialog
+                        self.workbook.api.Close(SaveChanges=False)
+                    else:
                         try:
-                            self.app.screen_updating = True
+                            self.workbook.api.saved.set(True)
                         except Exception:
                             pass
+                        self.workbook.close()
+                except Exception as close_err:
+                    self._log(f"Undo: Schließen-Fehler (wird ignoriert): {close_err}")
                 
-                elif action == 'insert_row_with_data':
-                    # Gelöschte Zeile wiederherstellen (Werte + Formatierung)
-                    excel_row = entry['excel_row']
-                    values = entry['values']
-                    formats = entry.get('formats', [])
-                    self.worksheet.range(f'{excel_row}:{excel_row}').insert(shift='down')
-                    if values:
-                        last_col = len(values)
-                        self.worksheet.range((excel_row, 1), (excel_row, last_col)).value = values
-                    # Formatierung wiederherstellen
-                    if formats:
-                        try:
-                            self.app.screen_updating = False
-                        except Exception:
-                            pass
-                        try:
-                            for c, fmt in enumerate(formats, start=1):
-                                cell = self.worksheet.range((excel_row, c))
-                                try:
-                                    if fmt.get('color') is not None:
-                                        cell.color = tuple(fmt['color']) if isinstance(fmt['color'], list) else fmt['color']
-                                except Exception:
-                                    pass
-                                try:
-                                    if fmt.get('number_format') is not None:
-                                        cell.number_format = fmt['number_format']
-                                except Exception:
-                                    pass
-                                try:
-                                    if fmt.get('bold') is not None:
-                                        cell.font.bold = fmt['bold']
-                                except Exception:
-                                    pass
-                                try:
-                                    if fmt.get('italic') is not None:
-                                        cell.font.italic = fmt['italic']
-                                except Exception:
-                                    pass
-                                try:
-                                    if fmt.get('font_color') is not None:
-                                        cell.font.color = tuple(fmt['font_color']) if isinstance(fmt['font_color'], list) else fmt['font_color']
-                                except Exception:
-                                    pass
-                                try:
-                                    if fmt.get('font_size') is not None:
-                                        cell.font.size = fmt['font_size']
-                                except Exception:
-                                    pass
-                        finally:
-                            try:
-                                self.app.screen_updating = True
-                            except Exception:
-                                pass
+                self.workbook = None
+                self.worksheet = None
                 
-                elif action == 'delete_rows':
-                    # Eingefügte Zeilen löschen
-                    start = entry['excel_row']
-                    count = entry['count']
-                    end = start + count - 1
-                    self.worksheet.range(f'{start}:{end}').delete()
+                # 2. Snapshot-Datei → Original-Pfad kopieren
+                self._log(f"Undo: Kopiere Snapshot → {os.path.basename(original_path)}")
+                shutil.copy2(temp_path, original_path)
                 
-                elif action == 'insert_col_with_data':
-                    # Gelöschte Spalte wiederherstellen (Werte + Formatierung)
-                    excel_col = entry['excel_col']
-                    values = entry['values']
-                    formats = entry.get('formats', [])
-                    col_letter = self._get_column_letter(excel_col)
-                    self.worksheet.range(f'{col_letter}:{col_letter}').insert(shift='right')
-                    try:
-                        self.app.screen_updating = False
-                    except Exception:
-                        pass
-                    try:
-                        if values:
-                            # Batch-Write: gesamte Spalte in EINEM COM-Aufruf
-                            col_values = [[v] for v in values]
-                            self.worksheet.range((1, excel_col), (len(values), excel_col)).value = col_values
-                        # Formatierung wiederherstellen
-                        if formats:
-                            for r, fmt in enumerate(formats, start=1):
-                                cell = self.worksheet.range((r, excel_col))
-                                try:
-                                    if fmt.get('color') is not None:
-                                        cell.color = tuple(fmt['color']) if isinstance(fmt['color'], list) else fmt['color']
-                                except Exception:
-                                    pass
-                                try:
-                                    if fmt.get('number_format') is not None:
-                                        cell.number_format = fmt['number_format']
-                                except Exception:
-                                    pass
-                                try:
-                                    if fmt.get('bold') is not None:
-                                        cell.font.bold = fmt['bold']
-                                except Exception:
-                                    pass
-                                try:
-                                    if fmt.get('italic') is not None:
-                                        cell.font.italic = fmt['italic']
-                                except Exception:
-                                    pass
-                                try:
-                                    if fmt.get('font_color') is not None:
-                                        cell.font.color = tuple(fmt['font_color']) if isinstance(fmt['font_color'], list) else fmt['font_color']
-                                except Exception:
-                                    pass
-                                try:
-                                    if fmt.get('font_size') is not None:
-                                        cell.font.size = fmt['font_size']
-                                except Exception:
-                                    pass
-                    finally:
-                        try:
-                            self.app.screen_updating = True
-                        except Exception:
-                            pass
+                # 3. Workbook wieder öffnen
+                self._log("Undo: Workbook wieder öffnen...")
+                try:
+                    self.app.screen_updating = False
+                except Exception:
+                    pass
                 
-                elif action == 'delete_columns':
-                    # Eingefügte Spalten löschen
-                    excel_col = entry['excel_col']
-                    count = entry['count']
-                    for _ in range(count):
-                        col_letter = self._get_column_letter(excel_col)
-                        if platform.system() == 'Darwin':
-                            self.worksheet.range(f'{col_letter}:{col_letter}').api.entire_column.delete()
-                        else:
-                            self.worksheet.range(f'{col_letter}:{col_letter}').api.Delete()
-                
-                elif action == 'move_row':
-                    # Zeilenverschiebung umkehren
-                    self.move_row(entry['from_index'], entry['to_index'])
-                
-                elif action == 'move_column':
-                    # Spaltenverschiebung umkehren
-                    self.move_column(entry['from_index'], entry['to_index'])
-                
+                if password:
+                    self.workbook = self.app.books.open(original_path, update_links=False, password=password)
                 else:
-                    self._log(f"Unbekannter Undo-Typ: {action}")
-                    return {'success': False, 'error': f'Unbekannter Undo-Typ: {action}'}
+                    self.workbook = self.app.books.open(original_path, update_links=False)
                 
-                # Screen refresh
-                self._force_screen_refresh()
+                # 4. Sheet aktivieren
+                try:
+                    self.worksheet = self.workbook.sheets[sheet_name]
+                    self.sheet_name = sheet_name
+                except Exception:
+                    # Fallback: Erstes Sheet
+                    self.worksheet = self.workbook.sheets[0]
+                    self.sheet_name = self.worksheet.name
+                    self._log(f"Undo: Sheet '{sheet_name}' nicht gefunden, verwende '{self.sheet_name}'")
                 
-                # Daten werden NICHT hier gelesen — das Frontend ruft
-                # anschließend getData() als separaten Befehl auf.
-                # Das trennt Undo-Operation von Datenlesen und vermeidet
-                # Probleme mit COM-Objekten / JSON-Serialisierung.
+                self.worksheet.activate()
+                self.file_path = original_path
                 
-                self._log(f"Undo erfolgreich: {label}")
+                try:
+                    self.app.screen_updating = True
+                except Exception:
+                    pass
+                
+                # 5. Temp-Datei aufräumen
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
+                
+                self._log(f"Undo erfolgreich: {label} (noch {len(self.undo_stack)} Undo-Schritte)")
                 return {'success': True, 'undone': label, 'undoCount': len(self.undo_stack)}
                 
             finally:
@@ -1057,6 +893,9 @@ class ExcelLiveSession:
                     pass
                 self.app = None
             
+            # Undo-Temp-Dateien aufräumen
+            self._cleanup_all_undo_files()
+            
             self.worksheet = None
             self.file_path = None
             self.sheet_name = None
@@ -1079,15 +918,8 @@ class ExcelLiveSession:
             
             excel_row = row_index + 2  # +2 für Header (1-basiert)
             
-            # Undo-Snapshot: Zeileninhalt + Formatierung sichern
-            row_snapshot = self._snapshot_row(excel_row)
-            self._push_undo({
-                'type': 'insert_row_with_data',
-                'label': f'Zeile {row_index + 1} gelöscht',
-                'excel_row': excel_row,
-                'values': row_snapshot['values'],
-                'formats': row_snapshot['formats']
-            })
+            # Undo-Snapshot: Komplettes Workbook sichern
+            self._push_undo_snapshot(f'Zeile {row_index + 1} gelöscht')
             
             self._log(f"Lösche Zeile {excel_row}")
             self.worksheet.range(f'{excel_row}:{excel_row}').delete()
@@ -1111,13 +943,8 @@ class ExcelLiveSession:
             excel_row_start = row_index + 2
             excel_row_end = excel_row_start + count - 1
             
-            # Undo-Snapshot: eingefügte Zeilen merken
-            self._push_undo({
-                'type': 'delete_rows',
-                'label': f'{count} Zeile(n) eingefügt',
-                'excel_row': excel_row_start,
-                'count': count
-            })
+            # Undo-Snapshot: Komplettes Workbook sichern
+            self._push_undo_snapshot(f'{count} Zeile(n) eingefügt')
             
             self._log(f"Füge {count} Zeile(n) bei {excel_row_start} ein")
             self.worksheet.range(f'{excel_row_start}:{excel_row_end}').insert(shift='down')
@@ -1142,13 +969,8 @@ class ExcelLiveSession:
             excel_from = from_index + 2
             excel_to = to_index + 2
             
-            # Undo-Snapshot: umgekehrte Verschiebung merken
-            self._push_undo({
-                'type': 'move_row',
-                'label': f'Zeile verschoben ({from_index + 1} → {to_index + 1})',
-                'from_index': to_index,
-                'to_index': from_index
-            })
+            # Undo-Snapshot: Komplettes Workbook sichern
+            self._push_undo_snapshot(f'Zeile verschoben ({from_index + 1} → {to_index + 1})')
             
             self._log(f"Verschiebe Zeile {excel_from} nach {excel_to}")
             
@@ -1322,15 +1144,8 @@ class ExcelLiveSession:
             excel_col = col_index + 1
             col_letter = self._get_column_letter(excel_col)
             
-            # Undo-Snapshot: Spalteninhalt + Formatierung sichern
-            col_snapshot = self._snapshot_column(excel_col)
-            self._push_undo({
-                'type': 'insert_col_with_data',
-                'label': f'Spalte {col_letter} gelöscht',
-                'excel_col': excel_col,
-                'values': col_snapshot['values'],
-                'formats': col_snapshot['formats']
-            })
+            # Undo-Snapshot: Komplettes Workbook sichern
+            self._push_undo_snapshot(f'Spalte {col_letter} gelöscht')
             
             self._log(f"Lösche Spalte {col_letter} (Index {col_index})")
             
@@ -1364,13 +1179,8 @@ class ExcelLiveSession:
             
             excel_col = col_index + 1
             
-            # Undo-Snapshot: eingefügte Spalten merken
-            self._push_undo({
-                'type': 'delete_columns',
-                'label': f'{count} Spalte(n) eingefügt',
-                'excel_col': excel_col,
-                'count': count
-            })
+            # Undo-Snapshot: Komplettes Workbook sichern
+            self._push_undo_snapshot(f'{count} Spalte(n) eingefügt')
             
             for i in range(count):
                 insert_letter = self._get_column_letter(excel_col + i)
@@ -1406,13 +1216,8 @@ class ExcelLiveSession:
             
             source_letter = self._get_column_letter(excel_from)
             
-            # Undo-Snapshot: umgekehrte Verschiebung merken
-            self._push_undo({
-                'type': 'move_column',
-                'label': f'Spalte verschoben ({from_index + 1} → {to_index + 1})',
-                'from_index': to_index,
-                'to_index': from_index
-            })
+            # Undo-Snapshot: Komplettes Workbook sichern
+            self._push_undo_snapshot(f'Spalte verschoben ({from_index + 1} → {to_index + 1})')
             
             self._log(f"Verschiebe Spalte {source_letter} (idx {from_index}) -> idx {to_index}")
             
@@ -1493,15 +1298,11 @@ class ExcelLiveSession:
             excel_row = row_index + 2
             excel_col = col_index + 1
             
-            # Alten Wert für Journal + Undo holen
+            # Alten Wert für Journal holen
             old_value = self.worksheet.range((excel_row, excel_col)).value
             
-            # Undo-Snapshot
-            self._push_undo({
-                'type': 'restore_cells',
-                'label': 'Zelle bearbeitet',
-                'cells': [{'row': excel_row, 'col': excel_col, 'value': old_value}]
-            })
+            # Undo-Snapshot: Komplettes Workbook sichern
+            self._push_undo_snapshot('Zelle bearbeitet')
             
             self.worksheet.range((excel_row, excel_col)).value = value
             
@@ -1537,25 +1338,12 @@ class ExcelLiveSession:
             excel_col = col_index + 1
             excel_start_row = start_row + 2  # +2 weil Header in Zeile 1
             
-            # Undo-Snapshot: alte Werte der Spalte sichern
             end_row = excel_start_row + len(values) - 1
             col_letter = self._get_column_letter(excel_col)
             range_addr = f'{col_letter}{excel_start_row}:{col_letter}{end_row}'
-            old_vals = self.worksheet.range(range_addr).value
-            if old_vals is None:
-                old_vals_flat = [None] * len(values)
-            elif not isinstance(old_vals, list):
-                old_vals_flat = [old_vals]
-            else:
-                old_vals_flat = [v[0] if isinstance(v, list) else v for v in old_vals]
-            undo_cells = []
-            for i, ov in enumerate(old_vals_flat):
-                undo_cells.append({'row': excel_start_row + i, 'col': excel_col, 'value': ov})
-            self._push_undo({
-                'type': 'restore_cells',
-                'label': f'Spaltenwerte geändert (Spalte {col_letter})',
-                'cells': undo_cells
-            })
+            
+            # Undo-Snapshot: Komplettes Workbook sichern
+            self._push_undo_snapshot(f'Spaltenwerte geändert (Spalte {col_letter})')
             
             # Werte als vertikale Liste formatieren (jeder Wert in eigener Liste)
             vertical_values = [[v] for v in values]
@@ -1586,25 +1374,12 @@ class ExcelLiveSession:
             excel_row = row_index + 2  # +2 weil Header in Zeile 1
             num_cols = len(values)
             
-            # Undo-Snapshot: alte Zeilenwerte sichern
             start_col_letter = self._get_column_letter(1)
             end_col_letter = self._get_column_letter(num_cols)
             range_addr = f'{start_col_letter}{excel_row}:{end_col_letter}{excel_row}'
-            old_vals = self.worksheet.range(range_addr).value
-            if old_vals is None:
-                old_vals_flat = [None] * num_cols
-            elif not isinstance(old_vals, list):
-                old_vals_flat = [old_vals]
-            else:
-                old_vals_flat = old_vals
-            undo_cells = []
-            for i, ov in enumerate(old_vals_flat):
-                undo_cells.append({'row': excel_row, 'col': i + 1, 'value': ov})
-            self._push_undo({
-                'type': 'restore_cells',
-                'label': f'Zeilenwerte geändert (Zeile {row_index + 1})',
-                'cells': undo_cells
-            })
+            
+            # Undo-Snapshot: Komplettes Workbook sichern
+            self._push_undo_snapshot(f'Zeilenwerte geändert (Zeile {row_index + 1})')
             
             if platform.system() == 'Darwin':
                 # macOS: Direkt über AppleScript für zuverlässigen Display-Refresh
@@ -1697,26 +1472,8 @@ end tell'''
             
             self._log(f"set_cells_batch: Setze {len(cells)} Zellen")
             
-            # Undo-Snapshot: alte Werte aller betroffenen Zellen sichern
-            undo_cells = []
-            for cell in cells:
-                row_index = cell.get('row')
-                col_index = cell.get('col')
-                if row_index is None or col_index is None:
-                    continue
-                excel_row = row_index + 2
-                excel_col = col_index + 1
-                try:
-                    old_val = self.worksheet.range((excel_row, excel_col)).value
-                except Exception:
-                    old_val = None
-                undo_cells.append({'row': excel_row, 'col': excel_col, 'value': old_val})
-            if undo_cells:
-                self._push_undo({
-                    'type': 'restore_cells',
-                    'label': f'{len(undo_cells)} Zelle(n) geändert',
-                    'cells': undo_cells
-                })
+            # Undo-Snapshot: Komplettes Workbook sichern
+            self._push_undo_snapshot(f'{len(cells)} Zelle(n) geändert')
             
             updated_count = 0
             
@@ -1834,23 +1591,10 @@ end tell'''
                 dst_start_row = target_row + 2
                 dst_start_col = target_col + 1
                 
-                # Undo-Snapshot: alte Werte im Zielbereich sichern
+                # Undo-Snapshot: Komplettes Workbook sichern
                 dst_end_row = dst_start_row + (max_row - min_row)
                 dst_end_col = dst_start_col + (max_col - min_col)
-                undo_cells = []
-                try:
-                    for r in range(dst_start_row, dst_end_row + 1):
-                        for c in range(dst_start_col, dst_end_col + 1):
-                            ov = self.worksheet.range((r, c)).value
-                            undo_cells.append({'row': r, 'col': c, 'value': ov})
-                except Exception:
-                    pass
-                if undo_cells:
-                    self._push_undo({
-                        'type': 'restore_cells',
-                        'label': f'{len(undo_cells)} Zelle(n) überschrieben (Einfügen)',
-                        'cells': undo_cells
-                    })
+                self._push_undo_snapshot(f'Zellen eingefügt ({max_row - min_row + 1}×{max_col - min_col + 1})')
                 
                 row_offset = dst_start_row - src_start_row
                 col_offset = dst_start_col - src_start_col
