@@ -2035,8 +2035,9 @@ end tell'''
     def _format_datetime_values(self, all_data: list, used_range) -> list:
         """Ersetzt datetime-Werte durch den in Excel angezeigten Text.
         
-        Liest für jede Zelle mit datetime-Wert die .api.Text Eigenschaft,
-        damit die GUI exakt das gleiche Datumsformat wie Excel anzeigt.
+        Strategie: Pro Spalte wird nur EIN COM-Aufruf gemacht um das
+        number_format zu lesen. Dieses Format wird dann auf alle datetime-
+        Werte in der Spalte angewendet. Viel schneller als per-Zelle.
         """
         if not all_data:
             return all_data
@@ -2044,66 +2045,138 @@ end tell'''
         start_row = used_range.row
         start_col = used_range.column
         
-        for r_idx, row in enumerate(all_data):
-            if not isinstance(row, list):
-                # Einzelne Zeile (nur 1 Spalte)
-                if isinstance(row, (datetime, date, dtime)):
-                    try:
-                        cell = self.worksheet.range((start_row + r_idx, start_col))
-                        display_text = cell.api.Text if platform.system() == 'Windows' else str(cell.value)
-                        all_data[r_idx] = display_text
-                    except Exception:
-                        pass
-                continue
-            
-            for c_idx, val in enumerate(row):
+        # Sonderfall: Nur eine Zeile, keine verschachtelte Liste
+        if not isinstance(all_data[0], list):
+            for c_idx, val in enumerate(all_data):
                 if isinstance(val, (datetime, date, dtime)):
                     try:
-                        cell = self.worksheet.range((start_row + r_idx, start_col + c_idx))
+                        cell = self.worksheet.range((start_row, start_col + c_idx))
                         if platform.system() == 'Windows':
-                            display_text = cell.api.Text
+                            all_data[c_idx] = cell.api.Text
                         else:
-                            # macOS: .api.text nicht zuverlässig, Fallback auf number_format
-                            nf = cell.number_format
-                            if nf and nf != 'General':
-                                display_text = self._apply_excel_number_format(val, nf)
-                            else:
-                                display_text = str(val)
-                        row[c_idx] = display_text
+                            all_data[c_idx] = str(val)
                     except Exception:
-                        pass
+                        all_data[c_idx] = str(val)
+            return all_data
+        
+        # Schritt 1: Finde Spalten die datetime-Werte enthalten
+        num_cols = max(len(row) for row in all_data if isinstance(row, list))
+        date_col_formats = {}  # col_index -> number_format string
+        
+        for c_idx in range(num_cols):
+            # Prüfe ob irgendeine Zeile in dieser Spalte einen datetime-Wert hat
+            has_date = False
+            for row in all_data:
+                if isinstance(row, list) and c_idx < len(row):
+                    if isinstance(row[c_idx], (datetime, date, dtime)):
+                        has_date = True
+                        break
+            
+            if not has_date:
+                continue
+            
+            # Schritt 2: number_format für diese Spalte lesen (1 COM-Aufruf)
+            try:
+                if platform.system() == 'Windows':
+                    # Auf Windows: .api.Text direkt für die ERSTE Datumszelle lesen
+                    # und das Format für den Rest ableiten
+                    for r_idx, row in enumerate(all_data):
+                        if isinstance(row, list) and c_idx < len(row) and isinstance(row[c_idx], (datetime, date, dtime)):
+                            cell = self.worksheet.range((start_row + r_idx, start_col + c_idx))
+                            nf = cell.number_format
+                            if nf:
+                                date_col_formats[c_idx] = nf
+                            break
+                else:
+                    # macOS: number_format der ersten Datumszelle lesen
+                    for r_idx, row in enumerate(all_data):
+                        if isinstance(row, list) and c_idx < len(row) and isinstance(row[c_idx], (datetime, date, dtime)):
+                            cell = self.worksheet.range((start_row + r_idx, start_col + c_idx))
+                            nf = cell.number_format
+                            if nf:
+                                date_col_formats[c_idx] = nf
+                            break
+            except Exception as e:
+                self._log(f"Datum-Format lesen Fehler Spalte {c_idx}: {e}")
+        
+        # Schritt 3: datetime-Werte formatieren (KEIN weiterer COM-Aufruf)
+        for r_idx, row in enumerate(all_data):
+            if not isinstance(row, list):
+                continue
+            for c_idx, val in enumerate(row):
+                if not isinstance(val, (datetime, date, dtime)):
+                    continue
+                
+                nf = date_col_formats.get(c_idx)
+                if nf and nf != 'General':
+                    row[c_idx] = self._apply_excel_number_format(val, nf)
+                else:
+                    # Kein Format bekannt: Datum ohne Uhrzeit wenn 00:00:00
+                    if hasattr(val, 'hour') and val.hour == 0 and val.minute == 0 and val.second == 0:
+                        row[c_idx] = val.strftime('%d.%m.%Y')
+                    else:
+                        row[c_idx] = str(val)
         
         return all_data
     
     @staticmethod
     def _apply_excel_number_format(dt_val, nf: str) -> str:
-        """Wendet ein Excel-Zahlenformat auf einen datetime-Wert an (macOS Fallback).
+        """Wendet ein Excel-Zahlenformat auf einen datetime-Wert an.
         
-        Konvertiert gängige Excel-Datumsformate in Python strftime-Formate.
+        Konvertiert Excel-Datumsformate in Python strftime-Formate.
+        Behandelt die mm-Ambiguität (Monat vs Minute) korrekt:
+        mm nach h/hh = Minuten, sonst = Monat.
         """
         try:
-            # Häufige Excel-Formate → strftime
             fmt = nf
-            fmt = fmt.replace('yyyy', '%Y').replace('yy', '%y')
-            fmt = fmt.replace('mmmm', '%B').replace('mmm', '%b')
-            fmt = fmt.replace('mm', '%m').replace('m', '%-m')
-            fmt = fmt.replace('dddd', '%A').replace('ddd', '%a')
-            fmt = fmt.replace('dd', '%d').replace('d', '%-d')
-            fmt = fmt.replace('hh', '%H').replace('h', '%-H')
-            fmt = fmt.replace('ss', '%S').replace('s', '%-S')
-            fmt = fmt.replace('AM/PM', '%p').replace('am/pm', '%p')
             
-            # Minuten: In Excel ist 'mm' nach 'hh' = Minuten, sonst = Monat
-            # Einfache Heuristik: wenn %H oder %S im Format, dann %m → %M für Minuten
-            if '%H' in fmt or '%S' in fmt:
-                # Ersetze die letzte %m-Instanz nach %H als Minuten
-                parts = fmt.split('%H')
-                if len(parts) > 1:
-                    parts[1] = parts[1].replace('%m', '%M', 1)
-                    fmt = '%H'.join(parts)
+            # Sonderzeichen entfernen die Excel nutzt aber Python nicht
+            fmt = fmt.replace('[', '').replace(']', '')
+            fmt = fmt.replace('"', '')  # Literal-Text-Anführungszeichen
             
-            return dt_val.strftime(fmt)
+            # Erst die längeren Patterns ersetzen (yyyy vor yy, etc.)
+            fmt = fmt.replace('yyyy', '{YYYY}').replace('yy', '{YY}')
+            fmt = fmt.replace('mmmm', '{MMMM}').replace('mmm', '{MMM}')
+            fmt = fmt.replace('dddd', '{DDDD}').replace('ddd', '{DDD}')
+            fmt = fmt.replace('dd', '{DD}').replace('d', '{D}')
+            fmt = fmt.replace('hh', '{HH}').replace('h', '{H}')
+            fmt = fmt.replace('ss', '{SS}').replace('s', '{S}')
+            fmt = fmt.replace('AM/PM', '{AMPM}').replace('am/pm', '{AMPM}')
+            
+            # mm → Monat oder Minute? Abhängig vom Kontext:
+            # Nach h/hh oder vor ss/s = Minuten, sonst = Monat
+            # Ersetze mm das NICHT neben Zeit-Platzhaltern steht als Monat
+            # und mm das neben Zeit-Platzhaltern steht als Minute
+            if '{HH}' in fmt or '{H}' in fmt or '{SS}' in fmt or '{S}' in fmt:
+                # Es gibt Zeitkomponenten → mm in der Nähe von h/s = Minuten
+                import re
+                # mm/m nach h/hh = Minuten
+                fmt = re.sub(r'(\{HH?\}[^{]*)mm', r'\1{MI}', fmt)
+                fmt = re.sub(r'(\{HH?\}[^{]*)m', r'\1{MI1}', fmt)
+                # mm/m vor ss/s = Minuten
+                fmt = re.sub(r'mm([^{]*\{SS?\})', r'{MI}\1', fmt)
+                fmt = re.sub(r'm([^{]*\{SS?\})', r'{MI1}\1', fmt)
+            
+            # Verbleibende mm/m = Monat
+            fmt = fmt.replace('mm', '{MM}').replace('m', '{M}')
+            
+            # Platzhalter → strftime
+            fmt = fmt.replace('{YYYY}', '%Y').replace('{YY}', '%y')
+            fmt = fmt.replace('{MMMM}', '%B').replace('{MMM}', '%b')
+            fmt = fmt.replace('{MM}', '%m').replace('{M}', '%-m')
+            fmt = fmt.replace('{DDDD}', '%A').replace('{DDD}', '%a')
+            fmt = fmt.replace('{DD}', '%d').replace('{D}', '%-d')
+            fmt = fmt.replace('{HH}', '%H').replace('{H}', '%-H')
+            fmt = fmt.replace('{MI}', '%M').replace('{MI1}', '%-M')
+            fmt = fmt.replace('{SS}', '%S').replace('{S}', '%-S')
+            fmt = fmt.replace('{AMPM}', '%p')
+            
+            result = dt_val.strftime(fmt)
+            return result
         except Exception:
+            # Fallback: Datum ohne Uhrzeit wenn 00:00:00
+            if hasattr(dt_val, 'hour') and dt_val.hour == 0 and dt_val.minute == 0 and dt_val.second == 0:
+                return dt_val.strftime('%d.%m.%Y')
             return str(dt_val)
     
     def get_data(self) -> Dict[str, Any]:
@@ -2120,8 +2193,12 @@ end tell'''
             if not all_data:
                 return {'success': True, 'headers': [], 'data': []}
             
-            # Datetime-Werte durch Excel-Anzeigetext ersetzen
-            all_data = self._format_datetime_values(all_data, used_range)
+            # Datetime-Werte durch formatierten Text ersetzen
+            # Liest number_format pro Spalte (1 COM-Aufruf pro Datumsspalte)
+            try:
+                all_data = self._format_datetime_values(all_data, used_range)
+            except Exception as fmt_err:
+                self._log(f"Datum-Formatierung Fehler (Fallback auf str): {fmt_err}")
             
             # Erste Zeile = Header
             headers = all_data[0] if isinstance(all_data[0], list) else [all_data[0]]
