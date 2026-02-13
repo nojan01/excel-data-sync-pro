@@ -15541,6 +15541,7 @@
                 let result;
                 
                 if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                    const _exportStart = performance.now();
                     console.log('[Export] Live-Session aktiv - verwende Excel direkt zum Speichern...');
                     
                     try {
@@ -15560,6 +15561,7 @@
                             console.log(`[Export] Sync ${pendingCells.length} ausstehende Zell-Änderungen an Excel...`);
                             await window.electronAPI.liveSessionSetCellsBatch(pendingCells);
                         }
+                        console.log(`[Export TIMING] pendingCells: ${(performance.now() - _exportStart).toFixed(0)}ms (${pendingCells.length} Zellen)`);
                         
                         // Passwort-Logik
                         let passwordToUse;
@@ -15571,7 +15573,9 @@
                             passwordToUse = exportPassword;
                         }
                         
+                        const _saveStart = performance.now();
                         result = await window.electronAPI.liveSessionSaveFile(savePath, passwordToUse);
+                        console.log(`[Export TIMING] liveSessionSaveFile: ${(performance.now() - _saveStart).toFixed(0)}ms`);
                         
                         if (result.success) {
                             result.method = 'Live-Session';
@@ -16255,7 +16259,9 @@
                         explorerState.originalRowHighlights = new Map(explorerState.rowHighlights);
                         
                         // originalData aktualisieren (aktuelle Daten sind jetzt die "Originale")
+                        const _copyStart = performance.now();
                         explorerState.originalData = explorerState.data.map(row => [...row]);
+                        console.log(`[Export TIMING] originalData copy: ${(performance.now() - _copyStart).toFixed(0)}ms (${explorerState.data.length} Zeilen)`);
                         
                         // Dateipfad aktualisieren falls "Speichern unter"
                         if (savePath !== explorerState.filePath) {
@@ -16265,7 +16271,10 @@
                         }
                         
                         // UI aktualisieren
+                        const _filterStart = performance.now();
                         filterExplorerData();
+                        console.log(`[Export TIMING] filterExplorerData: ${(performance.now() - _filterStart).toFixed(0)}ms`);
+                        console.log(`[Export TIMING] GESAMT: ${(performance.now() - _exportStart).toFixed(0)}ms`);
                         
                         showFloatingStatus(`✓ Export erfolgreich${pwInfo}${engineInfo}`, 'success');
                     } else {

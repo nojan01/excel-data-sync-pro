@@ -510,6 +510,8 @@ class ExcelLiveSession:
             output_path: Optionaler neuer Dateipfad
             password: Optionales Passwort (None = kein Passwort, '' = Passwort entfernen, 'xxx' = neues Passwort)
         """
+        import time as _time
+        _t0 = _time.time()
         try:
             if not self.workbook:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
@@ -592,8 +594,13 @@ class ExcelLiveSession:
             if password is not None:
                 self.file_password = password if password else None
             
+            _t1 = _time.time()
+            self._log(f"save_file: Excel save took {(_t1 - _t0)*1000:.0f}ms")
+            
             # Recovery-Dateien aufräumen nach erfolgreichem Speichern
             self._cleanup_recovery(success=True)
+            _t2 = _time.time()
+            self._log(f"save_file: cleanup took {(_t2 - _t1)*1000:.0f}ms, total {(_t2 - _t0)*1000:.0f}ms")
             
             return {'success': True, 'outputPath': output_path or self.file_path, 'hasPassword': bool(self.file_password)}
             
