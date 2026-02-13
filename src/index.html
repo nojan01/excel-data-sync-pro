@@ -15523,6 +15523,9 @@
                     showFloatingStatus('⏳ Filter in Excel werden zurückgesetzt...');
                     const result = await window.electronAPI.liveSessionClearAutoFilter();
                     console.log('[LiveSession] clearAutoFilter result:', JSON.stringify(result));
+                    if (result && result.diag) {
+                        console.log('[LiveSession] clearAutoFilter DIAGNOSE:', JSON.stringify(result.diag, null, 2));
+                    }
                     if (result && result.success) {
                         showFloatingStatus('✅ Filter in Excel zurückgesetzt');
                     } else {
