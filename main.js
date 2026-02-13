@@ -3652,6 +3652,18 @@ ipcMain.handle('liveSession:getData', async () => {
     }
 });
 
+// === UNDO ===
+
+ipcMain.handle('liveSession:undo', async () => {
+    console.log('[LiveSession] IPC: undo');
+    try {
+        const session = getLiveSession();
+        return await session.undo();
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 // === ZEILEN-OPERATIONEN ===
 
 ipcMain.handle('liveSession:deleteRow', async (event, rowIndex) => {

@@ -521,6 +521,11 @@ class ExcelLiveSession {
      * Löscht eine Spalte
      * @param {number} colIndex - 0-basierter Index
      */
+    async undo() {
+        console.log('[LiveSession] undo');
+        return this._sendCommand({ action: 'undo' });
+    }
+
     async deleteColumn(colIndex) {
         console.log('[LiveSession] deleteColumn:', colIndex);
         return this._sendCommand({

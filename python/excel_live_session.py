@@ -652,6 +652,45 @@ class ExcelLiveSession:
             'passwordKnown': self.file_password is not None
         }
     
+    def undo(self) -> Dict[str, Any]:
+        """Sendet Undo-Befehl an Excel (Strg+Z Äquivalent)"""
+        try:
+            if not self.app:
+                return {'success': False, 'error': 'Keine Excel-App aktiv'}
+            
+            self._log("Sende Undo an Excel...")
+            
+            if platform.system() == 'Windows':
+                # Windows: COM API
+                try:
+                    self.app.api.Undo()
+                except Exception as e:
+                    # Fallback: SendKeys
+                    self._log(f"api.Undo fehlgeschlagen ({e}), versuche SendKeys...")
+                    import win32com.client
+                    shell = win32com.client.Dispatch("WScript.Shell")
+                    shell.SendKeys("^z", 0)
+                    import time
+                    time.sleep(0.3)
+            else:
+                # macOS: AppleScript
+                try:
+                    import subprocess
+                    subprocess.run([
+                        'osascript', '-e',
+                        'tell application "Microsoft Excel" to undo'
+                    ], timeout=5, capture_output=True)
+                except Exception as e:
+                    self._log(f"macOS undo Fehler: {e}")
+                    return {'success': False, 'error': str(e)}
+            
+            self._log("Undo erfolgreich gesendet")
+            return {'success': True}
+            
+        except Exception as e:
+            self._log(f"Undo Fehler: {e}")
+            return {'success': False, 'error': str(e)}
+    
     def close_session(self, save: bool = False) -> Dict[str, Any]:
         """Schließt die Session
         
@@ -1841,6 +1880,9 @@ end tell'''
             # Filter
             'setAutoFilter': lambda: self.set_autofilter(cmd.get('filters')),
             'clearAutoFilter': lambda: self.clear_autofilter(),
+            
+            # Undo
+            'undo': lambda: self.undo(),
             
             # Session
             'ping': lambda: {'success': True, 'pong': True},

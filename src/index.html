@@ -2583,7 +2583,7 @@
                     <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Ctrl+Enter</kbd>
                     <span>Transfer selected rows directly</span>
                     <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Ctrl+Z</kbd>
-                    <span>Undo last edit</span>
+                    <span>Undo (Live-Session: Excel Undo + Reload)</span>
                     <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">Ctrl+Y</kbd>
                     <span>Redo undone edit</span>
                     <kbd style="background: var(--bg-lighter); padding: 4px 8px; border-radius: 4px;">F5</kbd>
@@ -3067,6 +3067,9 @@
                     </button>
                     <button class="btn btn-info" id="btnDataJoin" title="Spalten aus einer anderen Excel-Datei hinzufügen (basierend auf gemeinsamer Seriennummer)" disabled data-i18n="addColumns" data-i18n-title="addColumnsTitle">
                         🔗 Spalten hinzufügen
+                    </button>
+                    <button class="btn btn-warning btn-sm" id="btnExplorerUndo" title="Letzte Aktion rückgängig machen (Strg+Z) — nur bei aktiver Live-Session" style="display: none;">
+                        ↩️ Undo
                     </button>
                     <button class="btn btn-success" id="btnExplorerExport" title="Änderungen speichern oder als neue Datei exportieren">
                         💾 Speichern
@@ -7973,11 +7976,17 @@
          */
         function updateLiveModeIndicator() {
             const indicator = document.getElementById('liveModeIndicator');
+            const undoBtn = document.getElementById('btnExplorerUndo');
             
             if (!indicator) return;
             
             const isActive = explorerState.liveSessionActive && explorerState.liveSessionReady;
             const isExcelReady = explorerState.engineMode === 'live';
+            
+            // Undo-Button nur bei aktiver Live-Session anzeigen
+            if (undoBtn) {
+                undoBtn.style.display = isActive ? '' : 'none';
+            }
             
             if (isActive) {
                 // Grüner Punkt = Live aktiv (Datei geöffnet)
@@ -15514,6 +15523,58 @@
             }
         }
         
+        /**
+         * Undo — sendet Ctrl+Z an Excel und liest das Sheet neu ein
+         * Funktioniert nur bei aktiver Live-Session
+         */
+        async function explorerUndo() {
+            if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) {
+                showFloatingStatus('⚠️ Undo nur bei aktiver Live-Session verfügbar', 'warning');
+                return;
+            }
+            
+            const btnUndo = document.getElementById('btnExplorerUndo');
+            if (btnUndo) {
+                btnUndo.disabled = true;
+                btnUndo.textContent = '⏳ Undo...';
+            }
+            
+            try {
+                // 1. Undo an Excel senden
+                const undoResult = await window.electronAPI.liveSessionUndo();
+                if (!undoResult.success) {
+                    showFloatingStatus(`❌ Undo fehlgeschlagen: ${undoResult.error}`, 'error');
+                    return;
+                }
+                
+                // 2. Sheet neu einlesen (ExcelJS liest die Datei direkt)
+                // Kurz warten damit Excel den Undo verarbeitet hat
+                await new Promise(resolve => setTimeout(resolve, 300));
+                
+                // 3. Sheet-Daten neu laden
+                const sheetName = explorerState.selectedSheet;
+                // Cache für dieses Sheet leeren damit es frisch geladen wird
+                explorerState.sheetDataCache.delete(sheetName);
+                
+                // Editierte Zellen zurücksetzen (da wir den Excel-Stand neu laden)
+                explorerState.editedCells.clear();
+                
+                await loadExplorerSheet(sheetName);
+                
+                showFloatingStatus('↩️ Undo ausgeführt — Sheet neu geladen');
+                updateExplorerEditStatus();
+                
+            } catch (err) {
+                console.error('[Undo] Fehler:', err);
+                showFloatingStatus(`❌ Undo Fehler: ${err.message}`, 'error');
+            } finally {
+                if (btnUndo) {
+                    btnUndo.disabled = false;
+                    btnUndo.textContent = '↩️ Undo';
+                }
+            }
+        }
+        
         async function exportExplorerData() {
             if (!explorerState.filePath) {
                 elements.explorerStatus.textContent = t('noFileLoaded');
@@ -17281,6 +17342,18 @@
                     }
                 }
                 
+                // Strg+Z → Undo (im Explorer mit aktiver Live-Session)
+                if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+                    const explorerOpen = !elements.dataExplorerModal.classList.contains('hidden');
+                    if (explorerOpen && explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                        // Nicht verhindern wenn in contentEditable (Text-Editing)
+                        const activeEl = document.activeElement;
+                        if (activeEl && activeEl.isContentEditable) return;
+                        e.preventDefault();
+                        explorerUndo();
+                    }
+                }
+                
                 // Strg+S → Warteschlange exportieren
                 if ((e.ctrlKey || e.metaKey) && e.key === 's') {
                     e.preventDefault();
@@ -17466,6 +17539,12 @@
             elements.btnAddExplorerFilter.onclick = addExplorerFilter;
             elements.btnClearExplorerFilters.onclick = clearExplorerFilters;
             elements.btnExplorerExport.onclick = exportExplorerData;
+            
+            // Undo-Button
+            const btnUndo = document.getElementById('btnExplorerUndo');
+            if (btnUndo) {
+                btnUndo.onclick = explorerUndo;
+            }
             
             // Filter-Bereich Toggle
             const filterSectionToggle = document.getElementById('filterSectionToggle');
