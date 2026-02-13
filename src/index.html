@@ -9075,12 +9075,15 @@
             );
             
             // Live-Session: Spalten in Excel im Hintergrund synchronisieren
-            // (blockiert nicht die UI — Fehler werden als Warnung angezeigt)
+            // WICHTIG: AWAIT statt fire-and-forget, damit beim Speichern
+            // die Spalten bereits in Excel eingefügt sind!
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                _syncDataJoinToLiveSession(insertOperations, explorerState, sourceMap, currentKeyIndex, markNotFound).catch(err => {
+                try {
+                    await _syncDataJoinToLiveSession(insertOperations, explorerState, sourceMap, currentKeyIndex, markNotFound);
+                } catch (err) {
                     console.error('[LiveSession] DataJoin sync error:', err);
-                    showFloatingStatus('⚠️ Excel-Sync fehlgeschlagen — bitte manuell speichern', 'warning');
-                });
+                    showFloatingStatus('⚠️ Excel-Sync fehlgeschlagen — beim Speichern wird erneut versucht', 'warning');
+                }
             }
         }
         
@@ -16174,6 +16177,33 @@
                     console.log('[Export] Live-Session aktiv - verwende Excel direkt zum Speichern...');
                     
                     try {
+                        // Strukturelle Änderungen: Sende alle Zellwerte der eingefügten Spalten
+                        // Die Spalten selbst wurden bereits von _syncDataJoinToLiveSession eingefügt
+                        // (das läuft jetzt synchron mit await in executeDataJoin)
+                        // Hier senden wir die Werte nochmal als Sicherheitsnetz
+                        const columnInsertedInfo = explorerState.editedCells.get('_columnInserted');
+                        if (columnInsertedInfo && columnInsertedInfo.operations) {
+                            console.log(`[Export] Strukturelle Änderung: ${columnInsertedInfo.totalCount} Spalten eingefügt — Sicherheitsnetz: Werte synchronisieren...`);
+                            
+                            let offset = 0;
+                            for (const op of columnInsertedInfo.operations.sort((a, b) => a.position - b.position)) {
+                                const actualPos = op.position + offset;
+                                for (let i = 0; i < op.count; i++) {
+                                    const targetColIndex = actualPos + i;
+                                    const columnValues = explorerState.data.map(row => row[targetColIndex] || '');
+                                    if (columnValues.some(v => v !== '')) {
+                                        await window.electronAPI.liveSessionSetColumnValues(
+                                            targetColIndex,
+                                            columnValues,
+                                            0
+                                        );
+                                    }
+                                }
+                                offset += op.count;
+                            }
+                            console.log('[Export] Strukturelle Sync abgeschlossen');
+                        }
+                        
                         // Sicherheitsnetz: Alle ausstehenden Zell-Änderungen an Excel übertragen
                         // (falls blur-Handler nicht gefeuert hat oder Sync fehlgeschlagen ist)
                         const pendingCells = [];
