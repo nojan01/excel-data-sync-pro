@@ -3034,7 +3034,30 @@
             </div>
             <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px; padding: 15px; overflow-y: auto; flex: 1; min-height: 0;">
                 <!-- Explorer Controls -->
-                <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end; flex-shrink: 0;">
+                <div style="display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;">
+                <!-- Zeile 1: Suche + Live-Status + Excel + Undo -->
+                <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end;">
+                    <div class="transfer-field" style="flex: 1;">
+                        <label>Volltextsuche:</label>
+                        <div style="display: flex; gap: 8px;">
+                            <input type="text" id="explorerSearch" class="config-input" placeholder="Suchbegriff eingeben..." style="flex: 1; min-width: 200px;">
+                            <button class="btn btn-primary btn-sm" id="btnExplorerSearch" title="Suche starten (Enter)">🔍</button>
+                        </div>
+                    </div>
+                    <!-- Live-Mode Status (automatisch aktiviert wenn Excel verfügbar) -->
+                    <div id="liveModeIndicator" style="display: flex; padding: 4px 12px; border-radius: 4px; font-size: 12px; font-weight: 600; align-items: center; gap: 6px; background: var(--bg-lighter);" title="Live-Modus wird automatisch aktiviert wenn Excel verfügbar ist">
+                        <span id="liveModeIcon">⚫</span>
+                        <span id="liveModeText">Offline</span>
+                    </div>
+                    <button class="btn btn-primary" id="btnToggleExcel" title="Excel-Fenster ein-/ausblenden" disabled>
+                        👁️ Excel
+                    </button>
+                    <button class="btn btn-warning btn-sm" id="btnExplorerUndo" title="Letzte Aktion rückgängig machen (Strg+Z) — nur bei aktiver Live-Session" style="display: none;">
+                        ↩️ Undo
+                    </button>
+                </div>
+                <!-- Zeile 2: Datei, Arbeitsblatt, Aktionen -->
+                <div style="display: flex; gap: 15px; flex-wrap: wrap; align-items: flex-end;">
                     <button class="btn btn-primary" id="btnExplorerOpenFile">
                         📂 Datei öffnen
                     </button>
@@ -3049,36 +3072,19 @@
                             </button>
                         </div>
                     </div>
-                    <div class="transfer-field" style="flex: 1;">
-                        <label>Volltextsuche:</label>
-                        <div style="display: flex; gap: 8px;">
-                            <input type="text" id="explorerSearch" class="config-input" placeholder="Suchbegriff eingeben..." style="flex: 1; min-width: 200px;">
-                            <button class="btn btn-primary btn-sm" id="btnExplorerSearch" title="Suche starten (Enter)">🔍</button>
-                        </div>
-                    </div>
                     <button class="btn btn-info btn-sm" id="btnToggleFindReplace" title="Suchen & Ersetzen (Strg+H)" data-i18n="findReplace" data-i18n-title="findReplaceTitle">
                         🔄 Ersetzen
                     </button>
                     <button class="btn btn-primary" id="btnToggleColumns" title="Spalten ein-/ausblenden">
                         ❙❙ Spalten
                     </button>
-                    <button class="btn btn-primary" id="btnToggleExcel" title="Excel-Fenster ein-/ausblenden" disabled>
-                        👁️ Excel
-                    </button>
                     <button class="btn btn-info" id="btnDataJoin" title="Spalten aus einer anderen Excel-Datei hinzufügen (basierend auf gemeinsamer Seriennummer)" disabled data-i18n="addColumns" data-i18n-title="addColumnsTitle">
                         🔗 Spalten hinzufügen
-                    </button>
-                    <button class="btn btn-warning btn-sm" id="btnExplorerUndo" title="Letzte Aktion rückgängig machen (Strg+Z) — nur bei aktiver Live-Session" style="display: none;">
-                        ↩️ Undo
                     </button>
                     <button class="btn btn-success" id="btnExplorerExport" title="Änderungen speichern oder als neue Datei exportieren">
                         💾 Speichern
                     </button>
-                    <!-- Live-Mode Status (automatisch aktiviert wenn Excel verfügbar) -->
-                    <div id="liveModeIndicator" style="display: flex; padding: 4px 12px; border-radius: 4px; font-size: 12px; font-weight: 600; align-items: center; gap: 6px; background: var(--bg-lighter);" title="Live-Modus wird automatisch aktiviert wenn Excel verfügbar ist">
-                        <span id="liveModeIcon">⚫</span>
-                        <span id="liveModeText">Offline</span>
-                    </div>
+                </div>
                 </div>
                 
                 <!-- Filter Controls -->
