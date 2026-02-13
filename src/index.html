@@ -8005,41 +8005,49 @@
          * @returns {Promise<boolean>} true wenn erfolgreich
          */
         async function startLiveSession() {
+            const _liveStart = Date.now();
+            const _liveLog = (msg) => console.log(`[LiveSession ${Date.now() - _liveStart}ms] ${msg}`);
+            
             if (!explorerState.filePath || !explorerState.selectedSheet) {
-                console.log('[LiveSession] Keine Datei/Sheet geladen');
+                _liveLog('ABBRUCH: Keine Datei/Sheet geladen');
                 return false;
             }
             
             try {
-                console.log('[LiveSession] Starte Session...');
+                _liveLog(`=== START === Datei: ${explorerState.filePath}, Sheet: ${explorerState.selectedSheet}`);
                 
                 // Python-Prozess starten
+                _liveLog('liveSessionStart aufrufen...');
                 const startResult = await window.electronAPI.liveSessionStart();
+                _liveLog(`liveSessionStart: success=${startResult.success}${startResult.error ? ', error=' + startResult.error : ''}`);
                 if (!startResult.success) {
-                    console.error('[LiveSession] Start fehlgeschlagen:', startResult.error);
                     showFloatingStatus('Live-Session Start fehlgeschlagen: ' + startResult.error, true);
                     return false;
                 }
                 
                 // Datei öffnen - bei Fehlschlag Retry nach kurzer Pause (Windows File-Locking)
+                _liveLog('liveSessionOpenFile aufrufen (1. Versuch)...');
                 let openResult = await window.electronAPI.liveSessionOpenFile(
                     explorerState.filePath, 
                     explorerState.selectedSheet,
                     explorerState.filePassword || null
                 );
+                _liveLog(`liveSessionOpenFile (1): success=${openResult.success}${openResult.error ? ', error=' + openResult.error : ''}`);
                 
                 if (!openResult.success) {
-                    console.log('[LiveSession] Erster Versuch fehlgeschlagen, warte 2s und versuche erneut...');
+                    _liveLog('Warte 2s für Retry...');
                     await new Promise(r => setTimeout(r, 2000));
+                    _liveLog('liveSessionOpenFile aufrufen (2. Versuch)...');
                     openResult = await window.electronAPI.liveSessionOpenFile(
                         explorerState.filePath, 
                         explorerState.selectedSheet,
                         explorerState.filePassword || null
                     );
+                    _liveLog(`liveSessionOpenFile (2): success=${openResult.success}${openResult.error ? ', error=' + openResult.error : ''}`);
                 }
                 
                 if (!openResult.success) {
-                    console.error('[LiveSession] Datei öffnen fehlgeschlagen:', openResult.error);
+                    _liveLog(`FEHLGESCHLAGEN: ${openResult.error}`);
                     showFloatingStatus('Excel konnte Datei nicht öffnen: ' + openResult.error, true);
                     return false;
                 }
@@ -8047,7 +8055,7 @@
                 explorerState.liveSessionActive = true;
                 explorerState.liveSessionReady = true;
                 explorerState.excelVisible = false;
-                console.log('[LiveSession] ✓ Session aktiv (Excel versteckt)');
+                _liveLog('✓ Session AKTIV (Excel versteckt)');
                 showFloatingStatus(t('liveSessionActive'), 'success');
                 
                 // Live-Mode-Indikator und Excel-Button aktualisieren
@@ -8056,7 +8064,8 @@
                 
                 return true;
             } catch (error) {
-                console.error('[LiveSession] Fehler:', error);
+                _liveLog(`EXCEPTION: ${error.message}`);
+                console.error('[LiveSession] Stack:', error);
                 showFloatingStatus('Live-Session Fehler: ' + error.message, true);
                 explorerState.liveSessionActive = false;
                 explorerState.liveSessionReady = false;
@@ -12499,6 +12508,9 @@
         // Datei über Pfad laden (für Drag & Drop)
         async function loadExplorerFileByPath(filePath) {
             if (!filePath) return;
+            const _loadStart = Date.now();
+            const _log = (msg) => console.log(`[LOAD ${Date.now() - _loadStart}ms] ${msg}`);
+            _log('=== START loadExplorerFileByPath ===');
             
             // Prüfe auf ungespeicherte Änderungen
             if (hasUnsavedChanges()) {
@@ -12517,10 +12529,12 @@
             // State komplett zurücksetzen bevor neue Datei geladen wird
             resetExplorerState();
             
-            elements.explorerStatus.textContent = t('loadingFile');
+            elements.explorerStatus.textContent = '⏳ Sheet-Namen laden...';
+            _log('readExcelFile aufrufen (Sheet-Namen aus ZIP)...');
             
             // Versuche Datei zu öffnen
             let result = await window.electronAPI.readExcelFile(filePath);
+            _log(`readExcelFile fertig: success=${result.success}, sheets=${result.sheets?.length}`);
             
             // Passwortgeschützte Datei?
             if (!result.success && result.needsPassword) {
@@ -12579,7 +12593,10 @@
             // Sheet-Daten ZUERST laden (Datei wird danach komplett freigegeben)
             // Streaming Reader: blockiert den Event-Loop NICHT, UI bleibt responsiv
             if (explorerState.sheets.length > 0) {
+                _log(`loadExplorerSheet starten: "${explorerState.sheets[0]}"`);
+                elements.explorerStatus.textContent = '⏳ Sheet-Daten laden (Streaming)...';
                 await loadExplorerSheet(explorerState.sheets[0]);
+                _log('loadExplorerSheet fertig');
             }
             
             // DANACH Live-Session starten (Datei ist jetzt frei für xlwings/Excel)
@@ -12587,36 +12604,48 @@
             // deshalb MUSS das sequenziell sein (v1.2.0-Reihenfolge)
             try {
                 const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
+                _log(`checkExcelAvailable starten (Engine: ${engineSetting})...`);
+                elements.explorerStatus.textContent = '⏳ Excel-Verfügbarkeit prüfen...';
                 const status = await window.electronAPI.checkExcelAvailable();
+                _log(`checkExcelAvailable: excelAvailable=${status?.excelAvailable}`);
                 
                 const shouldUseLive = (engineSetting === 'xlwings') || 
                                       (engineSetting === 'auto' && status && status.excelAvailable);
                 
                 if (shouldUseLive && status && status.excelAvailable) {
+                    _log('startLiveSession starten...');
+                    elements.explorerStatus.textContent = '⏳ Live-Session starten (Excel öffnet Datei)...';
                     const liveOk = await startLiveSession();
+                    _log(`startLiveSession Ergebnis: ${liveOk}`);
                     if (liveOk) {
                         explorerState.engineMode = 'live';
-                        console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
+                        _log(`✓ Live-Session AKTIV`);
                     } else {
                         explorerState.engineMode = 'openpyxl';
-                        console.log('[Engine] Live-Session fehlgeschlagen, fallback openpyxl');
+                        _log('✗ Live-Session FEHLGESCHLAGEN → openpyxl Fallback');
                         updateLiveModeIndicator();
                     }
                 } else {
                     explorerState.engineMode = 'openpyxl';
-                    console.log(`[Engine] openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
+                    _log(`openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
                     updateLiveModeIndicator();
                 }
             } catch (e) {
                 explorerState.engineMode = 'openpyxl';
-                console.log('[Engine] Fallback: openpyxl (Fehler)', e);
+                _log(`FEHLER bei Live-Session: ${e.message}`);
+                console.error('[Engine] Fallback: openpyxl (Fehler)', e);
                 updateLiveModeIndicator();
             }
             
-            showFloatingStatus(`📂 ${result.fileName} geladen`);
+            _log(`=== FERTIG === Gesamt: ${Date.now() - _loadStart}ms, Engine: ${explorerState.engineMode}`);
+            elements.explorerStatus.textContent = '';
+            showFloatingStatus(`📂 ${result.fileName} geladen (${explorerState.engineMode})`);
         }
         
         async function loadExplorerFile() {
+            const _loadStart2 = Date.now();
+            const _log2 = (msg) => console.log(`[LOAD ${Date.now() - _loadStart2}ms] ${msg}`);
+            _log2('=== START loadExplorerFile ===');
             // Prüfe auf ungespeicherte Änderungen
             if (hasUnsavedChanges()) {
                 const totalChanges = countAllChanges();
@@ -12702,37 +12731,48 @@
             explorerState.selectedSheet = result.sheets[0];
             
             // Sheet-Daten ZUERST laden (Datei wird danach komplett freigegeben)
+            _log2(`loadExplorerSheet starten: "${result.sheets[0]}"`);
+            elements.explorerStatus.textContent = '⏳ Sheet-Daten laden (Streaming)...';
             await loadExplorerSheet(result.sheets[0]);
+            _log2('loadExplorerSheet fertig');
             
             // DANACH Live-Session starten (Datei ist jetzt frei für xlwings/Excel)
             try {
                 const engineSetting = localStorage.getItem('excelSyncEngine') || 'auto';
+                _log2(`checkExcelAvailable starten (Engine: ${engineSetting})...`);
+                elements.explorerStatus.textContent = '⏳ Excel-Verfügbarkeit prüfen...';
                 const status = await window.electronAPI.checkExcelAvailable();
+                _log2(`checkExcelAvailable: excelAvailable=${status?.excelAvailable}`);
                 
                 const shouldUseLive = (engineSetting === 'xlwings') || 
                                       (engineSetting === 'auto' && status && status.excelAvailable);
                 
                 if (shouldUseLive && status && status.excelAvailable) {
+                    _log2('startLiveSession starten...');
+                    elements.explorerStatus.textContent = '⏳ Live-Session starten (Excel öffnet Datei)...';
                     const liveOk = await startLiveSession();
+                    _log2(`startLiveSession Ergebnis: ${liveOk}`);
                     if (liveOk) {
                         explorerState.engineMode = 'live';
-                        console.log(`[Engine] Live-Session aktiviert (Einstellung: ${engineSetting})`);
+                        _log2(`✓ Live-Session AKTIV`);
                     } else {
                         explorerState.engineMode = 'openpyxl';
-                        console.log('[Engine] Live-Session fehlgeschlagen, fallback openpyxl');
+                        _log2('✗ Live-Session FEHLGESCHLAGEN → openpyxl Fallback');
                         updateLiveModeIndicator();
                     }
                 } else {
                     explorerState.engineMode = 'openpyxl';
-                    console.log(`[Engine] openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
+                    _log2(`openpyxl Modus (Einstellung: ${engineSetting}, Excel: ${status?.excelAvailable})`);
                     updateLiveModeIndicator();
                 }
             } catch (e) {
                 explorerState.engineMode = 'openpyxl';
-                console.log('[Engine] Fallback: openpyxl (Fehler)', e);
+                _log2(`FEHLER bei Live-Session: ${e.message}`);
+                console.error('[Engine] Fallback: openpyxl (Fehler)', e);
                 updateLiveModeIndicator();
             }
 
+            _log2(`=== FERTIG === Gesamt: ${Date.now() - _loadStart2}ms, Engine: ${explorerState.engineMode}`);
             // Auto-Save für Crash-Recovery starten
             startExplorerAutoSave();
         }
@@ -12810,12 +12850,18 @@
             }
             
             // ExcelJS zum Lesen (xlwings wird nur zum Schreiben verwendet)
+            console.log(`[loadExplorerSheet] readExcelSheet starten für "${sheetName}"...`);
+            const _sheetStart = Date.now();
             const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName, explorerState.filePassword);
+            const _sheetMs = Date.now() - _sheetStart;
             
             if (!result.success) {
+                console.log(`[loadExplorerSheet] FEHLER nach ${_sheetMs}ms: ${result.error}`);
                 elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 return;
             }
+            
+            console.log(`[loadExplorerSheet] readExcelSheet fertig in ${_sheetMs}ms — ${result.data?.length} Zeilen, ${result.headers?.length} Spalten, cellStyles: ${Object.keys(result.cellStyles || {}).length}, timings:`, result.stats?.timings || 'keine');
             
             explorerState.selectedSheet = sheetName;
             explorerState.headers = result.headers;

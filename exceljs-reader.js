@@ -129,11 +129,12 @@ function detectRowHighlights(cellStyles, rowCount, colCount) {
  * @param {string} sheetName - Name des Sheets
  * @returns {Object} Map von "rowNumber-colNumber" zu Fill-Farbe (z.B. "#FF0000")
  */
-function extractFillsFromXLSX(filePath, sheetName) {
+function extractFillsFromXLSX(fileBufferOrPath, sheetName) {
     const cellFills = {};
     
     try {
-        const zip = new AdmZip(filePath);
+        // Akzeptiert Buffer oder Dateipfad
+        const zip = Buffer.isBuffer(fileBufferOrPath) ? new AdmZip(fileBufferOrPath) : new AdmZip(fileBufferOrPath);
         
         // 1. styles.xml lesen und Fills extrahieren
         const stylesEntry = zip.getEntry('xl/styles.xml');
@@ -448,8 +449,11 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
 async function readSheetWithExcelJS(filePath, sheetName, password = null) {
     const startTime = Date.now();
     let tempFilePath = null; // Für entschlüsselte Dateien
+    const timings = {}; // Detaillierte Zeitmessungen
     
     try {
+        console.log(`[ExcelJS] === START readSheetWithExcelJS === Datei: ${path.basename(filePath)}, Sheet: ${sheetName}`);
+        
         // Bei passwortgeschützten Dateien: xlsx-populate zum Entschlüsseln verwenden
         // ExcelJS hat bekannte Probleme mit Passwort-Entschlüsselung
         let actualFilePath = filePath;
@@ -491,7 +495,10 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         // 2. Sheet-Metadaten (AdmZip)
         // 3. Streaming Reader (Readable.from)
         // Danach ist der File-Handle sofort frei für xlwings/Excel
+        const t0 = Date.now();
         const fileBuffer = await fs.promises.readFile(actualFilePath);
+        timings.fileRead = Date.now() - t0;
+        console.log(`[ExcelJS] Datei gelesen: ${(fileBuffer.length / 1024 / 1024).toFixed(1)} MB in ${timings.fileRead}ms`);
         
         // Prüfe ob die Datei passwortgeschützt ist
         if (!password) {
@@ -511,8 +518,11 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         }
         
         // Sheet-Metadaten aus Buffer extrahieren (kein erneuter Dateizugriff!)
+        const t1 = Date.now();
         const metadata = extractSheetMetadata(fileBuffer, sheetName);
+        timings.metadata = Date.now() - t1;
         let actualColumnCount = metadata.columnCount || 1;
+        console.log(`[ExcelJS] Metadaten: ${actualColumnCount} Spalten, ${metadata.mergedCells.length} Merged Cells, ${metadata.hiddenColumns.length} Hidden Cols in ${timings.metadata}ms`);
         
         // Daten-Strukturen initialisieren
         const headers = [];
@@ -532,6 +542,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         // STREAMING READER: Liest Zeilen einzeln, blockiert Event-Loop NICHT
         // Buffer wird wiederverwendet (kein erneuter Dateizugriff!)
         // ============================================================
+        const t2 = Date.now();
         const { Readable } = require('stream');
         const readStream = Readable.from(fileBuffer);
         const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(readStream, {
@@ -546,8 +557,10 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         for await (const worksheetReader of workbookReader) {
             if (worksheetReader.name !== sheetName) continue;
             sheetFound = true;
+            console.log(`[ExcelJS] Sheet "${sheetName}" gefunden, starte Streaming...`);
             
             let dataRowCounter = 0;
+            let lastProgressLog = Date.now();
         
         for await (const row of worksheetReader) {
             const rowNumber = row.number;
@@ -861,8 +874,17 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             
             data.push(rowData);
             dataRowCounter++; // Zähler für nächste Daten-Zeile erhöhen
+            
+            // Fortschritt alle 2 Sekunden loggen
+            const now = Date.now();
+            if (now - lastProgressLog > 2000) {
+                console.log(`[ExcelJS] Streaming: ${dataRowCounter} Zeilen verarbeitet (${now - t2}ms)`);
+                lastProgressLog = now;
+            }
         } // Ende for-await row
         
+            console.log(`[ExcelJS] Streaming abgeschlossen: ${dataRowCounter} Datenzeilen in ${Date.now() - t2}ms`);
+            timings.streaming = Date.now() - t2;
             break; // Sheet gefunden, keine weiteren Sheets verarbeiten
         } // Ende for-await worksheetReader
         
@@ -877,13 +899,19 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         // ============================================================
         // FALLBACK: Fill-Farben direkt aus XLSX extrahieren
         // ExcelJS erkennt bei manchen Dateien (z.B. SoftMaker) keine Fills
-        // NUR wenn ExcelJS keine einzige Fill-Farbe gefunden hat (Performance!)
-        // Bei 10000+ Zeilen würde das synchrone AdmZip-Lesen den Event-Loop blockieren
+        // NUR wenn ExcelJS keine einzige Fill-Farbe gefunden hat
+        // SKIP für große Dateien (>5000 Zeilen) — blockiert den Event-Loop zu lange
         // ============================================================
         const excelJSHasFills = Object.values(cellStyles).some(s => s.fill);
+        const dataRowCount = data.length - 1; // Minus Header
         
-        if (!excelJSHasFills) {
-            const directFills = extractFillsFromXLSX(filePath, sheetName);
+        if (!excelJSHasFills && dataRowCount <= 5000) {
+            console.log(`[ExcelJS] Kein ExcelJS-Fill gefunden, verwende ZIP-Fallback (${dataRowCount} Zeilen)`);
+            const t3 = Date.now();
+            // Buffer statt Dateipfad verwenden (kein erneuter Dateizugriff!)
+            const directFills = extractFillsFromXLSX(fileBuffer, sheetName);
+            timings.fillFallback = Date.now() - t3;
+            console.log(`[ExcelJS] Fill-Fallback: ${Object.keys(directFills).length} Fills in ${timings.fillFallback}ms`);
             
             if (Object.keys(directFills).length > 0) {
                 for (const [key, fillColor] of Object.entries(directFills)) {
@@ -896,12 +924,20 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     }
                 }
             }
+        } else if (!excelJSHasFills && dataRowCount > 5000) {
+            console.log(`[ExcelJS] Fill-Fallback ÜBERSPRUNGEN (${dataRowCount} Zeilen > 5000 — zu langsam)`);
+            timings.fillFallback = 0;
         }
         
         const totalTime = Date.now() - startTime;
         
         // Zeilenfarben erkennen (wenn alle Zellen einer Zeile die gleiche Hintergrundfarbe haben)
+        const t4 = Date.now();
         const rowHighlights = detectRowHighlights(cellStyles, data.length, headers.length);
+        timings.highlights = Date.now() - t4;
+        
+        console.log(`[ExcelJS] === FERTIG === ${data.length} Zeilen, ${headers.length} Spalten, ${Object.keys(cellStyles).length} Styles in ${totalTime}ms`);
+        console.log(`[ExcelJS] Timings: fileRead=${timings.fileRead}ms, metadata=${timings.metadata}ms, streaming=${timings.streaming}ms, fillFallback=${timings.fillFallback || 0}ms, highlights=${timings.highlights}ms`);
         
         return {
             success: true,
@@ -919,7 +955,8 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             stats: {
                 rows: data.length,
                 columns: headers.length,
-                loadTimeMs: totalTime
+                loadTimeMs: totalTime,
+                timings // Detaillierte Zeitmessungen für Diagnose
             }
         };
         
