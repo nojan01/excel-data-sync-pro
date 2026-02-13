@@ -1988,50 +1988,8 @@ end tell'''
                             self._log(f"{hidden_count} Zeilen in {len(ranges)} Bereichen ausgeblendet")
                 else:
                     # ===== AutoFilter entfernen / Alle Zeilen einblenden =====
-                    clear_error = None
-                    if is_windows:
-                        try:
-                            # Methode 1: ShowAllData - zeigt alle Daten wieder an
-                            if self.worksheet.api.AutoFilterMode:
-                                try:
-                                    # ShowAllData entfernt die Filter-Kriterien, behält aber AutoFilter
-                                    if self.worksheet.api.AutoFilter.FilterMode:
-                                        self.worksheet.api.AutoFilter.ShowAllData()
-                                        self._log("Windows: AutoFilter ShowAllData erfolgreich")
-                                    else:
-                                        self._log("Windows: FilterMode nicht aktiv, entferne AutoFilter")
-                                        self.worksheet.api.AutoFilterMode = False
-                                except Exception as e:
-                                    self._log(f"ShowAllData Fehler: {e}")
-                                    # Fallback: AutoFilterMode komplett entfernen
-                                    try:
-                                        self.worksheet.api.AutoFilterMode = False
-                                        self._log("Windows: AutoFilterMode entfernt (Fallback)")
-                                    except Exception as e2:
-                                        clear_error = str(e2)
-                                        self._log(f"Windows: Fallback fehlgeschlagen: {e2}")
-                            else:
-                                self._log("Windows: Kein AutoFilter aktiv")
-                        except Exception as e:
-                            clear_error = str(e)
-                            self._log(f"Windows: Fehler beim Entfernen: {e}")
-                    else:
-                        # macOS: Alle Zeilen einblenden (1 API-Aufruf)
-                        self._log("macOS: Alle Zeilen einblenden")
-                        try:
-                            last_row = used_range.last_cell.row
-                            if last_row > 1:
-                                all_rows = self.worksheet.range(f'A2:A{last_row}')
-                                all_rows.api.entire_row.hidden.set(False)
-                                self._log(f"macOS: Alle Zeilen eingeblendet (2 bis {last_row})")
-                            else:
-                                self._log("macOS: Nur Header vorhanden, nichts zum Einblenden")
-                        except Exception as e:
-                            clear_error = str(e)
-                            self._log(f"macOS: Fehler beim Einblenden: {e}")
-                    
-                    if clear_error:
-                        return {'success': False, 'error': clear_error}
+                    # Delegiere an clear_autofilter
+                    return self.clear_autofilter()
                         
             except Exception as api_error:
                 self._log(f"AutoFilter API Fehler: {api_error}")
@@ -2059,105 +2017,168 @@ end tell'''
             
             if is_windows:
                 # ===== WINDOWS: AutoFilter entfernen =====
-                try:
-                    if self.worksheet.api.AutoFilterMode:
-                        try:
-                            if self.worksheet.api.AutoFilter.FilterMode:
-                                self.worksheet.api.AutoFilter.ShowAllData()
-                                self._log("Windows: ShowAllData erfolgreich")
-                            else:
-                                self.worksheet.api.AutoFilterMode = False
-                                self._log("Windows: AutoFilterMode entfernt")
-                        except Exception as e:
-                            self._log(f"Windows: ShowAllData Fehler: {e}, versuche AutoFilterMode=False")
-                            try:
-                                self.worksheet.api.AutoFilterMode = False
-                            except Exception as e2:
-                                self._log(f"Windows: AutoFilterMode Fallback fehlgeschlagen: {e2}")
-                                return {'success': False, 'error': str(e2)}
-                    else:
-                        self._log("Windows: Kein AutoFilter aktiv")
-                except Exception as e:
-                    self._log(f"Windows: Fehler: {e}")
-                    return {'success': False, 'error': str(e)}
+                return self._clear_autofilter_windows()
             else:
                 # ===== macOS: Alle Zeilen einblenden =====
-                # Auf macOS simuliert set_autofilter Filter durch row.hidden.
-                # Zum Zurücksetzen: alle Zeilen des Sheets einblenden.
+                return self._clear_autofilter_macos()
+        except Exception as e:
+            self._log(f"clear_autofilter Fehler: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _clear_autofilter_windows(self) -> Dict[str, Any]:
+        """Windows: AutoFilter-Kriterien entfernen und alle Zeilen einblenden."""
+        try:
+            ws = self.worksheet.api
+            
+            # Schritt 1: Prüfe ob AutoFilter überhaupt aktiv ist
+            has_autofilter = False
+            try:
+                has_autofilter = bool(ws.AutoFilterMode)
+                self._log(f"Windows: AutoFilterMode = {has_autofilter}")
+            except Exception as e:
+                self._log(f"Windows: AutoFilterMode Abfrage Fehler: {e}")
+            
+            if has_autofilter:
+                # Methode 1: Jeden einzelnen Filter-Feld zurücksetzen
                 try:
-                    used_range = self.worksheet.used_range
-                    if used_range:
-                        last_row = used_range.last_cell.row
-                    else:
-                        last_row = 1
+                    af = ws.AutoFilter
+                    filter_count = af.Filters.Count
+                    self._log(f"Windows: {filter_count} Filter-Felder gefunden")
                     
-                    self._log(f"macOS: Einblenden aller Zeilen (last_row={last_row})")
-                    
-                    if last_row <= 1:
-                        self._log("macOS: Nur Header, nichts zum Einblenden")
-                        return {'success': True, 'filterCount': 0}
-                    
-                    # Methode 1: Alle Zeilen des Sheets auf einmal einblenden
-                    unhidden = False
-                    try:
-                        self.worksheet.api.rows.hidden.set(False)
-                        self._log("macOS: Methode 1 (sheet.rows.hidden=False) erfolgreich")
-                        unhidden = True
-                    except Exception as e1:
-                        self._log(f"macOS: Methode 1 fehlgeschlagen: {e1}")
-                    
-                    # Methode 2: Bereich A2:A{last_row} einblenden
-                    if not unhidden:
+                    for i in range(1, filter_count + 1):
                         try:
-                            all_rows = self.worksheet.range(f'A2:A{last_row}')
-                            all_rows.api.entire_row.hidden.set(False)
-                            self._log(f"macOS: Methode 2 (range A2:A{last_row}) erfolgreich")
-                            unhidden = True
-                        except Exception as e2:
-                            self._log(f"macOS: Methode 2 fehlgeschlagen: {e2}")
+                            if af.Filters(i).On:
+                                self._log(f"Windows: Filter Feld {i} aktiv, setze zurück")
+                                af.Range.AutoFilter(Field=i)
+                        except Exception as e:
+                            self._log(f"Windows: Filter Feld {i} Reset Fehler: {e}")
                     
-                    # Methode 3: Zeilen einzeln in Blöcken von 100 einblenden
-                    if not unhidden:
-                        self._log("macOS: Methode 3 — blockweise Einblendung")
-                        block_size = 100
-                        error_count = 0
-                        for start in range(2, last_row + 1, block_size):
-                            end = min(start + block_size - 1, last_row)
-                            try:
-                                rng = self.worksheet.range(f'A{start}:A{end}')
-                                rng.api.entire_row.hidden.set(False)
-                            except Exception as e3:
-                                error_count += 1
-                                self._log(f"macOS: Block {start}-{end} Fehler: {e3}")
-                        if error_count == 0:
-                            unhidden = True
-                            self._log("macOS: Methode 3 erfolgreich")
-                        else:
-                            self._log(f"macOS: Methode 3 mit {error_count} Fehlern")
-                    
-                    # Methode 4: Zeile für Zeile (letzter Versuch)
-                    if not unhidden:
-                        self._log("macOS: Methode 4 — zeilenweise Einblendung")
+                    self._log("Windows: Einzelne Filter zurückgesetzt")
+                except Exception as e:
+                    self._log(f"Windows: Einzelfilter-Reset Fehler: {e}")
+                
+                # Methode 2: ShowAllData
+                try:
+                    if ws.AutoFilterMode and ws.AutoFilter.FilterMode:
+                        ws.AutoFilter.ShowAllData()
+                        self._log("Windows: ShowAllData erfolgreich")
+                except Exception as e:
+                    self._log(f"Windows: ShowAllData Fehler: {e}")
+                
+                # Methode 3: AutoFilterMode komplett aus und wieder ein
+                try:
+                    if ws.AutoFilterMode:
+                        ws.AutoFilterMode = False
+                        self._log("Windows: AutoFilterMode = False")
+                except Exception as e:
+                    self._log(f"Windows: AutoFilterMode=False Fehler: {e}")
+            
+            # Schritt 2: Versteckte Zeilen einblenden (unabhängig von AutoFilter)
+            try:
+                used_range = self.worksheet.used_range
+                if used_range:
+                    last_row = used_range.last_cell.row
+                    if last_row > 1:
+                        # Alle Zeilen im UsedRange einblenden
                         for row_num in range(2, last_row + 1):
                             try:
-                                self.worksheet.range(f'A{row_num}').api.entire_row.hidden.set(False)
+                                row_obj = ws.Rows(row_num)
+                                if row_obj.Hidden:
+                                    row_obj.Hidden = False
                             except:
                                 pass
-                        unhidden = True
-                        self._log("macOS: Methode 4 abgeschlossen")
-                    
-                    if not unhidden:
-                        return {'success': False, 'error': 'Konnte Zeilen nicht einblenden'}
-                    
-                except Exception as e:
-                    self._log(f"macOS: Fehler beim Einblenden: {e}")
-                    return {'success': False, 'error': str(e)}
+                        self._log(f"Windows: Versteckte Zeilen 2-{last_row} eingeblendet")
+            except Exception as e:
+                self._log(f"Windows: Zeilen-Einblendung Fehler: {e}")
             
-            self._log("clear_autofilter: OK")
+            # Schritt 3: Bildschirm aktualisieren
+            try:
+                app = self.workbook.app.api
+                app.ScreenUpdating = True
+                app.Calculate()
+                self._log("Windows: ScreenUpdating + Calculate erzwungen")
+            except Exception as e:
+                self._log(f"Windows: ScreenUpdate Fehler: {e}")
+            
+            self._log("Windows: clear_autofilter OK")
             return {'success': True, 'filterCount': 0}
             
         except Exception as e:
-            self._log(f"clear_autofilter Fehler: {e}")
+            self._log(f"Windows: clear_autofilter Fehler: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _clear_autofilter_macos(self) -> Dict[str, Any]:
+        """macOS: Alle versteckten Zeilen einblenden (AutoFilter wird via row.hidden simuliert)."""
+        try:
+            used_range = self.worksheet.used_range
+            if used_range:
+                last_row = used_range.last_cell.row
+            else:
+                last_row = 1
+            
+            self._log(f"macOS: Einblenden aller Zeilen (last_row={last_row})")
+            
+            if last_row <= 1:
+                self._log("macOS: Nur Header, nichts zum Einblenden")
+                return {'success': True, 'filterCount': 0}
+            
+            # Methode 1: Alle Zeilen des Sheets auf einmal einblenden
+            unhidden = False
+            try:
+                self.worksheet.api.rows.hidden.set(False)
+                self._log("macOS: Methode 1 (sheet.rows.hidden=False) erfolgreich")
+                unhidden = True
+            except Exception as e1:
+                self._log(f"macOS: Methode 1 fehlgeschlagen: {e1}")
+            
+            # Methode 2: Bereich A2:A{last_row} einblenden
+            if not unhidden:
+                try:
+                    all_rows = self.worksheet.range(f'A2:A{last_row}')
+                    all_rows.api.entire_row.hidden.set(False)
+                    self._log(f"macOS: Methode 2 (range A2:A{last_row}) erfolgreich")
+                    unhidden = True
+                except Exception as e2:
+                    self._log(f"macOS: Methode 2 fehlgeschlagen: {e2}")
+            
+            # Methode 3: Zeilen einzeln in Blöcken von 100 einblenden
+            if not unhidden:
+                self._log("macOS: Methode 3 — blockweise Einblendung")
+                block_size = 100
+                error_count = 0
+                for start in range(2, last_row + 1, block_size):
+                    end = min(start + block_size - 1, last_row)
+                    try:
+                        rng = self.worksheet.range(f'A{start}:A{end}')
+                        rng.api.entire_row.hidden.set(False)
+                    except Exception as e3:
+                        error_count += 1
+                        self._log(f"macOS: Block {start}-{end} Fehler: {e3}")
+                if error_count == 0:
+                    unhidden = True
+                    self._log("macOS: Methode 3 erfolgreich")
+                else:
+                    self._log(f"macOS: Methode 3 mit {error_count} Fehlern")
+            
+            # Methode 4: Zeile für Zeile (letzter Versuch)
+            if not unhidden:
+                self._log("macOS: Methode 4 — zeilenweise Einblendung")
+                for row_num in range(2, last_row + 1):
+                    try:
+                        self.worksheet.range(f'A{row_num}').api.entire_row.hidden.set(False)
+                    except:
+                        pass
+                unhidden = True
+                self._log("macOS: Methode 4 abgeschlossen")
+            
+            if not unhidden:
+                return {'success': False, 'error': 'Konnte Zeilen nicht einblenden'}
+            
+            self._log("macOS: clear_autofilter OK")
+            return {'success': True, 'filterCount': 0}
+            
+        except Exception as e:
+            self._log(f"macOS: clear_autofilter Fehler: {e}")
             return {'success': False, 'error': str(e)}
     
     def switch_sheet(self, sheet_name: str) -> Dict[str, Any]:
