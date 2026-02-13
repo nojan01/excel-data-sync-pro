@@ -15542,8 +15542,15 @@
             try {
                 // 1. Undo an Python-Session senden (pop Undo-Stack + reverse)
                 const undoResult = await window.electronAPI.liveSessionUndo();
-                console.log('[Undo] Result:', undoResult?.success, 'sheetData:', !!undoResult?.sheetData,
-                    'headers:', undoResult?.sheetData?.headers?.length, 'rows:', undoResult?.sheetData?.data?.length);
+                console.log('[Undo] Result:', JSON.stringify({
+                    success: undoResult?.success,
+                    undone: undoResult?.undone,
+                    undoCount: undoResult?.undoCount,
+                    hasSheetData: !!undoResult?.sheetData,
+                    headers: undoResult?.sheetData?.headers?.length,
+                    rows: undoResult?.sheetData?.data?.length,
+                    error: undoResult?.error
+                }));
                 
                 if (!undoResult.success) {
                     showFloatingStatus(`❌ Undo: ${undoResult.error}`, 'error');
@@ -15556,7 +15563,6 @@
                 
                 // 3. Daten aktualisieren
                 if (undoResult.sheetData && undoResult.sheetData.headers && undoResult.sheetData.headers.length > 0) {
-                    // Daten direkt aus Python-Session verwenden (kein File-Read nötig)
                     const headers = undoResult.sheetData.headers;
                     const rawData = undoResult.sheetData.data || [];
                     
@@ -15593,7 +15599,8 @@
                 }
                 
                 const label = undoResult.undone || 'Letzte Aktion';
-                showFloatingStatus(`↩️ Rückgängig: ${label}`);
+                const remaining = undoResult.undoCount != null ? ` (${undoResult.undoCount} verbleibend)` : '';
+                showFloatingStatus(`↩️ Rückgängig: ${label}${remaining}`);
                 updateExplorerEditStatus();
                 
             } catch (err) {
