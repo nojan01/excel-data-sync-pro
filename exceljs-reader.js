@@ -390,57 +390,63 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
         
         // Bild-Formeln erkennen (DISPIMG, IMAGE)
         // ExcelJS Streaming erkennt diese Formeln nicht, daher direkt aus XML parsen
-        // Suche nach <f>-Tags die DISPIMG oder IMAGE enthalten
-        const formulaPattern = /<c\s+r="([A-Z]+\d+)"[^>]*>[\s\S]*?<f[^>]*>([\s\S]*?)<\/f>[\s\S]*?<\/c>/g;
-        let fMatch;
-        while ((fMatch = formulaPattern.exec(sheetXml)) !== null) {
-            const cellRef = fMatch[1];
-            const formula = fMatch[2];
-            if (/DISPIMG|IMAGE/i.test(formula)) {
-                // Zellreferenz parsen (z.B. "B5" → { col: 1, row: 4 })
-                const colLetters = cellRef.match(/^([A-Z]+)/)[1];
-                const rowNum = parseInt(cellRef.match(/(\d+)$/)[1]);
-                result.imageCells.push({
-                    col: colLettersToIndex(colLetters),
-                    row: rowNum - 1  // 0-basiert
-                });
-            }
+        // Robuster Ansatz: Zuerst alle <c>...</c> Blöcke finden, dann auf Bild-Formeln prüfen
+        // Wir splitten nach </c> um einzelne Zell-Blöcke zu erhalten
+        const cellBlocks = sheetXml.split('</c>');
+        for (const block of cellBlocks) {
+            // Prüfe ob dieser Block DISPIMG oder IMAGE enthält
+            if (!/DISPIMG|IMAGE/i.test(block)) continue;
+            
+            // Prüfe ob es eine Formel ist (innerhalb von <f>...</f>)
+            if (!/<f[\s>]/.test(block)) continue;
+            
+            // Extrahiere das r-Attribut (Zellreferenz) aus dem <c> Tag
+            // r kann an beliebiger Position stehen: <c r="B5"...> oder <c s="1" r="B5"...>
+            const cellRefMatch = block.match(/<c\s[^>]*?r="([A-Z]+\d+)"/);
+            if (!cellRefMatch) continue;
+            
+            const cellRef = cellRefMatch[1];
+            const colLetters = cellRef.match(/^([A-Z]+)/)[1];
+            const rowNum = parseInt(cellRef.match(/(\d+)$/)[1]);
+            result.imageCells.push({
+                ref: cellRef,
+                col: colLettersToIndex(colLetters),
+                row: rowNum - 1  // 0-basiert
+            });
         }
-        // Auch shared formulas mit DISPIMG/IMAGE erkennen
-        // <f t="shared" si="X">_xlfn.DISPIMG(...)</f> definiert die Formel
-        // <f t="shared" si="X"/> referenziert sie
+        
+        // Shared formulas: Wenn eine DISPIMG-Formel als shared definiert ist,
+        // referenzieren andere Zellen sie nur per si="X" ohne Formeltext
         if (result.imageCells.length > 0) {
-            // Suche nach allen Zellen mit shared formula reference die auf eine Image-Formel zeigen
-            const sharedFormulaIds = new Set();
-            const sharedRefPattern = /<c\s+r="([A-Z]+\d+)"[^>]*>[\s\S]*?<f[^>]*t="shared"[^>]*si="(\d+)"[^>]*>([\s\S]*?)<\/f>[\s\S]*?<\/c>/g;
-            let sfMatch;
-            while ((sfMatch = sharedRefPattern.exec(sheetXml)) !== null) {
-                const formula = sfMatch[3];
-                if (/DISPIMG|IMAGE/i.test(formula)) {
-                    sharedFormulaIds.add(sfMatch[2]);
+            // Finde shared formula IDs von Bild-Formeln
+            const sharedImageIds = new Set();
+            for (const block of cellBlocks) {
+                if (!/DISPIMG|IMAGE/i.test(block)) continue;
+                const siMatch = block.match(/<f[^>]*t="shared"[^>]*si="(\d+)"/);
+                if (siMatch) {
+                    sharedImageIds.add(siMatch[1]);
                 }
             }
-            // Finde alle Zellen die diese shared formula IDs referenzieren
-            if (sharedFormulaIds.size > 0) {
-                const sharedUsagePattern = /<c\s+r="([A-Z]+\d+)"[^>]*>[\s\S]*?<f[^>]*t="shared"[^>]*si="(\d+)"[^>]*\/?>[\s\S]*?<\/c>/g;
-                let suMatch;
-                while ((suMatch = sharedUsagePattern.exec(sheetXml)) !== null) {
-                    if (sharedFormulaIds.has(suMatch[2])) {
-                        const cellRef = suMatch[1];
-                        const colLetters = cellRef.match(/^([A-Z]+)/)[1];
-                        const rowNum = parseInt(cellRef.match(/(\d+)$/)[1]);
-                        const col = colLettersToIndex(colLetters);
-                        const row = rowNum - 1;
-                        // Nur hinzufügen wenn nicht schon vorhanden
-                        if (!result.imageCells.some(ic => ic.col === col && ic.row === row)) {
-                            result.imageCells.push({ col, row });
-                        }
+            // Finde alle Zellen die diese shared IDs referenzieren
+            if (sharedImageIds.size > 0) {
+                for (const block of cellBlocks) {
+                    const siRef = block.match(/<f[^>]*t="shared"[^>]*si="(\d+)"[^>]*\/?>/);
+                    if (!siRef || !sharedImageIds.has(siRef[1])) continue;
+                    
+                    const cellRefMatch = block.match(/<c\s[^>]*?r="([A-Z]+\d+)"/);
+                    if (!cellRefMatch) continue;
+                    
+                    const cellRef = cellRefMatch[1];
+                    const col = colLettersToIndex(cellRef.match(/^([A-Z]+)/)[1]);
+                    const row = parseInt(cellRef.match(/(\d+)$/)[1]) - 1;
+                    if (!result.imageCells.some(ic => ic.col === col && ic.row === row)) {
+                        result.imageCells.push({ ref: cellRef, col, row });
                     }
                 }
             }
         }
         if (result.imageCells.length > 0) {
-            console.log(`[SheetMetadata] ${result.imageCells.length} Bild-Zellen erkannt`);
+            console.log(`[SheetMetadata] ${result.imageCells.length} Bild-Zellen erkannt: ${result.imageCells.map(c => c.ref).join(', ')}`);
         }
         
         // Tables (für AutoFilter, falls kein direkter AutoFilter vorhanden)
@@ -754,6 +760,14 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 
                 let cellValue = cell.value;
                 
+                // Bild-Zellen sofort erkennen (aus XML-Metadaten)
+                // ExcelJS kann DISPIMG/IMAGE Formeln nicht parsen, liefert #VALUE! oder Objekte
+                // Daher VOR jeder anderen Verarbeitung abfangen
+                if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
+                    cellValue = '🖼️ Bild';
+                    rowData[colIndex] = cellValue;
+                    return; // Nächste Zelle
+                }                
                 // Formel extrahieren - WICHTIG: VOR der Objekt-Behandlung!
                 // Bei Formeln kann cell.value ein Objekt sein mit { formula, result }
                 // oder cell.formula ist direkt verfügbar
