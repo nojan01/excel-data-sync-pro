@@ -696,10 +696,23 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     cellFormulas[styleKey] = cell.formula;
                     // Das Ergebnis ist in cell.result (nicht cell.value!)
                     cellValue = cell.result !== undefined ? cell.result : '';
+                    // IMAGE()-Formel erkennen: Excel 365 Bild-Funktion, ExcelJS kann sie nicht auswerten
+                    if (/^_xlfn\.IMAGE\b|^IMAGE\(|^_xlfn\.DISPIMG\b|^DISPIMG\(/i.test(cell.formula)) {
+                        cellValue = '🖼️ Bild';
+                    }
                 } else if (cell.value && typeof cell.value === 'object' && cell.value.formula) {
                     // Formel als Objekt gespeichert: { formula: '...', result: ... }
                     cellFormulas[styleKey] = cell.value.formula;
                     cellValue = cell.value.result !== undefined ? cell.value.result : '';
+                    // IMAGE()-Formel erkennen
+                    if (/^_xlfn\.IMAGE\b|^IMAGE\(|^_xlfn\.DISPIMG\b|^DISPIMG\(/i.test(cell.value.formula)) {
+                        cellValue = '🖼️ Bild';
+                    }
+                }
+                
+                // Error-Werte behandeln (z.B. { error: '#VALUE!' } aus Formel-Ergebnissen)
+                if (cellValue && typeof cellValue === 'object' && cellValue.error) {
+                    cellValue = String(cellValue.error);
                 }
                 
                 // Hyperlink extrahieren
