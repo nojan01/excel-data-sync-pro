@@ -15651,25 +15651,31 @@
                     return;
                 }
                 
-                // 2. Daten separat von der Live-Session lesen
-                //    (getData ist ein separater Befehl — robuster als inline-Daten)
-                console.log('[Undo] Step 2 - getData aufrufen...');
-                const dataResult = await window.electronAPI.liveSessionGetData();
-                console.log('[Undo] Step 2 - getData Result:', JSON.stringify({
-                    success: dataResult?.success,
-                    headers: dataResult?.headers?.length,
-                    rows: dataResult?.data?.length,
-                    error: dataResult?.error
+                // 2. Datei komplett neu lesen (inkl. Styles, Formeln, Hyperlinks)
+                //    readExcelSheet liest die Datei über ExcelJS und liefert alles:
+                //    cellStyles, cellFormulas, cellHyperlinks, richTextCells, rowHighlights, etc.
+                //    getData() liefert nur Rohdaten ohne Formatierung.
+                console.log('[Undo] Step 2 - readExcelSheet aufrufen...');
+                const sheetName = explorerState.selectedSheet;
+                const result = await window.electronAPI.readExcelSheet(
+                    explorerState.filePath, sheetName, explorerState.filePassword
+                );
+                console.log('[Undo] Step 2 - readExcelSheet Result:', JSON.stringify({
+                    success: result?.success,
+                    headers: result?.headers?.length,
+                    rows: result?.data?.length,
+                    cellStyles: Object.keys(result?.cellStyles || {}).length,
+                    error: result?.error
                 }));
                 
                 // 3. Caches leeren
                 explorerState.sheetDataCache.clear();
                 explorerState.editedCells.clear();
                 
-                // 4. Daten aktualisieren
-                if (dataResult && dataResult.success && dataResult.headers && dataResult.headers.length > 0) {
-                    const headers = dataResult.headers;
-                    const rawData = dataResult.data || [];
+                // 4. Daten + Formatierungen aktualisieren
+                if (result && result.success && result.headers && result.headers.length > 0) {
+                    const headers = result.headers;
+                    const rawData = (result.data || []).slice(1); // Erste Zeile = Header
                     
                     console.log('[Undo] Step 3 - Update:', headers.length, 'Spalten,', rawData.length, 'Zeilen');
                     
@@ -15688,19 +15694,45 @@
                     explorerState.data = newData;
                     explorerState.originalData = newData.map(row => [...row]);
                     
+                    // Formatierungen aus der neu gelesenen Datei übernehmen
+                    explorerState.cellStyles = result.cellStyles || {};
+                    explorerState.cellFormulas = result.cellFormulas || {};
+                    explorerState.cellHyperlinks = result.cellHyperlinks || {};
+                    explorerState.richTextCells = result.richTextCells || {};
+                    explorerState.dataValidations = result.dataValidations || {};
+                    explorerState.mergedCells = result.mergedCells || [];
+                    explorerState.autoFilterRange = result.autoFilterRange || null;
+                    explorerState.headerStyles = result.headerStyles || {};
+                    
+                    // Zeilenfarben aus Excel laden
+                    explorerState.rowHighlights.clear();
+                    explorerState.originalRowHighlights.clear();
+                    if (result.rowHighlights && result.rowHighlights.length > 0) {
+                        for (const [rowIdx, colorName] of result.rowHighlights) {
+                            explorerState.rowHighlights.set(rowIdx, colorName);
+                            explorerState.originalRowHighlights.set(rowIdx, colorName);
+                        }
+                    }
+                    
+                    // Hidden Rows aus Excel laden
+                    explorerState.hiddenRows = new Set(result.hiddenRows || []);
+                    
                     if (columnsChanged) {
                         // Spaltenstruktur hat sich geändert → Layout komplett zurücksetzen
                         console.log('[Undo] Spaltenstruktur geändert → Layout-Reset');
-                        explorerState.visibleColumns = newHeaders.map((_, i) => i);
+                        if (result.hiddenColumns && result.hiddenColumns.length > 0) {
+                            const hiddenSet = new Set(result.hiddenColumns);
+                            explorerState.visibleColumns = newHeaders.map((_, i) => i).filter(i => !hiddenSet.has(i));
+                        } else {
+                            explorerState.visibleColumns = newHeaders.map((_, i) => i);
+                        }
                         explorerState.columnOrder = [];
                         explorerState.sortColumn = null;
                         explorerState.sortDirection = null;
-                        explorerState.mergedCells = [];
                         updateColumnToggles();
                     }
                     
                     // filteredData mit aktualisierten Daten neu aufbauen
-                    // (hiddenRows, searchTerm, sortierung beibehalten)
                     explorerState.filteredData = newData.map((row, index) => ({ originalIndex: index, row: row }));
                     
                     // Versteckte Zeilen anwenden (falls vorhanden)
@@ -15728,7 +15760,7 @@
                     updateHiddenColumnsIndicator();
                     updateAutoFilterIndicator();
                 } else {
-                    console.warn('[Undo] getData fehlgeschlagen:', dataResult?.error);
+                    console.warn('[Undo] readExcelSheet fehlgeschlagen:', result?.error);
                     showFloatingStatus('⚠️ Undo ausgeführt, aber Daten konnten nicht gelesen werden', 'warning');
                 }
                 
