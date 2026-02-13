@@ -9495,6 +9495,25 @@
             const columnTogglePanel = document.getElementById('columnTogglePanel');
             if (columnTogglePanel) columnTogglePanel.style.display = 'none';
             
+            // Filter-Panel (explorerFilterControls) zurücksetzen und schließen
+            const filterPanel = document.getElementById('explorerFilterControls');
+            if (filterPanel) filterPanel.style.display = 'none';
+            
+            // Ersetzen-Panel zurücksetzen und schließen
+            const findReplacePanel = document.getElementById('findReplacePanel');
+            if (findReplacePanel) findReplacePanel.style.display = 'none';
+            findReplaceState.isOpen = false;
+            
+            // Button-Farben auf Standard (grün) zurücksetzen
+            const btnFilter = document.getElementById('btnToggleFilterPanel');
+            if (btnFilter) { btnFilter.classList.remove('btn-info'); btnFilter.classList.add('btn-success'); }
+            const btnColumns = document.getElementById('btnToggleColumns');
+            if (btnColumns) { btnColumns.classList.remove('btn-info'); btnColumns.classList.add('btn-success'); }
+            const btnFindReplace = document.getElementById('btnToggleFindReplace');
+            if (btnFindReplace) { btnFindReplace.classList.remove('btn-info'); btnFindReplace.classList.add('btn-success'); }
+            const btnDataJoin = document.getElementById('btnDataJoin');
+            if (btnDataJoin) { btnDataJoin.classList.remove('btn-info'); btnDataJoin.classList.add('btn-success'); }
+            
             // Status zurücksetzen
             if (elements.explorerStatus) {
                 elements.explorerStatus.textContent = '';
