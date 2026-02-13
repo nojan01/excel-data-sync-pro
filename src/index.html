@@ -3072,7 +3072,7 @@
                 </div>
                 <!-- Zeile 2: Ersetzen, Platzhalter, Spalten, Spalten hinzufügen, Undo -->
                 <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
-                    <button class="btn btn-info" id="btnToggleFindReplace" title="Suchen & Ersetzen (Strg+H)" data-i18n="findReplace" data-i18n-title="findReplaceTitle" style="height: 34px;">
+                    <button class="btn btn-success" id="btnToggleFindReplace" title="Suchen & Ersetzen (Strg+H)" data-i18n="findReplace" data-i18n-title="findReplaceTitle" style="height: 34px;">
                         🔄 Ersetzen
                     </button>
                     <button class="btn btn-primary" id="btnToggleFilterPanel" title="Filter-Bereich ein-/ausblenden" style="height: 34px;">
@@ -3081,7 +3081,7 @@
                     <button class="btn btn-primary" id="btnToggleColumns" title="Spalten ein-/ausblenden" style="height: 34px;">
                         ❙❙ Spalten
                     </button>
-                    <button class="btn btn-info" id="btnDataJoin" title="Spalten aus einer anderen Excel-Datei hinzufügen (basierend auf gemeinsamer Seriennummer)" disabled data-i18n="addColumns" data-i18n-title="addColumnsTitle" style="height: 34px;">
+                    <button class="btn btn-success" id="btnDataJoin" title="Spalten aus einer anderen Excel-Datei hinzufügen (basierend auf gemeinsamer Seriennummer)" disabled data-i18n="addColumns" data-i18n-title="addColumnsTitle" style="height: 34px;">
                         🔗 Spalten hinzufügen
                     </button>
                     <button class="btn btn-warning" id="btnExplorerUndo" title="Letzte Aktion rückgängig machen (Strg+Z) — nur bei aktiver Live-Session" style="display: none; height: 34px;">
@@ -8412,11 +8412,25 @@
             // Modal öffnen
             elements.dataJoinModal.classList.remove('hidden');
             document.body.classList.add('modal-open');
+            
+            // Button-Farbe umschalten (aktiv)
+            const btn = document.getElementById('btnDataJoin');
+            if (btn) {
+                btn.classList.remove('btn-success');
+                btn.classList.add('btn-info');
+            }
         }
         
         function closeDataJoinModal() {
             elements.dataJoinModal.classList.add('hidden');
             document.body.classList.remove('modal-open');
+            
+            // Button-Farbe zurücksetzen (inaktiv)
+            const btn = document.getElementById('btnDataJoin');
+            if (btn) {
+                btn.classList.remove('btn-info');
+                btn.classList.add('btn-success');
+            }
         }
         
         // Hilfsfunktion: Quelldatei laden (von Pfad)
@@ -11756,6 +11770,13 @@
             const panel = document.getElementById('findReplacePanel');
             findReplaceState.isOpen = !findReplaceState.isOpen;
             panel.style.display = findReplaceState.isOpen ? 'flex' : 'none';
+            
+            // Button-Farbe umschalten
+            const btn = document.getElementById('btnToggleFindReplace');
+            if (btn) {
+                btn.classList.toggle('btn-success', !findReplaceState.isOpen);
+                btn.classList.toggle('btn-info', findReplaceState.isOpen);
+            }
             
             if (findReplaceState.isOpen) {
                 document.getElementById('findText').focus();
@@ -15270,7 +15291,15 @@
         
         function toggleColumnPanel() {
             const panel = document.getElementById('columnTogglePanel');
-            panel.style.display = panel.style.display === 'none' ? 'flex' : 'none';
+            const isHidden = panel.style.display === 'none';
+            panel.style.display = isHidden ? 'flex' : 'none';
+            
+            // Button-Farbe umschalten
+            const btn = document.getElementById('btnToggleColumns');
+            if (btn) {
+                btn.classList.toggle('btn-primary', !isHidden);
+                btn.classList.toggle('btn-info', isHidden);
+            }
         }
         
         function updateColumnToggles() {
