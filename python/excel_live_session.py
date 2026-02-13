@@ -2040,73 +2040,33 @@ end tell'''
             return {'success': False, 'error': str(e)}
     
     def _format_datetime_values(self, all_data: list, used_range) -> list:
-        """Ersetzt datetime-Werte durch den in Excel angezeigten Text.
+        """Konvertiert datetime-Werte zu Strings (DD.MM.YYYY).
         
-        Windows: Liest .api.Text pro Datumsspalte (1. Zelle), dann
-        versucht das Format abzuleiten und auf alle Zellen anzuwenden.
-        Fallback: strftime('%d.%m.%Y').
+        Kein COM-Aufruf, kein .api.Text, kein Format-Ableitung.
+        Pure Python strftime — maximal zuverlässig.
         """
         if not all_data:
             return all_data
         
-        is_windows = platform.system() == 'Windows'
-        start_row = used_range.row
-        start_col = used_range.column
-        
-        # Sonderfall: Nur eine Zeile/Spalte (keine verschachtelte Liste)
+        # Sonderfall: Nur eine Zeile (keine verschachtelte Liste)
         if not isinstance(all_data[0], list):
-            for c_idx, val in enumerate(all_data):
-                if isinstance(val, (datetime, date, dtime)):
-                    all_data[c_idx] = self._format_single_date(val, start_row, start_col + c_idx, is_windows)
+            for i, val in enumerate(all_data):
+                if isinstance(val, (datetime, date)):
+                    all_data[i] = self._default_date_str(val)
             return all_data
         
-        # Pro Spalte: Format vom ersten Datumswert ableiten, dann auf alle anwenden
-        num_cols = max(len(row) for row in all_data if isinstance(row, list))
-        col_format_cache = {}  # col_index -> strftime format string
-        
-        for r_idx, row in enumerate(all_data):
+        for row in all_data:
             if not isinstance(row, list):
                 continue
-            for c_idx, val in enumerate(row):
-                if not isinstance(val, (datetime, date, dtime)):
-                    continue
-                
-                try:
-                    # Haben wir schon ein Format für diese Spalte?
-                    if c_idx in col_format_cache:
-                        fmt = col_format_cache[c_idx]
-                        if fmt:
-                            row[c_idx] = val.strftime(fmt)
-                        else:
-                            row[c_idx] = self._default_date_str(val)
-                        continue
-                    
-                    # Erstes Datum in dieser Spalte: Format ableiten
-                    if is_windows:
-                        try:
-                            cell = self.worksheet.range((start_row + r_idx, start_col + c_idx))
-                            display_text = str(cell.api.Text or '')
-                            if display_text and not display_text.startswith('#'):
-                                # Format aus dem Anzeigetext und dem datetime-Wert ableiten
-                                derived_fmt = self._derive_strftime_format(val, display_text)
-                                col_format_cache[c_idx] = derived_fmt
-                                row[c_idx] = display_text  # Erster Wert: direkt den Excel-Text verwenden
-                                continue
-                        except Exception:
-                            pass
-                    
-                    # Fallback: Kein Format abgeleitet
-                    col_format_cache[c_idx] = None
-                    row[c_idx] = self._default_date_str(val)
-                    
-                except Exception:
-                    row[c_idx] = self._default_date_str(val)
+            for i, val in enumerate(row):
+                if isinstance(val, (datetime, date)):
+                    row[i] = self._default_date_str(val)
         
         return all_data
     
     @staticmethod
     def _default_date_str(val) -> str:
-        """Einfache Datum-zu-String Konvertierung als Fallback."""
+        """Einfache Datum-zu-String Konvertierung."""
         try:
             if isinstance(val, datetime):
                 if val.hour == 0 and val.minute == 0 and val.second == 0:
@@ -2117,88 +2077,6 @@ end tell'''
             return str(val)
         except Exception:
             return str(val)
-    
-    def _format_single_date(self, val, excel_row: int, excel_col: int, is_windows: bool) -> str:
-        """Formatiert einen einzelnen datetime-Wert mit .api.Text (Windows) oder Fallback."""
-        try:
-            if is_windows:
-                cell = self.worksheet.range((excel_row, excel_col))
-                text = str(cell.api.Text or '')
-                if text and not text.startswith('#'):
-                    return text
-        except Exception:
-            pass
-        return self._default_date_str(val)
-    
-    @staticmethod
-    def _derive_strftime_format(dt_val, display_text: str) -> str:
-        """Leitet ein strftime-Format aus einem datetime-Wert und dem Excel-Anzeigetext ab.
-        
-        Beispiel: datetime(2019,1,31) + "31.01.2019" → "%d.%m.%Y"
-        """
-        try:
-            text = display_text.strip()
-            if not text:
-                return None
-            
-            year4 = str(dt_val.year)           # "2019"
-            year2 = str(dt_val.year % 100).zfill(2)  # "19"
-            month2 = str(dt_val.month).zfill(2)  # "01"
-            month1 = str(dt_val.month)           # "1"
-            day2 = str(dt_val.day).zfill(2)      # "31"
-            day1 = str(dt_val.day)               # "31"
-            
-            fmt = text
-            
-            # Jahr ersetzen (4-stellig vor 2-stellig)
-            if year4 in fmt:
-                fmt = fmt.replace(year4, '%Y', 1)
-            elif year2 in fmt:
-                fmt = fmt.replace(year2, '%y', 1)
-            
-            # Tag und Monat: Ersetze den Tag-Wert zuerst wenn er != Monat
-            # Problem: Tag und Monat können gleich sein (z.B. 05.05.2019)
-            if dt_val.day != dt_val.month:
-                # Verschiedene Werte → eindeutig
-                if day2 in fmt:
-                    fmt = fmt.replace(day2, '%d', 1)
-                elif day1 in fmt:
-                    fmt = fmt.replace(day1, '%d', 1)
-                if month2 in fmt:
-                    fmt = fmt.replace(month2, '%m', 1)
-                elif month1 in fmt:
-                    fmt = fmt.replace(month1, '%m', 1)
-            else:
-                # Tag == Monat → Position unklar, Standardannahme DD.MM
-                if day2 in fmt:
-                    fmt = fmt.replace(day2, '%d', 1)
-                    fmt = fmt.replace(day2, '%m', 1)
-            
-            # Zeit-Komponenten
-            if hasattr(dt_val, 'hour'):
-                hour2 = str(dt_val.hour).zfill(2)
-                min2 = str(dt_val.minute).zfill(2)
-                sec2 = str(dt_val.second).zfill(2)
-                if hour2 in fmt:
-                    fmt = fmt.replace(hour2, '%H', 1)
-                if min2 in fmt:
-                    fmt = fmt.replace(min2, '%M', 1)
-                if sec2 in fmt:
-                    fmt = fmt.replace(sec2, '%S', 1)
-            
-            # Prüfe ob das abgeleitete Format sinnvoll ist
-            if '%' not in fmt:
-                return None  # Konnte nichts ableiten
-            
-            # Teste ob das Format den gleichen Text reproduziert
-            test = dt_val.strftime(fmt)
-            if test == display_text.strip():
-                return fmt
-            
-            return None  # Format reproduziert nicht den Originaltext
-            
-        except Exception:
-            return None
     
     def get_data(self) -> Dict[str, Any]:
         """Liest alle Daten aus dem aktuellen Sheet"""
