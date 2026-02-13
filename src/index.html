@@ -4662,12 +4662,8 @@
             }
             
             // UI aktualisieren
-            const cell = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
-            if (cell) {
-                cell.textContent = oldValue;
-                cell.classList.toggle('edited', oldValue !== cell.dataset.original);
-            }
             updateExplorerEditStatus();
+            renderExplorerTable();
             return true;
         }
         
@@ -4778,12 +4774,8 @@
             }
             
             // UI aktualisieren
-            const cell = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
-            if (cell) {
-                cell.textContent = newValue;
-                cell.classList.toggle('edited', newValue !== cell.dataset.original);
-            }
             updateExplorerEditStatus();
+            renderExplorerTable();
             return true;
         }
         
