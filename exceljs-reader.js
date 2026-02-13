@@ -588,7 +588,22 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                         actualColumnCount = Math.max(actualColumnCount, headers.length);
                     }
                     // Überschreibe den leeren Wert mit dem tatsächlichen Wert
-                    headers[colIndex] = cell.value ? String(cell.value) : '';
+                    if (!cell.value) {
+                        headers[colIndex] = '';
+                    } else if (typeof cell.value === 'object') {
+                        // Rich Text, Hyperlinks, Bilder etc.
+                        if (cell.value.richText) {
+                            headers[colIndex] = cell.value.richText.map(part => part.text).join('');
+                        } else if (cell.value.text !== undefined) {
+                            headers[colIndex] = String(cell.value.text);
+                        } else if (cell.value.buffer || cell.value.image || cell.value.imageId) {
+                            headers[colIndex] = '🖼️ Bild';
+                        } else {
+                            headers[colIndex] = '📎 Objekt';
+                        }
+                    } else {
+                        headers[colIndex] = String(cell.value);
+                    }
                     
                     // WICHTIG: Auch Header-Styles extrahieren (für Frontend-Kompatibilität)
                     const styleKey = `0-${colIndex}`; // Header = Zeile 0
@@ -771,9 +786,26 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     else if (cell.value === null) {
                         cellValue = '';
                     }
-                    // Letzter Fallback: Unbekanntes Objekt -> versuche String-Konvertierung
+                    // Bild-Objekte erkennen (Buffer, Base64 oder image-Properties)
+                    else if (cell.value.buffer || cell.value.image || cell.value.imageId || 
+                             (cell.value.extension && (cell.value.extension === 'png' || cell.value.extension === 'jpeg' || cell.value.extension === 'gif' || cell.value.extension === 'bmp'))) {
+                        cellValue = '🖼️ Bild';
+                    }
+                    // Error-Objekte erkennen
+                    else if (cell.value.error) {
+                        cellValue = cell.value.error; // z.B. #REF!, #VALUE!, #DIV/0!
+                    }
+                    // Letzter Fallback: Unbekanntes Objekt -> versuche sinnvolle Darstellung
                     else {
-                        cellValue = String(cell.value);
+                        // Prüfe ob JSON-Serialisierung "[object Object]" vermeidet
+                        const keys = Object.keys(cell.value);
+                        if (keys.length === 0) {
+                            cellValue = '';
+                        } else {
+                            // Logge das unbekannte Objekt für Debugging
+                            console.log(`[ExcelJS] Unbekanntes Objekt in Zelle ${styleKey}:`, JSON.stringify(cell.value).substring(0, 200));
+                            cellValue = '📎 Objekt';
+                        }
                     }
                 }
                 
@@ -864,6 +896,11 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 }
                 
                 // Setze den Wert an der korrekten Position
+                // Letzte Absicherung: Objekte die durchgerutscht sind, nie als "[object Object]" speichern
+                if (cellValue !== null && cellValue !== undefined && typeof cellValue === 'object') {
+                    console.log(`[ExcelJS] Objekt durchgerutscht in Zelle ${styleKey}:`, JSON.stringify(cellValue).substring(0, 200));
+                    cellValue = '📎 Objekt';
+                }
                 rowData[colIndex] = cellValue === null || cellValue === undefined ? '' : cellValue;
             });
             
