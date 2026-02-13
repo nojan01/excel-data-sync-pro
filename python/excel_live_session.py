@@ -1988,6 +1988,7 @@ end tell'''
                             self._log(f"{hidden_count} Zeilen in {len(ranges)} Bereichen ausgeblendet")
                 else:
                     # ===== AutoFilter entfernen / Alle Zeilen einblenden =====
+                    clear_error = None
                     if is_windows:
                         try:
                             # Methode 1: ShowAllData - zeigt alle Daten wieder an
@@ -1996,24 +1997,41 @@ end tell'''
                                     # ShowAllData entfernt die Filter-Kriterien, behält aber AutoFilter
                                     if self.worksheet.api.AutoFilter.FilterMode:
                                         self.worksheet.api.AutoFilter.ShowAllData()
+                                        self._log("Windows: AutoFilter ShowAllData erfolgreich")
+                                    else:
+                                        self._log("Windows: FilterMode nicht aktiv, entferne AutoFilter")
+                                        self.worksheet.api.AutoFilterMode = False
                                 except Exception as e:
                                     self._log(f"ShowAllData Fehler: {e}")
                                     # Fallback: AutoFilterMode komplett entfernen
-                                    self.worksheet.api.AutoFilterMode = False
+                                    try:
+                                        self.worksheet.api.AutoFilterMode = False
+                                        self._log("Windows: AutoFilterMode entfernt (Fallback)")
+                                    except Exception as e2:
+                                        clear_error = str(e2)
+                                        self._log(f"Windows: Fallback fehlgeschlagen: {e2}")
                             else:
                                 self._log("Windows: Kein AutoFilter aktiv")
                         except Exception as e:
+                            clear_error = str(e)
                             self._log(f"Windows: Fehler beim Entfernen: {e}")
                     else:
                         # macOS: Alle Zeilen einblenden (1 API-Aufruf)
                         self._log("macOS: Alle Zeilen einblenden")
                         try:
                             last_row = used_range.last_cell.row
-                            all_rows = self.worksheet.range(f'A2:A{last_row}')
-                            all_rows.api.entire_row.hidden.set(False)
-                            self._log("macOS: Alle Zeilen eingeblendet")
+                            if last_row > 1:
+                                all_rows = self.worksheet.range(f'A2:A{last_row}')
+                                all_rows.api.entire_row.hidden.set(False)
+                                self._log(f"macOS: Alle Zeilen eingeblendet (2 bis {last_row})")
+                            else:
+                                self._log("macOS: Nur Header vorhanden, nichts zum Einblenden")
                         except Exception as e:
+                            clear_error = str(e)
                             self._log(f"macOS: Fehler beim Einblenden: {e}")
+                    
+                    if clear_error:
+                        return {'success': False, 'error': clear_error}
                         
             except Exception as api_error:
                 self._log(f"AutoFilter API Fehler: {api_error}")
