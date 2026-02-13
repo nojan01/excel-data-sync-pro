@@ -652,6 +652,19 @@ class ExcelLiveSession {
     }
 
     /**
+     * Setzt die Sichtbarkeit eines Arbeitsblatts
+     * @param {string} sheetName - Name des Arbeitsblatts
+     * @param {boolean} visible - true = einblenden, false = ausblenden
+     */
+    async setSheetVisibility(sheetName, visible) {
+        return this._sendCommand({
+            action: 'setSheetVisibility',
+            sheetName: sheetName,
+            visible: visible
+        });
+    }
+
+    /**
      * Setzt alle Werte einer Zeile auf einmal
      * @param {number} rowIndex - 0-basierter Zeilenindex
      * @param {Array} values - Array von Werten (ein Wert pro Spalte)

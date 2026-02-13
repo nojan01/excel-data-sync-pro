@@ -1981,11 +1981,16 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
     try {
         let sheets;
         
+        let hiddenSheets = [];
+        
         if (password) {
             // Passwortgeschützte Dateien: xlsx-populate zum Entschlüsseln nötig
             const fileBuffer = await fs.promises.readFile(filePath);
             const workbook = await XlsxPopulate.fromDataAsync(fileBuffer, { password });
             sheets = workbook.sheets().map(ws => ws.name());
+            hiddenSheets = workbook.sheets()
+                .filter(ws => ws.hidden())
+                .map(ws => ws.name());
         } else {
             // PERFORMANCE: Sheet-Namen direkt aus ZIP extrahieren (ohne Zell-Parsing)
             // xlsx-populate parst die GESAMTE Datei (alle Zellen, Formeln, Styles)
@@ -2002,8 +2007,9 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             
             const workbookXml = workbookEntry.getData().toString('utf8');
             sheets = [];
-            // Sheet-Namen aus XML extrahieren (Reihenfolge wird beibehalten)
-            const sheetPattern = /<sheet[^>]+name="([^"]*)"[^/]*\/?>/g;
+            hiddenSheets = [];
+            // Sheet-Namen und Sichtbarkeit aus XML extrahieren (Reihenfolge wird beibehalten)
+            const sheetPattern = /<sheet[^>]*\bname="([^"]*)"[^>]*>/g;
             let match;
             while ((match = sheetPattern.exec(workbookXml)) !== null) {
                 // XML-Entities dekodieren
@@ -2014,12 +2020,19 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
                     .replace(/&quot;/g, '"')
                     .replace(/&apos;/g, "'");
                 sheets.push(name);
+                // Prüfe ob state="hidden" oder state="veryHidden"
+                if (/\bstate\s*=\s*"(hidden|veryHidden)"/.test(match[0])) {
+                    hiddenSheets.push(name);
+                }
             }
             
             if (sheets.length === 0) {
                 // Fallback: xlsx-populate wenn Regex nichts findet
                 const workbook = await XlsxPopulate.fromDataAsync(fileBuffer);
                 sheets = workbook.sheets().map(ws => ws.name());
+                hiddenSheets = workbook.sheets()
+                    .filter(ws => ws.hidden())
+                    .map(ws => ws.name());
             }
         }
 
@@ -2028,6 +2041,7 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             fileName: path.basename(filePath),
             filePath: filePath,
             sheets: sheets,
+            hiddenSheets: hiddenSheets,
             isPasswordProtected: !!password
         };
     } catch (error) {
@@ -3811,6 +3825,16 @@ ipcMain.handle('liveSession:switchSheet', async (event, sheetName) => {
     try {
         const session = getLiveSession();
         return await session.switchSheet(sheetName);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:setSheetVisibility', async (event, sheetName, visible) => {
+    console.log('[LiveSession] IPC: setSheetVisibility', sheetName, visible);
+    try {
+        const session = getLiveSession();
+        return await session.setSheetVisibility(sheetName, visible);
     } catch (error) {
         return { success: false, error: error.message };
     }

@@ -867,6 +867,15 @@
             border-radius: 10px;
             margin-left: 8px;
         }
+        
+        .sheet-list-item .sheet-hidden-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            background: var(--text-muted);
+            color: white;
+            border-radius: 10px;
+            margin-left: 8px;
+        }
 
         /* Merged Cells Styles */
         .results-table td.merged-cell {
@@ -3255,6 +3264,9 @@
                     </button>
                     <button class="btn btn-primary btn-sm" id="btnSheetClone" title="Ausgewähltes Arbeitsblatt kopieren" disabled>
                         📑 Kopieren
+                    </button>
+                    <button class="btn btn-secondary btn-sm" id="btnSheetToggleVisibility" title="Arbeitsblatt ein-/ausblenden" disabled>
+                        👁️ Ein-/Ausblenden
                     </button>
                     <button class="btn btn-warning btn-sm" id="btnSheetMoveUp" title="Nach oben verschieben" disabled>
                         ⬆️ Hoch
@@ -8344,6 +8356,8 @@
             autoFilterRange: null,  // z.B. "A1:D10"
             // Merged Cells (verbundene Zellen)
             mergedCells: [],  // Array von { startRow, startCol, endRow, endCol, rowSpan, colSpan }
+            // Ausgeblendete Arbeitsblätter
+            hiddenSheets: new Set(),  // Set von Sheet-Namen die ausgeblendet sind
             // Passwort für passwortgeschützte Dateien
             filePassword: null,
             // Operations Queues für serielle Abarbeitung
@@ -9228,9 +9242,11 @@
             listContainer.innerHTML = explorerState.sheets.map((sheetName, index) => {
                 const isSelected = sheetName === selectedSheetForManagement;
                 const isActive = sheetName === explorerState.selectedSheet;
+                const isHidden = explorerState.hiddenSheets && explorerState.hiddenSheets.has(sheetName);
                 return `<div class="sheet-list-item${isSelected ? ' selected' : ''}" data-sheet="${escapeHtml(sheetName)}" data-index="${index}">
                     <span class="sheet-index">${index + 1}.</span>
                     <span class="sheet-name">${escapeHtml(sheetName)}</span>
+                    ${isHidden ? '<span class="sheet-hidden-badge">Ausgeblendet</span>' : ''}
                     ${isActive ? '<span class="sheet-active-badge">Aktiv</span>' : ''}
                 </div>`;
             }).join('');
@@ -9251,12 +9267,26 @@
             const isFirst = selectedIndex === 0;
             const isLast = selectedIndex === explorerState.sheets.length - 1;
             const canDelete = explorerState.sheets.length > 1;
+            const isLive = explorerState.liveSessionActive && explorerState.liveSessionReady;
             
             document.getElementById('btnSheetRename').disabled = !hasSelection;
             document.getElementById('btnSheetClone').disabled = !hasSelection;
             document.getElementById('btnSheetDelete').disabled = !hasSelection || !canDelete;
             document.getElementById('btnSheetMoveUp').disabled = !hasSelection || isFirst;
             document.getElementById('btnSheetMoveDown').disabled = !hasSelection || isLast;
+            
+            // Visibility-Toggle nur im Live-Modus aktivierbar
+            const btnToggle = document.getElementById('btnSheetToggleVisibility');
+            if (btnToggle) {
+                btnToggle.disabled = !hasSelection || !isLive;
+                if (hasSelection && explorerState.hiddenSheets && explorerState.hiddenSheets.has(selectedSheetForManagement)) {
+                    btnToggle.innerHTML = '👁️ Einblenden';
+                    btnToggle.title = 'Ausgewähltes Arbeitsblatt einblenden';
+                } else {
+                    btnToggle.innerHTML = '👁️‍🗨️ Ausblenden';
+                    btnToggle.title = 'Ausgewähltes Arbeitsblatt ausblenden';
+                }
+            }
         }
         
         async function addNewSheet() {
@@ -9408,11 +9438,54 @@
             }
         }
         
+        async function toggleSheetVisibility() {
+            if (!selectedSheetForManagement) return;
+            if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) {
+                showNotification('Ein-/Ausblenden erfordert eine aktive Live-Session (Excel)', 'warning');
+                return;
+            }
+            
+            const isCurrentlyHidden = explorerState.hiddenSheets && explorerState.hiddenSheets.has(selectedSheetForManagement);
+            const newVisible = isCurrentlyHidden; // toggle: hidden → visible, visible → hidden
+            
+            // Prüfe ob es das letzte sichtbare Sheet wäre
+            if (!newVisible) {
+                const visibleCount = explorerState.sheets.filter(s => !explorerState.hiddenSheets.has(s)).length;
+                if (visibleCount <= 1) {
+                    showNotification('Mindestens ein Arbeitsblatt muss sichtbar bleiben', 'warning');
+                    return;
+                }
+            }
+            
+            try {
+                const result = await window.electronAPI.liveSessionSetSheetVisibility(selectedSheetForManagement, newVisible);
+                
+                if (result.success) {
+                    if (newVisible) {
+                        explorerState.hiddenSheets.delete(selectedSheetForManagement);
+                        showNotification(`Arbeitsblatt "${selectedSheetForManagement}" eingeblendet`, 'success');
+                    } else {
+                        explorerState.hiddenSheets.add(selectedSheetForManagement);
+                        showNotification(`Arbeitsblatt "${selectedSheetForManagement}" ausgeblendet`, 'success');
+                    }
+                    updateSheetDropdown();
+                    updateSheetManageList();
+                    updateSheetManageButtons();
+                } else {
+                    showNotification(result.error, 'error');
+                }
+            } catch (error) {
+                showNotification('Fehler beim Ein-/Ausblenden: ' + error.message, 'error');
+            }
+        }
+        
         function updateSheetDropdown() {
             if (elements.explorerSheetSelect) {
-                elements.explorerSheetSelect.innerHTML = explorerState.sheets.map(s => 
-                    `<option value="${escapeHtml(s)}"${s === explorerState.selectedSheet ? ' selected' : ''}>${escapeHtml(s)}</option>`
-                ).join('');
+                elements.explorerSheetSelect.innerHTML = explorerState.sheets.map(s => {
+                    const isHidden = explorerState.hiddenSheets && explorerState.hiddenSheets.has(s);
+                    const label = isHidden ? `👁️‍🗨️ ${s} (ausgeblendet)` : s;
+                    return `<option value="${escapeHtml(s)}"${s === explorerState.selectedSheet ? ' selected' : ''}>${escapeHtml(label)}</option>`;
+                }).join('');
             }
         }
         
@@ -9452,6 +9525,7 @@
             explorerState.hiddenRows.clear();
             explorerState.autoFilterRange = null;
             explorerState.mergedCells = [];
+            explorerState.hiddenSheets = new Set();
             explorerState.filePassword = null;
             explorerState.rowMapping = null;  // Mapping: neue Position -> Original Excel-Zeile
             explorerState.columnOperationsQueue = [];  // Reset Queue
@@ -9687,11 +9761,13 @@
                 explorerFileName.textContent = explorerState.fileName || '';
             }
             
-            // Sheet-Dropdown füllen
+            // Sheet-Dropdown füllen (mit Markierung für ausgeblendete Sheets)
             if (elements.explorerSheetSelect && explorerState.sheets.length > 0) {
-                elements.explorerSheetSelect.innerHTML = explorerState.sheets.map(s => 
-                    `<option value="${s}" ${s === explorerState.selectedSheet ? 'selected' : ''}>${s}</option>`
-                ).join('');
+                elements.explorerSheetSelect.innerHTML = explorerState.sheets.map(s => {
+                    const isHidden = explorerState.hiddenSheets && explorerState.hiddenSheets.has(s);
+                    const label = isHidden ? `👁️‍🗨️ ${s} (ausgeblendet)` : s;
+                    return `<option value="${s}" ${s === explorerState.selectedSheet ? 'selected' : ''}>${label}</option>`;
+                }).join('');
             }
             
             // Daten filtern und anzeigen
@@ -12672,13 +12748,18 @@
             explorerState.originalFilePath = filePath;  // Ursprüngliche Datei merken (für Export)
             explorerState.fileName = result.fileName;
             explorerState.sheets = result.sheets;
+            explorerState.hiddenSheets = new Set(result.hiddenSheets || []);
             
             // UI aktualisieren
             document.getElementById('explorerFileName').textContent = explorerState.fileName;
             
-            // Sheet-Dropdown füllen
+            // Sheet-Dropdown füllen (mit Markierung für ausgeblendete Sheets)
             elements.explorerSheetSelect.innerHTML = explorerState.sheets
-                .map(s => `<option value="${s}">${s}</option>`)
+                .map(s => {
+                    const isHidden = explorerState.hiddenSheets && explorerState.hiddenSheets.has(s);
+                    const label = isHidden ? `👁️‍🗨️ ${s} (ausgeblendet)` : s;
+                    return `<option value="${s}">${label}</option>`;
+                })
                 .join('');
             
             // selectedSheet VOR dem Laden setzen (für Live-Session-Start)
@@ -12878,6 +12959,29 @@
         async function loadExplorerSheet(sheetName) {
             if (!explorerState.filePath || !sheetName) return;
             
+            // Prüfe ob das Sheet ausgeblendet ist
+            if (explorerState.hiddenSheets && explorerState.hiddenSheets.has(sheetName)) {
+                // Nur im Live-Modus kann man einblenden
+                if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                    const confirmed = await showConfirmDialog(
+                        'Ausgeblendetes Arbeitsblatt',
+                        `Das Arbeitsblatt "${sheetName}" ist in Excel ausgeblendet.\n\n` +
+                        `Möchten Sie es einblenden und dorthin wechseln?`,
+                        'Einblenden & Wechseln',
+                        'Abbrechen'
+                    );
+                    if (!confirmed) {
+                        // Dropdown zurücksetzen auf vorheriges Sheet
+                        if (explorerState.selectedSheet) {
+                            elements.explorerSheetSelect.value = explorerState.selectedSheet;
+                        }
+                        return;
+                    }
+                    // Sheet wird automatisch eingeblendet beim switchSheet (Python-Seite)
+                }
+                // Ohne Live-Session: Daten können trotzdem gelesen werden (ExcelJS liest auch hidden sheets)
+            }
+            
             // VOR dem Wechsel: Aktuelles Sheet im Cache speichern wenn es Änderungen gibt
             // ABER NICHT wenn editedCells leer ist (z.B. nach Export/Reload)
             if (explorerState.selectedSheet && explorerState.data.length > 0 && explorerState.editedCells.size > 0) {
@@ -12885,16 +12989,43 @@
             }
             
             // Live-Session: Arbeitsblatt in Excel synchron wechseln
+            console.log('[loadExplorerSheet] Live-Check:', {
+                liveSessionActive: explorerState.liveSessionActive,
+                liveSessionReady: explorerState.liveSessionReady,
+                engineMode: explorerState.engineMode,
+                targetSheet: sheetName
+            });
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 try {
                     const switchResult = await window.electronAPI.liveSessionSwitchSheet(sheetName);
                     if (switchResult.success) {
                         console.log('[LiveSession] Sheet gewechselt zu:', sheetName);
+                        // Sheet wurde automatisch eingeblendet → aus hiddenSheets entfernen
+                        if (switchResult.wasHidden && explorerState.hiddenSheets) {
+                            explorerState.hiddenSheets.delete(sheetName);
+                            updateSheetDropdown();
+                        }
                     } else {
                         console.error('[LiveSession] Sheet-Wechsel fehlgeschlagen:', switchResult.error);
+                        showFloatingStatus(`⚠️ Excel Sheet-Wechsel fehlgeschlagen: ${switchResult.error}`, 'error');
                     }
                 } catch (err) {
                     console.error('[LiveSession] Sheet-Wechsel Fehler:', err);
+                    showFloatingStatus(`⚠️ Excel Sheet-Wechsel Fehler: ${err.message}`, 'error');
+                }
+            } else if (explorerState.engineMode === 'live') {
+                // Live-Modus aktiv aber Session nicht bereit → Session neu starten
+                console.warn('[loadExplorerSheet] engineMode=live aber Session nicht aktiv → starte Session neu');
+                try {
+                    const liveOk = await startLiveSession();
+                    if (liveOk) {
+                        const switchResult = await window.electronAPI.liveSessionSwitchSheet(sheetName);
+                        if (switchResult.success) {
+                            console.log('[LiveSession] Sheet gewechselt zu:', sheetName, '(nach Session-Neustart)');
+                        }
+                    }
+                } catch (err) {
+                    console.error('[LiveSession] Session-Neustart fehlgeschlagen:', err);
                 }
             }
             
@@ -16648,9 +16779,13 @@
             // UI aktualisieren
             document.getElementById('explorerFileName').textContent = explorerState.fileName;
             
-            // Sheet-Dropdown füllen
+            // Sheet-Dropdown füllen (mit Markierung für ausgeblendete Sheets)
             elements.explorerSheetSelect.innerHTML = explorerState.sheets
-                .map(s => `<option value="${s}">${s}</option>`)
+                .map(s => {
+                    const isHidden = explorerState.hiddenSheets && explorerState.hiddenSheets.has(s);
+                    const label = isHidden ? `👁️‍🗨️ ${s} (ausgeblendet)` : s;
+                    return `<option value="${s}">${label}</option>`;
+                })
                 .join('');
             
             // Aktuelles Sheet auswählen (falls es noch existiert)
@@ -17863,6 +17998,7 @@
             document.getElementById('btnSheetMoveUp').onclick = () => moveSelectedSheet('up');
             document.getElementById('btnSheetMoveDown').onclick = () => moveSelectedSheet('down');
             document.getElementById('btnSheetDelete').onclick = deleteSelectedSheet;
+            document.getElementById('btnSheetToggleVisibility').onclick = toggleSheetVisibility;
             
             // Excel Ein-/Ausblenden Button
             elements.btnToggleExcel.onclick = toggleExcelVisibility;

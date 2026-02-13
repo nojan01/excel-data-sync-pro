@@ -2169,15 +2169,56 @@ end tell'''
             if sheet_name not in sheet_names:
                 return {'success': False, 'error': f'Sheet "{sheet_name}" nicht gefunden'}
             
-            self.worksheet = self.workbook.sheets[sheet_name]
+            target_sheet = self.workbook.sheets[sheet_name]
+            
+            # Pr\u00fcfe ob Sheet ausgeblendet ist
+            was_hidden = not target_sheet.visible
+            if was_hidden:
+                # Sheet muss zuerst eingeblendet werden, sonst schl\u00e4gt activate() fehl
+                target_sheet.visible = True
+                self._log(f"Sheet '{sheet_name}' war ausgeblendet \u2192 automatisch eingeblendet")
+            
+            self.worksheet = target_sheet
             self.sheet_name = sheet_name
             self.worksheet.activate()
             
             self._log(f"Sheet gewechselt zu: {sheet_name}")
-            return {'success': True, 'sheetName': sheet_name}
+            return {'success': True, 'sheetName': sheet_name, 'wasHidden': was_hidden}
             
         except Exception as e:
             self._log(f"Fehler beim Sheet-Wechsel: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def set_sheet_visibility(self, sheet_name: str, visible: bool) -> Dict[str, Any]:
+        """Setzt die Sichtbarkeit eines Arbeitsblatts
+        
+        Args:
+            sheet_name: Name des Arbeitsblatts
+            visible: True = einblenden, False = ausblenden
+        """
+        try:
+            if not self.workbook:
+                return {'success': False, 'error': 'Keine Datei ge\u00f6ffnet'}
+            
+            sheet_names = [s.name for s in self.workbook.sheets]
+            if sheet_name not in sheet_names:
+                return {'success': False, 'error': f'Sheet "{sheet_name}" nicht gefunden'}
+            
+            # Mindestens ein Sheet muss sichtbar bleiben
+            if not visible:
+                visible_count = sum(1 for s in self.workbook.sheets if s.visible)
+                if visible_count <= 1:
+                    return {'success': False, 'error': 'Mindestens ein Arbeitsblatt muss sichtbar bleiben'}
+            
+            target_sheet = self.workbook.sheets[sheet_name]
+            target_sheet.visible = visible
+            
+            action_text = "eingeblendet" if visible else "ausgeblendet"
+            self._log(f"Sheet '{sheet_name}' {action_text}")
+            return {'success': True, 'sheetName': sheet_name, 'visible': visible}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Setzen der Sichtbarkeit: {e}")
             return {'success': False, 'error': str(e)}
     
     def _format_datetime_values(self, all_data: list, used_range) -> list:
@@ -2264,6 +2305,7 @@ end tell'''
             'close': lambda: self.close_session(save=cmd.get('save', False)),
             'getData': lambda: self.get_data(),
             'switchSheet': lambda: self.switch_sheet(cmd.get('sheetName')),
+            'setSheetVisibility': lambda: self.set_sheet_visibility(cmd.get('sheetName'), cmd.get('visible', True)),
             
             # Passwort
             'setPassword': lambda: self.set_password(cmd.get('password')),
