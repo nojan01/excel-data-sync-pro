@@ -88,6 +88,7 @@ class ExcelLiveSession:
         self.undo_stack: List[Dict] = []
         self._undo_in_progress = False
         self.MAX_UNDO = 10
+        self._last_undo_snapshot_time: float = 0  # Für Drosselung bei schnellen Edits
         
         # Recovery-System
         self.backup_path: Optional[str] = None
@@ -1405,6 +1406,7 @@ class ExcelLiveSession:
         """
         try:
             if not self.worksheet:
+                self._log(f"set_row_values: Keine Datei geöffnet (row={row_index})")
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
             
             if not values:
@@ -1417,8 +1419,16 @@ class ExcelLiveSession:
             end_col_letter = self._get_column_letter(num_cols)
             range_addr = f'{start_col_letter}{excel_row}:{end_col_letter}{excel_row}'
             
-            # Undo-Snapshot: Komplettes Workbook sichern
-            self._push_undo_snapshot(f'Zeilenwerte geändert (Zeile {row_index + 1})')
+            self._log(f"set_row_values: row={row_index}, excel_row={excel_row}, cols={num_cols}, range={range_addr}")
+            
+            # Undo-Snapshot: Drosselung bei schnellen aufeinanderfolgenden Edits
+            # Nur Snapshot erstellen wenn letzter > 2 Sekunden her
+            now = time.time()
+            if now - self._last_undo_snapshot_time >= 2.0:
+                self._push_undo_snapshot(f'Zeilenwerte geändert (Zeile {row_index + 1})')
+                self._last_undo_snapshot_time = now
+            else:
+                self._log(f"set_row_values: Undo-Snapshot übersprungen (letzer vor {now - self._last_undo_snapshot_time:.1f}s)")
             
             if platform.system() == 'Darwin':
                 # macOS: Direkt über AppleScript für zuverlässigen Display-Refresh
@@ -1426,8 +1436,12 @@ class ExcelLiveSession:
             else:
                 # Windows: xlwings Range-Write + expliziter Screen-Refresh
                 self.app.screen_updating = True
+                self._log(f"set_row_values: Schreibe in Range {range_addr}...")
                 self.worksheet.range(range_addr).value = values
+                self._log(f"set_row_values: Range-Write abgeschlossen, Screen-Refresh...")
                 self._force_screen_refresh()
+            
+            self._log(f"set_row_values: Erfolgreich (row={row_index}, cols={num_cols})")
             
             # Journal
             self._journal_add('setRowValues', {
@@ -1440,7 +1454,9 @@ class ExcelLiveSession:
             return {'success': True, 'rowIndex': row_index, 'count': num_cols}
             
         except Exception as e:
-            self._log(f"Fehler beim Setzen der Zeilenwerte: {e}")
+            self._log(f"Fehler beim Setzen der Zeilenwerte (row={row_index}): {e}")
+            import traceback
+            self._log(traceback.format_exc())
             return {'success': False, 'error': str(e)}
     
     def _set_row_values_applescript(self, excel_row: int, values: list):
@@ -2209,7 +2225,15 @@ end tell'''
                     self._respond({'success': False, 'error': f'Ungültiges JSON: {e}'})
                     continue
                 
+                action = cmd.get('action', '?')
+                start_time = time.time()
+                self._log(f"CMD empfangen: {action}")
+                
                 result = self.handle_command(cmd)
+                
+                elapsed = time.time() - start_time
+                self._log(f"CMD fertig: {action} in {elapsed:.3f}s (success={result.get('success', '?')})")
+                
                 self._respond(result)
                 
             except KeyboardInterrupt:

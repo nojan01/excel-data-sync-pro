@@ -170,6 +170,7 @@ class ExcelLiveSession {
             if (this.isBusy) {
                 // Befehl in Queue einreihen — wird nach aktuellem Befehl ausgeführt
                 this.commandQueue.push(entry);
+                console.log(`[LiveSession] Command queued: ${command.action} (queue size: ${this.commandQueue.length})`);
                 return;
             }
 
@@ -184,9 +185,13 @@ class ExcelLiveSession {
         const { command, resolve, reject, timeout } = entry;
 
         this.isBusy = true;
+        const cmdStartTime = Date.now();
+        console.log(`[LiveSession] Executing: ${command.action}${command.rowIndex !== undefined ? ` (row=${command.rowIndex})` : ''}`);
 
         this._currentTimeoutId = setTimeout(() => {
             if (this.isBusy) {
+                const elapsed = Date.now() - cmdStartTime;
+                console.error(`[LiveSession] TIMEOUT after ${elapsed}ms: ${command.action}`);
                 this.isBusy = false;
                 this.currentResolve = null;
                 this.currentReject = null;
@@ -200,6 +205,8 @@ class ExcelLiveSession {
             if (this._currentTimeoutId) clearTimeout(this._currentTimeoutId);
             this._currentTimeoutId = null;
             this.isBusy = false;
+            const elapsed = Date.now() - cmdStartTime;
+            console.log(`[LiveSession] Completed: ${command.action} in ${elapsed}ms (success=${result?.success})`);
             this.currentResolve = null;
             this.currentReject = null;
             resolve(result);
@@ -209,6 +216,8 @@ class ExcelLiveSession {
             if (this._currentTimeoutId) clearTimeout(this._currentTimeoutId);
             this._currentTimeoutId = null;
             this.isBusy = false;
+            const elapsed = Date.now() - cmdStartTime;
+            console.error(`[LiveSession] Failed: ${command.action} after ${elapsed}ms: ${error}`);
             this.currentResolve = null;
             this.currentReject = null;
             reject(error);
@@ -235,6 +244,7 @@ class ExcelLiveSession {
     _processNextCommand() {
         if (this.commandQueue.length > 0 && !this.isBusy && this.pythonProcess) {
             const next = this.commandQueue.shift();
+            console.log(`[LiveSession] Processing queued: ${next.command.action} (remaining: ${this.commandQueue.length})`);
             this._executeCommand(next);
         }
     }
