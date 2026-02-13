@@ -2032,6 +2032,80 @@ end tell'''
             self._log(f"Fehler beim Sheet-Wechsel: {e}")
             return {'success': False, 'error': str(e)}
     
+    def _format_datetime_values(self, all_data: list, used_range) -> list:
+        """Ersetzt datetime-Werte durch den in Excel angezeigten Text.
+        
+        Liest für jede Zelle mit datetime-Wert die .api.Text Eigenschaft,
+        damit die GUI exakt das gleiche Datumsformat wie Excel anzeigt.
+        """
+        if not all_data:
+            return all_data
+        
+        start_row = used_range.row
+        start_col = used_range.column
+        
+        for r_idx, row in enumerate(all_data):
+            if not isinstance(row, list):
+                # Einzelne Zeile (nur 1 Spalte)
+                if isinstance(row, (datetime, date, dtime)):
+                    try:
+                        cell = self.worksheet.range((start_row + r_idx, start_col))
+                        display_text = cell.api.Text if platform.system() == 'Windows' else str(cell.value)
+                        all_data[r_idx] = display_text
+                    except Exception:
+                        pass
+                continue
+            
+            for c_idx, val in enumerate(row):
+                if isinstance(val, (datetime, date, dtime)):
+                    try:
+                        cell = self.worksheet.range((start_row + r_idx, start_col + c_idx))
+                        if platform.system() == 'Windows':
+                            display_text = cell.api.Text
+                        else:
+                            # macOS: .api.text nicht zuverlässig, Fallback auf number_format
+                            nf = cell.number_format
+                            if nf and nf != 'General':
+                                display_text = self._apply_excel_number_format(val, nf)
+                            else:
+                                display_text = str(val)
+                        row[c_idx] = display_text
+                    except Exception:
+                        pass
+        
+        return all_data
+    
+    @staticmethod
+    def _apply_excel_number_format(dt_val, nf: str) -> str:
+        """Wendet ein Excel-Zahlenformat auf einen datetime-Wert an (macOS Fallback).
+        
+        Konvertiert gängige Excel-Datumsformate in Python strftime-Formate.
+        """
+        try:
+            # Häufige Excel-Formate → strftime
+            fmt = nf
+            fmt = fmt.replace('yyyy', '%Y').replace('yy', '%y')
+            fmt = fmt.replace('mmmm', '%B').replace('mmm', '%b')
+            fmt = fmt.replace('mm', '%m').replace('m', '%-m')
+            fmt = fmt.replace('dddd', '%A').replace('ddd', '%a')
+            fmt = fmt.replace('dd', '%d').replace('d', '%-d')
+            fmt = fmt.replace('hh', '%H').replace('h', '%-H')
+            fmt = fmt.replace('ss', '%S').replace('s', '%-S')
+            fmt = fmt.replace('AM/PM', '%p').replace('am/pm', '%p')
+            
+            # Minuten: In Excel ist 'mm' nach 'hh' = Minuten, sonst = Monat
+            # Einfache Heuristik: wenn %H oder %S im Format, dann %m → %M für Minuten
+            if '%H' in fmt or '%S' in fmt:
+                # Ersetze die letzte %m-Instanz nach %H als Minuten
+                parts = fmt.split('%H')
+                if len(parts) > 1:
+                    parts[1] = parts[1].replace('%m', '%M', 1)
+                    fmt = '%H'.join(parts)
+            
+            return dt_val.strftime(fmt)
+        except Exception:
+            return str(dt_val)
+    
     def get_data(self) -> Dict[str, Any]:
         """Liest alle Daten aus dem aktuellen Sheet"""
         try:
@@ -2045,6 +2119,9 @@ end tell'''
             all_data = used_range.value
             if not all_data:
                 return {'success': True, 'headers': [], 'data': []}
+            
+            # Datetime-Werte durch Excel-Anzeigetext ersetzen
+            all_data = self._format_datetime_values(all_data, used_range)
             
             # Erste Zeile = Header
             headers = all_data[0] if isinstance(all_data[0], list) else [all_data[0]]
