@@ -13,6 +13,139 @@ const AdmZip = require('adm-zip');
 let XlsxPopulate = null; // Lazy-load für Passwort-Entschlüsselung
 
 /**
+ * Formatiert ein JS Date-Objekt gemäß einem Excel numFmt-String.
+ * Parst die Excel-Format-Tokens (d, dd, m, mm, mmm, mmmm, yy, yyyy, h, hh, s, ss)
+ * und gibt den formatierten String zurück — exakt wie Excel es anzeigen würde.
+ * 
+ * @param {Date} dt - Das Date-Objekt
+ * @param {string} numFmt - Excel-Format-String (z.B. "dd.mm.yyyy", "m/d/yy h:mm")
+ * @returns {string} Formatierter Datum-String
+ */
+function formatDateWithNumFmt(dt, numFmt) {
+    if (!numFmt || numFmt === 'General') {
+        // Kein Format: deutsches Standard-Datum
+        const d = dt.getDate(), m = dt.getMonth() + 1, y = dt.getFullYear();
+        return `${String(d).padStart(2, '0')}.${String(m).padStart(2, '0')}.${y}`;
+    }
+
+    // Nur den Datum/Zeit-Teil verwenden (vor Semikolon = positiver Format-Teil)
+    let fmt = numFmt.split(';')[0];
+    // Escaped Text in eckigen Klammern entfernen (z.B. [$-407], [$€-de-DE])
+    fmt = fmt.replace(/\[([^\]]*)\]/g, '');
+    // Literal-Strings in Anführungszeichen durch Platzhalter ersetzen
+    const literals = [];
+    fmt = fmt.replace(/"([^"]*)"/g, (_, text) => {
+        literals.push(text);
+        return `\x00LIT${literals.length - 1}\x00`;
+    });
+    // Backslash-Escapes: \X → Literal X
+    fmt = fmt.replace(/\\(.)/g, (_, ch) => {
+        literals.push(ch);
+        return `\x00LIT${literals.length - 1}\x00`;
+    });
+
+    const day = dt.getDate();
+    const month = dt.getMonth() + 1;
+    const year = dt.getFullYear();
+    const hours24 = dt.getHours();
+    const minutes = dt.getMinutes();
+    const seconds = dt.getSeconds();
+
+    // AM/PM-Erkennung
+    const hasAMPM = /am\/pm|AM\/PM|a\/p|A\/P/i.test(fmt);
+    const hours12 = hasAMPM ? (hours24 % 12 || 12) : hours24;
+    const ampm = hours24 < 12 ? 'AM' : 'PM';
+
+    // Token-basiertes Ersetzen (längste Matches zuerst)
+    // 'm' nach 'h' oder vor 's' = Minute, sonst = Monat
+    // Wir müssen die Reihenfolge der Tokens im Format-String beachten
+    const monthNames = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+    const monthNamesFull = ['Januar', 'Februar', 'März', 'April', 'Mai', 'Juni', 'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'];
+
+    // Tokenize: Finde alle Format-Tokens und deren Positionen
+    const tokenRegex = /mmmm|mmm|mm|m|dddd|ddd|dd|d|yyyy|yy|hh|h|ss|s|AM\/PM|am\/pm|A\/P|a\/p/gi;
+    let result = '';
+    let lastIndex = 0;
+    let afterHour = false; // Ist das nächste 'm' eine Minute?
+    
+    // Erst mal alle Tokens sammeln um den Kontext (h vor m) zu kennen
+    const tokens = [];
+    let match;
+    while ((match = tokenRegex.exec(fmt)) !== null) {
+        tokens.push({ token: match[0], index: match.index, end: match.index + match[0].length });
+    }
+
+    // Bestimme für jedes 'm'-Token ob es Monat oder Minute ist
+    for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i].token.toLowerCase();
+        if (t === 'm' || t === 'mm') {
+            // Minute wenn: vorheriges Token ist h/hh ODER nächstes Token ist s/ss
+            const prev = i > 0 ? tokens[i - 1].token.toLowerCase() : '';
+            const next = i < tokens.length - 1 ? tokens[i + 1].token.toLowerCase() : '';
+            tokens[i].isMinute = (prev === 'h' || prev === 'hh' || next === 's' || next === 'ss');
+        }
+    }
+
+    // Jetzt den Format-String zusammenbauen
+    for (let i = 0; i < tokens.length; i++) {
+        const t = tokens[i];
+        // Text vor diesem Token
+        result += fmt.substring(lastIndex, t.index);
+        lastIndex = t.end;
+
+        const lower = t.token.toLowerCase();
+        switch (lower) {
+            case 'yyyy': result += String(year); break;
+            case 'yy':   result += String(year).substring(2); break;
+            case 'mmmm': result += monthNamesFull[month - 1]; break;
+            case 'mmm':  result += monthNames[month - 1]; break;
+            case 'mm':
+                if (t.isMinute) {
+                    result += String(minutes).padStart(2, '0');
+                } else {
+                    result += String(month).padStart(2, '0');
+                }
+                break;
+            case 'm':
+                if (t.isMinute) {
+                    result += String(minutes);
+                } else {
+                    result += String(month);
+                }
+                break;
+            case 'dddd': {
+                const dayNames = ['Sonntag', 'Montag', 'Dienstag', 'Mittwoch', 'Donnerstag', 'Freitag', 'Samstag'];
+                result += dayNames[dt.getDay()];
+                break;
+            }
+            case 'ddd': {
+                const dayNamesShort = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
+                result += dayNamesShort[dt.getDay()];
+                break;
+            }
+            case 'dd':   result += String(day).padStart(2, '0'); break;
+            case 'd':    result += String(day); break;
+            case 'hh':   result += String(hasAMPM ? hours12 : hours24).padStart(2, '0'); break;
+            case 'h':    result += String(hasAMPM ? hours12 : hours24); break;
+            case 'ss':   result += String(seconds).padStart(2, '0'); break;
+            case 's':    result += String(seconds); break;
+            case 'am/pm': case 'a/p':
+                result += t.token === t.token.toUpperCase() ? ampm : ampm.toLowerCase();
+                break;
+            default:     result += t.token; break;
+        }
+    }
+    // Rest nach dem letzten Token
+    result += fmt.substring(lastIndex);
+
+    // Literal-Platzhalter zurückersetzen
+    result = result.replace(/\x00LIT(\d+)\x00/g, (_, idx) => literals[parseInt(idx)]);
+
+    // Bereinigung: Führende/angehängte Leerzeichen trimmen
+    return result.trim();
+}
+
+/**
  * Konvertiert Spalten-Buchstaben zu Index (A=0, B=1, ..., Z=25, AA=26, ...)
  * @param {string} letters - Spalten-Buchstaben (z.B. "A", "AA", "BC")
  * @returns {number} 0-basierter Spalten-Index
@@ -875,45 +1008,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 // WICHTIG: Datums-Behandlung VOR der allgemeinen Objekt-Behandlung!
                 // Date ist auch ein Objekt, würde sonst mit String() konvertiert werden
                 if (cellValue instanceof Date) {
-                    // Excel-Format aus numFmt extrahieren (falls vorhanden)
-                    const numFmt = cell.numFmt || '';
-                    
-                    // Prüfe ob es ein Zeit-Format ist (h für Stunden, : für Zeit-Separator)
-                    // WICHTIG: 'm' allein ist Monat, nicht Minute!
-                    // Minute wird nur nach 'h' oder vor 's' verwendet
-                    const hasTime = numFmt.includes('h') || numFmt.includes('H') || numFmt.includes(':');
-                    
-                    if (hasTime) {
-                        // Mit Zeit: ISO-Format verwenden
-                        cellValue = cellValue.toISOString().replace('T', ' ').substring(0, 19);
-                    } else {
-                        // Nur Datum: Format aus numFmt ableiten
-                        const day = cellValue.getDate();
-                        const month = cellValue.getMonth() + 1;
-                        const year = cellValue.getFullYear();
-                        
-                        // Führende Nullen hinzufügen wenn Format es verlangt
-                        const dayStr = numFmt.includes('dd') ? String(day).padStart(2, '0') : String(day);
-                        const monthStr = numFmt.includes('mm') ? String(month).padStart(2, '0') : String(month);
-                        
-                        // Jahr-Format: yyyy = 4 Ziffern, yy = 2 Ziffern
-                        let yearStr = String(year);
-                        if (!numFmt.includes('yyyy') && numFmt.includes('yy')) {
-                            yearStr = yearStr.substring(2);
-                        }
-                        
-                        // Separator bestimmen: ., /, oder -
-                        if (numFmt.includes('.')) {
-                            // Deutsches Format: D.M.YYYY
-                            cellValue = `${dayStr}.${monthStr}.${yearStr}`;
-                        } else if (numFmt.includes('-')) {
-                            // ISO-ähnlich: M-D-YYYY
-                            cellValue = `${monthStr}-${dayStr}-${yearStr}`;
-                        } else {
-                            // Standard: D.M.YYYY (da ursprüngliche Datei deutsches Format hatte)
-                            cellValue = `${dayStr}.${monthStr}.${yearStr}`;
-                        }
-                    }
+                    cellValue = formatDateWithNumFmt(cellValue, cell.numFmt || '');
                 }
                 
                 // Objekt-Werte behandeln (Rich Text, Hyperlinks, etc.)
