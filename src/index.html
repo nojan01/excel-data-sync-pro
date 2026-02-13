@@ -17403,16 +17403,22 @@
             document.addEventListener('keydown', (e) => {
                 // Strg+Z (Windows/Linux) oder Cmd+Z (Mac)
                 if ((e.ctrlKey || e.metaKey) && e.key === 'z' && !e.shiftKey) {
-                    e.preventDefault();
-                    
                     // Prüfe welches Modal aktiv ist
                     const explorerOpen = !elements.dataExplorerModal.classList.contains('hidden');
                     
                     if (explorerOpen) {
-                        if (undoExplorer()) {
-                            showUndoRedoFeedback('Rückgängig');
+                        // Bei aktiver Live-Session: explorerUndo() nutzen (wird weiter unten aufgerufen)
+                        // NICHT zusätzlich undoExplorer() aufrufen → sonst Doppel-Undo + Race-Condition
+                        if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                            // Wird vom zweiten Ctrl+Z Handler (explorerUndo) behandelt
+                        } else {
+                            e.preventDefault();
+                            if (undoExplorer()) {
+                                showUndoRedoFeedback('Rückgängig');
+                            }
                         }
                     } else {
+                        e.preventDefault();
                         if (undoSearch()) {
                             showUndoRedoFeedback('Rückgängig');
                         }
