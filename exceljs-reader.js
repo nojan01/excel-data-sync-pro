@@ -919,7 +919,8 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 // Objekt-Werte behandeln (Rich Text, Hyperlinks, etc.)
                 // WICHTIG: Nur wenn es KEINE Formel war (die wurde oben schon behandelt)
                 // Wir prüfen cell.value (nicht cellValue), um zu sehen ob es ein spezielles Objekt ist
-                if (cell.value && typeof cell.value === 'object' && !cell.formula && !cell.value.formula) {
+                // Date-Objekte NICHT als Objekte behandeln (wurden oben bereits formatiert)
+                if (cell.value && typeof cell.value === 'object' && !(cell.value instanceof Date) && !cell.formula && !cell.value.formula) {
                     // Rich Text extrahieren
                     if (cell.value.richText) {
                         const richText = cell.value.richText.map(part => ({
