@@ -12881,13 +12881,6 @@
             
             console.log(`[loadExplorerSheet] readExcelSheet fertig in ${_sheetMs}ms — ${result.data?.length} Zeilen, ${result.headers?.length} Spalten, cellStyles: ${Object.keys(result.cellStyles || {}).length}, timings:`, result.stats?.timings || 'keine');
             
-            // Debug-Info für Bild-Erkennung (temporär)
-            if (result._imageDebug) {
-                console.log('[IMAGE-DEBUG] === Bild-Erkennungs-Diagnose ===');
-                result._imageDebug.forEach(line => console.log('[IMAGE-DEBUG]', line));
-                console.log('[IMAGE-DEBUG] Debug-Datei:', result._imageDebugPath || 'nicht geschrieben');
-            }
-            
             explorerState.selectedSheet = sheetName;
             explorerState.headers = result.headers;
             explorerState.data = result.data.slice(1);

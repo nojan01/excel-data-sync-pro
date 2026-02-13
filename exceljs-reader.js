@@ -388,20 +388,19 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
             }
         }
         
-        // Bild-Formeln erkennen (DISPIMG, IMAGE)
-        // ExcelJS Streaming erkennt diese Formeln nicht, daher direkt aus XML parsen
-        // Robuster Ansatz: Zuerst alle <c>...</c> Blöcke finden, dann auf Bild-Formeln prüfen
-        // Wir splitten nach </c> um einzelne Zell-Blöcke zu erhalten
+        // ================================================================
+        // Bild-Zellen erkennen
+        // Excel 365 speichert Zellbilder auf 2 Arten:
+        // 1) DISPIMG/IMAGE Formeln in <f>-Tags (ältere Methode)
+        // 2) vm-Attribut (Value Metadata) auf <c>-Tags + richData (moderne Methode)
+        // ================================================================
         const cellBlocks = sheetXml.split('</c>');
+        
+        // Methode 1: DISPIMG/IMAGE Formeln
         for (const block of cellBlocks) {
-            // Prüfe ob dieser Block DISPIMG oder IMAGE enthält
             if (!/DISPIMG|IMAGE/i.test(block)) continue;
-            
-            // Prüfe ob es eine Formel ist (innerhalb von <f>...</f>)
             if (!/<f[\s>]/.test(block)) continue;
             
-            // Extrahiere das r-Attribut (Zellreferenz) aus dem <c> Tag
-            // r kann an beliebiger Position stehen: <c r="B5"...> oder <c s="1" r="B5"...>
             const cellRefMatch = block.match(/<c\s[^>]*?r="([A-Z]+\d+)"/);
             if (!cellRefMatch) continue;
             
@@ -411,31 +410,24 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
             result.imageCells.push({
                 ref: cellRef,
                 col: colLettersToIndex(colLetters),
-                row: rowNum - 1  // 0-basiert
+                row: rowNum - 1
             });
         }
         
-        // Shared formulas: Wenn eine DISPIMG-Formel als shared definiert ist,
-        // referenzieren andere Zellen sie nur per si="X" ohne Formeltext
+        // Shared formulas mit DISPIMG/IMAGE
         if (result.imageCells.length > 0) {
-            // Finde shared formula IDs von Bild-Formeln
             const sharedImageIds = new Set();
             for (const block of cellBlocks) {
                 if (!/DISPIMG|IMAGE/i.test(block)) continue;
                 const siMatch = block.match(/<f[^>]*t="shared"[^>]*si="(\d+)"/);
-                if (siMatch) {
-                    sharedImageIds.add(siMatch[1]);
-                }
+                if (siMatch) sharedImageIds.add(siMatch[1]);
             }
-            // Finde alle Zellen die diese shared IDs referenzieren
             if (sharedImageIds.size > 0) {
                 for (const block of cellBlocks) {
                     const siRef = block.match(/<f[^>]*t="shared"[^>]*si="(\d+)"[^>]*\/?>/);
                     if (!siRef || !sharedImageIds.has(siRef[1])) continue;
-                    
                     const cellRefMatch = block.match(/<c\s[^>]*?r="([A-Z]+\d+)"/);
                     if (!cellRefMatch) continue;
-                    
                     const cellRef = cellRefMatch[1];
                     const col = colLettersToIndex(cellRef.match(/^([A-Z]+)/)[1]);
                     const row = parseInt(cellRef.match(/(\d+)$/)[1]) - 1;
@@ -445,102 +437,67 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
                 }
             }
         }
+        
+        // Methode 2: vm-Attribut (Value Metadata) — Excel 365 Zellbilder
+        // Zellen mit vm="N" verweisen auf xl/richData/rdrichvalue.xml
+        // Prüfe zuerst ob richData existiert (= es gibt Zellbilder)
+        const hasRichData = zip.getEntries().some(e => /richData/i.test(e.entryName));
+        if (hasRichData) {
+            // Prüfe welche richData-Einträge Bilder enthalten
+            let richDataHasImages = false;
+            try {
+                // rdrichvalue.xml enthält <rv>-Einträge, Bilder haben type mit Bild-Referenz
+                const rdEntry = zip.getEntry('xl/richData/rdrichvalue.xml') || 
+                                zip.getEntry('xl/richData/rdRichValue.xml');
+                if (rdEntry) {
+                    const rdXml = rdEntry.getData().toString('utf8');
+                    // Bilder in richData haben typischerweise einen Verweis auf media/ oder image
+                    richDataHasImages = /img|image|picture|Bild/i.test(rdXml) || 
+                                         rdXml.includes('<v>') || // Hat Werte = wahrscheinlich Bilder
+                                         true; // richData existiert = fast immer Bilder
+                }
+                // Auch rdRichValueStructure.xml prüfen
+                const structEntry = zip.getEntry('xl/richData/rdrichvaluestructure.xml') ||
+                                    zip.getEntry('xl/richData/rdRichValueStructure.xml');
+                if (structEntry) {
+                    const structXml = structEntry.getData().toString('utf8');
+                    if (/image|img|picture/i.test(structXml)) {
+                        richDataHasImages = true;
+                    }
+                }
+            } catch (e) {
+                // Fallback: richData existiert = nehme an es sind Bilder
+                richDataHasImages = true;
+            }
+            
+            if (richDataHasImages) {
+                // Finde alle Zellen mit vm-Attribut
+                for (const block of cellBlocks) {
+                    // vm-Attribut auf dem <c>-Element
+                    const vmMatch = block.match(/<c\s[^>]*?\bvm="(\d+)"[^>]*?r="([A-Z]+\d+)"/);
+                    const vmMatch2 = block.match(/<c\s[^>]*?r="([A-Z]+\d+)"[^>]*?\bvm="(\d+)"/);
+                    
+                    let cellRef = null;
+                    if (vmMatch) {
+                        cellRef = vmMatch[2];
+                    } else if (vmMatch2) {
+                        cellRef = vmMatch2[1];
+                    }
+                    
+                    if (!cellRef) continue;
+                    
+                    const col = colLettersToIndex(cellRef.match(/^([A-Z]+)/)[1]);
+                    const row = parseInt(cellRef.match(/(\d+)$/)[1]) - 1;
+                    if (!result.imageCells.some(ic => ic.col === col && ic.row === row)) {
+                        result.imageCells.push({ ref: cellRef, col, row });
+                    }
+                }
+                console.log(`[SheetMetadata] richData gefunden, ${result.imageCells.length} Bild-Zellen (inkl. vm-Attribut)`);
+            }
+        }
+        
         if (result.imageCells.length > 0) {
             console.log(`[SheetMetadata] ${result.imageCells.length} Bild-Zellen erkannt: ${result.imageCells.map(c => c.ref).join(', ')}`);
-        }
-        
-        // DEBUG: Diagnose für Bild-Erkennung
-        // Suche nach #VALUE!-Zellen und prüfe ob DISPIMG/IMAGE irgendwo vorkommt
-        const debugInfo = [];
-        const hasDispimg = /DISPIMG/i.test(sheetXml);
-        const hasImage = /IMAGE/i.test(sheetXml);
-        debugInfo.push(`DISPIMG im XML: ${hasDispimg}, IMAGE im XML: ${hasImage}`);
-        debugInfo.push(`Gefundene Bild-Zellen: ${result.imageCells.length}`);
-        
-        // Alle ZIP-Einträge auflisten (suche nach richData, drawings, media)
-        const allEntries = zip.getEntries().map(e => e.entryName);
-        const relevantEntries = allEntries.filter(e => 
-            /richData|drawing|media|image|picture/i.test(e)
-        );
-        debugInfo.push(`Relevante ZIP-Einträge: ${relevantEntries.join(', ') || 'keine'}`);
-        
-        // Suche nach Zellen mit error/VALUE im XML
-        const valueCells = [];
-        for (const block of cellBlocks) {
-            if (/<v>[^<]*#VALUE![^<]*<\/v>/.test(block) || /t="e"/.test(block)) {
-                const refM = block.match(/<c\s[^>]*?r="([A-Z]+\d+)"/);
-                if (refM) {
-                    // Zeige den <c>-Block (gekürzt)
-                    const cStart = block.lastIndexOf('<c ');
-                    const snippet = cStart >= 0 ? block.substring(cStart).substring(0, 300) : block.substring(0, 300);
-                    valueCells.push({ ref: refM[1], xml: snippet });
-                }
-            }
-        }
-        if (valueCells.length > 0) {
-            debugInfo.push(`#VALUE!/Error-Zellen im XML (${valueCells.length}):`);
-            for (const vc of valueCells.slice(0, 10)) {
-                debugInfo.push(`  ${vc.ref}: ${vc.xml}`);
-            }
-        }
-        
-        // Prüfe ob es Drawing-Referenzen gibt
-        const drawingMatch = sheetXml.match(/<drawing\s+r:id="([^"]*)"/);
-        if (drawingMatch) {
-            debugInfo.push(`Drawing-Referenz: ${drawingMatch[1]}`);
-            // Versuche Drawing-XML zu lesen
-            try {
-                const sheetDir2 = fullSheetPath.substring(0, fullSheetPath.lastIndexOf('/'));
-                const sheetFileName2 = fullSheetPath.split('/').pop();
-                const sheetRelsPath2 = `${sheetDir2}/_rels/${sheetFileName2}.rels`;
-                const rels2 = zip.getEntry(sheetRelsPath2);
-                if (rels2) {
-                    const relsXml2 = rels2.getData().toString('utf8');
-                    const drawRel = relsXml2.match(new RegExp(`Id="${drawingMatch[1]}"[^>]*Target="([^"]*)"`));
-                    if (drawRel) {
-                        const drawPath = drawRel[1].startsWith('/') ? drawRel[1].substring(1) : `xl/worksheets/${drawRel[1]}`.replace('/worksheets/../', '/');
-                        const normalizedPath = drawPath.replace(/\/[^/]+\/\.\.\//g, '/');
-                        debugInfo.push(`Drawing-Pfad: ${normalizedPath}`);
-                        const drawEntry = zip.getEntry(normalizedPath);
-                        if (drawEntry) {
-                            const drawXml = drawEntry.getData().toString('utf8');
-                            debugInfo.push(`Drawing-XML (erste 1000 Zeichen): ${drawXml.substring(0, 1000)}`);
-                        }
-                    }
-                }
-            } catch (e) {
-                debugInfo.push(`Drawing-Fehler: ${e.message}`);
-            }
-        }
-        
-        // richData prüfen
-        for (const entry of relevantEntries) {
-            if (/richData/i.test(entry)) {
-                try {
-                    const rdEntry = zip.getEntry(entry);
-                    if (rdEntry) {
-                        const rdXml = rdEntry.getData().toString('utf8');
-                        debugInfo.push(`${entry} (erste 500 Zeichen): ${rdXml.substring(0, 500)}`);
-                    }
-                } catch (e) {
-                    debugInfo.push(`${entry}: Fehler: ${e.message}`);
-                }
-            }
-        }
-        
-        // Debug-Info als Datei speichern
-        if (valueCells.length > 0 || relevantEntries.length > 0) {
-            try {
-                const fs = require('fs');
-                const os = require('os');
-                const debugPath = require('path').join(os.tmpdir(), 'excel-image-debug.txt');
-                fs.writeFileSync(debugPath, debugInfo.join('\n'), 'utf8');
-                console.log(`[SheetMetadata] Debug-Info geschrieben: ${debugPath}`);
-                result._debugImageInfo = debugInfo;
-                result._debugPath = debugPath;
-            } catch (e) {
-                console.log(`[SheetMetadata] Debug-Schreiben fehlgeschlagen: ${e.message}`);
-            }
         }
         
         // Tables (für AutoFilter, falls kein direkter AutoFilter vorhanden)
@@ -1207,9 +1164,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 columns: headers.length,
                 loadTimeMs: totalTime,
                 timings // Detaillierte Zeitmessungen für Diagnose
-            },
-            _imageDebug: metadata._debugImageInfo || null,
-            _imageDebugPath: metadata._debugPath || null
+            }
         };
         
     } catch (error) {
