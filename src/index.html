@@ -3068,8 +3068,8 @@
                     <button class="btn btn-info" id="btnDataJoin" title="Spalten aus einer anderen Excel-Datei hinzufügen (basierend auf gemeinsamer Seriennummer)" disabled data-i18n="addColumns" data-i18n-title="addColumnsTitle">
                         🔗 Spalten hinzufügen
                     </button>
-                    <button class="btn btn-warning btn-sm" id="btnExplorerUndo" title="Alle ungespeicherten Änderungen verwerfen und letzten Speicherstand wiederherstellen — nur bei aktiver Live-Session" style="display: none;">
-                        ↩️ Zurücksetzen
+                    <button class="btn btn-warning btn-sm" id="btnExplorerUndo" title="Letzte Aktion rückgängig machen (Strg+Z) — nur bei aktiver Live-Session" style="display: none;">
+                        ↩️ Undo
                     </button>
                     <button class="btn btn-success" id="btnExplorerExport" title="Änderungen speichern oder als neue Datei exportieren">
                         💾 Speichern
@@ -15524,9 +15524,8 @@
         }
         
         /**
-         * Undo — schließt das Workbook ohne Speichern und öffnet es neu
-         * von der Festplatte (= letzter Speicherstand).
-         * Funktioniert nur bei aktiver Live-Session.
+         * Undo — macht die letzte Aktion in der Live-Session rückgängig.
+         * Nutzt einen internen Undo-Stack (nicht Excels Undo).
          */
         async function explorerUndo() {
             if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) {
@@ -15534,22 +15533,17 @@
                 return;
             }
             
-            // Bestätigung — alle ungespeicherten Änderungen gehen verloren
-            if (!confirm('Alle ungespeicherten Änderungen werden verworfen und der letzte Speicherstand wiederhergestellt.\n\nFortfahren?')) {
-                return;
-            }
-            
             const btnUndo = document.getElementById('btnExplorerUndo');
             if (btnUndo) {
                 btnUndo.disabled = true;
-                btnUndo.textContent = '⏳ Lade...';
+                btnUndo.textContent = '⏳ Undo...';
             }
             
             try {
-                // 1. Undo = close-without-save + reopen
+                // 1. Undo an Python-Session senden (pop Undo-Stack + reverse)
                 const undoResult = await window.electronAPI.liveSessionUndo();
                 if (!undoResult.success) {
-                    showFloatingStatus(`❌ Undo fehlgeschlagen: ${undoResult.error}`, 'error');
+                    showFloatingStatus(`❌ Undo: ${undoResult.error}`, 'error');
                     return;
                 }
                 
@@ -15560,7 +15554,8 @@
                 
                 await loadExplorerSheet(sheetName);
                 
-                showFloatingStatus('↩️ Letzter Speicherstand wiederhergestellt');
+                const label = undoResult.undone || 'Letzte Aktion';
+                showFloatingStatus(`↩️ Rückgängig: ${label}`);
                 updateExplorerEditStatus();
                 
             } catch (err) {
@@ -15569,7 +15564,7 @@
             } finally {
                 if (btnUndo) {
                     btnUndo.disabled = false;
-                    btnUndo.textContent = '↩️ Zurücksetzen';
+                    btnUndo.textContent = '↩️ Undo';
                 }
             }
         }
