@@ -15673,26 +15673,57 @@
                     
                     console.log('[Undo] Step 3 - Update:', headers.length, 'Spalten,', rawData.length, 'Zeilen');
                     
-                    explorerState.headers = headers.map(h => h != null ? String(h) : '');
-                    explorerState.data = rawData.map(row => {
+                    const newHeaders = headers.map(h => h != null ? String(h) : '');
+                    const newData = rawData.map(row => {
                         if (!Array.isArray(row)) return [row];
                         return row;
                     });
-                    explorerState.originalData = explorerState.data.map(row => [...row]);
-                    explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
-                    explorerState.columnOrder = [];
-                    explorerState.filteredData = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
-                    explorerState.currentPage = 1;
-                    explorerState.searchTerm = '';
-                    explorerState.sortColumn = null;
-                    explorerState.sortDirection = null;
-                    explorerState.hiddenRows = new Set();
-                    explorerState.mergedCells = [];
-                    explorerState.rowMapping = explorerState.data.map((_, i) => i);
-                    explorerState.rowHighlights.clear();
+                    
+                    // Prüfe ob sich die Spaltenstruktur geändert hat
+                    const columnsChanged = newHeaders.length !== explorerState.headers.length ||
+                        newHeaders.some((h, i) => h !== explorerState.headers[i]);
+                    
+                    // Daten immer aktualisieren
+                    explorerState.headers = newHeaders;
+                    explorerState.data = newData;
+                    explorerState.originalData = newData.map(row => [...row]);
+                    
+                    if (columnsChanged) {
+                        // Spaltenstruktur hat sich geändert → Layout komplett zurücksetzen
+                        console.log('[Undo] Spaltenstruktur geändert → Layout-Reset');
+                        explorerState.visibleColumns = newHeaders.map((_, i) => i);
+                        explorerState.columnOrder = [];
+                        explorerState.sortColumn = null;
+                        explorerState.sortDirection = null;
+                        explorerState.mergedCells = [];
+                        updateColumnToggles();
+                    }
+                    
+                    // filteredData mit aktualisierten Daten neu aufbauen
+                    // (hiddenRows, searchTerm, sortierung beibehalten)
+                    explorerState.filteredData = newData.map((row, index) => ({ originalIndex: index, row: row }));
+                    
+                    // Versteckte Zeilen anwenden (falls vorhanden)
+                    if (explorerState.hiddenRows.size > 0) {
+                        explorerState.filteredData = explorerState.filteredData.filter(
+                            item => !explorerState.hiddenRows.has(item.originalIndex)
+                        );
+                    }
+                    
+                    // Sortierung erneut anwenden (falls vorhanden)
+                    if (explorerState.sortColumn !== null) {
+                        applyExplorerSort();
+                    }
+                    
+                    // Sicherstellen, dass currentPage gültig ist
+                    const totalPages = Math.max(1, Math.ceil(explorerState.filteredData.length / explorerState.pageSize));
+                    if (explorerState.currentPage > totalPages) {
+                        explorerState.currentPage = totalPages;
+                    }
+                    
+                    explorerState.rowMapping = newData.map((_, i) => i);
                     
                     renderExplorerTable();
-                    updateColumnToggles();
                     updateHiddenRowsIndicator();
                     updateHiddenColumnsIndicator();
                     updateAutoFilterIndicator();
