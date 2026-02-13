@@ -53,6 +53,10 @@ class ExcelLiveSession {
             
             // Umgebungsvariablen für Python (inkl. PYTHONPATH)
             const env = getPythonEnv();
+            // WICHTIG: UTF-8 für stdin/stdout erzwingen (Windows nutzt sonst CP1252)
+            // Ohne das werden Umlaute (ß, ä, ö, ü) in Sheet-Namen falsch dekodiert
+            env.PYTHONUTF8 = '1';
+            env.PYTHONIOENCODING = 'utf-8';
 
             console.log('[LiveSession] Starte Python-Prozess:', pythonPath, pythonScript);
             console.log('[LiveSession] CWD:', cwd);
@@ -71,7 +75,7 @@ class ExcelLiveSession {
             this.pythonProcess.stderr.on('data', (data) => {
                 if (processEnded) return;
                 try {
-                    console.log('[Python]', data.toString().trim());
+                    console.log('[Python]', data.toString('utf-8').trim());
                 } catch (e) {
                     // Ignore EPIPE errors during shutdown
                 }
@@ -81,7 +85,7 @@ class ExcelLiveSession {
             this.pythonProcess.stdout.on('data', (data) => {
                 if (processEnded) return;
                 try {
-                    this.responseBuffer += data.toString();
+                    this.responseBuffer += data.toString('utf-8');
                     
                     // Verarbeite vollständige JSON-Zeilen
                     const lines = this.responseBuffer.split('\n');
@@ -213,7 +217,7 @@ class ExcelLiveSession {
 
         const cmdJson = JSON.stringify(command) + '\n';
         try {
-            this.pythonProcess.stdin.write(cmdJson);
+            this.pythonProcess.stdin.write(cmdJson, 'utf-8');
         } catch (e) {
             if (this._currentTimeoutId) clearTimeout(this._currentTimeoutId);
             this._currentTimeoutId = null;

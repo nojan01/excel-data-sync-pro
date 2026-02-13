@@ -23,6 +23,17 @@ import shutil
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 
+# WICHTIG: UTF-8 für stdin/stdout erzwingen
+# Auf Windows verwendet embedded Python sonst die System-Codepage (CP1252),
+# was bei Umlauten in Sheet-Namen (ß, ä, ö, ü) zu Mojibake führt:
+# "Große Tabelle" → "GroÃŸe Tabelle" → Sheet nicht gefunden!
+if hasattr(sys.stdin, 'reconfigure'):
+    sys.stdin.reconfigure(encoding='utf-8')
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
 # Für embedded Python auf Windows: pywin32 DLLs finden
 if platform.system() == 'Windows':
     # Bei embedded Python: sys.prefix kann falsch sein, daher vom executable ausgehen

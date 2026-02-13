@@ -170,6 +170,9 @@ async function callPython(scriptName, args = [], timeoutMs = 120000) {
     const basePath = getPythonBasePath();
     const scriptPath = path.resolve(basePath, scriptName);
     const env = getPythonEnv();
+    // UTF-8 für Python erzwingen (Windows nutzt sonst CP1252 für Umlaute)
+    env.PYTHONUTF8 = '1';
+    env.PYTHONIOENCODING = 'utf-8';
     
     // Sicherheitsprüfung: Script muss innerhalb von basePath liegen
     if (!scriptPath.startsWith(path.resolve(basePath))) {
@@ -366,6 +369,8 @@ async function writeExcel(config) {
     
     // Umgebungsvariablen für Python
     const env = getPythonEnv();
+    env.PYTHONUTF8 = '1';
+    env.PYTHONIOENCODING = 'utf-8';
     
     return new Promise((resolve, reject) => {
         const startTime = Date.now();
@@ -457,6 +462,8 @@ async function writeExcelOpenpyxl(config) {
     const pythonPath = getPythonPath();
     const scriptPath = path.join(getPythonBasePath(), 'excel_writer.py');
     const env = getPythonEnv();
+    env.PYTHONUTF8 = '1';
+    env.PYTHONIOENCODING = 'utf-8';
     
     return new Promise((resolve, reject) => {
         const pythonProcess = spawn(pythonPath, [scriptPath, 'write_sheet'], { env });
