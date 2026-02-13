@@ -12877,6 +12877,8 @@
             }
 
             _log2(`=== FERTIG === Gesamt: ${Date.now() - _loadStart2}ms, Engine: ${explorerState.engineMode}`);
+            elements.explorerStatus.textContent = '';
+            showFloatingStatus(`📂 ${result.fileName} geladen (${explorerState.engineMode})`);
             // Auto-Save für Crash-Recovery starten
             startExplorerAutoSave();
         }
