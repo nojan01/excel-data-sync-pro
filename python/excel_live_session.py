@@ -653,39 +653,89 @@ class ExcelLiveSession:
         }
     
     def undo(self) -> Dict[str, Any]:
-        """Sendet Undo-Befehl an Excel (Strg+Z Äquivalent)"""
+        """Undo = Workbook ohne Speichern schließen und von Platte neu öffnen.
+        
+        COM-Operationen (xlwings) löschen Excels Undo-Stack, deshalb kann
+        app.api.Undo() nicht funktionieren.  Stattdessen wird das Workbook
+        *ohne Speichern* geschlossen und erneut von der Festplatte geladen.
+        Damit kehrt der Stand zum letzten manuellen Speichern zurück.
+        """
+        import time as _time
         try:
-            if not self.app:
-                return {'success': False, 'error': 'Keine Excel-App aktiv'}
+            if not self.workbook or not self.file_path:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
             
-            self._log("Sende Undo an Excel...")
+            # Pfade / State merken
+            file_path = self.file_path
+            sheet_name = self.sheet_name
+            password = self.file_password
             
-            if platform.system() == 'Windows':
-                # Windows: COM API
-                try:
-                    self.app.api.Undo()
-                except Exception as e:
-                    # Fallback: SendKeys
-                    self._log(f"api.Undo fehlgeschlagen ({e}), versuche SendKeys...")
-                    import win32com.client
-                    shell = win32com.client.Dispatch("WScript.Shell")
-                    shell.SendKeys("^z", 0)
-                    import time
-                    time.sleep(0.3)
+            self._log(f"Undo: Workbook schließen ohne Speichern und neu öffnen...")
+            
+            # ── 1. Workbook OHNE Speichern schließen ──────────────────────
+            try:
+                self.app.display_alerts = False
+            except Exception:
+                pass
+            
+            try:
+                if platform.system() == 'Windows':
+                    self.workbook.api.Saved = True
+                    self.workbook.api.Close(SaveChanges=False)
+                else:
+                    self.workbook.api.saved.set(True)
+                    self.workbook.close()
+            except Exception as e:
+                self._log(f"Workbook-Close Fehler: {e}")
+                return {'success': False, 'error': f'Workbook schließen fehlgeschlagen: {e}'}
+            
+            self.workbook = None
+            self.worksheet = None
+            
+            # ── 2. Berechnung auf manuell (Pivot-Schutz) ─────────────────
+            try:
+                self.app.calculation = 'manual'
+            except Exception:
+                pass
+            
+            try:
+                self.app.screen_updating = False
+            except Exception:
+                pass
+            
+            # ── 3. Datei neu von Platte öffnen ────────────────────────────
+            _t0 = _time.time()
+            self._log(f"Öffne {file_path} erneut...")
+            if password:
+                self.workbook = self.app.books.open(file_path, update_links=False, password=password)
             else:
-                # macOS: AppleScript
-                try:
-                    import subprocess
-                    subprocess.run([
-                        'osascript', '-e',
-                        'tell application "Microsoft Excel" to undo'
-                    ], timeout=5, capture_output=True)
-                except Exception as e:
-                    self._log(f"macOS undo Fehler: {e}")
-                    return {'success': False, 'error': str(e)}
+                self.workbook = self.app.books.open(file_path, update_links=False)
+            self.file_path = file_path
+            self._log(f"Datei neu geöffnet in {_time.time() - _t0:.1f}s")
             
-            self._log("Undo erfolgreich gesendet")
-            return {'success': True}
+            try:
+                self.app.screen_updating = True
+            except Exception:
+                pass
+            
+            # ── 4. Sheet wieder auswählen ─────────────────────────────────
+            sheet_names = [s.name for s in self.workbook.sheets]
+            if sheet_name and sheet_name in sheet_names:
+                self.worksheet = self.workbook.sheets[sheet_name]
+                self.sheet_name = sheet_name
+            else:
+                # Fallback: erstes Sheet
+                self.worksheet = self.workbook.sheets[0]
+                self.sheet_name = self.worksheet.name
+                self._log(f"Sheet '{sheet_name}' nicht mehr vorhanden, nutze '{self.sheet_name}'")
+            
+            self._log("Undo abgeschlossen — Stand ist letzter Speicherpunkt")
+            return {
+                'success': True,
+                'message': 'Zurück zum letzten Speicherstand',
+                'sheet': self.sheet_name,
+                'sheets': sheet_names
+            }
             
         except Exception as e:
             self._log(f"Undo Fehler: {e}")

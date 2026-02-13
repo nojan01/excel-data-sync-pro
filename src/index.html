@@ -3068,8 +3068,8 @@
                     <button class="btn btn-info" id="btnDataJoin" title="Spalten aus einer anderen Excel-Datei hinzufügen (basierend auf gemeinsamer Seriennummer)" disabled data-i18n="addColumns" data-i18n-title="addColumnsTitle">
                         🔗 Spalten hinzufügen
                     </button>
-                    <button class="btn btn-warning btn-sm" id="btnExplorerUndo" title="Letzte Aktion rückgängig machen (Strg+Z) — nur bei aktiver Live-Session" style="display: none;">
-                        ↩️ Undo
+                    <button class="btn btn-warning btn-sm" id="btnExplorerUndo" title="Alle ungespeicherten Änderungen verwerfen und letzten Speicherstand wiederherstellen — nur bei aktiver Live-Session" style="display: none;">
+                        ↩️ Zurücksetzen
                     </button>
                     <button class="btn btn-success" id="btnExplorerExport" title="Änderungen speichern oder als neue Datei exportieren">
                         💾 Speichern
@@ -15524,8 +15524,9 @@
         }
         
         /**
-         * Undo — sendet Ctrl+Z an Excel und liest das Sheet neu ein
-         * Funktioniert nur bei aktiver Live-Session
+         * Undo — schließt das Workbook ohne Speichern und öffnet es neu
+         * von der Festplatte (= letzter Speicherstand).
+         * Funktioniert nur bei aktiver Live-Session.
          */
         async function explorerUndo() {
             if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) {
@@ -15533,35 +15534,33 @@
                 return;
             }
             
+            // Bestätigung — alle ungespeicherten Änderungen gehen verloren
+            if (!confirm('Alle ungespeicherten Änderungen werden verworfen und der letzte Speicherstand wiederhergestellt.\n\nFortfahren?')) {
+                return;
+            }
+            
             const btnUndo = document.getElementById('btnExplorerUndo');
             if (btnUndo) {
                 btnUndo.disabled = true;
-                btnUndo.textContent = '⏳ Undo...';
+                btnUndo.textContent = '⏳ Lade...';
             }
             
             try {
-                // 1. Undo an Excel senden
+                // 1. Undo = close-without-save + reopen
                 const undoResult = await window.electronAPI.liveSessionUndo();
                 if (!undoResult.success) {
                     showFloatingStatus(`❌ Undo fehlgeschlagen: ${undoResult.error}`, 'error');
                     return;
                 }
                 
-                // 2. Sheet neu einlesen (ExcelJS liest die Datei direkt)
-                // Kurz warten damit Excel den Undo verarbeitet hat
-                await new Promise(resolve => setTimeout(resolve, 300));
-                
-                // 3. Sheet-Daten neu laden
+                // 2. Sheet-Daten neu laden (ExcelJS liest direkt von Platte)
                 const sheetName = explorerState.selectedSheet;
-                // Cache für dieses Sheet leeren damit es frisch geladen wird
                 explorerState.sheetDataCache.delete(sheetName);
-                
-                // Editierte Zellen zurücksetzen (da wir den Excel-Stand neu laden)
                 explorerState.editedCells.clear();
                 
                 await loadExplorerSheet(sheetName);
                 
-                showFloatingStatus('↩️ Undo ausgeführt — Sheet neu geladen');
+                showFloatingStatus('↩️ Letzter Speicherstand wiederhergestellt');
                 updateExplorerEditStatus();
                 
             } catch (err) {
@@ -15570,7 +15569,7 @@
             } finally {
                 if (btnUndo) {
                     btnUndo.disabled = false;
-                    btnUndo.textContent = '↩️ Undo';
+                    btnUndo.textContent = '↩️ Zurücksetzen';
                 }
             }
         }
