@@ -16177,32 +16177,9 @@
                     console.log('[Export] Live-Session aktiv - verwende Excel direkt zum Speichern...');
                     
                     try {
-                        // Strukturelle Änderungen: Sende alle Zellwerte der eingefügten Spalten
-                        // Die Spalten selbst wurden bereits von _syncDataJoinToLiveSession eingefügt
-                        // (das läuft jetzt synchron mit await in executeDataJoin)
-                        // Hier senden wir die Werte nochmal als Sicherheitsnetz
-                        const columnInsertedInfo = explorerState.editedCells.get('_columnInserted');
-                        if (columnInsertedInfo && columnInsertedInfo.operations) {
-                            console.log(`[Export] Strukturelle Änderung: ${columnInsertedInfo.totalCount} Spalten eingefügt — Sicherheitsnetz: Werte synchronisieren...`);
-                            
-                            let offset = 0;
-                            for (const op of columnInsertedInfo.operations.sort((a, b) => a.position - b.position)) {
-                                const actualPos = op.position + offset;
-                                for (let i = 0; i < op.count; i++) {
-                                    const targetColIndex = actualPos + i;
-                                    const columnValues = explorerState.data.map(row => row[targetColIndex] || '');
-                                    if (columnValues.some(v => v !== '')) {
-                                        await window.electronAPI.liveSessionSetColumnValues(
-                                            targetColIndex,
-                                            columnValues,
-                                            0
-                                        );
-                                    }
-                                }
-                                offset += op.count;
-                            }
-                            console.log('[Export] Strukturelle Sync abgeschlossen');
-                        }
+                        // Strukturelle Änderungen (Spalten-Join) wurden bereits durch
+                        // await _syncDataJoinToLiveSession() in executeDataJoin synchron übertragen.
+                        // Kein erneutes Senden nötig.
                         
                         // Sicherheitsnetz: Alle ausstehenden Zell-Änderungen an Excel übertragen
                         // (falls blur-Handler nicht gefeuert hat oder Sync fehlgeschlagen ist)
