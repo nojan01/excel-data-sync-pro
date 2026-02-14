@@ -3482,8 +3482,8 @@
             </select>
             <input type="text" class="filter-value config-input" placeholder="Wert..." style="flex: 1; min-width: 100px;">
             <input type="number" class="filter-days config-input" placeholder="Tage" style="width: 60px; display: none;" min="0">
-            <input type="date" class="filter-date-from config-input" style="width: 130px; display: none;" title="Von-Datum">
-            <input type="date" class="filter-date-to config-input" style="width: 130px; display: none;" title="Bis-Datum">
+            <input type="text" class="filter-date-from config-input" placeholder="Von..." style="width: 130px; display: none;" title="Von-Datum">
+            <input type="text" class="filter-date-to config-input" placeholder="Bis..." style="width: 130px; display: none;" title="Bis-Datum">
             <button type="button" class="btn btn-secondary btn-sm remove-filter" style="padding: 2px 8px;">✕</button>
         </div>
     </template>
@@ -13374,6 +13374,47 @@
         }
         
         /**
+         * Erkennt ein Beispiel-Datum aus einer Spalte für den Placeholder-Text
+         * Gibt den ersten nicht-leeren Datumswert der Spalte als String zurück
+         */
+        function getDateSampleFromColumn(colIndex) {
+            if (!explorerState.data || colIndex < 0) return '';
+            for (let i = 0; i < Math.min(explorerState.data.length, 50); i++) {
+                const val = explorerState.data[i][colIndex];
+                if (val && String(val).trim() !== '') {
+                    const parsed = parseDateValue(val);
+                    if (parsed) return String(val).trim();
+                }
+            }
+            return '';
+        }
+        
+        /**
+         * Aktualisiert die Placeholders der Von/Bis-Felder basierend auf Spalten-Daten
+         */
+        function updateDatePlaceholders(row) {
+            const colSelect = row.querySelector('.filter-column');
+            const dateFromInput = row.querySelector('.filter-date-from');
+            const dateToInput = row.querySelector('.filter-date-to');
+            const colIndex = parseInt(colSelect.value);
+            
+            if (isNaN(colIndex) || colIndex < 0) {
+                dateFromInput.placeholder = 'Von...';
+                dateToInput.placeholder = 'Bis...';
+                return;
+            }
+            
+            const sample = getDateSampleFromColumn(colIndex);
+            if (sample) {
+                dateFromInput.placeholder = `Von z.B. ${sample}`;
+                dateToInput.placeholder = `Bis z.B. ${sample}`;
+            } else {
+                dateFromInput.placeholder = 'Von...';
+                dateToInput.placeholder = 'Bis...';
+            }
+        }
+        
+        /**
          * Prüft ob ein Datum den Filter-Bedingungen entspricht
          */
         function matchDateFilter(cellValue, operator, days = 0, dateFrom = null, dateTo = null) {
@@ -13647,10 +13688,19 @@
                                     dateTo = fmt(new Date(today.getTime() - 86400000)); // bis gestern
                                     break;
                                 }
-                                case 'dateBetween':
-                                    dateFrom = f.dateFrom || null;
-                                    dateTo = f.dateTo || null;
+                                case 'dateBetween': {
+                                    // User tippt Datum im Tabellenformat (z.B. "14.02.2026")
+                                    // → parseDateValue() parst alle Formate → in ISO umwandeln für Python
+                                    if (f.dateFrom) {
+                                        const parsed = parseDateValue(f.dateFrom);
+                                        dateFrom = parsed ? fmt(parsed) : f.dateFrom;
+                                    }
+                                    if (f.dateTo) {
+                                        const parsed = parseDateValue(f.dateTo);
+                                        dateTo = parsed ? fmt(parsed) : f.dateTo;
+                                    }
                                     break;
+                                }
                             }
                             
                             return {
@@ -13951,6 +14001,11 @@
                     valueInput.value = '';
                 }
                 
+                // Placeholders aktualisieren wenn dateBetween gewählt
+                if (needsDateRange) {
+                    updateDatePlaceholders(row);
+                }
+                
                 updateFiltersFromDOM();
             };
             
@@ -13958,11 +14013,25 @@
                 row.remove();
                 updateFiltersFromDOM();
             };
-            row.querySelector('.filter-column').onchange = updateFiltersFromDOM;
+            row.querySelector('.filter-column').onchange = () => {
+                const op = operatorSelect.value;
+                if (op === 'dateBetween') {
+                    updateDatePlaceholders(row);
+                }
+                updateFiltersFromDOM();
+            };
             daysInput.oninput = updateFiltersFromDOM;
-            dateFromInput.onchange = updateFiltersFromDOM;
-            dateToInput.onchange = updateFiltersFromDOM;
+            dateFromInput.oninput = updateFiltersFromDOM;
+            dateToInput.oninput = updateFiltersFromDOM;
             valueInput.oninput = updateFiltersFromDOM;
+            
+            // Enter-Handler für Datums-Textfelder
+            dateFromInput.onkeydown = (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); syncFiltersToExcel(); }
+            };
+            dateToInput.onkeydown = (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); syncFiltersToExcel(); }
+            };
             
             // Enter-Handler für Filter-Value
             valueInput.onkeydown = (e) => {
@@ -15790,6 +15859,11 @@
                     valueInput.value = '';
                 }
                 
+                // Placeholders aktualisieren wenn dateBetween gewählt
+                if (needsDateRange) {
+                    updateDatePlaceholders(row);
+                }
+                
                 updateFiltersFromDOM();
             };
             
@@ -15798,10 +15872,25 @@
                 row.remove();
                 updateFiltersFromDOM();
             };
-            row.querySelector('.filter-column').onchange = updateFiltersFromDOM;
+            row.querySelector('.filter-column').onchange = () => {
+                // Placeholders aktualisieren wenn Spalte gewechselt
+                const op = operatorSelect.value;
+                if (op === 'dateBetween') {
+                    updateDatePlaceholders(row);
+                }
+                updateFiltersFromDOM();
+            };
             daysInput.oninput = updateFiltersFromDOM;
-            dateFromInput.onchange = updateFiltersFromDOM;
-            dateToInput.onchange = updateFiltersFromDOM;
+            dateFromInput.oninput = updateFiltersFromDOM;
+            dateToInput.oninput = updateFiltersFromDOM;
+            
+            // Enter in Datums-Textfeldern sendet an Excel
+            dateFromInput.onkeydown = (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); syncFiltersToExcel(); }
+            };
+            dateToInput.onkeydown = (e) => {
+                if (e.key === 'Enter') { e.preventDefault(); syncFiltersToExcel(); }
+            };
             
             // Filter-Value: Enter sendet an Excel
             const filterValueInput = row.querySelector('.filter-value');
