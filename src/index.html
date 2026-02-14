@@ -15690,6 +15690,13 @@
             document.getElementById('btnClearExplorerFilters').disabled = true;
             updateFilterBadge();
             
+            // AutoFilter-versteckte Zeilen und Range zurücksetzen
+            // (Non-Streaming Reader liest row.hidden korrekt aus, Streaming Reader nicht)
+            explorerState.hiddenRows.clear();
+            explorerState.autoFilterRange = null;
+            updateAutoFilterIndicator();
+            updateHiddenRowsIndicator();
+            
             // LIVE SESSION: AutoFilter in Excel zurücksetzen
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 try {
