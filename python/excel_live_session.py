@@ -20,7 +20,7 @@ import os
 import platform
 import time
 import shutil
-from datetime import datetime, date, time as dtime
+from datetime import datetime, date, time as dtime, timedelta
 from typing import Optional, Dict, Any, List
 
 # WICHTIG: UTF-8 für stdin/stdout erzwingen
@@ -1903,7 +1903,10 @@ end tell'''
                             col_idx = f.get('colIndex', 0) + 1  # 1-basiert
                             criteria = f.get('criteria', '')
                             operator = f.get('operator', 'equals')
+                            date_from = f.get('dateFrom', None)
+                            date_to = f.get('dateTo', None)
                             
+                            # ---- Text-Filter ----
                             if operator == 'contains':
                                 criteria = f'*{criteria}*'
                             elif operator == 'notContains':
@@ -1916,6 +1919,38 @@ end tell'''
                                 criteria = '='
                             elif operator == 'isNotEmpty':
                                 criteria = '<>'
+                            
+                            # ---- Datums-Filter ----
+                            elif operator in ('dateToday', 'datePast', 'dateFuture',
+                                              'dateThisWeek', 'dateThisMonth',
+                                              'dateInDays', 'dateOverdueDays', 'dateBetween'):
+                                self._log(f"Windows: Datums-Filter Spalte {col_idx}: op={operator}, from={date_from}, to={date_to}")
+                                try:
+                                    c1 = None
+                                    c2 = None
+                                    xl_op = None  # 1 = xlAnd
+                                    
+                                    if date_from and date_to:
+                                        c1 = f">={date_from}"
+                                        c2 = f"<={date_to}"
+                                        xl_op = 1  # xlAnd
+                                    elif date_from:
+                                        c1 = f">={date_from}"
+                                    elif date_to:
+                                        c1 = f"<={date_to}"
+                                    else:
+                                        self._log(f"Windows: Datums-Filter Spalte {col_idx} übersprungen (keine Daten)")
+                                        continue
+                                    
+                                    if c2 and xl_op:
+                                        used_range.api.AutoFilter(Field=col_idx, Criteria1=c1, Operator=xl_op, Criteria2=c2)
+                                    else:
+                                        used_range.api.AutoFilter(Field=col_idx, Criteria1=c1)
+                                    self._active_filter_fields.append(col_idx)
+                                    self._log(f"Windows: Datums-Filter Spalte {col_idx} gesetzt: c1={c1}, c2={c2}")
+                                except Exception as e:
+                                    self._log(f"Fehler bei Datums-Filter Spalte {col_idx}: {e}")
+                                continue  # Skip den normalen AutoFilter-Aufruf unten
                             
                             self._log(f"Windows: Setze Filter Spalte {col_idx}: operator={operator}, criteria='{criteria}'")
                             
@@ -1947,11 +1982,54 @@ end tell'''
                             if not isinstance(col_values, list):
                                 col_values = [col_values]
                             
+                            # Datum-Grenzen für Datums-Filter vorbereiten
+                            date_from = f.get('dateFrom', None)
+                            date_to = f.get('dateTo', None)
+                            date_from_dt = None
+                            date_to_dt = None
+                            is_date_op = operator in ('dateToday', 'datePast', 'dateFuture',
+                                                       'dateThisWeek', 'dateThisMonth',
+                                                       'dateInDays', 'dateOverdueDays', 'dateBetween')
+                            if is_date_op:
+                                try:
+                                    if date_from:
+                                        date_from_dt = datetime.strptime(date_from, '%Y-%m-%d')
+                                    if date_to:
+                                        date_to_dt = datetime.strptime(date_to, '%Y-%m-%d')
+                                except Exception as e:
+                                    self._log(f"macOS: Datums-Parse Fehler: {e}")
+                            
                             for idx, cell_value in enumerate(col_values):
                                 row_num = idx + 2
                                 cell_str = str(cell_value).lower() if cell_value is not None else ''
                                 matches = False
-                                if operator == 'contains':
+                                
+                                if is_date_op:
+                                    # Datums-Vergleich
+                                    cell_date = None
+                                    if isinstance(cell_value, datetime):
+                                        cell_date = cell_value
+                                    elif isinstance(cell_value, date):
+                                        cell_date = datetime.combine(cell_value, dtime())
+                                    elif cell_value:
+                                        # Versuche String als Datum zu parsen
+                                        for dfmt in ('%Y-%m-%d', '%d.%m.%Y', '%m/%d/%Y', '%d/%m/%Y'):
+                                            try:
+                                                cell_date = datetime.strptime(str(cell_value).strip(), dfmt)
+                                                break
+                                            except:
+                                                pass
+                                    
+                                    if cell_date:
+                                        cell_date = cell_date.replace(hour=0, minute=0, second=0, microsecond=0)
+                                        if date_from_dt and date_to_dt:
+                                            matches = date_from_dt <= cell_date <= date_to_dt
+                                        elif date_from_dt:
+                                            matches = cell_date >= date_from_dt
+                                        elif date_to_dt:
+                                            matches = cell_date <= date_to_dt
+                                    # cell_date == None → matches bleibt False
+                                elif operator == 'contains':
                                     matches = criteria in cell_str
                                 elif operator == 'notContains':
                                     matches = criteria not in cell_str

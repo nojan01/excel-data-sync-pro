@@ -13494,23 +13494,96 @@
             }
             
             try {
+                const noValueOps = ['isEmpty', 'isNotEmpty', 'dateToday', 'datePast', 'dateFuture', 'dateThisWeek', 'dateThisMonth'];
+                const dateOps = ['dateInDays', 'dateOverdueDays', 'dateBetween', 'dateToday', 'datePast', 'dateFuture', 'dateThisWeek', 'dateThisMonth'];
+                
                 // Konvertiere Explorer-Filter zu Excel-AutoFilter-Format
                 const excelFilters = explorerState.filters
                     .filter(f => {
                         if (!f.column) return false;
-                        // isEmpty/isNotEmpty brauchen keinen Wert
-                        if (f.operator === 'isEmpty' || f.operator === 'isNotEmpty') return true;
+                        // Operatoren die keinen Wert brauchen
+                        if (noValueOps.includes(f.operator)) return true;
+                        // dateBetween braucht dateFrom oder dateTo
+                        if (f.operator === 'dateBetween') return !!(f.dateFrom || f.dateTo);
+                        // dateInDays/dateOverdueDays brauchen days
+                        if (f.operator === 'dateInDays' || f.operator === 'dateOverdueDays') return true;
                         return !!f.value;
                     })
                     .map(f => {
-                        // Für isEmpty/isNotEmpty: keinen Criteria-Wert senden
-                        const criteria = (f.operator === 'isEmpty' || f.operator === 'isNotEmpty')
-                            ? '' 
-                            : f.value;
+                        const op = f.operator || 'contains';
+                        
+                        // Datumsfilter: Berechne konkrete Datumsgrenzen
+                        if (dateOps.includes(op)) {
+                            const today = new Date();
+                            today.setHours(0, 0, 0, 0);
+                            const fmt = d => `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                            
+                            let dateFrom = null, dateTo = null;
+                            
+                            switch (op) {
+                                case 'dateToday':
+                                    dateFrom = fmt(today);
+                                    dateTo = fmt(today);
+                                    break;
+                                case 'datePast': {
+                                    dateTo = fmt(new Date(today.getTime() - 86400000)); // gestern
+                                    break;
+                                }
+                                case 'dateFuture': {
+                                    dateFrom = fmt(new Date(today.getTime() + 86400000)); // morgen
+                                    break;
+                                }
+                                case 'dateThisWeek': {
+                                    const dow = today.getDay();
+                                    const mondayOff = dow === 0 ? -6 : 1 - dow;
+                                    const mon = new Date(today);
+                                    mon.setDate(today.getDate() + mondayOff);
+                                    const sun = new Date(mon);
+                                    sun.setDate(mon.getDate() + 6);
+                                    dateFrom = fmt(mon);
+                                    dateTo = fmt(sun);
+                                    break;
+                                }
+                                case 'dateThisMonth': {
+                                    const first = new Date(today.getFullYear(), today.getMonth(), 1);
+                                    const last = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+                                    dateFrom = fmt(first);
+                                    dateTo = fmt(last);
+                                    break;
+                                }
+                                case 'dateInDays': {
+                                    const days = parseInt(f.value) || parseInt(f.days) || 0;
+                                    dateFrom = fmt(today);
+                                    dateTo = fmt(new Date(today.getTime() + days * 86400000));
+                                    break;
+                                }
+                                case 'dateOverdueDays': {
+                                    const days = parseInt(f.value) || parseInt(f.days) || 0;
+                                    dateFrom = fmt(new Date(today.getTime() - days * 86400000));
+                                    dateTo = fmt(new Date(today.getTime() - 86400000)); // bis gestern
+                                    break;
+                                }
+                                case 'dateBetween':
+                                    dateFrom = f.dateFrom || null;
+                                    dateTo = f.dateTo || null;
+                                    break;
+                            }
+                            
+                            return {
+                                colIndex: parseInt(f.column),
+                                operator: op,
+                                criteria: '',
+                                dateFrom: dateFrom,
+                                dateTo: dateTo
+                            };
+                        }
+                        
+                        // isEmpty/isNotEmpty: keinen Criteria-Wert senden
+                        const criteria = (op === 'isEmpty' || op === 'isNotEmpty') ? '' : f.value;
                         return {
                             colIndex: parseInt(f.column),
                             criteria: criteria,
-                            operator: f.operator || 'contains'
+                            operator: op
                         };
                     });
                 
