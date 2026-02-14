@@ -13439,7 +13439,7 @@
                     // Beispiel: days=7 zeigt alles was in den letzten 7 Tagen überfällig wurde
                     return diffDays < 0 && Math.abs(diffDays) <= days;
                     
-                case 'dateBetween':
+                case 'dateBetween': {
                     // Datum liegt im angegebenen Zeitraum von-bis
                     if (!dateFrom && !dateTo) return false;
                     
@@ -13458,6 +13458,10 @@
                         if (toDate) toDate.setHours(23, 59, 59, 999); // Ende des Tages
                     }
                     
+                    // Eingabe vorhanden, aber nicht parsebar (z.B. unvollständige Eingabe)
+                    // → nicht filtern, alle Zeilen anzeigen
+                    if (!fromDate && !toDate) return true;
+                    
                     // Wenn nur Von-Datum: alles ab diesem Datum
                     if (fromDate && !toDate) {
                         return cellDate >= fromDate;
@@ -13468,6 +13472,7 @@
                     }
                     // Beide Daten: Bereich prüfen
                     return cellDate >= fromDate && cellDate <= toDate;
+                }
                     
                 case 'dateToday':
                     return diffDays === 0;
@@ -13555,8 +13560,10 @@
                             const result = matchDateFilter(rawCellValue, filter.operator, 0, filter.dateFrom, filter.dateTo);
                             if (isDateFilter && dateDebugCount < 3) {
                                 dateDebugCount++;
-                                const parsed = parseDateValue(rawCellValue);
-                                console.log(`[DateFilter] Spalte ${colIndex}, Operator: ${filter.operator}, Zellwert: "${rawCellValue}" (Typ: ${typeof rawCellValue}), Parsed: ${parsed}, Von: ${filter.dateFrom}, Bis: ${filter.dateTo}, Ergebnis: ${result}`);
+                                const parsedCell = parseDateValue(rawCellValue);
+                                const parsedFrom = filter.dateFrom ? parseDateValue(filter.dateFrom) : null;
+                                const parsedTo = filter.dateTo ? parseDateValue(filter.dateTo) : null;
+                                console.log(`[DateFilter] dateBetween: Zelle="${rawCellValue}" → ${parsedCell}, Von="${filter.dateFrom}" → ${parsedFrom}, Bis="${filter.dateTo}" → ${parsedTo}, Ergebnis: ${result}`);
                             }
                             return result;
                         }
