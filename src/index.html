@@ -17557,6 +17557,9 @@
                 return;
             }
             
+            const isEn = currentLanguage === 'en';
+            const locale = isEn ? 'en-US' : 'de-DE';
+            
             // Overlay
             const existingDialog = document.querySelector('.fileinfo-dialog-overlay');
             if (existingDialog) existingDialog.remove();
@@ -17576,69 +17579,76 @@
             
             const formatDate = (d) => {
                 if (!d) return '—';
-                try { return new Date(d).toLocaleString('de-DE'); } catch { return d; }
+                try { return new Date(d).toLocaleString(locale); } catch { return d; }
             };
             
             const badge = (text, color) => `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${color};color:white;margin:2px;">${text}</span>`;
             
             // Features sammeln
             const features = [];
-            if (result.hasPivotTables) features.push(badge(`${result.pivotTableCount} Pivot-Tabelle${result.pivotTableCount > 1 ? 'n' : ''}`, '#e91e63'));
-            if (result.hasCharts) features.push(badge(`${result.chartCount} Diagramm${result.chartCount > 1 ? 'e' : ''}`, '#2196F3'));
-            if (result.hasTables) features.push(badge(`${result.tableCount} Tabelle${result.tableCount > 1 ? 'n' : ''}`, '#009688'));
-            if (result.hasMacros) features.push(badge('Makros (VBA)', '#ff5722'));
-            if (result.hasImages) features.push(badge(`${result.imageCount} Bild${result.imageCount > 1 ? 'er' : ''}`, '#795548'));
-            if (result.hasComments) features.push(badge('Kommentare', '#607d8b'));
-            if (result.hasConditionalFormatting) features.push(badge('Bedingte Formatierung', '#9c27b0'));
-            if (result.hasDataValidations) features.push(badge('Datenvalidierung', '#ff9800'));
+            if (result.hasPivotTables) features.push(badge(`${result.pivotTableCount} ${isEn ? 'Pivot Table' : 'Pivot-Tabelle'}${result.pivotTableCount > 1 ? (isEn ? 's' : 'n') : ''}`, '#e91e63'));
+            if (result.hasCharts) features.push(badge(`${result.chartCount} ${isEn ? 'Chart' : 'Diagramm'}${result.chartCount > 1 ? (isEn ? 's' : 'e') : ''}`, '#2196F3'));
+            if (result.hasTables) features.push(badge(`${result.tableCount} ${isEn ? 'Table' : 'Tabelle'}${result.tableCount > 1 ? (isEn ? 's' : 'n') : ''}`, '#009688'));
+            if (result.hasMacros) features.push(badge(isEn ? 'Macros (VBA)' : 'Makros (VBA)', '#ff5722'));
+            if (result.hasImages) features.push(badge(`${result.imageCount} ${isEn ? 'Image' : 'Bild'}${result.imageCount > 1 ? (isEn ? 's' : 'er') : ''}`, '#795548'));
+            if (result.hasComments) features.push(badge(isEn ? 'Comments' : 'Kommentare', '#607d8b'));
+            if (result.hasConditionalFormatting) features.push(badge(isEn ? 'Conditional Formatting' : 'Bedingte Formatierung', '#9c27b0'));
+            if (result.hasDataValidations) features.push(badge(isEn ? 'Data Validation' : 'Datenvalidierung', '#ff9800'));
             if (result.hasExternalLinks) features.push(badge(`${result.externalLinkCount} Ext. Link${result.externalLinkCount > 1 ? 's' : ''}`, '#f44336'));
-            if (result.isPasswordProtected) features.push(badge('Passwortgeschützt', '#d32f2f'));
+            if (result.isPasswordProtected) features.push(badge(isEn ? 'Password Protected' : 'Passwortgeschützt', '#d32f2f'));
             
             const row = (label, value) => value && value !== '—' ? `<tr><td style="padding:4px 12px 4px 0;color:var(--text-muted);white-space:nowrap;vertical-align:top;">${label}</td><td style="padding:4px 0;color:var(--text);word-break:break-all;">${value}</td></tr>` : '';
             
+            // Sheet-Info mit Zeilen/Spalten
+            const dims = result.sheetDimensions || {};
             const sheetsInfo = result.sheets.map(s => {
                 const hidden = result.hiddenSheets.includes(s);
-                return `<span style="display:inline-block;padding:2px 8px;margin:2px;border-radius:4px;font-size:12px;background:${hidden ? '#555' : 'var(--bg-lighter)'};color:${hidden ? '#999' : 'var(--text)'};border:1px solid var(--border);">${s}${hidden ? ' 👁️‍🗨️' : ''}</span>`;
+                const dim = dims[s];
+                let dimText = '';
+                if (dim) {
+                    dimText = ` <span style="font-size:10px;color:var(--text-muted);">(${dim.rows.toLocaleString(locale)} ${isEn ? 'rows' : 'Zeilen'} × ${dim.cols} ${isEn ? 'cols' : 'Spalten'})</span>`;
+                }
+                return `<div style="display:inline-block;padding:3px 8px;margin:2px;border-radius:4px;font-size:12px;background:${hidden ? '#555' : 'var(--bg-lighter)'};color:${hidden ? '#999' : 'var(--text)'};border:1px solid var(--border);">${s}${hidden ? ' 👁️‍🗨️' : ''}${dimText}</div>`;
             }).join('');
             
             dialog.innerHTML = `
                 <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);">
-                    <h3 style="margin:0;color:var(--text);font-size:16px;">ℹ️ Datei-Informationen</h3>
+                    <h3 style="margin:0;color:var(--text);font-size:16px;">ℹ️ ${isEn ? 'File Information' : 'Datei-Informationen'}</h3>
                     <button id="fileInfoClose" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;padding:0 4px;">&times;</button>
                 </div>
                 <div style="padding:20px;overflow-y:auto;flex:1;">
                     <table style="width:100%;border-collapse:collapse;font-size:13px;">
-                        <tr><td colspan="2" style="padding:6px 0 4px;font-weight:700;font-size:14px;color:var(--primary);border-bottom:1px solid var(--border);">📄 Datei</td></tr>
-                        ${row('Dateiname', result.fileName)}
-                        ${row('Pfad', `<span style="font-size:11px;color:var(--text-muted);">${result.filePath}</span>`)}
-                        ${row('Größe', formatSize(result.fileSize) + ` <span style="color:var(--text-muted);font-size:11px;">(${result.fileSize.toLocaleString('de-DE')} Bytes, ${result.zipEntryCount} ZIP-Einträge)</span>`)}
-                        ${row('Erstellt (Datei)', formatDate(result.created))}
-                        ${row('Geändert (Datei)', formatDate(result.modified))}
+                        <tr><td colspan="2" style="padding:6px 0 4px;font-weight:700;font-size:14px;color:var(--primary);border-bottom:1px solid var(--border);">📄 ${isEn ? 'File' : 'Datei'}</td></tr>
+                        ${row(isEn ? 'File Name' : 'Dateiname', result.fileName)}
+                        ${row(isEn ? 'Path' : 'Pfad', `<span style="font-size:11px;color:var(--text-muted);">${result.filePath}</span>`)}
+                        ${row(isEn ? 'Size' : 'Größe', formatSize(result.fileSize) + ` <span style="color:var(--text-muted);font-size:11px;">(${result.fileSize.toLocaleString(locale)} Bytes, ${result.zipEntryCount} ${isEn ? 'ZIP entries' : 'ZIP-Einträge'})</span>`)}
+                        ${row(isEn ? 'Created (File)' : 'Erstellt (Datei)', formatDate(result.created))}
+                        ${row(isEn ? 'Modified (File)' : 'Geändert (Datei)', formatDate(result.modified))}
                         
-                        <tr><td colspan="2" style="padding:14px 0 4px;font-weight:700;font-size:14px;color:var(--primary);border-bottom:1px solid var(--border);">👤 Dokument-Eigenschaften</td></tr>
-                        ${row('Ersteller', result.creator || '—')}
-                        ${row('Zuletzt geändert von', result.lastModifiedBy || '—')}
-                        ${row('Erstellt (Dokument)', formatDate(result.createdDate))}
-                        ${row('Geändert (Dokument)', formatDate(result.modifiedDate))}
-                        ${row('Titel', result.title || '')}
-                        ${row('Betreff', result.subject || '')}
-                        ${row('Kategorie', result.category || '')}
-                        ${row('Stichwörter', result.keywords || '')}
-                        ${row('Firma', result.company || '')}
-                        ${row('Anwendung', (result.application || '—') + (result.appVersion ? ` (v${result.appVersion})` : ''))}
+                        <tr><td colspan="2" style="padding:14px 0 4px;font-weight:700;font-size:14px;color:var(--primary);border-bottom:1px solid var(--border);">👤 ${isEn ? 'Document Properties' : 'Dokument-Eigenschaften'}</td></tr>
+                        ${row(isEn ? 'Creator' : 'Ersteller', result.creator || '—')}
+                        ${row(isEn ? 'Last Modified By' : 'Zuletzt geändert von', result.lastModifiedBy || '—')}
+                        ${row(isEn ? 'Created (Document)' : 'Erstellt (Dokument)', formatDate(result.createdDate))}
+                        ${row(isEn ? 'Modified (Document)' : 'Geändert (Dokument)', formatDate(result.modifiedDate))}
+                        ${row(isEn ? 'Title' : 'Titel', result.title || '')}
+                        ${row(isEn ? 'Subject' : 'Betreff', result.subject || '')}
+                        ${row(isEn ? 'Category' : 'Kategorie', result.category || '')}
+                        ${row(isEn ? 'Keywords' : 'Stichwörter', result.keywords || '')}
+                        ${row(isEn ? 'Company' : 'Firma', result.company || '')}
+                        ${row(isEn ? 'Application' : 'Anwendung', (result.application || '—') + (result.appVersion ? ` (v${result.appVersion})` : ''))}
                         
-                        <tr><td colspan="2" style="padding:14px 0 4px;font-weight:700;font-size:14px;color:var(--primary);border-bottom:1px solid var(--border);">📊 Arbeitsblätter (${result.sheets.length})</td></tr>
+                        <tr><td colspan="2" style="padding:14px 0 4px;font-weight:700;font-size:14px;color:var(--primary);border-bottom:1px solid var(--border);">📊 ${isEn ? 'Worksheets' : 'Arbeitsblätter'} (${result.sheets.length})</td></tr>
                         <tr><td colspan="2" style="padding:6px 0;">${sheetsInfo}</td></tr>
                         
                         <tr><td colspan="2" style="padding:14px 0 4px;font-weight:700;font-size:14px;color:var(--primary);border-bottom:1px solid var(--border);">🔧 Features</td></tr>
-                        <tr><td colspan="2" style="padding:6px 0;">${features.length > 0 ? features.join(' ') : '<span style="color:var(--text-muted);">Keine besonderen Features erkannt</span>'}</td></tr>
-                        ${result.hasSharedStrings ? row('Shared Strings', `${result.sharedStringUniqueCount?.toLocaleString('de-DE') || '?'} eindeutige / ${result.sharedStringCount?.toLocaleString('de-DE') || '?'} gesamt`) : ''}
+                        <tr><td colspan="2" style="padding:6px 0;">${features.length > 0 ? features.join(' ') : `<span style="color:var(--text-muted);">${isEn ? 'No special features detected' : 'Keine besonderen Features erkannt'}</span>`}</td></tr>
+                        ${result.hasSharedStrings ? row('Shared Strings', `${result.sharedStringUniqueCount?.toLocaleString(locale) || '?'} ${isEn ? 'unique' : 'eindeutige'} / ${result.sharedStringCount?.toLocaleString(locale) || '?'} ${isEn ? 'total' : 'gesamt'}`) : ''}
                         
                         ${result.lockFile ? `
-                        <tr><td colspan="2" style="padding:14px 0 4px;font-weight:700;font-size:14px;color:#f44336;border-bottom:1px solid var(--border);">🔒 Lock-Datei erkannt</td></tr>
-                        ${row('Lock-Datei', result.lockFile)}
-                        ${row('Gesperrt von', result.lockedByUser || 'Unbekannt')}
-                        <tr><td colspan="2" style="padding:4px 0;"><span style="font-size:11px;color:#ff9800;">⚠️ Diese Datei wird möglicherweise gerade von einem anderen Benutzer bearbeitet.</span></td></tr>
+                        <tr><td colspan="2" style="padding:14px 0 4px;font-weight:700;font-size:14px;color:#f44336;border-bottom:1px solid var(--border);">🔒 ${isEn ? 'Lock File Detected' : 'Lock-Datei erkannt'}</td></tr>
+                        ${row(isEn ? 'Lock File' : 'Lock-Datei', result.lockFile)}
+                        ${row(isEn ? 'Locked By' : 'Gesperrt von', result.lockedByUser || (isEn ? 'Unknown' : 'Unbekannt'))}
+                        <tr><td colspan="2" style="padding:4px 0;"><span style="font-size:11px;color:#ff9800;">⚠️ ${isEn ? 'This file may currently be edited by another user.' : 'Diese Datei wird möglicherweise gerade von einem anderen Benutzer bearbeitet.'}</span></td></tr>
                         ` : ''}
                     </table>
                 </div>

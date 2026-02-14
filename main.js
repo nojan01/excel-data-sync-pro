@@ -2208,6 +2208,20 @@ ipcMain.handle('excel:getFileMetadata', async (event, filePath) => {
 
         // --- Arbeitsblätter ---
         const wbEntry = zip.getEntry('xl/workbook.xml');
+        info.sheetDimensions = {}; // { sheetName: { rows, cols, ref } }
+        
+        // Rels lesen für Sheet-Nr → Dateiname Mapping
+        const relsEntry = zip.getEntry('xl/_rels/workbook.xml.rels');
+        const rIdToFile = {};
+        if (relsEntry) {
+            const relsXml = relsEntry.getData().toString('utf8');
+            const relPattern = /<Relationship[^>]*\bId="([^"]*)"[^>]*\bTarget="([^"]*)"/g;
+            let rm;
+            while ((rm = relPattern.exec(relsXml)) !== null) {
+                rIdToFile[rm[1]] = rm[2]; // e.g. rId1 → worksheets/sheet1.xml
+            }
+        }
+        
         if (wbEntry) {
             const wbXml = wbEntry.getData().toString('utf8');
             const sheetPattern = /<sheet[^>]*\bname="([^"]*)"([^>]*)>/g;
@@ -2217,6 +2231,38 @@ ipcMain.handle('excel:getFileMetadata', async (event, filePath) => {
                 info.sheets.push(name);
                 if (/\bstate\s*=\s*"(hidden|veryHidden)"/.test(m[2])) {
                     info.hiddenSheets.push(name);
+                }
+                
+                // Dimension aus Sheet-XML lesen
+                const rIdMatch = m[2].match(/r:id="([^"]*)"/i) || m[0].match(/r:id="([^"]*)"/i);
+                if (rIdMatch && rIdToFile[rIdMatch[1]]) {
+                    const sheetFile = rIdToFile[rIdMatch[1]];
+                    const sheetPath = sheetFile.startsWith('/') ? sheetFile.substring(1) : 'xl/' + sheetFile;
+                    const sheetEntry = zip.getEntry(sheetPath);
+                    if (sheetEntry) {
+                        try {
+                            const sheetXml = sheetEntry.getData().toString('utf8');
+                            const dimMatch = sheetXml.match(/<dimension\s+ref="([^"]+)"/i);
+                            if (dimMatch) {
+                                const ref = dimMatch[1]; // e.g. "A1:Z1000" or "A1"
+                                const parts = ref.split(':');
+                                if (parts.length === 2) {
+                                    // Parse end cell (e.g. "Z1000" → col=26, row=1000)
+                                    const endCell = parts[1];
+                                    const colLetters = endCell.replace(/[0-9]/g, '');
+                                    const rowNum = parseInt(endCell.replace(/[A-Za-z]/g, ''));
+                                    // Convert column letters to number (A=1, Z=26, AA=27...)
+                                    let colNum = 0;
+                                    for (let i = 0; i < colLetters.length; i++) {
+                                        colNum = colNum * 26 + (colLetters.charCodeAt(i) - 64);
+                                    }
+                                    info.sheetDimensions[name] = { rows: rowNum, cols: colNum, ref: ref };
+                                } else {
+                                    info.sheetDimensions[name] = { rows: 1, cols: 1, ref: ref };
+                                }
+                            }
+                        } catch (e) { /* Sheet-XML nicht lesbar */ }
+                    }
                 }
             }
         }
