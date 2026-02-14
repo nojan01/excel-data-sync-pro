@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     
     // Excel-Engine Steuerung
     checkExcelAvailable: () => ipcRenderer.invoke('excel:checkAvailable'),
+    getFileMetadata: (filePath) => ipcRenderer.invoke('excel:getFileMetadata', filePath),
     
     // Sheet-Verwaltung
     addSheet: (params) => ipcRenderer.invoke('excel:addSheet', params),

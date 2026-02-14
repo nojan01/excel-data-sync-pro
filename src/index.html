@@ -3058,6 +3058,9 @@
                             <button class="btn btn-sm" id="btnSheetManage" title="Arbeitsblätter verwalten" style="padding: 4px 8px; font-size: 14px; height: 34px;">
                                 📋
                             </button>
+                            <button class="btn btn-sm" id="btnFileInfo" title="Datei-Informationen anzeigen" style="padding: 4px 8px; font-size: 14px; height: 34px; display: none;">
+                                ℹ️
+                            </button>
                         </div>
                     </div>
                     <div class="transfer-field" style="flex: 1;">
@@ -9553,6 +9556,8 @@
             if (explorerFileName) {
                 explorerFileName.textContent = t('noFileLoaded');
             }
+            const btnFileInfo = document.getElementById('btnFileInfo');
+            if (btnFileInfo) btnFileInfo.style.display = 'none';
             // Nur thead und tbody leeren, nicht die gesamte Tabelle (sonst werden die Element-Referenzen ungültig)
             if (elements.explorerTableHead) {
                 elements.explorerTableHead.innerHTML = '';
@@ -12915,6 +12920,11 @@
             // Passwort-Indikator aktualisieren
             updatePasswordIndicator();
             
+            // FileInfo-Button anzeigen
+            const btnFileInfo = document.getElementById('btnFileInfo');
+            if (btnFileInfo) btnFileInfo.style.display = '';
+            
+            
             // selectedSheet VOR dem Laden setzen
             explorerState.selectedSheet = result.sheets[0];
             
@@ -13049,6 +13059,7 @@
             if (cachedSheet) {
                 // Aus Cache laden
                 explorerState.selectedSheet = sheetName;
+                elements.explorerSheetSelect.value = sheetName;
                 explorerState.headers = cachedSheet.headers;
                 explorerState.data = cachedSheet.data.map(row => [...row]); // Deep copy
                 explorerState.originalData = cachedSheet.originalData.map(row => [...row]);
@@ -13104,6 +13115,7 @@
             console.log(`[loadExplorerSheet] readExcelSheet fertig in ${_sheetMs}ms — ${result.data?.length} Zeilen, ${result.headers?.length} Spalten, cellStyles: ${Object.keys(result.cellStyles || {}).length}, timings:`, result.stats?.timings || 'keine');
             
             explorerState.selectedSheet = sheetName;
+            elements.explorerSheetSelect.value = sheetName;
             explorerState.headers = result.headers;
             explorerState.data = result.data.slice(1);
             // Kopie der Originaldaten speichern (deep copy)
@@ -17212,6 +17224,113 @@
             });
         }
         
+        // ==================== Datei-Info Modal ====================
+        async function showFileInfoModal() {
+            if (!explorerState.filePath) return;
+            
+            const result = await window.electronAPI.getFileMetadata(explorerState.filePath);
+            if (!result.success) {
+                showFloatingStatus('Fehler: ' + result.error, 'error');
+                return;
+            }
+            
+            // Overlay
+            const existingDialog = document.querySelector('.fileinfo-dialog-overlay');
+            if (existingDialog) existingDialog.remove();
+            
+            const overlay = document.createElement('div');
+            overlay.className = 'fileinfo-dialog-overlay';
+            overlay.style.cssText = `position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10002;`;
+            
+            const dialog = document.createElement('div');
+            dialog.style.cssText = `background:var(--bg-medium);border:1px solid var(--border);border-radius:10px;padding:0;max-width:600px;width:90vw;max-height:80vh;box-shadow:0 8px 32px rgba(0,0,0,0.4);display:flex;flex-direction:column;`;
+            
+            const formatSize = (bytes) => {
+                if (bytes < 1024) return bytes + ' B';
+                if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+                return (bytes/(1024*1024)).toFixed(2) + ' MB';
+            };
+            
+            const formatDate = (d) => {
+                if (!d) return '—';
+                try { return new Date(d).toLocaleString('de-DE'); } catch { return d; }
+            };
+            
+            const badge = (text, color) => `<span style="display:inline-block;padding:2px 8px;border-radius:10px;font-size:11px;font-weight:600;background:${color};color:white;margin:2px;">${text}</span>`;
+            
+            // Features sammeln
+            const features = [];
+            if (result.hasPivotTables) features.push(badge(`${result.pivotTableCount} Pivot-Tabelle${result.pivotTableCount > 1 ? 'n' : ''}`, '#e91e63'));
+            if (result.hasCharts) features.push(badge(`${result.chartCount} Diagramm${result.chartCount > 1 ? 'e' : ''}`, '#2196F3'));
+            if (result.hasTables) features.push(badge(`${result.tableCount} Tabelle${result.tableCount > 1 ? 'n' : ''}`, '#009688'));
+            if (result.hasMacros) features.push(badge('Makros (VBA)', '#ff5722'));
+            if (result.hasImages) features.push(badge(`${result.imageCount} Bild${result.imageCount > 1 ? 'er' : ''}`, '#795548'));
+            if (result.hasComments) features.push(badge('Kommentare', '#607d8b'));
+            if (result.hasConditionalFormatting) features.push(badge('Bedingte Formatierung', '#9c27b0'));
+            if (result.hasDataValidations) features.push(badge('Datenvalidierung', '#ff9800'));
+            if (result.hasExternalLinks) features.push(badge(`${result.externalLinkCount} Ext. Link${result.externalLinkCount > 1 ? 's' : ''}`, '#f44336'));
+            if (result.isPasswordProtected) features.push(badge('Passwortgeschützt', '#d32f2f'));
+            
+            const row = (label, value) => value && value !== '—' ? `<tr><td style="padding:4px 12px 4px 0;color:var(--text-muted);white-space:nowrap;vertical-align:top;">${label}</td><td style="padding:4px 0;color:var(--text);word-break:break-all;">${value}</td></tr>` : '';
+            
+            const sheetsInfo = result.sheets.map(s => {
+                const hidden = result.hiddenSheets.includes(s);
+                return `<span style="display:inline-block;padding:2px 8px;margin:2px;border-radius:4px;font-size:12px;background:${hidden ? '#555' : 'var(--bg-lighter)'};color:${hidden ? '#999' : 'var(--text)'};border:1px solid var(--border);">${s}${hidden ? ' 👁️‍🗨️' : ''}</span>`;
+            }).join('');
+            
+            dialog.innerHTML = `
+                <div style="display:flex;justify-content:space-between;align-items:center;padding:16px 20px;border-bottom:1px solid var(--border);">
+                    <h3 style="margin:0;color:var(--text);font-size:16px;">ℹ️ Datei-Informationen</h3>
+                    <button id="fileInfoClose" style="background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;padding:0 4px;">&times;</button>
+                </div>
+                <div style="padding:20px;overflow-y:auto;flex:1;">
+                    <table style="width:100%;border-collapse:collapse;font-size:13px;">
+                        <tr><td colspan="2" style="padding:6px 0 4px;font-weight:700;font-size:14px;color:var(--primary);border-bottom:1px solid var(--border);">📄 Datei</td></tr>
+                        ${row('Dateiname', result.fileName)}
+                        ${row('Pfad', `<span style="font-size:11px;color:var(--text-muted);">${result.filePath}</span>`)}
+                        ${row('Größe', formatSize(result.fileSize) + ` <span style="color:var(--text-muted);font-size:11px;">(${result.fileSize.toLocaleString('de-DE')} Bytes, ${result.zipEntryCount} ZIP-Einträge)</span>`)}
+                        ${row('Erstellt (Datei)', formatDate(result.created))}
+                        ${row('Geändert (Datei)', formatDate(result.modified))}
+                        
+                        <tr><td colspan="2" style="padding:14px 0 4px;font-weight:700;font-size:14px;color:var(--primary);border-bottom:1px solid var(--border);">👤 Dokument-Eigenschaften</td></tr>
+                        ${row('Ersteller', result.creator || '—')}
+                        ${row('Zuletzt geändert von', result.lastModifiedBy || '—')}
+                        ${row('Erstellt (Dokument)', formatDate(result.createdDate))}
+                        ${row('Geändert (Dokument)', formatDate(result.modifiedDate))}
+                        ${row('Titel', result.title || '')}
+                        ${row('Betreff', result.subject || '')}
+                        ${row('Kategorie', result.category || '')}
+                        ${row('Stichwörter', result.keywords || '')}
+                        ${row('Firma', result.company || '')}
+                        ${row('Anwendung', (result.application || '—') + (result.appVersion ? ` (v${result.appVersion})` : ''))}
+                        
+                        <tr><td colspan="2" style="padding:14px 0 4px;font-weight:700;font-size:14px;color:var(--primary);border-bottom:1px solid var(--border);">📊 Arbeitsblätter (${result.sheets.length})</td></tr>
+                        <tr><td colspan="2" style="padding:6px 0;">${sheetsInfo}</td></tr>
+                        
+                        <tr><td colspan="2" style="padding:14px 0 4px;font-weight:700;font-size:14px;color:var(--primary);border-bottom:1px solid var(--border);">🔧 Features</td></tr>
+                        <tr><td colspan="2" style="padding:6px 0;">${features.length > 0 ? features.join(' ') : '<span style="color:var(--text-muted);">Keine besonderen Features erkannt</span>'}</td></tr>
+                        ${result.hasSharedStrings ? row('Shared Strings', `${result.sharedStringUniqueCount?.toLocaleString('de-DE') || '?'} eindeutige / ${result.sharedStringCount?.toLocaleString('de-DE') || '?'} gesamt`) : ''}
+                        
+                        ${result.lockFile ? `
+                        <tr><td colspan="2" style="padding:14px 0 4px;font-weight:700;font-size:14px;color:#f44336;border-bottom:1px solid var(--border);">🔒 Lock-Datei erkannt</td></tr>
+                        ${row('Lock-Datei', result.lockFile)}
+                        ${row('Gesperrt von', result.lockedByUser || 'Unbekannt')}
+                        <tr><td colspan="2" style="padding:4px 0;"><span style="font-size:11px;color:#ff9800;">⚠️ Diese Datei wird möglicherweise gerade von einem anderen Benutzer bearbeitet.</span></td></tr>
+                        ` : ''}
+                    </table>
+                </div>
+            `;
+            
+            overlay.appendChild(dialog);
+            document.body.appendChild(overlay);
+            
+            // Close handlers
+            dialog.querySelector('#fileInfoClose').onclick = () => overlay.remove();
+            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+            const escHandler = (e) => { if (e.key === 'Escape') { overlay.remove(); document.removeEventListener('keydown', escHandler); } };
+            document.addEventListener('keydown', escHandler);
+        }
+        
         // ==================== New Month Modal Functions ====================
         function openNewMonthModal() {
             if (!state.template.filePath && !state.template.data) {
@@ -18001,6 +18120,7 @@
             
             // Sheet Management Event Listeners
             document.getElementById('btnSheetManage').onclick = openSheetManageModal;
+            document.getElementById('btnFileInfo').onclick = showFileInfoModal;
             document.getElementById('btnCloseSheetManage').onclick = closeSheetManageModal;
             document.getElementById('btnSheetManageClose').onclick = closeSheetManageModal;
             document.getElementById('btnSheetAdd').onclick = addNewSheet;

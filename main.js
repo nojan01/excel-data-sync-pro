@@ -2106,6 +2106,188 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
 });
 
 // ======================================================================
+// EXCEL DATEI-METADATEN
+// Extrahiert umfassende Informationen aus einer Excel-Datei (ZIP-Struktur)
+// ======================================================================
+ipcMain.handle('excel:getFileMetadata', async (event, filePath) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+
+    try {
+        const AdmZip = require('adm-zip');
+        const fileStat = await fs.promises.stat(filePath);
+        const fileBuffer = await fs.promises.readFile(filePath);
+        const zip = new AdmZip(fileBuffer);
+
+        const info = {
+            // Datei-Informationen
+            fileName: path.basename(filePath),
+            filePath: filePath,
+            fileSize: fileStat.size,
+            created: fileStat.birthtime?.toISOString() || null,
+            modified: fileStat.mtime?.toISOString() || null,
+            accessed: fileStat.atime?.toISOString() || null,
+
+            // Dokument-Eigenschaften
+            creator: null,
+            lastModifiedBy: null,
+            createdDate: null,
+            modifiedDate: null,
+            title: null,
+            subject: null,
+            description: null,
+            keywords: null,
+            category: null,
+            company: null,
+            manager: null,
+            application: null,
+            appVersion: null,
+
+            // Arbeitsblätter
+            sheets: [],
+            hiddenSheets: [],
+
+            // Features
+            hasPivotTables: false,
+            pivotTableCount: 0,
+            hasCharts: false,
+            chartCount: 0,
+            hasMacros: false,
+            hasExternalLinks: false,
+            externalLinkCount: 0,
+            hasSharedStrings: false,
+            sharedStringCount: 0,
+            hasImages: false,
+            imageCount: 0,
+            hasComments: false,
+            hasConditionalFormatting: false,
+            hasDataValidations: false,
+            hasTables: false,
+            tableCount: 0,
+            isPasswordProtected: false,
+
+            // Lock-Datei
+            lockFile: null,
+            lockedByUser: null,
+
+            // ZIP-Struktur
+            zipEntryCount: zip.getEntries().length,
+            zipCompressedSize: 0,
+        };
+
+        // ZIP-Gesamtgröße
+        zip.getEntries().forEach(e => { info.zipCompressedSize += e.header.compressedSize || 0; });
+
+        // --- docProps/core.xml (Ersteller, Datum, etc.) ---
+        const coreEntry = zip.getEntry('docProps/core.xml');
+        if (coreEntry) {
+            const coreXml = coreEntry.getData().toString('utf8');
+            const extract = (tag) => { const m = coreXml.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)</${tag}>`)); return m ? m[1].trim() : null; };
+            info.creator = extract('dc:creator');
+            info.lastModifiedBy = extract('cp:lastModifiedBy');
+            info.createdDate = extract('dcterms:created');
+            info.modifiedDate = extract('dcterms:modified');
+            info.title = extract('dc:title');
+            info.subject = extract('dc:subject');
+            info.description = extract('dc:description');
+            info.keywords = extract('cp:keywords');
+            info.category = extract('cp:category');
+        }
+
+        // --- docProps/app.xml (Anwendung, Firma, etc.) ---
+        const appEntry = zip.getEntry('docProps/app.xml');
+        if (appEntry) {
+            const appXml = appEntry.getData().toString('utf8');
+            const extract = (tag) => { const m = appXml.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`)); return m ? m[1].trim() : null; };
+            info.company = extract('Company');
+            info.manager = extract('Manager');
+            info.application = extract('Application');
+            info.appVersion = extract('AppVersion');
+        }
+
+        // --- Arbeitsblätter ---
+        const wbEntry = zip.getEntry('xl/workbook.xml');
+        if (wbEntry) {
+            const wbXml = wbEntry.getData().toString('utf8');
+            const sheetPattern = /<sheet[^>]*\bname="([^"]*)"([^>]*)>/g;
+            let m;
+            while ((m = sheetPattern.exec(wbXml)) !== null) {
+                const name = m[1].replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+                info.sheets.push(name);
+                if (/\bstate\s*=\s*"(hidden|veryHidden)"/.test(m[2])) {
+                    info.hiddenSheets.push(name);
+                }
+            }
+        }
+
+        // --- Features erkennen (ZIP-Einträge scannen) ---
+        const entries = zip.getEntries().map(e => e.entryName);
+        info.hasPivotTables = entries.some(e => e.includes('pivotTable') || e.includes('pivotCache'));
+        info.pivotTableCount = entries.filter(e => /xl\/pivotTables\/pivotTable\d+\.xml/.test(e)).length;
+        info.hasCharts = entries.some(e => e.includes('xl/charts/'));
+        info.chartCount = entries.filter(e => /xl\/charts\/chart\d+\.xml/.test(e)).length;
+        info.hasMacros = entries.some(e => e === 'xl/vbaProject.bin');
+        info.hasExternalLinks = entries.some(e => e.includes('xl/externalLinks/'));
+        info.externalLinkCount = entries.filter(e => /xl\/externalLinks\/externalLink\d+\.xml/.test(e)).length;
+        info.hasImages = entries.some(e => e.startsWith('xl/media/'));
+        info.imageCount = entries.filter(e => e.startsWith('xl/media/')).length;
+        info.hasComments = entries.some(e => e.includes('comments'));
+        info.hasTables = entries.some(e => e.includes('xl/tables/'));
+        info.tableCount = entries.filter(e => /xl\/tables\/table\d+\.xml/.test(e)).length;
+
+        // Shared Strings
+        const ssEntry = zip.getEntry('xl/sharedStrings.xml');
+        if (ssEntry) {
+            info.hasSharedStrings = true;
+            const ssXml = ssEntry.getData().toString('utf8');
+            const countMatch = ssXml.match(/count="(\d+)"/);
+            const uniqueMatch = ssXml.match(/uniqueCount="(\d+)"/);
+            info.sharedStringCount = countMatch ? parseInt(countMatch[1]) : 0;
+            info.sharedStringUniqueCount = uniqueMatch ? parseInt(uniqueMatch[1]) : 0;
+        }
+
+        // Conditional Formatting / Data Validations (im ersten Sheet prüfen)
+        const sheet1Entry = zip.getEntry('xl/worksheets/sheet1.xml');
+        if (sheet1Entry) {
+            const s1Xml = sheet1Entry.getData().toString('utf8');
+            info.hasConditionalFormatting = s1Xml.includes('<conditionalFormatting');
+            info.hasDataValidations = s1Xml.includes('<dataValidation');
+        }
+
+        // Passwortschutz (workbook protection)
+        if (wbEntry) {
+            const wbXml = wbEntry.getData().toString('utf8');
+            info.isPasswordProtected = wbXml.includes('<workbookProtection') || wbXml.includes('<fileSharing');
+        }
+
+        // --- Lock-Datei prüfen (~$Dateiname.xlsx) ---
+        const dir = path.dirname(filePath);
+        const baseName = path.basename(filePath);
+        const lockFileName = '~$' + baseName;
+        const lockFilePath = path.join(dir, lockFileName);
+        try {
+            if (require('fs').existsSync(lockFilePath)) {
+                info.lockFile = lockFileName;
+                const lockData = require('fs').readFileSync(lockFilePath);
+                // Lock-Datei enthält den Benutzernamen (UTF-16LE oder ASCII)
+                let userName = '';
+                for (let i = 0; i < Math.min(lockData.length, 200); i++) {
+                    const ch = lockData[i];
+                    if (ch >= 32 && ch < 127) userName += String.fromCharCode(ch);
+                }
+                userName = userName.replace(/[^\w\s.-]/g, '').trim();
+                if (userName.length > 1) info.lockedByUser = userName;
+            }
+        } catch (e) { /* Lock-Datei nicht lesbar */ }
+
+        return { success: true, ...info };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// ======================================================================
 // Python/openpyxl Export - Behält ALLE Formatierungen bei
 // Vorteile gegenüber ExcelJS:
 // - Conditional Formatting bleibt vollständig erhalten (2812+ Regeln)
