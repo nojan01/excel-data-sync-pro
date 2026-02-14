@@ -3096,6 +3096,8 @@
                     <button class="btn btn-warning" id="btnExplorerUndo" title="Letzte Aktion rückgängig machen (Strg+Z) — nur bei aktiver Live-Session" style="display: none; height: 34px;">
                         ↩️ Undo
                     </button>
+                    <!-- Container für Hidden-Indikatoren (Zeilen/Spalten) - rechts am Rand -->
+                    <div id="hiddenIndicatorsContainer" style="display: flex; gap: 4px; margin-left: auto; align-items: center;"></div>
                 </div>
                 </div>
                 
@@ -3114,8 +3116,6 @@
                             <span id="autoFilterIndicator" style="display: none; background: #2196F3; color: white; font-size: 12px; padding: 4px 10px; border-radius: 4px; align-items: center; gap: 6px; cursor: help; font-weight: 500;">
                                 ▼ AutoFilter
                             </span>
-                            <!-- Container für Hidden-Indikatoren (Zeilen/Spalten) -->
-                            <div id="hiddenIndicatorsContainer" style="display: flex; gap: 4px;"></div>
                         </div>
                         <button class="btn btn-secondary btn-sm" id="btnCloseFilterPanel" title="Filter schließen" style="margin-left: auto;">✕</button>
                     </div>

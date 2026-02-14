@@ -99,16 +99,20 @@ function getPythonPath() {
         safeLog('[Python] WARNUNG: Eingebettetes Python nicht gefunden, versuche System-Python');
     }
     
-    // Dev-Modus: Prüfe ob venv existiert
+    // Dev-Modus: Prüfe ob venv existiert UND das Python-Executable vorhanden ist
     if (!isPackaged) {
         const venvPath = path.join(basePath, '..', '.venv');
         if (fs.existsSync(venvPath)) {
-            if (process.platform === 'win32') {
-                _cachedPythonPath = path.join(venvPath, 'Scripts', 'python.exe');
+            const venvPython = process.platform === 'win32'
+                ? path.join(venvPath, 'Scripts', 'python.exe')
+                : path.join(venvPath, 'bin', 'python3');
+            if (fs.existsSync(venvPython)) {
+                safeLog(`[Python] venv-Python gefunden: ${venvPython}`);
+                _cachedPythonPath = venvPython;
+                return _cachedPythonPath;
             } else {
-                _cachedPythonPath = path.join(venvPath, 'bin', 'python3');
+                safeLog(`[Python] venv existiert aber Python nicht gefunden: ${venvPython} (überspringe venv)`);
             }
-            return _cachedPythonPath;
         }
     }
     

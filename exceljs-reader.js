@@ -12,6 +12,104 @@ const crypto = require('crypto');
 const AdmZip = require('adm-zip');
 let XlsxPopulate = null; // Lazy-load für Passwort-Entschlüsselung
 
+// Excel Standard-Theme-Farben (Office-Theme)
+// Index 0-9 entspricht den Theme-Colors dk1, lt1, dk2, lt2, accent1-6
+const THEME_COLORS = [
+    '000000', // 0: dk1 (schwarz)
+    'FFFFFF', // 1: lt1 (weiß)
+    '44546A', // 2: dk2
+    'E7E6E6', // 3: lt2
+    '4472C4', // 4: accent1 (blau)
+    'ED7D31', // 5: accent2 (orange)
+    'A5A5A5', // 6: accent3 (grau)
+    'FFC000', // 7: accent4 (gold)
+    '5B9BD5', // 8: accent5 (hellblau)
+    '70AD47', // 9: accent6 (grün)
+];
+
+/**
+ * Löst eine ExcelJS-Farbangabe zu einem Hex-String auf.
+ * Unterstützt ARGB, Theme-Farben (mit Tint) und Indexed-Farben.
+ * @param {Object} color - ExcelJS color object { argb, theme, tint, indexed }
+ * @returns {string|null} Hex-Farbstring (z.B. '#FF0000') oder null
+ */
+function resolveColor(color) {
+    if (!color) return null;
+    
+    // 1. ARGB-Wert (häufigstes Format)
+    if (color.argb) {
+        const hex = color.argb.length === 8 ? color.argb.substring(2) : color.argb;
+        if (hex !== '000000') return `#${hex}`;
+        return null;
+    }
+    
+    // 2. Theme-Farbe (z.B. { theme: 4, tint: -0.25 })
+    if (color.theme !== undefined && color.theme !== null) {
+        let hex = THEME_COLORS[color.theme] || '000000';
+        
+        // Tint anwenden (aufhellen/abdunkeln)
+        if (color.tint) {
+            hex = applyTint(hex, color.tint);
+        }
+        
+        if (hex !== '000000') return `#${hex}`;
+        return null;
+    }
+    
+    // 3. Indexed-Farbe (Legacy-Format)
+    if (color.indexed !== undefined && color.indexed !== null) {
+        const INDEXED_COLORS = [
+            '000000', 'FFFFFF', 'FF0000', '00FF00', '0000FF', 'FFFF00', 'FF00FF', '00FFFF',
+            '000000', 'FFFFFF', 'FF0000', '00FF00', '0000FF', 'FFFF00', 'FF00FF', '00FFFF',
+            '800000', '008000', '000080', '808000', '800080', '008080', 'C0C0C0', '808080',
+            '9999FF', '993366', 'FFFFCC', 'CCFFFF', '660066', 'FF8080', '0066CC', 'CCCCFF',
+            '000080', 'FF00FF', 'FFFF00', '00FFFF', '800080', '800000', '008080', '0000FF',
+            '00CCFF', 'CCFFFF', 'CCFFCC', 'FFFF99', '99CCFF', 'FF99CC', 'CC99FF', 'FFCC99',
+            '3366FF', '33CCCC', '99CC00', 'FFCC00', 'FF9900', 'FF6600', '666699', '969696',
+            '003366', '339966', '003300', '333300', '993300', '993366', '333399', '333333',
+        ];
+        const idx = color.indexed;
+        if (idx >= 0 && idx < INDEXED_COLORS.length) {
+            const hex = INDEXED_COLORS[idx];
+            if (hex !== '000000') return `#${hex}`;
+        }
+        return null;
+    }
+    
+    return null;
+}
+
+/**
+ * Wendet einen Tint-Wert auf eine Hex-Farbe an.
+ * Positiver Tint = aufhellen (Richtung Weiß), negativer Tint = abdunkeln (Richtung Schwarz).
+ * @param {string} hex - 6-stelliger Hex-String (ohne #)
+ * @param {number} tint - Wert zwischen -1.0 und 1.0
+ * @returns {string} Angepasster 6-stelliger Hex-String
+ */
+function applyTint(hex, tint) {
+    let r = parseInt(hex.substring(0, 2), 16);
+    let g = parseInt(hex.substring(2, 4), 16);
+    let b = parseInt(hex.substring(4, 6), 16);
+    
+    if (tint > 0) {
+        // Aufhellen: Richtung Weiß
+        r = Math.round(r + (255 - r) * tint);
+        g = Math.round(g + (255 - g) * tint);
+        b = Math.round(b + (255 - b) * tint);
+    } else {
+        // Abdunkeln: Richtung Schwarz
+        r = Math.round(r * (1 + tint));
+        g = Math.round(g * (1 + tint));
+        b = Math.round(b * (1 + tint));
+    }
+    
+    r = Math.max(0, Math.min(255, r));
+    g = Math.max(0, Math.min(255, g));
+    b = Math.max(0, Math.min(255, b));
+    
+    return r.toString(16).padStart(2, '0') + g.toString(16).padStart(2, '0') + b.toString(16).padStart(2, '0');
+}
+
 /**
  * Formatiert ein JS Date-Objekt gemäß einem Excel numFmt-String.
  * Parst die Excel-Format-Tokens (d, dd, m, mm, mmm, mmmm, yy, yyyy, h, hh, s, ss)
@@ -709,6 +807,169 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
 
 
 /**
+ * Parst die Shared Strings aus der Excel-ZIP-Datei.
+ * ExcelJS Streaming löst RichText-SharedStrings nicht korrekt auf,
+ * daher müssen wir sie manuell parsen.
+ * 
+ * @param {Buffer} fileBuffer - Der Datei-Buffer
+ * @returns {Array} Array von SharedString-Objekten: { text, richText?, font? }
+ */
+function parseSharedStrings(fileBuffer) {
+    try {
+        const zip = new AdmZip(fileBuffer);
+        const ssEntry = zip.getEntry('xl/sharedStrings.xml');
+        if (!ssEntry) return [];
+        
+        const xml = ssEntry.getData().toString('utf8');
+        const strings = [];
+        
+        // Parse jedes <si>...</si> Element
+        const siRegex = /<si>([\s\S]*?)<\/si>/g;
+        let siMatch;
+        
+        while ((siMatch = siRegex.exec(xml)) !== null) {
+            const siContent = siMatch[1];
+            
+            // Prüfe ob es RichText ist (mehrere <r>-Elemente)
+            const runs = [];
+            const runRegex = /<r>([\s\S]*?)<\/r>/g;
+            let runMatch;
+            
+            while ((runMatch = runRegex.exec(siContent)) !== null) {
+                const runContent = runMatch[1];
+                
+                // Text extrahieren
+                const textMatch = runContent.match(/<t[^>]*>([\s\S]*?)<\/t>/);
+                const text = textMatch ? textMatch[1]
+                    .replace(/&amp;/g, '&')
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/&quot;/g, '"')
+                    .replace(/&apos;/g, "'")
+                    : '';
+                
+                // Font/Run-Properties extrahieren
+                const rprMatch = runContent.match(/<rPr>([\s\S]*?)<\/rPr>/);
+                const font = {};
+                
+                if (rprMatch) {
+                    const rpr = rprMatch[1];
+                    if (/<b\s*\/>|<b>/.test(rpr)) font.bold = true;
+                    if (/<i\s*\/>|<i>/.test(rpr)) font.italic = true;
+                    if (/<u\s*\/>|<u>|<u [^>]*\/>/.test(rpr)) font.underline = true;
+                    if (/<strike\s*\/>|<strike>/.test(rpr)) font.strike = true;
+                    
+                    // Schriftgröße
+                    const szMatch = rpr.match(/<sz\s+val="([^"]+)"/);
+                    if (szMatch) font.size = parseFloat(szMatch[1]);
+                    
+                    // Schriftname
+                    const nameMatch = rpr.match(/<rFont\s+val="([^"]+)"/);
+                    if (nameMatch) font.name = nameMatch[1];
+                    
+                    // Farbe - ARGB
+                    const colorMatch = rpr.match(/<color\s+([^/>]*)\/?>/);
+                    if (colorMatch) {
+                        const colorAttrs = colorMatch[1];
+                        const rgbMatch = colorAttrs.match(/rgb="([^"]+)"/);
+                        const themeMatch = colorAttrs.match(/theme="([^"]+)"/);
+                        const tintMatch = colorAttrs.match(/tint="([^"]+)"/);
+                        const indexedMatch = colorAttrs.match(/indexed="([^"]+)"/);
+                        
+                        if (rgbMatch) {
+                            font.color = { argb: rgbMatch[1] };
+                        } else if (themeMatch) {
+                            font.color = { theme: parseInt(themeMatch[1]) };
+                            if (tintMatch) font.color.tint = parseFloat(tintMatch[1]);
+                        } else if (indexedMatch) {
+                            font.color = { indexed: parseInt(indexedMatch[1]) };
+                        }
+                    }
+                }
+                
+                runs.push({ text, font: Object.keys(font).length > 0 ? font : undefined });
+            }
+            
+            if (runs.length > 0) {
+                // RichText: mehrere Runs
+                strings.push({ richText: runs });
+            } else {
+                // Einfacher Text (kein RichText)
+                const tMatch = siContent.match(/<t[^>]*>([\s\S]*?)<\/t>/);
+                const plainText = tMatch ? tMatch[1]
+                    .replace(/&amp;/g, '&')
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/&quot;/g, '"')
+                    .replace(/&apos;/g, "'")
+                    : '';
+                strings.push({ text: plainText });
+            }
+        }
+        
+        return strings;
+    } catch (e) {
+        console.error('[ExcelJS] Shared Strings Parse-Fehler:', e.message);
+        return [];
+    }
+}
+
+
+/**
+ * Extrahiert Cell-Styles aus einer ExcelJS-Zelle.
+ * Wird sowohl im Non-Streaming als auch im Streaming Reader verwendet.
+ * @param {Object} cell - ExcelJS Cell-Objekt
+ * @returns {Object} Style-Objekt
+ */
+function extractCellStyle(cell) {
+    const style = {};
+    
+    if (cell.font) {
+        if (cell.font.bold) style.bold = true;
+        if (cell.font.italic) style.italic = true;
+        if (cell.font.underline) style.underline = true;
+        if (cell.font.strike) style.strikethrough = true;
+        if (cell.font.size) style.fontSize = cell.font.size;
+        if (cell.font.name && cell.font.name !== 'Calibri') style.fontName = cell.font.name;
+        const fontColor = resolveColor(cell.font.color);
+        if (fontColor) style.fontColor = fontColor;
+    }
+    
+    if (cell.alignment) {
+        if (cell.alignment.horizontal && cell.alignment.horizontal !== 'general') {
+            style.textAlign = cell.alignment.horizontal;
+        }
+        if (cell.alignment.vertical && cell.alignment.vertical !== 'bottom') {
+            style.verticalAlign = cell.alignment.vertical;
+        }
+        if (cell.alignment.wrapText) style.wrapText = true;
+    }
+    
+    if (cell.fill) {
+        if (cell.fill.type === 'pattern' && cell.fill.pattern === 'solid') {
+            const fillColor = resolveColor(cell.fill.fgColor);
+            if (fillColor) style.fill = fillColor;
+        }
+    }
+    
+    if (cell.border) {
+        const borders = {};
+        for (const side of ['top', 'bottom', 'left', 'right']) {
+            if (cell.border[side] && cell.border[side].style) {
+                borders[side] = {
+                    style: cell.border[side].style,
+                    color: resolveColor(cell.border[side].color)
+                };
+            }
+        }
+        if (Object.keys(borders).length > 0) style.borders = borders;
+    }
+    
+    return style;
+}
+
+
+/**
  * Liest ein Excel-Sheet mit ExcelJS Streaming Reader (nicht-blockierend)
  * 
  * @param {string} filePath - Pfad zur Excel-Datei
@@ -818,10 +1079,181 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         }
         
         // ============================================================
-        // STREAMING READER: Liest Zeilen einzeln, blockiert Event-Loop NICHT
-        // Buffer wird wiederverwendet (kein erneuter Dateizugriff!)
+        // SHARED STRINGS: Prüfe ob RichText vorhanden ist
+        // Streaming löst RichText-SharedStrings nicht auf und liefert keine Styles
+        // ============================================================
+        const sharedStrings = parseSharedStrings(fileBuffer);
+        const hasRichTextSharedStrings = sharedStrings.some(ss => ss.richText);
+        if (sharedStrings.length > 0) {
+            console.log(`[ExcelJS] ${sharedStrings.length} Shared Strings, davon ${sharedStrings.filter(s => s.richText).length} mit RichText`);
+        }
+        
+        // ============================================================
+        // READER-AUSWAHL: Non-Streaming wenn RichText vorhanden (für korrekte Styles)
+        // Streaming wenn kein RichText (für Performance bei großen Dateien)
         // ============================================================
         const t2 = Date.now();
+        
+        if (hasRichTextSharedStrings) {
+            // NON-STREAMING: Löst alle SharedStrings, RichText und Styles korrekt auf
+            console.log(`[ExcelJS] Verwende Non-Streaming Reader (RichText erkannt)`);
+            const workbook = new ExcelJS.Workbook();
+            await workbook.xlsx.load(fileBuffer);
+            
+            const worksheet = workbook.getWorksheet(sheetName);
+            if (!worksheet) {
+                return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
+            }
+            
+            let dataRowCounter = 0;
+            
+            worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+                if (rowNumber === 1) {
+                    // Header
+                    for (let i = 0; i < actualColumnCount; i++) {
+                        headers.push('');
+                    }
+                    row.eachCell((cell, colNumber) => {
+                        const colIndex = colNumber - 1;
+                        while (colIndex >= headers.length) {
+                            headers.push('');
+                            actualColumnCount = Math.max(actualColumnCount, headers.length);
+                        }
+                        if (!cell.value) {
+                            headers[colIndex] = '';
+                        } else if (typeof cell.value === 'object') {
+                            if (cell.value.richText) {
+                                headers[colIndex] = cell.value.richText.map(part => part.text).join('');
+                            } else if (cell.value.text !== undefined) {
+                                headers[colIndex] = String(cell.value.text);
+                            } else if (cell.value.buffer || cell.value.image || cell.value.imageId) {
+                                headers[colIndex] = '🖼️ Bild';
+                            } else {
+                                headers[colIndex] = '📎 Objekt';
+                            }
+                        } else {
+                            headers[colIndex] = String(cell.value);
+                        }
+                        
+                        // Header-Styles
+                        const styleKey = `0-${colIndex}`;
+                        const style = extractCellStyle(cell);
+                        if (Object.keys(style).length > 0) {
+                            cellStyles[styleKey] = style;
+                        }
+                    });
+                    return; // Nächste Zeile
+                }
+                
+                // Leere Zeilen auffüllen
+                const expectedDataRow = rowNumber - 2;
+                while (dataRowCounter < expectedDataRow) {
+                    data.push(new Array(actualColumnCount).fill(''));
+                    dataRowCounter++;
+                }
+                
+                const currentDataRowIndex = dataRowCounter;
+                const rowData = new Array(actualColumnCount).fill('');
+                
+                row.eachCell((cell, colNumber) => {
+                    const colIndex = colNumber - 1;
+                    while (colIndex >= rowData.length) {
+                        rowData.push('');
+                        actualColumnCount = Math.max(actualColumnCount, rowData.length);
+                    }
+                    
+                    const styleKey = `${currentDataRowIndex + 1}-${colIndex}`;
+                    let cellValue = cell.value;
+                    
+                    // Formeln
+                    if (cell.formula) {
+                        cellFormulas[styleKey] = cell.formula;
+                        cellValue = cell.result !== undefined ? cell.result : cell.value;
+                    } else if (cell.value && typeof cell.value === 'object' && cell.value.formula) {
+                        cellFormulas[styleKey] = cell.value.formula;
+                        cellValue = cell.value.result !== undefined ? cell.value.result : '';
+                    }
+                    
+                    // Hyperlinks
+                    if (cell.hyperlink) {
+                        cellHyperlinks[styleKey] = cell.hyperlink.hyperlink || cell.hyperlink;
+                    }
+                    
+                    // Datum
+                    if (cellValue instanceof Date) {
+                        cellValue = formatDateWithNumFmt(cellValue, cell.numFmt || '');
+                    }
+                    
+                    // Objekte (RichText, Hyperlinks, etc.)
+                    if (cell.value && typeof cell.value === 'object' && !(cell.value instanceof Date) && !cell.formula && !cell.value.formula) {
+                        if (cell.value.richText) {
+                            const richText = cell.value.richText.map(part => ({
+                                text: part.text,
+                                styles: {
+                                    bold: part.font?.bold || false,
+                                    italic: part.font?.italic || false,
+                                    underline: part.font?.underline || false,
+                                    strikethrough: part.font?.strike || false,
+                                    color: resolveColor(part.font?.color),
+                                    fontSize: part.font?.size || null,
+                                    fontName: part.font?.name || null
+                                }
+                            }));
+                            richTextCells[styleKey] = richText;
+                            cellValue = cell.value.richText.map(part => part.text).join('');
+                        } else if (cell.value.text !== undefined && cell.value.hyperlink !== undefined) {
+                            cellValue = cell.value.text;
+                            cellHyperlinks[styleKey] = cell.value.hyperlink;
+                        } else if (cell.value.text !== undefined) {
+                            cellValue = cell.value.text;
+                        } else if (cell.value === null) {
+                            cellValue = '';
+                        } else if (cell.value.error) {
+                            if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
+                                cellValue = '🖼️ Bild';
+                            } else {
+                                cellValue = cell.value.error;
+                            }
+                        } else if (cell.value.buffer || cell.value.image || cell.value.imageId) {
+                            cellValue = '🖼️ Bild';
+                        } else {
+                            cellValue = '';
+                        }
+                    }
+                    
+                    // Styles
+                    const style = extractCellStyle(cell);
+                    if (Object.keys(style).length > 0) {
+                        cellStyles[styleKey] = style;
+                    }
+                    
+                    // Date Fallback
+                    if (cellValue instanceof Date) {
+                        cellValue = cellValue.toLocaleDateString('de-DE');
+                    }
+                    
+                    if (typeof cellValue === 'object' && cellValue !== null) {
+                        cellValue = '';
+                    }
+                    
+                    rowData[colIndex] = cellValue === null || cellValue === undefined ? '' : cellValue;
+                });
+                
+                if (row.hidden) {
+                    hiddenRows.push(currentDataRowIndex);
+                }
+                
+                data.push(rowData);
+                dataRowCounter++;
+            });
+            
+            console.log(`[ExcelJS] Non-Streaming abgeschlossen: ${dataRowCounter} Datenzeilen in ${Date.now() - t2}ms`);
+            timings.streaming = Date.now() - t2;
+        } else {
+        // STREAMING READER: Liest Zeilen einzeln, blockiert Event-Loop NICHT
+        // Buffer wird wiederverwendet (kein erneuter Dateizugriff!)
+        console.log(`[ExcelJS] Verwende Streaming Reader (kein RichText)`);
+        
         const { Readable } = require('stream');
         const readStream = Readable.from(fileBuffer);
         const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(readStream, {
@@ -867,6 +1299,18 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                         actualColumnCount = Math.max(actualColumnCount, headers.length);
                     }
                     // Überschreibe den leeren Wert mit dem tatsächlichen Wert
+                    // SharedString-Referenz auflösen (Streaming löst RichText-SharedStrings nicht auf)
+                    if (cell.value && typeof cell.value === 'object' && cell.value.sharedString !== undefined && sharedStrings.length > 0) {
+                        const ssIdx = cell.value.sharedString;
+                        const ss = sharedStrings[ssIdx];
+                        if (ss) {
+                            if (ss.richText) {
+                                cell.value = { richText: ss.richText.map(r => ({ text: r.text, font: r.font })) };
+                            } else {
+                                cell.value = ss.text || '';
+                            }
+                        }
+                    }
                     if (!cell.value) {
                         headers[colIndex] = '';
                     } else if (typeof cell.value === 'object') {
@@ -899,56 +1343,54 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                         if (cell.font.name && cell.font.name !== 'Calibri') {
                             style.fontName = cell.font.name;
                         }
-                        if (cell.font.color?.argb) {
-                            const colorHex = cell.font.color.argb.substring(2);
-                            if (colorHex !== '000000') {
-                                style.fontColor = `#${colorHex}`;
-                            }
+                    const fontColor = resolveColor(cell.font.color);
+                    if (fontColor) {
+                        style.fontColor = fontColor;
+                    }
+                }
+                
+                // Alignment extrahieren
+                if (cell.alignment) {
+                    if (cell.alignment.horizontal && cell.alignment.horizontal !== 'general') {
+                        style.textAlign = cell.alignment.horizontal;
+                    }
+                    if (cell.alignment.vertical && cell.alignment.vertical !== 'bottom') {
+                        style.verticalAlign = cell.alignment.vertical;
+                    }
+                    if (cell.alignment.wrapText) {
+                        style.wrapText = true;
+                    }
+                }
+                
+                // Fill extrahieren
+                if (cell.fill) {
+                    if (cell.fill.type === 'pattern' && cell.fill.pattern === 'solid') {
+                        const fillColor = resolveColor(cell.fill.fgColor);
+                        if (fillColor) {
+                            style.fill = fillColor;
                         }
                     }
-                    
-                    // Alignment extrahieren
-                    if (cell.alignment) {
-                        if (cell.alignment.horizontal && cell.alignment.horizontal !== 'general') {
-                            style.textAlign = cell.alignment.horizontal;
-                        }
-                        if (cell.alignment.vertical && cell.alignment.vertical !== 'bottom') {
-                            style.verticalAlign = cell.alignment.vertical;
-                        }
-                        if (cell.alignment.wrapText) {
-                            style.wrapText = true;
-                        }
-                    }
-                    
-                    // Fill extrahieren
-                    if (cell.fill) {
-                        if (cell.fill.type === 'pattern' && cell.fill.pattern === 'solid' && cell.fill.fgColor?.argb) {
-                            const fillHex = cell.fill.fgColor.argb.substring(2);
-                            if (fillHex !== 'FFFFFF') {
-                                style.fill = `#${fillHex}`;
-                            }
+                }
+                
+                // Borders extrahieren
+                if (cell.border) {
+                    const borders = {};
+                    for (const side of ['top', 'bottom', 'left', 'right']) {
+                        if (cell.border[side] && cell.border[side].style) {
+                            borders[side] = {
+                                style: cell.border[side].style,
+                                color: resolveColor(cell.border[side].color)
+                            };
                         }
                     }
-                    
-                    // Borders extrahieren
-                    if (cell.border) {
-                        const borders = {};
-                        for (const side of ['top', 'bottom', 'left', 'right']) {
-                            if (cell.border[side] && cell.border[side].style) {
-                                borders[side] = {
-                                    style: cell.border[side].style,
-                                    color: cell.border[side].color?.argb ? `#${cell.border[side].color.argb.substring(2)}` : null
-                                };
-                            }
-                        }
-                        if (Object.keys(borders).length > 0) {
-                            style.borders = borders;
-                        }
+                    if (Object.keys(borders).length > 0) {
+                        style.borders = borders;
                     }
-                    
-                    if (Object.keys(style).length > 0) {
-                        cellStyles[styleKey] = style;
-                    }
+                }
+                
+                if (Object.keys(style).length > 0) {
+                    cellStyles[styleKey] = style;
+                }
                 });
                 continue; // Weiter zur nächsten Zeile
             }
@@ -1035,6 +1477,20 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     cellValue = formatDateWithNumFmt(cellValue, cell.numFmt || '');
                 }
                 
+                // SharedString-Referenz auflösen (Streaming löst RichText-SharedStrings nicht auf)
+                if (cell.value && typeof cell.value === 'object' && cell.value.sharedString !== undefined && sharedStrings.length > 0) {
+                    const ssIdx = cell.value.sharedString;
+                    const ss = sharedStrings[ssIdx];
+                    if (ss) {
+                        if (ss.richText) {
+                            cell.value = { richText: ss.richText.map(r => ({ text: r.text, font: r.font })) };
+                        } else {
+                            cell.value = ss.text || '';
+                        }
+                        cellValue = typeof cell.value === 'string' ? cell.value : (cell.value.richText ? cell.value.richText.map(p => p.text).join('') : '');
+                    }
+                }
+                
                 // Objekt-Werte behandeln (Rich Text, Hyperlinks, etc.)
                 // WICHTIG: Nur wenn es KEINE Formel war (die wurde oben schon behandelt)
                 // Wir prüfen cell.value (nicht cellValue), um zu sehen ob es ein spezielles Objekt ist
@@ -1049,7 +1505,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                                 italic: part.font?.italic || false,
                                 underline: part.font?.underline || false,
                                 strikethrough: part.font?.strike || false,
-                                color: part.font?.color?.argb ? `#${part.font.color.argb.substring(2)}` : null,
+                            color: resolveColor(part.font?.color),
                                 fontSize: part.font?.size || null,
                                 fontName: part.font?.name || null
                             }
@@ -1113,11 +1569,9 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     if (cell.font.name && cell.font.name !== 'Calibri') {
                         style.fontName = cell.font.name;
                     }
-                    if (cell.font.color?.argb) {
-                        const colorHex = cell.font.color.argb.substring(2);
-                        if (colorHex !== '000000') {
-                            style.fontColor = `#${colorHex}`;
-                        }
+                    const fontColor = resolveColor(cell.font.color);
+                    if (fontColor) {
+                        style.fontColor = fontColor;
                     }
                 }
                 
@@ -1136,10 +1590,10 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 
                 // Fill extrahieren
                 if (cell.fill) {
-                    if (cell.fill.type === 'pattern' && cell.fill.pattern === 'solid' && cell.fill.fgColor?.argb) {
-                        const fillHex = cell.fill.fgColor.argb.substring(2);
-                        if (fillHex !== 'FFFFFF') {
-                            style.fill = `#${fillHex}`;
+                    if (cell.fill.type === 'pattern' && cell.fill.pattern === 'solid') {
+                        const fillColor = resolveColor(cell.fill.fgColor);
+                        if (fillColor) {
+                            style.fill = fillColor;
                         }
                     }
                 }
@@ -1151,7 +1605,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                         if (cell.border[side] && cell.border[side].style) {
                             borders[side] = {
                                 style: cell.border[side].style,
-                                color: cell.border[side].color?.argb ? `#${cell.border[side].color.argb.substring(2)}` : null
+                                color: resolveColor(cell.border[side].color)
                             };
                         }
                     }
@@ -1218,6 +1672,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         if (!sheetFound) {
             return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
         }
+        } // Ende else (Streaming-Pfad)
         
         // WICHTIG: Header-Zeile als erste Zeile in data einfügen
         // Das Frontend erwartet data.slice(1) - also Header an Position 0
