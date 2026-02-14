@@ -9493,6 +9493,12 @@
                     updateSheetDropdown();
                     updateSheetManageList();
                     updateSheetManageButtons();
+                    
+                    // Bei Einblenden: zum eingeblendeten Sheet wechseln
+                    if (newVisible) {
+                        await loadExplorerSheet(selectedSheetForManagement);
+                        updateSheetManageList();
+                    }
                 } else {
                     showNotification(result.error, 'error');
                 }
