@@ -2126,6 +2126,10 @@ end tell'''
         - Table/ListObject-AutoFilter (AutoFilter innerhalb von Excel-Tabellen)
         - Filter die über set_autofilter gesetzt wurden
         - Filter die bereits in der Excel-Datei vorhanden waren
+        
+        Robustheit: Wenn keine Zeilen dem Filter entsprechen (0 Treffer),
+        kann ShowAllData() fehlschlagen. In diesem Fall werden die Filter
+        direkt über AutoFilter(Field=N) einzeln entfernt.
         """
         try:
             used_range = self.worksheet.used_range
@@ -2139,6 +2143,9 @@ end tell'''
             # SCHRITT 1: Table/ListObject AutoFilter zurücksetzen
             # Excel-Tabellen haben ihren EIGENEN AutoFilter!
             # worksheet.AutoFilterMode zeigt diesen NICHT an.
+            # WICHTIG: DataBodyRange kann None sein wenn ALLE Zeilen
+            # gefiltert sind (0 Treffer) — daher ShowAllData über
+            # Worksheet statt über DataBodyRange.Parent aufrufen.
             # =====================================================
             try:
                 tables = self.worksheet.api.ListObjects
@@ -2150,13 +2157,8 @@ end tell'''
                         try:
                             if table.AutoFilter:
                                 af = table.AutoFilter
-                                # Prüfe ob Filter aktiv sind
-                                if af.FilterMode:
-                                    table.DataBodyRange.Parent.ShowAllData()
-                                    self._log(f"Windows: Table '{table_name}' ShowAllData erfolgreich")
-                                    cleared_something = True
-                                
-                                # Einzelne Filter-Felder zurücksetzen
+                                # Einzelne Filter-Felder zuerst zurücksetzen
+                                # (robuster als ShowAllData, funktioniert auch bei 0 Treffern)
                                 try:
                                     filters = af.Filters
                                     for fi in range(1, filters.Count + 1):
@@ -2169,6 +2171,15 @@ end tell'''
                                             pass
                                 except Exception as e:
                                     self._log(f"Windows: Table '{table_name}' Filter-Iteration Fehler: {e}")
+                                
+                                # ShowAllData als Sicherheitsnetz
+                                try:
+                                    if af.FilterMode:
+                                        self.worksheet.api.ShowAllData()
+                                        self._log(f"Windows: Table '{table_name}' ShowAllData erfolgreich")
+                                        cleared_something = True
+                                except Exception as e:
+                                    self._log(f"Windows: Table '{table_name}' ShowAllData Fehler (ignoriert): {e}")
                         except Exception as e:
                             self._log(f"Windows: Table '{table_name}' AutoFilter-Zugriff Fehler: {e}")
                 else:
@@ -2179,17 +2190,38 @@ end tell'''
             # =====================================================
             # SCHRITT 2: Worksheet-AutoFilter zurücksetzen
             # (normaler AutoFilter, nicht Teil einer Tabelle)
+            # WICHTIG: ShowAllData kann fehlschlagen wenn 0 Zeilen
+            # sichtbar sind. In dem Fall Filter einzeln entfernen.
             # =====================================================
             try:
                 if self.worksheet.api.AutoFilterMode:
                     self._log("Windows: Worksheet AutoFilterMode ist aktiv")
+                    
+                    # ERST: Einzelne Filter-Felder zurücksetzen (funktioniert immer)
+                    try:
+                        af = self.worksheet.api.AutoFilter
+                        if af:
+                            filters = af.Filters
+                            for fi in range(1, filters.Count + 1):
+                                try:
+                                    if filters.Item(fi).On:
+                                        used_range.api.AutoFilter(Field=fi)
+                                        self._log(f"Windows: Worksheet Filter Feld {fi} zurückgesetzt")
+                                        cleared_something = True
+                                except:
+                                    pass
+                    except Exception as e:
+                        self._log(f"Windows: Worksheet Filter-Iteration Fehler: {e}")
+                    
+                    # DANN: ShowAllData als Sicherheitsnetz
                     try:
                         self.worksheet.api.ShowAllData()
                         self._log("Windows: Worksheet ShowAllData() erfolgreich")
                         cleared_something = True
                     except Exception as e:
-                        self._log(f"Windows: Worksheet ShowAllData Fehler: {e}")
+                        self._log(f"Windows: Worksheet ShowAllData Fehler (ignoriert): {e}")
                     
+                    # AutoFilterMode deaktivieren
                     try:
                         self.worksheet.api.AutoFilterMode = False
                         self._log("Windows: AutoFilterMode auf False gesetzt")
