@@ -1926,18 +1926,81 @@ end tell'''
                                               'dateInDays', 'dateOverdueDays', 'dateBetween'):
                                 self._log(f"Windows: Datums-Filter Spalte {col_idx}: op={operator}, from={date_from}, to={date_to}")
                                 try:
+                                    # Datumsformat der Spalte erkennen und ISO-Daten umwandeln
+                                    # Excel AutoFilter erwartet Kriterien im angezeigten Zellformat
+                                    def _convert_date_for_excel(iso_date_str, col_index):
+                                        """Konvertiert ISO-Datum (YYYY-MM-DD) ins Zellformat der Spalte"""
+                                        try:
+                                            dt = datetime.strptime(iso_date_str, '%Y-%m-%d')
+                                        except:
+                                            return iso_date_str  # Fallback: unverändert
+                                        
+                                        try:
+                                            # NumberFormat der ersten Datenzelle dieser Spalte lesen
+                                            col_letter = self._get_column_letter(col_index)
+                                            cell = self.worksheet.range(f'{col_letter}2')
+                                            num_fmt = cell.number_format or ''
+                                            self._log(f"  Spalte {col_index} NumberFormat: '{num_fmt}'")
+                                            
+                                            # Bekannte Excel-Datumsformate → Python strftime
+                                            nf = num_fmt.lower().replace('\\', '').strip()
+                                            
+                                            if 'yyyy' in nf and 'mm' in nf and 'dd' in nf:
+                                                # z.B. yyyy-mm-dd, yyyy/mm/dd, yyyy.mm.dd
+                                                sep = '-' if '-' in nf else ('/' if '/' in nf else '.')
+                                                if nf.index('yyyy') < nf.index('mm'):
+                                                    return dt.strftime(f'%Y{sep}%m{sep}%d')  # 2026-02-14
+                                                else:
+                                                    return dt.strftime(f'%d{sep}%m{sep}%Y')  # 14-02-2026
+                                            elif 'dd' in nf and 'mm' in nf and 'yy' in nf:
+                                                sep = '.' if '.' in nf else ('/' if '/' in nf else '-')
+                                                return dt.strftime(f'%d{sep}%m{sep}%Y')  # 14.02.2026
+                                            elif 'mm' in nf and 'dd' in nf and 'yy' in nf:
+                                                sep = '/' if '/' in nf else ('-' if '-' in nf else '.')
+                                                return dt.strftime(f'%#m{sep}%#d{sep}%Y')  # 2/14/2026
+                                            elif 'm' in nf and 'd' in nf and 'y' in nf:
+                                                sep = '/' if '/' in nf else ('-' if '-' in nf else '.')
+                                                return dt.strftime(f'%#m{sep}%#d{sep}%Y')  # 2/14/2026
+                                        except Exception as e:
+                                            self._log(f"  NumberFormat-Erkennung fehlgeschlagen: {e}")
+                                        
+                                        # Fallback: Beispielwert der Zelle lesen und Format ableiten
+                                        try:
+                                            col_letter = self._get_column_letter(col_index)
+                                            sample = str(self.worksheet.range(f'{col_letter}2').value or '')
+                                            self._log(f"  Fallback: Beispielwert='{sample}'")
+                                            # Wenn Punkt-Trenner → DD.MM.YYYY (deutsch)
+                                            if '.' in sample and sample.count('.') == 2:
+                                                return dt.strftime('%d.%m.%Y')
+                                            # Wenn Slash-Trenner → M/D/YYYY (englisch)
+                                            elif '/' in sample:
+                                                return dt.strftime('%#m/%#d/%Y')
+                                            # Wenn Bindestrich und nicht ISO-ähnlich → D-M-YYYY
+                                            elif '-' in sample and not sample[:4].isdigit():
+                                                return dt.strftime('%d-%m-%Y')
+                                        except:
+                                            pass
+                                        
+                                        # Letzter Fallback: M/D/YYYY (englisch, gängigste COM-Variante)
+                                        return dt.strftime('%#m/%#d/%Y')
+                                    
                                     c1 = None
                                     c2 = None
                                     xl_op = None  # 1 = xlAnd
                                     
-                                    if date_from and date_to:
-                                        c1 = f">={date_from}"
-                                        c2 = f"<={date_to}"
+                                    # ISO-Daten ins Zellformat konvertieren
+                                    excel_from = _convert_date_for_excel(date_from, col_idx) if date_from else None
+                                    excel_to = _convert_date_for_excel(date_to, col_idx) if date_to else None
+                                    self._log(f"  Konvertiert: from={date_from} → {excel_from}, to={date_to} → {excel_to}")
+                                    
+                                    if excel_from and excel_to:
+                                        c1 = f">={excel_from}"
+                                        c2 = f"<={excel_to}"
                                         xl_op = 1  # xlAnd
-                                    elif date_from:
-                                        c1 = f">={date_from}"
-                                    elif date_to:
-                                        c1 = f"<={date_to}"
+                                    elif excel_from:
+                                        c1 = f">={excel_from}"
+                                    elif excel_to:
+                                        c1 = f"<={excel_to}"
                                     else:
                                         self._log(f"Windows: Datums-Filter Spalte {col_idx} übersprungen (keine Daten)")
                                         continue
