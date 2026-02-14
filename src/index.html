@@ -12769,6 +12769,10 @@
             // UI aktualisieren
             document.getElementById('explorerFileName').textContent = explorerState.fileName;
             
+            // FileInfo-Button anzeigen
+            const btnFileInfo = document.getElementById('btnFileInfo');
+            if (btnFileInfo) btnFileInfo.style.display = '';
+            
             // Sheet-Dropdown füllen (mit Markierung für ausgeblendete Sheets)
             elements.explorerSheetSelect.innerHTML = explorerState.sheets
                 .map(s => {
