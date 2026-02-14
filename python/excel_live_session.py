@@ -2219,16 +2219,21 @@ end tell'''
             # =====================================================
             # SCHRITT 4: Alle versteckten Zeilen einblenden (Sicherheitsnetz)
             # Falls ShowAllData nicht alle Zeilen eingeblendet hat
+            # WICHTIG: Ein einziger COM-Aufruf statt Zeile-für-Zeile,
+            # sonst Timeout bei großen Tabellen (>1000 Zeilen)
             # =====================================================
             try:
-                for row in used_range.api.Rows:
-                    try:
-                        if row.Hidden:
-                            row.Hidden = False
-                    except:
-                        pass
+                # Methode 1: Gesamten used_range auf einmal einblenden
+                used_range.api.EntireRow.Hidden = False
+                self._log("Windows: Alle Zeilen eingeblendet (EntireRow.Hidden=False)")
             except Exception as e:
-                self._log(f"Windows: Zeilen-Einblendung Fehler: {e}")
+                self._log(f"Windows: EntireRow.Hidden Fehler: {e}")
+                # Fallback: Rows-Collection auf einmal
+                try:
+                    self.worksheet.api.Rows.Hidden = False
+                    self._log("Windows: Alle Zeilen eingeblendet (Rows.Hidden=False)")
+                except Exception as e2:
+                    self._log(f"Windows: Rows.Hidden Fehler: {e2}")
             
             # Schritt 5: Screen-Refresh
             try:
