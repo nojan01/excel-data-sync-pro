@@ -13405,13 +13405,16 @@
                     let fromDate = null;
                     let toDate = null;
                     
+                    // WICHTIG: parseDateValue statt new Date() verwenden!
+                    // new Date("2026-02-14") parst als UTC → in CET wird das zum Vortag!
+                    // parseDateValue() nutzt new Date(year, month, day) → lokale Zeitzone
                     if (dateFrom) {
-                        fromDate = new Date(dateFrom);
-                        fromDate.setHours(0, 0, 0, 0);
+                        fromDate = parseDateValue(dateFrom);
+                        if (fromDate) fromDate.setHours(0, 0, 0, 0);
                     }
                     if (dateTo) {
-                        toDate = new Date(dateTo);
-                        toDate.setHours(23, 59, 59, 999); // Ende des Tages
+                        toDate = parseDateValue(dateTo);
+                        if (toDate) toDate.setHours(23, 59, 59, 999); // Ende des Tages
                     }
                     
                     // Wenn nur Von-Datum: alles ab diesem Datum
