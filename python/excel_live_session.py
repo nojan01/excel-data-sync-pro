@@ -1943,43 +1943,101 @@ end tell'''
                                             self._log(f"  Spalte {col_index} NumberFormat: '{num_fmt}'")
                                             
                                             # Bekannte Excel-Datumsformate → Python strftime
+                                            # WICHTIG: Reihenfolge von m/d im Format bestimmt MM.DD vs DD.MM
                                             nf = num_fmt.lower().replace('\\', '').strip()
                                             
-                                            if 'yyyy' in nf and 'mm' in nf and 'dd' in nf:
-                                                # z.B. yyyy-mm-dd, yyyy/mm/dd, yyyy.mm.dd
-                                                sep = '-' if '-' in nf else ('/' if '/' in nf else '.')
-                                                if nf.index('yyyy') < nf.index('mm'):
-                                                    return dt.strftime(f'%Y{sep}%m{sep}%d')  # 2026-02-14
-                                                else:
-                                                    return dt.strftime(f'%d{sep}%m{sep}%Y')  # 14-02-2026
-                                            elif 'dd' in nf and 'mm' in nf and 'yy' in nf:
-                                                sep = '.' if '.' in nf else ('/' if '/' in nf else '-')
-                                                return dt.strftime(f'%d{sep}%m{sep}%Y')  # 14.02.2026
-                                            elif 'mm' in nf and 'dd' in nf and 'yy' in nf:
-                                                sep = '/' if '/' in nf else ('-' if '-' in nf else '.')
-                                                return dt.strftime(f'%#m{sep}%#d{sep}%Y')  # 2/14/2026
-                                            elif 'm' in nf and 'd' in nf and 'y' in nf:
-                                                sep = '/' if '/' in nf else ('-' if '-' in nf else '.')
-                                                return dt.strftime(f'%#m{sep}%#d{sep}%Y')  # 2/14/2026
+                                            # Position von m und d im Format bestimmen
+                                            # (Suche erstes 'm' und erstes 'd' das nicht in anderen Tokens steckt)
+                                            import re as _re
+                                            m_pos = -1
+                                            d_pos = -1
+                                            for _m in _re.finditer(r'[md]', nf):
+                                                ch = _m.group()
+                                                if ch == 'm' and m_pos < 0:
+                                                    m_pos = _m.start()
+                                                elif ch == 'd' and d_pos < 0:
+                                                    d_pos = _m.start()
+                                            
+                                            month_first = m_pos < d_pos if m_pos >= 0 and d_pos >= 0 else False
+                                            self._log(f"  Format-Analyse: m_pos={m_pos}, d_pos={d_pos}, month_first={month_first}")
+                                            
+                                            # Separator erkennen
+                                            sep = '.'
+                                            for ch in nf:
+                                                if ch in './-':
+                                                    sep = ch
+                                                    break
+                                            
+                                            # Jahr-Format erkennen
+                                            has_4y = 'yyyy' in nf
+                                            
+                                            if 'yyyy' in nf:
+                                                y_pos = nf.index('yyyy')
+                                                if y_pos == 0 or (m_pos >= 0 and y_pos < m_pos):
+                                                    # YYYY zuerst: YYYY-MM-DD
+                                                    return dt.strftime(f'%Y{sep}%m{sep}%d')
+                                            
+                                            # Padding erkennen: 'dd' = 2-stellig, 'd' = ohne führende Null
+                                            has_dd = 'dd' in nf
+                                            has_mm = 'mm' in nf
+                                            
+                                            if month_first:
+                                                # MM.DD.YY oder M.DD.YY
+                                                m_fmt = '%m' if has_mm else '%#m'
+                                                d_fmt = '%d' if has_dd else '%#d'
+                                                y_fmt = '%Y' if has_4y else '%#y' if not has_4y else '%Y'
+                                                # Windows: %#y gibt keine führende Null, aber strftime hat kein 2-digit year
+                                                # Verwende stattdessen manuelles Format
+                                                y_str = str(dt.year) if has_4y else str(dt.year % 100).zfill(2)
+                                                m_str = str(dt.month).zfill(2) if has_mm else str(dt.month)
+                                                d_str = str(dt.day).zfill(2) if has_dd else str(dt.day)
+                                                return f'{m_str}{sep}{d_str}{sep}{y_str}'
+                                            else:
+                                                # DD.MM.YY oder D.M.YYYY
+                                                y_str = str(dt.year) if has_4y else str(dt.year % 100).zfill(2)
+                                                m_str = str(dt.month).zfill(2) if has_mm else str(dt.month)
+                                                d_str = str(dt.day).zfill(2) if has_dd else str(dt.day)
+                                                return f'{d_str}{sep}{m_str}{sep}{y_str}'
                                         except Exception as e:
                                             self._log(f"  NumberFormat-Erkennung fehlgeschlagen: {e}")
                                         
                                         # Fallback: Beispielwert der Zelle lesen und Format ableiten
                                         try:
                                             col_letter = self._get_column_letter(col_index)
-                                            sample = str(self.worksheet.range(f'{col_letter}2').value or '')
-                                            self._log(f"  Fallback: Beispielwert='{sample}'")
-                                            # Wenn Punkt-Trenner → DD.MM.YYYY (deutsch)
+                                            cell_val = self.worksheet.range(f'{col_letter}2').value
+                                            sample = str(cell_val or '')
+                                            self._log(f"  Fallback: Beispielwert='{sample}' (Typ: {type(cell_val).__name__})")
+                                            
                                             if '.' in sample and sample.count('.') == 2:
-                                                return dt.strftime('%d.%m.%Y')
-                                            # Wenn Slash-Trenner → M/D/YYYY (englisch)
+                                                # Punkt-Trenner → prüfe ob MM.DD oder DD.MM
+                                                # Suche eindeutigen Wert in den Daten
+                                                import re as _re2
+                                                last_row = min(used_range.last_cell.row, 52)
+                                                col_vals = self.worksheet.range(f'{col_letter}2:{col_letter}{last_row}').value
+                                                if not isinstance(col_vals, list):
+                                                    col_vals = [col_vals]
+                                                is_mdy = False
+                                                for cv in col_vals:
+                                                    s = str(cv or '').strip()
+                                                    dm = _re2.match(r'^(\d{1,2})\.(\d{1,2})\.(\d{2,4})', s)
+                                                    if dm:
+                                                        pp1, pp2 = int(dm.group(1)), int(dm.group(2))
+                                                        if pp2 > 12 and pp1 <= 12:
+                                                            is_mdy = True
+                                                            break
+                                                        if pp1 > 12 and pp2 <= 12:
+                                                            break  # DD.MM confirmed
+                                                if is_mdy:
+                                                    self._log(f"  Fallback: MM.DD Format erkannt")
+                                                    return f'{dt.month}.{dt.day:02d}.{dt.year % 100:02d}'
+                                                else:
+                                                    return dt.strftime('%d.%m.%Y')
                                             elif '/' in sample:
                                                 return dt.strftime('%#m/%#d/%Y')
-                                            # Wenn Bindestrich und nicht ISO-ähnlich → D-M-YYYY
                                             elif '-' in sample and not sample[:4].isdigit():
                                                 return dt.strftime('%d-%m-%Y')
-                                        except:
-                                            pass
+                                        except Exception as e:
+                                            self._log(f"  Fallback-Fehler: {e}")
                                         
                                         # Letzter Fallback: M/D/YYYY (englisch, gängigste COM-Variante)
                                         return dt.strftime('%#m/%#d/%Y')

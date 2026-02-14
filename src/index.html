@@ -13296,7 +13296,7 @@
             return months[name.toLowerCase()] ?? months[n] ?? -1;
         }
         
-        function parseDateValue(value) {
+        function parseDateValue(value, dateOrder) {
             if (!value) return null;
             
             // Bereits ein Date-Objekt
@@ -13320,12 +13320,34 @@
                 if (!isNaN(date)) return date;
             }
             
-            // Deutsches Format mit Punkt-Trenner: 08.01.2026, 8.1.2026, 08.01.26, 8.1.26
-            const deMatch = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
-            if (deMatch) {
-                const year = expandYear(parseInt(deMatch[3]));
-                const date = new Date(year, parseInt(deMatch[2]) - 1, parseInt(deMatch[1]));
-                if (!isNaN(date)) return date;
+            // Punkt-Trenner: DD.MM.YYYY (deutsch) oder MM.DD.YYYY (US mit Punkt)
+            // Auto-Erkennung + optionaler dateOrder-Hint aus Spaltendaten
+            const dotMatch = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+            if (dotMatch) {
+                const p1 = parseInt(dotMatch[1]);
+                const p2 = parseInt(dotMatch[2]);
+                const year = expandYear(parseInt(dotMatch[3]));
+                let day, month;
+                if (p2 > 12 && p1 <= 12) {
+                    // p2 kann kein Monat sein → MM.DD Format (z.B. 1.31.26)
+                    month = p1; day = p2;
+                } else if (p1 > 12 && p2 <= 12) {
+                    // p1 kann kein Monat sein → DD.MM Format (z.B. 31.01.26)
+                    day = p1; month = p2;
+                } else if (dateOrder === 'mdy') {
+                    // Spaltenformat sagt MM.DD (z.B. 1.05.26 = Jan 5)
+                    month = p1; day = p2;
+                } else {
+                    // Default oder dateOrder === 'dmy' → DD.MM (deutsch)
+                    day = p1; month = p2;
+                }
+                if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+                    const date = new Date(year, month - 1, day);
+                    // Validierung: JS Date kann ungültige Werte wrappen (z.B. Tag 31 bei 30-Tage-Monat)
+                    if (!isNaN(date) && date.getMonth() === month - 1 && date.getDate() === day) {
+                        return date;
+                    }
+                }
             }
             
             // US/Internationales Format mit Schrägstrich: 01/08/2026, 1/8/26
@@ -13390,6 +13412,28 @@
         }
         
         /**
+         * Erkennt ob eine Spalte MM.DD oder DD.MM Reihenfolge bei Punkt-Format verwendet.
+         * Sucht in den Spaltendaten nach eindeutigen Werten (Teil > 12).
+         * @returns 'mdy' | 'dmy'
+         */
+        function detectColumnDateOrder(colIndex) {
+            if (!explorerState.data || colIndex < 0) return 'dmy';
+            for (let i = 0; i < Math.min(explorerState.data.length, 200); i++) {
+                const val = explorerState.data[i]?.[colIndex];
+                if (!val) continue;
+                const str = String(val).trim();
+                const m = str.match(/^(\d{1,2})\.(\d{1,2})\.(\d{2,4})/);
+                if (m) {
+                    const p1 = parseInt(m[1]);
+                    const p2 = parseInt(m[2]);
+                    if (p2 > 12 && p1 <= 12) return 'mdy'; // z.B. 1.31.26 → MM.DD
+                    if (p1 > 12 && p2 <= 12) return 'dmy'; // z.B. 31.01.26 → DD.MM
+                }
+            }
+            return 'dmy'; // Default: deutsch
+        }
+        
+        /**
          * Aktualisiert die Placeholders der Von/Bis-Felder basierend auf Spalten-Daten
          */
         function updateDatePlaceholders(row) {
@@ -13417,8 +13461,8 @@
         /**
          * Prüft ob ein Datum den Filter-Bedingungen entspricht
          */
-        function matchDateFilter(cellValue, operator, days = 0, dateFrom = null, dateTo = null) {
-            const cellDate = parseDateValue(cellValue);
+        function matchDateFilter(cellValue, operator, days = 0, dateFrom = null, dateTo = null, dateOrder = null) {
+            const cellDate = parseDateValue(cellValue, dateOrder);
             if (!cellDate) return false;
             
             const today = new Date();
@@ -13446,15 +13490,14 @@
                     let fromDate = null;
                     let toDate = null;
                     
-                    // WICHTIG: parseDateValue statt new Date() verwenden!
-                    // new Date("2026-02-14") parst als UTC → in CET wird das zum Vortag!
-                    // parseDateValue() nutzt new Date(year, month, day) → lokale Zeitzone
+                    // WICHTIG: parseDateValue mit dateOrder verwenden!
+                    // Gleiche Spaltenformat-Erkennung für Filtereingabe und Zellwerte
                     if (dateFrom) {
-                        fromDate = parseDateValue(dateFrom);
+                        fromDate = parseDateValue(dateFrom, dateOrder);
                         if (fromDate) fromDate.setHours(0, 0, 0, 0);
                     }
                     if (dateTo) {
-                        toDate = parseDateValue(dateTo);
+                        toDate = parseDateValue(dateTo, dateOrder);
                         if (toDate) toDate.setHours(23, 59, 59, 999); // Ende des Tages
                     }
                     
@@ -13555,15 +13598,16 @@
                         case 'isEmpty': return !rawCellValue || String(rawCellValue).trim() === '';
                         case 'isNotEmpty': return rawCellValue && String(rawCellValue).trim() !== '';
                         
-                        // Datum-Filter
+                        // Datum-Filter — Spalten-Datumsformat erkennen
                         case 'dateBetween': {
-                            const result = matchDateFilter(rawCellValue, filter.operator, 0, filter.dateFrom, filter.dateTo);
+                            const colDateOrder = detectColumnDateOrder(colIndex);
+                            const result = matchDateFilter(rawCellValue, filter.operator, 0, filter.dateFrom, filter.dateTo, colDateOrder);
                             if (isDateFilter && dateDebugCount < 3) {
                                 dateDebugCount++;
-                                const parsedCell = parseDateValue(rawCellValue);
-                                const parsedFrom = filter.dateFrom ? parseDateValue(filter.dateFrom) : null;
-                                const parsedTo = filter.dateTo ? parseDateValue(filter.dateTo) : null;
-                                console.log(`[DateFilter] dateBetween: Zelle="${rawCellValue}" → ${parsedCell}, Von="${filter.dateFrom}" → ${parsedFrom}, Bis="${filter.dateTo}" → ${parsedTo}, Ergebnis: ${result}`);
+                                const parsedCell = parseDateValue(rawCellValue, colDateOrder);
+                                const parsedFrom = filter.dateFrom ? parseDateValue(filter.dateFrom, colDateOrder) : null;
+                                const parsedTo = filter.dateTo ? parseDateValue(filter.dateTo, colDateOrder) : null;
+                                console.log(`[DateFilter] dateBetween (${colDateOrder}): Zelle="${rawCellValue}" → ${parsedCell}, Von="${filter.dateFrom}" → ${parsedFrom}, Bis="${filter.dateTo}" → ${parsedTo}, Ergebnis: ${result}`);
                             }
                             return result;
                         }
@@ -13575,7 +13619,8 @@
                         case 'dateThisWeek':
                         case 'dateThisMonth': {
                             const days = parseInt(filter.value) || 0;
-                            const result = matchDateFilter(rawCellValue, filter.operator, days);
+                            const colDateOrder2 = detectColumnDateOrder(colIndex);
+                            const result = matchDateFilter(rawCellValue, filter.operator, days, null, null, colDateOrder2);
                             if (isDateFilter && dateDebugCount < 3) {
                                 dateDebugCount++;
                                 const parsed = parseDateValue(rawCellValue);
@@ -13696,16 +13741,19 @@
                                     break;
                                 }
                                 case 'dateBetween': {
-                                    // User tippt Datum im Tabellenformat (z.B. "14.02.2026")
-                                    // → parseDateValue() parst alle Formate → in ISO umwandeln für Python
+                                    // User tippt Datum im Tabellenformat (z.B. "1.31.26" oder "14.02.2026")
+                                    // Spalten-Datumsformat erkennen für korrekte Interpretation
+                                    const colIdx = parseInt(f.column);
+                                    const dateOrd = detectColumnDateOrder(colIdx);
                                     if (f.dateFrom) {
-                                        const parsed = parseDateValue(f.dateFrom);
+                                        const parsed = parseDateValue(f.dateFrom, dateOrd);
                                         dateFrom = parsed ? fmt(parsed) : f.dateFrom;
                                     }
                                     if (f.dateTo) {
-                                        const parsed = parseDateValue(f.dateTo);
+                                        const parsed = parseDateValue(f.dateTo, dateOrd);
                                         dateTo = parsed ? fmt(parsed) : f.dateTo;
                                     }
+                                    console.log(`[syncFilters] dateBetween col ${colIdx} order=${dateOrd}: "${f.dateFrom}" → ${dateFrom}, "${f.dateTo}" → ${dateTo}`);
                                     break;
                                 }
                             }
