@@ -9318,6 +9318,10 @@
                     updateSheetDropdown();
                     updateSheetManageList();
                     showNotification(`Arbeitsblatt "${name}" hinzugefügt`, 'success');
+                    
+                    // Automatisch zum neuen Sheet wechseln
+                    await loadExplorerSheet(name);
+                    updateSheetManageList();
                 } else {
                     showNotification(result.error, 'error');
                 }
@@ -9375,6 +9379,10 @@
                     updateSheetDropdown();
                     updateSheetManageList();
                     showNotification(`Arbeitsblatt kopiert als "${newName}"`, 'success');
+                    
+                    // Automatisch zum kopierten Sheet wechseln
+                    await loadExplorerSheet(newName);
+                    updateSheetManageList();
                 } else {
                     showNotification(result.error, 'error');
                 }
