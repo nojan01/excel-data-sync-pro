@@ -2031,9 +2031,8 @@ end tell'''
     def _clear_autofilter_windows(self) -> Dict[str, Any]:
         """Windows: AutoFilter-Kriterien entfernen und alle Zeilen einblenden.
         
-        Exakter Umkehrweg von set_autofilter:
-        SET:   used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria)
-        CLEAR: used_range.api.AutoFilter(Field=col_idx)  ← gleiche Methode, ohne Criteria
+        Unterstützt sowohl Filter die über set_autofilter gesetzt wurden
+        als auch bereits in der Excel-Datei vorhandene AutoFilter.
         """
         try:
             used_range = self.worksheet.used_range
@@ -2042,29 +2041,40 @@ end tell'''
             
             self._log(f"Windows: clear_autofilter Start, gespeicherte Felder: {self._active_filter_fields}")
             
-            # Schritt 1: Jedes Filter-Feld einzeln zurücksetzen (exakter Umkehrweg)
-            # SET:   used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria)
-            # CLEAR: used_range.api.AutoFilter(Field=col_idx)  ← ohne Criteria1!
-            cleared_fields = []
-            for col_idx in self._active_filter_fields:
-                try:
-                    used_range.api.AutoFilter(Field=col_idx)
-                    cleared_fields.append(col_idx)
-                    self._log(f"Windows: Filter Feld {col_idx} zurückgesetzt")
-                except Exception as e:
-                    self._log(f"Windows: Filter Feld {col_idx} Fehler: {e}")
-            
-            self._active_filter_fields = []
-            self._log(f"Windows: {len(cleared_fields)} Filter-Felder zurückgesetzt")
-            
-            # Schritt 2: Sicherheitshalber ShowAllData aufrufen
+            # Schritt 1: ShowAllData — zeigt alle gefilterten Zeilen wieder an
+            # Dies ist der zuverlässigste Weg, alle Filter-Kriterien zu entfernen
             try:
                 if self.worksheet.api.AutoFilterMode:
-                    if self.worksheet.api.AutoFilter.FilterMode:
+                    self._log("Windows: AutoFilterMode ist aktiv")
+                    try:
+                        # ShowAllData entfernt alle Filterkriterien und zeigt alle Zeilen
                         self.worksheet.api.ShowAllData()
-                        self._log("Windows: ShowAllData() aufgerufen")
+                        self._log("Windows: ShowAllData() erfolgreich")
+                    except Exception as e:
+                        # ShowAllData wirft Fehler wenn keine Filter aktiv sind — das ist OK
+                        self._log(f"Windows: ShowAllData Fehler (evtl. keine Filter aktiv): {e}")
+                    
+                    # Schritt 2: AutoFilter komplett deaktivieren (Dropdown-Pfeile entfernen)
+                    # und dann wieder aktivieren, um einen sauberen Zustand zu haben
+                    try:
+                        # AutoFilter ausschalten (entfernt Dropdown-Pfeile)
+                        self.worksheet.api.AutoFilterMode = False
+                        self._log("Windows: AutoFilterMode auf False gesetzt")
+                    except Exception as e:
+                        self._log(f"Windows: AutoFilterMode=False Fehler: {e}")
+                else:
+                    self._log("Windows: Kein AutoFilter aktiv")
             except Exception as e:
-                self._log(f"Windows: ShowAllData Fehler: {e}")
+                self._log(f"Windows: AutoFilter-Check Fehler: {e}")
+                # Fallback: Versuche gespeicherte Felder einzeln zu löschen
+                for col_idx in self._active_filter_fields:
+                    try:
+                        used_range.api.AutoFilter(Field=col_idx)
+                        self._log(f"Windows: Filter Feld {col_idx} zurückgesetzt (Fallback)")
+                    except Exception as e2:
+                        self._log(f"Windows: Filter Feld {col_idx} Fehler: {e2}")
+            
+            self._active_filter_fields = []
             
             # Schritt 3: Screen-Refresh
             try:
