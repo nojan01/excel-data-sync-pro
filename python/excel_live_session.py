@@ -1906,12 +1906,18 @@ end tell'''
                             
                             if operator == 'contains':
                                 criteria = f'*{criteria}*'
+                            elif operator == 'notContains':
+                                criteria = f'<>*{criteria}*'
                             elif operator == 'startsWith':
                                 criteria = f'{criteria}*'
                             elif operator == 'endsWith':
                                 criteria = f'*{criteria}'
+                            elif operator == 'isEmpty':
+                                criteria = '='
+                            elif operator == 'isNotEmpty':
+                                criteria = '<>'
                             
-                            self._log(f"Windows: Setze Filter Spalte {col_idx}: '{criteria}'")
+                            self._log(f"Windows: Setze Filter Spalte {col_idx}: operator={operator}, criteria='{criteria}'")
                             
                             try:
                                 # AutoFilter mit Kriterien setzen
@@ -1947,12 +1953,18 @@ end tell'''
                                 matches = False
                                 if operator == 'contains':
                                     matches = criteria in cell_str
+                                elif operator == 'notContains':
+                                    matches = criteria not in cell_str
                                 elif operator == 'startsWith':
                                     matches = cell_str.startswith(criteria)
                                 elif operator == 'endsWith':
                                     matches = cell_str.endswith(criteria)
                                 elif operator == 'equals':
                                     matches = cell_str == criteria
+                                elif operator == 'isEmpty':
+                                    matches = cell_value is None or cell_str.strip() == ''
+                                elif operator == 'isNotEmpty':
+                                    matches = cell_value is not None and cell_str.strip() != ''
                                 else:
                                     matches = criteria in cell_str
                                 if not matches:

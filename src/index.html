@@ -13496,12 +13496,23 @@
             try {
                 // Konvertiere Explorer-Filter zu Excel-AutoFilter-Format
                 const excelFilters = explorerState.filters
-                    .filter(f => f.column && f.value)
-                    .map(f => ({
-                        colIndex: parseInt(f.column),
-                        criteria: f.value,
-                        operator: f.operator || 'contains'
-                    }));
+                    .filter(f => {
+                        if (!f.column) return false;
+                        // isEmpty/isNotEmpty brauchen keinen Wert
+                        if (f.operator === 'isEmpty' || f.operator === 'isNotEmpty') return true;
+                        return !!f.value;
+                    })
+                    .map(f => {
+                        // Für isEmpty/isNotEmpty: keinen Criteria-Wert senden
+                        const criteria = (f.operator === 'isEmpty' || f.operator === 'isNotEmpty')
+                            ? '' 
+                            : f.value;
+                        return {
+                            colIndex: parseInt(f.column),
+                            criteria: criteria,
+                            operator: f.operator || 'contains'
+                        };
+                    });
                 
                 if (excelFilters.length > 0) {
                     const result = await window.electronAPI.liveSessionSetAutoFilter(excelFilters);
