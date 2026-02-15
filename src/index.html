@@ -13464,14 +13464,25 @@
         // Prüft ob es ungespeicherte Änderungen in irgendeinem Sheet gibt
         function hasUnsavedChanges() {
             // Pending Sheet-Operationen prüfen
-            if (explorerState.pendingSheetOperations.length > 0) return true;
+            if (explorerState.pendingSheetOperations.length > 0) {
+                console.log('[hasUnsavedChanges] pendingSheetOperations:', explorerState.pendingSheetOperations.length);
+                return true;
+            }
             
             // Aktuelles Sheet prüfen
-            if (explorerState.editedCells.size > 0) return true;
+            if (explorerState.editedCells.size > 0) {
+                const keys = Array.from(explorerState.editedCells.keys()).slice(0, 5);
+                console.log(`[hasUnsavedChanges] editedCells: ${explorerState.editedCells.size} Einträge, Keys: ${keys.join(', ')}`);
+                return true;
+            }
             
             // Cache prüfen
             for (const [sheetName, cached] of explorerState.sheetDataCache) {
-                if (cached.editedCells.size > 0) return true;
+                if (cached.editedCells.size > 0) {
+                    const keys = Array.from(cached.editedCells.keys()).slice(0, 5);
+                    console.log(`[hasUnsavedChanges] Cache "${sheetName}": ${cached.editedCells.size} Einträge, Keys: ${keys.join(', ')}`);
+                    return true;
+                }
             }
             
             return false;
