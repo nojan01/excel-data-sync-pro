@@ -10063,7 +10063,11 @@
             
             // rowMapping aktualisieren - trackt welche Original-Excel-Zeile an welcher Position ist
             // Bei neuen Zeilen wird -1 als Marker verwendet (keine Original-Zeile)
-            if (explorerState.rowMapping && explorerState.rowMapping.length > 0) {
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                // Live Session: Daten und Excel sind synchron, kein Mapping nötig
+                // Excel hat die Zeile bereits eingefügt, alle Indizes stimmen überein
+                explorerState.rowMapping = null;
+            } else if (explorerState.rowMapping && explorerState.rowMapping.length > 0) {
                 // Bestehendes Mapping: -1 an insertIndex einfügen
                 // Die bestehenden Mappings bleiben unverändert (sie referenzieren immer noch ihre Original-Zeilen)
                 explorerState.rowMapping.splice(insertIndex, 0, -1);  // -1 = neue Zeile
