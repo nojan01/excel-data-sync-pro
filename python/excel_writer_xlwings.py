@@ -331,10 +331,6 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                     # Tatsächliche Umordnung nötig - physisch verschieben wie bei Spalten (Schritt 8)
                     print(f"[xlwings_writer] Verschiebe Zeilen physisch (erhält Formatierung)", file=sys.stderr)
                     num_data_rows = len(row_order)
-                    last_col = len(headers) if headers else 1
-                    if ws.used_range:
-                        last_col = max(last_col, ws.used_range.last_cell.column)
-                    last_col_letter = _get_column_letter(last_col)
                     
                     physical_move_ok = True
                     try:
@@ -352,8 +348,10 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                                     ws.range(f'{target_excel}:{target_excel}').insert(shift='down')
                                     # Dadurch verschiebt sich source um 1 nach unten
                                     new_source_excel = source_excel + 1
-                                    # 2. Kopiere Quell-Zeile zur Ziel-Zeile (mit Formatierung)
-                                    source_rng = ws.range(f'A{new_source_excel}:{last_col_letter}{new_source_excel}')
+                                    # 2. Kopiere GANZE Quell-Zeile zur Ziel-Zeile
+                                    # WICHTIG: Ganze Zeile kopieren (nicht nur A:last_col),
+                                    # damit Zeilen-Level-Formatierung (Fills, Höhe) erhalten bleibt!
+                                    source_rng = ws.range(f'{new_source_excel}:{new_source_excel}')
                                     dest_rng = ws.range(f'A{target_excel}')
                                     if platform.system() == 'Windows':
                                         source_rng.api.Copy(Destination=dest_rng.api)
@@ -366,8 +364,8 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                                     # 1. Insert leere Zeile NACH dem Ziel (target+1)
                                     after_target_excel = target_excel + 1
                                     ws.range(f'{after_target_excel}:{after_target_excel}').insert(shift='down')
-                                    # 2. Kopiere Quell-Zeile zur neuen Position (mit Formatierung)
-                                    source_rng = ws.range(f'A{source_excel}:{last_col_letter}{source_excel}')
+                                    # 2. Kopiere GANZE Quell-Zeile zur neuen Position
+                                    source_rng = ws.range(f'{source_excel}:{source_excel}')
                                     dest_rng = ws.range(f'A{after_target_excel}')
                                     if platform.system() == 'Windows':
                                         source_rng.api.Copy(Destination=dest_rng.api)
