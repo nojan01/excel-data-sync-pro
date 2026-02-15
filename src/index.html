@@ -16544,6 +16544,7 @@
                 // - Manuelle Edits: via blur-Handler (sofortige Zell-Sync)
                 // Kein erneutes Senden nötig!
                 let result;
+                let sheetsToExport = null;
                 const _exportStart = performance.now();
                 
                 if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
@@ -16580,7 +16581,7 @@
                 // FALLBACK MODUS: Daten aufbereiten und über Python/xlwings exportieren
                 if (!result) {
                 
-                const sheetsToExport = [];
+                sheetsToExport = [];
                 
                 for (const sheetName of selectedSheets) {
                     let sheetData;
@@ -17268,7 +17269,7 @@
                     } else {
                         // Fallback-Modus: Strukturelle Änderungen behandeln
                         // Prüfe ob strukturelle Änderungen vorlagen (Spalten eingefügt/gelöscht)
-                        const exportedSheet = sheetsToExport.find(s => s.sheetName === explorerState.selectedSheet);
+                        const exportedSheet = sheetsToExport ? sheetsToExport.find(s => s.sheetName === explorerState.selectedSheet) : null;
                         const hadStructuralChange = exportedSheet && exportedSheet.structuralChange;
                     
                         if (hadStructuralChange) {
