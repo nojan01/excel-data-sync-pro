@@ -2436,16 +2436,85 @@ ipcMain.handle('excel:addSheet', async (event, { filePath, sheetName }) => {
             return result;
         }
         
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        // Offline: JSZip-basiert - vermeidet XlsxPopulate-Re-Serialisierung
+        // die komplexe XLSX-Features (Tables, CF, etc.) korrumpieren kann
+        const JSZip = require('jszip');
+        const fileData = fs.readFileSync(filePath);
+        const zip = await JSZip.loadAsync(fileData);
 
-        // Prüfe ob Name bereits existiert
-        const existingSheet = workbook.sheet(sheetName);
-        if (existingSheet) {
+        // 1. workbook.xml lesen und prüfen
+        const workbookXml = await zip.file('xl/workbook.xml').async('string');
+
+        // Prüfe ob Name bereits existiert (XML-encoded)
+        const encodedName = sheetName
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&apos;');
+        if (workbookXml.includes(`name="${encodedName}"`)) {
             return { success: false, error: 'Ein Arbeitsblatt mit diesem Namen existiert bereits' };
         }
 
-        workbook.addSheet(sheetName);
-        await saveWorkbookOptimized(workbook, filePath, {}, filePath);
+        // 2. Nächste freie sheetId und rId ermitteln
+        const sheetIdMatches = [...workbookXml.matchAll(/sheetId="(\d+)"/g)];
+        const maxSheetId = sheetIdMatches.reduce((max, m) => Math.max(max, parseInt(m[1])), 0);
+        const newSheetId = maxSheetId + 1;
+
+        const relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+        const rIdMatches = [...relsXml.matchAll(/Id="rId(\d+)"/g)];
+        const maxRId = rIdMatches.reduce((max, m) => Math.max(max, parseInt(m[1])), 0);
+        const newRId = `rId${maxRId + 1}`;
+
+        // 3. Nächste freie Worksheet-Dateinummer ermitteln
+        const worksheetFiles = Object.keys(zip.files).filter(f => f.match(/^xl\/worksheets\/sheet\d+\.xml$/));
+        const sheetNums = worksheetFiles.map(f => parseInt(f.match(/sheet(\d+)/)[1]));
+        const maxSheetNum = sheetNums.length > 0 ? Math.max(...sheetNums) : 0;
+        const newSheetNum = maxSheetNum + 1;
+        const newSheetFile = `worksheets/sheet${newSheetNum}.xml`;
+
+        // 4. Minimales Worksheet-XML erstellen
+        const newSheetXml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+            'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+            '<sheetData/></worksheet>';
+        zip.file(`xl/${newSheetFile}`, newSheetXml);
+
+        // 5. <sheet> Eintrag in workbook.xml hinzufügen (vor </sheets>)
+        const newSheetTag = `<sheet name="${encodedName}" sheetId="${newSheetId}" r:id="${newRId}"/>`;
+        const modifiedWorkbookXml = workbookXml.replace('</sheets>', `${newSheetTag}</sheets>`);
+        zip.file('xl/workbook.xml', modifiedWorkbookXml);
+
+        // 6. Relationship in workbook.xml.rels hinzufügen
+        const newRelTag = `<Relationship Id="${newRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${newSheetFile}"/>`;
+        const modifiedRelsXml = relsXml.replace('</Relationships>', `${newRelTag}</Relationships>`);
+        zip.file('xl/_rels/workbook.xml.rels', modifiedRelsXml);
+
+        // 7. Content Type in [Content_Types].xml hinzufügen
+        const contentTypesXml = await zip.file('[Content_Types].xml').async('string');
+        const newContentType = `<Override PartName="/xl/${newSheetFile}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`;
+        const modifiedContentTypes = contentTypesXml.replace('</Types>', `${newContentType}</Types>`);
+        zip.file('[Content_Types].xml', modifiedContentTypes);
+
+        // 8. ZIP speichern
+        const outputBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+        fs.writeFileSync(filePath, outputBuffer);
+
+        // Cache invalidieren
+        clearWorkbookCache();
+
+        // Sheet-Liste aus modifiziertem workbook.xml extrahieren
+        const sheetNames = [];
+        const sheetTagRegex = /<sheet[^>]+name="([^"]+)"/g;
+        let sm;
+        while ((sm = sheetTagRegex.exec(modifiedWorkbookXml)) !== null) {
+            sheetNames.push(sm[1]
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&apos;/g, "'"));
+        }
 
         securityLog.log('INFO', 'SHEET_ADDED', {
             file: path.basename(filePath),
@@ -2454,7 +2523,7 @@ ipcMain.handle('excel:addSheet', async (event, { filePath, sheetName }) => {
 
         return {
             success: true,
-            sheets: workbook.sheets().map(s => s.name())
+            sheets: sheetNames
         };
     } catch (error) {
         securityLog.log('ERROR', 'SHEET_ADD_FAILED', { error: error.message });
@@ -2603,6 +2672,96 @@ ipcMain.handle('excel:moveSheet', async (event, { filePath, sheetName, newIndex 
             sheets: workbook.sheets().map(s => s.name())
         };
     } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Arbeitsblatt-Sichtbarkeit ändern (offline via JSZip)
+ipcMain.handle('excel:setSheetVisibility', async (event, { filePath, sheetName, visible }) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    try {
+        // Bei aktiver Live-Session: über xlwings
+        const session = getLiveSession();
+        if (session && session.isReady) {
+            return await session.setSheetVisibility(sheetName, visible);
+        }
+
+        // Offline: JSZip-basiert - nur workbook.xml ändern
+        const JSZip = require('jszip');
+        const fileData = fs.readFileSync(filePath);
+        const zip = await JSZip.loadAsync(fileData);
+
+        const workbookXml = await zip.file('xl/workbook.xml').async('string');
+
+        // XML-encode den Sheet-Namen für den Vergleich
+        const encodedName = sheetName
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&apos;');
+        const escapedName = encodedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+        let modifiedXml;
+        if (visible) {
+            // Einblenden: state="hidden" oder state="veryHidden" entfernen
+            const regex = new RegExp(`(<sheet[^>]*name="${escapedName}"[^>]*?)\\s+state="(?:hidden|veryHidden)"`, 'g');
+            modifiedXml = workbookXml.replace(regex, '$1');
+        } else {
+            // Ausblenden: state="hidden" hinzufügen
+            // Prüfe zuerst ob schon ein state-Attribut existiert
+            const hasStateRegex = new RegExp(`<sheet[^>]*name="${escapedName}"[^>]*state=`);
+            if (hasStateRegex.test(workbookXml)) {
+                // state-Attribut ersetzen
+                const regex = new RegExp(`(<sheet[^>]*name="${escapedName}"[^>]*)state="[^"]*"`, 'g');
+                modifiedXml = workbookXml.replace(regex, '$1state="hidden"');
+            } else {
+                // state-Attribut hinzufügen (vor dem />)
+                const regex = new RegExp(`(<sheet[^>]*name="${escapedName}"[^/]*)(/>)`, 'g');
+                modifiedXml = workbookXml.replace(regex, '$1 state="hidden"$2');
+            }
+        }
+
+        zip.file('xl/workbook.xml', modifiedXml);
+
+        const outputBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+        fs.writeFileSync(filePath, outputBuffer);
+
+        // Cache invalidieren
+        clearWorkbookCache();
+
+        securityLog.log('INFO', 'SHEET_VISIBILITY_CHANGED', {
+            file: path.basename(filePath),
+            sheet: sheetName,
+            visible: visible
+        });
+
+        // Sheet-Liste mit Sichtbarkeitsstatus zurückgeben
+        const updatedXml = await zip.file('xl/workbook.xml').async('string');
+        const sheetNames = [];
+        const hiddenSheets = [];
+        const sheetTagRegex = /<sheet[^>]+name="([^"]+)"[^>]*?(state="(?:hidden|veryHidden)")?[^>]*?\/>/g;
+        let m;
+        while ((m = sheetTagRegex.exec(modifiedXml)) !== null) {
+            const name = m[1]
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&apos;/g, "'");
+            sheetNames.push(name);
+            if (m[2]) hiddenSheets.push(name);
+        }
+
+        return {
+            success: true,
+            sheets: sheetNames,
+            hiddenSheets: hiddenSheets
+        };
+    } catch (error) {
+        securityLog.log('ERROR', 'SHEET_VISIBILITY_FAILED', { error: error.message });
         return { success: false, error: error.message };
     }
 });

@@ -46,6 +46,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     renameSheet: (params) => ipcRenderer.invoke('excel:renameSheet', params),
     cloneSheet: (params) => ipcRenderer.invoke('excel:cloneSheet', params),
     moveSheet: (params) => ipcRenderer.invoke('excel:moveSheet', params),
+    setSheetVisibility: (params) => ipcRenderer.invoke('excel:setSheetVisibility', params),
     
     // Konfiguration
     saveConfig: (filePath, config) => ipcRenderer.invoke('config:save', { filePath, config }),

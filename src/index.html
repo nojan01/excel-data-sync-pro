@@ -9289,10 +9289,10 @@
             document.getElementById('btnSheetMoveUp').disabled = !hasSelection || isFirst;
             document.getElementById('btnSheetMoveDown').disabled = !hasSelection || isLast;
             
-            // Visibility-Toggle nur im Live-Modus aktivierbar
+            // Visibility-Toggle auch im Offline-Modus aktivierbar
             const btnToggle = document.getElementById('btnSheetToggleVisibility');
             if (btnToggle) {
-                btnToggle.disabled = !hasSelection || !isLive;
+                btnToggle.disabled = !hasSelection;
                 if (hasSelection && explorerState.hiddenSheets && explorerState.hiddenSheets.has(selectedSheetForManagement)) {
                     btnToggle.innerHTML = '👁️ Einblenden';
                     btnToggle.title = 'Ausgewähltes Arbeitsblatt einblenden';
@@ -9462,10 +9462,6 @@
         
         async function toggleSheetVisibility() {
             if (!selectedSheetForManagement) return;
-            if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) {
-                showNotification('Ein-/Ausblenden erfordert eine aktive Live-Session (Excel)', 'warning');
-                return;
-            }
             
             const isCurrentlyHidden = explorerState.hiddenSheets && explorerState.hiddenSheets.has(selectedSheetForManagement);
             const newVisible = isCurrentlyHidden; // toggle: hidden → visible, visible → hidden
@@ -9480,7 +9476,18 @@
             }
             
             try {
-                const result = await window.electronAPI.liveSessionSetSheetVisibility(selectedSheetForManagement, newVisible);
+                let result;
+                if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                    // Live-Session: über xlwings
+                    result = await window.electronAPI.liveSessionSetSheetVisibility(selectedSheetForManagement, newVisible);
+                } else {
+                    // Offline: über JSZip-basierte Manipulation
+                    result = await window.electronAPI.setSheetVisibility({
+                        filePath: explorerState.filePath,
+                        sheetName: selectedSheetForManagement,
+                        visible: newVisible
+                    });
+                }
                 
                 if (result.success) {
                     if (newVisible) {
