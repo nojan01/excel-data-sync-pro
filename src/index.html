@@ -17349,12 +17349,20 @@
                     explorerState.rowOperationsQueue = [];
                     explorerState.affectedRows?.clear();
                     explorerState.rowMapping = null;
+                    // originalData mit aktuellen Daten synchronisieren (keine Differenz mehr)
+                    explorerState.originalData = explorerState.data.map(row => [...row]);
+                    explorerState.originalRowHighlights = new Map(explorerState.rowHighlights);
                     for (const [, cached] of explorerState.sheetDataCache) {
                         cached.editedCells.clear();
+                        if (cached.data) {
+                            cached.originalData = cached.data.map(row => [...row]);
+                        }
                     }
+                    // Cache mit bereinigtem State aktualisieren
+                    saveCurrentSheetToCache();
                     // Recovery-Daten aktualisieren (keine Änderungen mehr)
                     saveExplorerRecoveryData();
-                    console.log('[Export] Alle Change-Marker zurückgesetzt');
+                    console.log(`[Export] Alle Change-Marker zurückgesetzt (editedCells=${explorerState.editedCells.size}, pending=${explorerState.pendingSheetOperations.length}, countAll=${countAllChanges()})`);
                     
                 } else {
                     elements.explorerStatus.textContent = `Fehler: ${result.error}`;
