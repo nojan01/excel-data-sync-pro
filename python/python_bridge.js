@@ -629,23 +629,42 @@ async function applyPendingSheetOperations(filePath, operations) {
 
                     const srcFile = zip.file(srcZipPath);
                     if (!srcFile) break;
-                    const srcXml = await srcFile.async('string');
+                    let clonedXml = await srcFile.async('string');
+
+                    // Strip <tableParts> from cloned sheet (references original tables → conflict)
+                    clonedXml = clonedXml.replace(/<tableParts[\s\S]*?<\/tableParts>/g, '');
+                    // Also strip self-closing <tableParts ... />
+                    clonedXml = clonedXml.replace(/<tableParts[^>]*\/>/g, '');
 
                     // New file
                     const wsFiles = Object.keys(zip.files).filter(f => /^xl\/worksheets\/sheet\d+\.xml$/.test(f));
                     const nums = wsFiles.map(f => parseInt(f.match(/sheet(\d+)/)[1]));
                     const newNum = (nums.length > 0 ? Math.max(...nums) : 0) + 1;
                     const newFile = `worksheets/sheet${newNum}.xml`;
-                    zip.file(`xl/${newFile}`, srcXml);
+                    zip.file(`xl/${newFile}`, clonedXml);
 
-                    // Copy sheet-level rels if exist
+                    // Copy sheet-level rels if exist, but EXCLUDE table/slicer/pivotTable/drawing refs
+                    // These reference shared resources that can't be duplicated by simple copy
                     const srcSheetNum = srcTarget.match(/sheet(\d+)/)?.[1];
                     if (srcSheetNum) {
                         const srcRelsPath = `xl/worksheets/_rels/sheet${srcSheetNum}.xml.rels`;
                         const srcSheetRelsFile = zip.file(srcRelsPath);
                         if (srcSheetRelsFile) {
-                            zip.file(`xl/worksheets/_rels/sheet${newNum}.xml.rels`,
-                                await srcSheetRelsFile.async('string'));
+                            let sheetRelsXml = await srcSheetRelsFile.async('string');
+                            // Remove relationships to tables, slicers, pivotTables, drawings
+                            // These share internal IDs and would cause Excel repair errors
+                            const excludeTypes = [
+                                'table', 'slicer', 'pivotTable', 'drawing',
+                                'pivotCacheDefinition', 'slicerCache'
+                            ];
+                            for (const t of excludeTypes) {
+                                sheetRelsXml = sheetRelsXml.replace(
+                                    new RegExp(`\\s*<Relationship[^>]*Type="[^"]*${t}[^"]*"[^>]*/>`, 'gi'), '');
+                            }
+                            // Only write rels file if there are remaining relationships
+                            if (/<Relationship\s/i.test(sheetRelsXml)) {
+                                zip.file(`xl/worksheets/_rels/sheet${newNum}.xml.rels`, sheetRelsXml);
+                            }
                         }
                     }
 
