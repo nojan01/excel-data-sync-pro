@@ -17338,6 +17338,23 @@
                         
                         showFloatingStatus(`✓ Export erfolgreich${pwInfo}${engineInfo}`, 'success');
                     } // Ende else (Fallback-Modus)
+                    
+                    // ========== GEMEINSAME CLEANUP nach erfolgreichem Export ==========
+                    // Sicherstellen dass ALLE Change-Marker zurückgesetzt werden,
+                    // unabhängig davon welcher Export-Pfad (Live/Fallback/Strukturell) genommen wurde
+                    explorerState.editedCells.clear();
+                    explorerState.pendingSheetOperations = [];
+                    explorerState.columnOperationsQueue = [];
+                    explorerState.rowOperationsQueue = [];
+                    explorerState.affectedRows?.clear();
+                    explorerState.rowMapping = null;
+                    for (const [, cached] of explorerState.sheetDataCache) {
+                        cached.editedCells.clear();
+                    }
+                    // Recovery-Daten aktualisieren (keine Änderungen mehr)
+                    saveExplorerRecoveryData();
+                    console.log('[Export] Alle Change-Marker zurückgesetzt');
+                    
                 } else {
                     elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 }
