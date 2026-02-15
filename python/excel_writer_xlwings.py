@@ -569,20 +569,12 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
             print(f"[xlwings_writer] Lösche Zeilen {first_row_to_delete} bis {last_row_to_delete} ({rows_to_delete} Zeilen)", file=sys.stderr)
             ws.range(f'{first_row_to_delete}:{last_row_to_delete}').delete()
         
-        # SCHRITT 11b: FULL REWRITE ohne strukturelle Änderungen (z.B. Bulk-Replace >100 Zellen)
-        # Hier haben wir data[] mit allen Zeilen, schreiben sie als Block
-        if full_rewrite and data and not structural_change and not column_order_applied and not rows_inserted and not rows_reordered:
-            num_rows = len(data)
-            num_cols = len(data[0]) if data[0] else (len(headers) if headers else 0)
-            if num_rows > 0 and num_cols > 0:
-                print(f"[xlwings_writer] Full Rewrite (non-structural): {num_rows}x{num_cols} Daten schreiben...", file=sys.stderr)
-                ws.range((2, 1), (num_rows + 1, num_cols)).value = data
-                print(f"[xlwings_writer] Full Rewrite abgeschlossen", file=sys.stderr)
-        
         # SCHRITT 12: ZELL-EDITS (geänderte Zellen)
-        # NUR wenn nicht bereits durch Block-Write geschrieben (columnOrder, rowsInserted, rowsReordered, fullRewrite)
+        # NUR wenn nicht bereits durch Block-Write geschrieben (columnOrder, rowsInserted, rowsReordered)
         # OPTIMIERUNG: Gruppiere nach Spalten und schreibe spaltenweise statt zellweise
-        elif edited_cells and not column_order_applied and not rows_inserted and not rows_reordered:
+        # Bei fullRewrite+changedCells (z.B. Bulk-Replace >100 Zellen) werden NUR die
+        # geänderten Zellen geschrieben - das erhält die Formatierung aller anderen Zellen!
+        if edited_cells and not column_order_applied and not rows_inserted and not rows_reordered:
             print(f"[xlwings_writer] Schreibe {len(edited_cells)} geänderte Zellen...", file=sys.stderr)
             
             # Gruppiere Zellen nach Spaltenindex
