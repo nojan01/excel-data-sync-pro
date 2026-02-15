@@ -1388,7 +1388,9 @@ async function processSheet(worksheet, sheetData) {
         
         // Bei Zeilen-Verschiebung: ExcelJS-Zeilen physisch umordnen (mit allen Styles!)
         // rowMapping[newPos] = originalPos (0-basiert für Datenzeilen)
+        // -1 = eingefügte Zeile (keine Original-Zeile vorhanden)
         // Excel-Zeilen: Header=1, Datenzeilen ab 2
+        const insertedRowIndices = new Set(); // Trackt welche neuen Positionen eingefügte Zeilen sind
         if (hasRowMapping) {
             // Neues _rows Array erstellen mit umgeordneten Zeilen
             // _rows ist 0-basiert, Excel-Zeilen sind 1-basiert
@@ -1399,6 +1401,15 @@ async function processSheet(worksheet, sheetData) {
             // Für jede neue Position: Die originale Excel-Zeile holen
             for (let newDataIdx = 0; newDataIdx < rowMapping.length; newDataIdx++) {
                 const originalDataIdx = rowMapping[newDataIdx];
+                
+                if (originalDataIdx < 0) {
+                    // -1 = eingefügte Zeile: Keine originale Zeile vorhanden
+                    // Leere Zeile einfügen (wird später mit Daten gefüllt)
+                    insertedRowIndices.add(newDataIdx);
+                    newRows.push(undefined);
+                    continue;
+                }
+                
                 // Excel-Zeile: originalDataIdx + 2 (Header ist 1, erste Datenzeile ist 2)
                 // _rows Index: originalDataIdx + 1 (0-basiert)
                 const originalRowsIdx = originalDataIdx + 1;
@@ -1415,6 +1426,8 @@ async function processSheet(worksheet, sheetData) {
             
             // Worksheet _rows ersetzen
             worksheet._rows = newRows;
+            
+            console.log(`[Writer] Zeilen umgeordnet: ${rowMapping.length} Positionen, ${insertedRowIndices.size} eingefügte Zeilen`);
         }
         
         // Header aktualisieren (Zeile 1)
@@ -1431,14 +1444,17 @@ async function processSheet(worksheet, sheetData) {
         // Wir müssen nur noch geänderte Werte schreiben, nicht alle Zellen überschreiben
         if (hasRowMapping) {
             
-            // Nur editierte Zellen aktualisieren (aus editedCells)
-            const editedCellsObj = sheetData.editedCells || {};
+            // 1. Editierte Zellen aktualisieren (aus changedCells)
+            const editedCellsObj = changedCells || {};
             let editedCount = 0;
             
             for (const [key, newValue] of Object.entries(editedCellsObj)) {
-                const [rowStr, colStr] = key.split(',');
+                // Keys sind im Format "rowIdx-colIdx" (mit Bindestrich)
+                const [rowStr, colStr] = key.split('-');
                 const dataRowIdx = parseInt(rowStr);
                 const colIdx = parseInt(colStr);
+                
+                if (isNaN(dataRowIdx) || isNaN(colIdx)) continue;
                 
                 // Finde die neue Position dieser Zeile nach dem Mapping
                 // rowMapping[newPos] = originalPos
@@ -1468,6 +1484,21 @@ async function processSheet(worksheet, sheetData) {
                     
                     editedCount++;
                 }
+            }
+            
+            // 2. Eingefügte Zeilen: ALLE Zellen schreiben (keine originalen Daten vorhanden)
+            if (insertedRowIndices.size > 0 && data && data.length > 0) {
+                for (const newDataIdx of insertedRowIndices) {
+                    if (newDataIdx < data.length) {
+                        const row = data[newDataIdx];
+                        for (let colIdx = 0; colIdx < row.length; colIdx++) {
+                            const cell = worksheet.getCell(newDataIdx + 2, colIdx + 1);
+                            const value = row[colIdx];
+                            cell.value = value === null || value === undefined ? '' : value;
+                        }
+                    }
+                }
+                console.log(`[Writer] ${insertedRowIndices.size} eingefügte Zeilen mit Daten gefüllt`);
             }
         } else {
             // Normales Schreiben ohne rowMapping
@@ -1551,8 +1582,27 @@ async function processSheet(worksheet, sheetData) {
         }
         
         // Zeilenhöhen wiederherstellen
-        for (const [rowIdx, height] of Object.entries(rowHeights)) {
-            worksheet.getRow(parseInt(rowIdx)).height = height;
+        // Bei rowMapping: Höhen müssen gemäß Mapping umgeordnet werden
+        if (hasRowMapping) {
+            for (let newDataIdx = 0; newDataIdx < rowMapping.length; newDataIdx++) {
+                const originalDataIdx = rowMapping[newDataIdx];
+                if (originalDataIdx >= 0) {
+                    // Original-Excel-Zeile = originalDataIdx + 2
+                    const originalHeight = rowHeights[originalDataIdx + 2];
+                    if (originalHeight !== undefined) {
+                        worksheet.getRow(newDataIdx + 2).height = originalHeight;
+                    }
+                }
+                // Eingefügte Zeilen (originalDataIdx = -1): Standard-Höhe beibehalten
+            }
+            // Header-Höhe beibehalten
+            if (rowHeights[1] !== undefined) {
+                worksheet.getRow(1).height = rowHeights[1];
+            }
+        } else {
+            for (const [rowIdx, height] of Object.entries(rowHeights)) {
+                worksheet.getRow(parseInt(rowIdx)).height = height;
+            }
         }
         
         // Bei fullRewrite: Styles anwenden
@@ -1564,7 +1614,24 @@ async function processSheet(worksheet, sheetData) {
         
         if (hasRowMapping) {
             // Zeilen-Verschiebung: ExcelJS-Zeilen wurden bereits umgeordnet (mit allen Styles!)
-            // Keine Frontend-Styles nötig, da die Original-Excel-Styles erhalten bleiben
+            // ABER: Eingefügte Zeilen (originalDataIdx = -1) haben keine Original-Styles
+            // → Frontend-Styles für eingefügte Zeilen anwenden
+            if (insertedRowIndices.size > 0 && cellStyles && Object.keys(cellStyles).length > 0) {
+                const insertedStyles = {};
+                for (const [key, style] of Object.entries(cellStyles)) {
+                    const [rowStr, colStr] = key.split('-');
+                    const styleRowIdx = parseInt(rowStr);
+                    // cellStyles: styleRowIdx ist 0=header, 1+=Datenzeilen
+                    // Nur Styles für eingefügte Zeilen anwenden
+                    if (styleRowIdx > 0 && insertedRowIndices.has(styleRowIdx - 1)) {
+                        insertedStyles[key] = style;
+                    }
+                }
+                if (Object.keys(insertedStyles).length > 0) {
+                    applyStyles(worksheet, insertedStyles);
+                    console.log(`[Writer] ${Object.keys(insertedStyles).length} Styles für eingefügte Zeilen angewendet`);
+                }
+            }
         } else if (fullRewrite && !usedSpliceColumns) {
             const styleCount = Object.keys(cellStyles || {}).length;
 

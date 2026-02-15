@@ -10377,16 +10377,20 @@
             explorerState.editedCells = newEditedCells;
             
             // CellStyles anpassen (analog zu deleteExplorerColumn)
+            // Style-Keys: "styleRowIdx-colIdx" wobei styleRowIdx = dataRowIdx + 1 (Header = 0)
+            // Gelöschte Zeile hat styleRowIdx = rowIndex + 1
+            const deleteStyleRow = rowIndex + 1;
             const newCellStyles = {};
             for (const [key, value] of Object.entries(explorerState.cellStyles || {})) {
                 const [rowStr, colStr] = key.split('-');
                 const row = parseInt(rowStr);
                 const col = parseInt(colStr);
-                if (row > rowIndex) {
+                if (row > deleteStyleRow) {
                     newCellStyles[`${row - 1}-${col}`] = value;
-                } else if (row < rowIndex) {
+                } else if (row < deleteStyleRow) {
                     newCellStyles[key] = value;
                 }
+                // row === deleteStyleRow wird nicht übernommen (gelöscht)
             }
             explorerState.cellStyles = newCellStyles;
             
@@ -10396,9 +10400,9 @@
                 const [rowStr, colStr] = key.split('-');
                 const row = parseInt(rowStr);
                 const col = parseInt(colStr);
-                if (row > rowIndex) {
+                if (row > deleteStyleRow) {
                     newCellFormulas[`${row - 1}-${col}`] = value;
-                } else if (row < rowIndex) {
+                } else if (row < deleteStyleRow) {
                     newCellFormulas[key] = value;
                 }
             }
@@ -10410,9 +10414,9 @@
                 const [rowStr, colStr] = key.split('-');
                 const row = parseInt(rowStr);
                 const col = parseInt(colStr);
-                if (row > rowIndex) {
+                if (row > deleteStyleRow) {
                     newCellHyperlinks[`${row - 1}-${col}`] = value;
-                } else if (row < rowIndex) {
+                } else if (row < deleteStyleRow) {
                     newCellHyperlinks[key] = value;
                 }
             }
@@ -10424,9 +10428,9 @@
                 const [rowStr, colStr] = key.split('-');
                 const row = parseInt(rowStr);
                 const col = parseInt(colStr);
-                if (row > rowIndex) {
+                if (row > deleteStyleRow) {
                     newRichTextCells[`${row - 1}-${col}`] = value;
-                } else if (row < rowIndex) {
+                } else if (row < deleteStyleRow) {
                     newRichTextCells[key] = value;
                 }
             }

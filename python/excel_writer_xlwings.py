@@ -231,7 +231,7 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
         inserted_columns = changes.get('insertedColumns')
         hidden_columns = changes.get('hiddenColumns', [])
         hidden_rows = changes.get('hiddenRows', [])
-        deleted_rows = changes.get('deletedRows', [])
+        deleted_rows = changes.get('deletedRowIndices', changes.get('deletedRows', []))
         inserted_rows = changes.get('insertedRowInfo')  # Info über eingefügte Zeilen
         row_order = changes.get('rowOrder')  # Zeilen-Reihenfolge bei Verschiebung
         from_file = changes.get('fromFile', False)
