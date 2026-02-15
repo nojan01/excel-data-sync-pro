@@ -502,6 +502,233 @@ async function writeExcelOpenpyxl(config) {
 }
 
 /**
+ * Wendet deferred Sheet-Operationen auf eine XLSX-Datei an (JSZip-basiert).
+ * Wird beim Export aufgerufen, um Add/Delete/Rename/Clone/Move/Visibility-Ops anzuwenden,
+ * die im Offline-Modus nur im Speicher gehalten wurden.
+ */
+async function applyPendingSheetOperations(filePath, operations) {
+    if (!operations || operations.length === 0) return { success: true };
+
+    const JSZip = require('jszip');
+    const fileData = fs.readFileSync(filePath);
+    const zip = await JSZip.loadAsync(fileData);
+
+    let workbookXml = await zip.file('xl/workbook.xml').async('string');
+    let relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+    let contentTypesXml = await zip.file('[Content_Types].xml').async('string');
+
+    function xmlEncode(name) {
+        return name
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&apos;');
+    }
+    function regexEscape(str) {
+        return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    for (const op of operations) {
+        try {
+            switch (op.type) {
+                case 'add': {
+                    const enc = xmlEncode(op.sheetName);
+
+                    const sheetIdMatches = [...workbookXml.matchAll(/sheetId="(\d+)"/g)];
+                    const maxSheetId = sheetIdMatches.reduce((max, m) => Math.max(max, parseInt(m[1])), 0);
+                    const newSheetId = maxSheetId + 1;
+
+                    const rIdMatches = [...relsXml.matchAll(/Id="rId(\d+)"/g)];
+                    const maxRId = rIdMatches.reduce((max, m) => Math.max(max, parseInt(m[1])), 0);
+                    const newRId = `rId${maxRId + 1}`;
+
+                    const wsFiles = Object.keys(zip.files).filter(f => /^xl\/worksheets\/sheet\d+\.xml$/.test(f));
+                    const nums = wsFiles.map(f => parseInt(f.match(/sheet(\d+)/)[1]));
+                    const newNum = (nums.length > 0 ? Math.max(...nums) : 0) + 1;
+                    const newFile = `worksheets/sheet${newNum}.xml`;
+
+                    zip.file(`xl/${newFile}`,
+                        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n' +
+                        '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ' +
+                        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">' +
+                        '<sheetData/></worksheet>');
+
+                    workbookXml = workbookXml.replace('</sheets>',
+                        `<sheet name="${enc}" sheetId="${newSheetId}" r:id="${newRId}"/></sheets>`);
+                    relsXml = relsXml.replace('</Relationships>',
+                        `<Relationship Id="${newRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${newFile}"/></Relationships>`);
+                    contentTypesXml = contentTypesXml.replace('</Types>',
+                        `<Override PartName="/xl/${newFile}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`);
+
+                    safeLog(`[PendingOps] Added sheet "${op.sheetName}"`);
+                    break;
+                }
+
+                case 'delete': {
+                    const enc = xmlEncode(op.sheetName);
+                    const esc = regexEscape(enc);
+
+                    // Find rId
+                    const sheetRe = new RegExp(`<sheet[^>]*name="${esc}"[^>]*r:id="(rId\\d+)"[^>]*/>`);
+                    const sheetM = workbookXml.match(sheetRe);
+                    if (!sheetM) { safeLog(`[PendingOps] Sheet "${op.sheetName}" not found for delete`); break; }
+                    const rId = sheetM[1];
+
+                    // Find target file
+                    const relRe = new RegExp(`<Relationship[^>]*Id="${rId}"[^>]*Target="([^"]+)"[^>]*/>`);
+                    const relM = relsXml.match(relRe);
+                    const target = relM ? relM[1] : null;
+
+                    // Remove from workbook.xml
+                    workbookXml = workbookXml.replace(new RegExp(`\\s*<sheet[^>]*name="${esc}"[^>]*/>`), '');
+
+                    // Remove relationship
+                    relsXml = relsXml.replace(new RegExp(`\\s*<Relationship[^>]*Id="${rId}"[^>]*/>`), '');
+
+                    // Remove content type and file
+                    if (target) {
+                        const partName = target.startsWith('/') ? target : `/xl/${target}`;
+                        contentTypesXml = contentTypesXml.replace(
+                            new RegExp(`\\s*<Override[^>]*PartName="${regexEscape(partName)}"[^>]*/>`), '');
+                        const zipPath = partName.startsWith('/') ? partName.slice(1) : `xl/${target}`;
+                        zip.remove(zipPath);
+                    }
+
+                    safeLog(`[PendingOps] Deleted sheet "${op.sheetName}"`);
+                    break;
+                }
+
+                case 'rename': {
+                    const encOld = xmlEncode(op.oldName);
+                    const encNew = xmlEncode(op.newName);
+                    const escOld = regexEscape(encOld);
+                    workbookXml = workbookXml.replace(
+                        new RegExp(`(<sheet[^>]*name=")${escOld}(")`), `$1${encNew}$2`);
+                    safeLog(`[PendingOps] Renamed "${op.oldName}" -> "${op.newName}"`);
+                    break;
+                }
+
+                case 'clone': {
+                    const encSrc = xmlEncode(op.sourceSheet);
+                    const encNew = xmlEncode(op.newName);
+                    const escSrc = regexEscape(encSrc);
+
+                    // Find source rId
+                    const srcRe = new RegExp(`<sheet[^>]*name="${escSrc}"[^>]*r:id="(rId\\d+)"[^>]*/>`);
+                    const srcM = workbookXml.match(srcRe);
+                    if (!srcM) { safeLog(`[PendingOps] Source "${op.sourceSheet}" not found for clone`); break; }
+                    const srcRId = srcM[1];
+
+                    // Find source target file
+                    const srcRelRe = new RegExp(`<Relationship[^>]*Id="${srcRId}"[^>]*Target="([^"]+)"[^>]*/>`);
+                    const srcRelM = relsXml.match(srcRelRe);
+                    if (!srcRelM) break;
+                    const srcTarget = srcRelM[1];
+                    const srcZipPath = srcTarget.startsWith('/') ? srcTarget.slice(1) : `xl/${srcTarget}`;
+
+                    const srcFile = zip.file(srcZipPath);
+                    if (!srcFile) break;
+                    const srcXml = await srcFile.async('string');
+
+                    // New file
+                    const wsFiles = Object.keys(zip.files).filter(f => /^xl\/worksheets\/sheet\d+\.xml$/.test(f));
+                    const nums = wsFiles.map(f => parseInt(f.match(/sheet(\d+)/)[1]));
+                    const newNum = (nums.length > 0 ? Math.max(...nums) : 0) + 1;
+                    const newFile = `worksheets/sheet${newNum}.xml`;
+                    zip.file(`xl/${newFile}`, srcXml);
+
+                    // Copy sheet-level rels if exist
+                    const srcSheetNum = srcTarget.match(/sheet(\d+)/)?.[1];
+                    if (srcSheetNum) {
+                        const srcRelsPath = `xl/worksheets/_rels/sheet${srcSheetNum}.xml.rels`;
+                        const srcSheetRelsFile = zip.file(srcRelsPath);
+                        if (srcSheetRelsFile) {
+                            zip.file(`xl/worksheets/_rels/sheet${newNum}.xml.rels`,
+                                await srcSheetRelsFile.async('string'));
+                        }
+                    }
+
+                    // Next IDs
+                    const sheetIdMatches = [...workbookXml.matchAll(/sheetId="(\d+)"/g)];
+                    const maxSId = sheetIdMatches.reduce((max, m) => Math.max(max, parseInt(m[1])), 0);
+                    const rIdMatches = [...relsXml.matchAll(/Id="rId(\d+)"/g)];
+                    const maxRId = rIdMatches.reduce((max, m) => Math.max(max, parseInt(m[1])), 0);
+                    const newSheetId = maxSId + 1;
+                    const newRId = `rId${maxRId + 1}`;
+
+                    // Insert after source sheet tag
+                    const newTag = `<sheet name="${encNew}" sheetId="${newSheetId}" r:id="${newRId}"/>`;
+                    workbookXml = workbookXml.replace(srcM[0], `${srcM[0]}${newTag}`);
+
+                    relsXml = relsXml.replace('</Relationships>',
+                        `<Relationship Id="${newRId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="${newFile}"/></Relationships>`);
+                    contentTypesXml = contentTypesXml.replace('</Types>',
+                        `<Override PartName="/xl/${newFile}" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>`);
+
+                    safeLog(`[PendingOps] Cloned "${op.sourceSheet}" -> "${op.newName}"`);
+                    break;
+                }
+
+                case 'move': {
+                    const sheetTagRegex = /<sheet[^>]+\/>/g;
+                    const sheetTags = workbookXml.match(sheetTagRegex);
+                    if (!sheetTags || sheetTags.length < 2) break;
+
+                    const enc = xmlEncode(op.sheetName);
+                    const currentIdx = sheetTags.findIndex(t => t.includes(`name="${enc}"`));
+                    if (currentIdx === -1) break;
+
+                    const [movedTag] = sheetTags.splice(currentIdx, 1);
+                    sheetTags.splice(op.newIndex, 0, movedTag);
+
+                    workbookXml = workbookXml.replace(/<sheets>[\s\S]*?<\/sheets>/,
+                        `<sheets>${sheetTags.join('')}</sheets>`);
+
+                    safeLog(`[PendingOps] Moved "${op.sheetName}" to index ${op.newIndex}`);
+                    break;
+                }
+
+                case 'visibility': {
+                    const enc = xmlEncode(op.sheetName);
+                    const esc = regexEscape(enc);
+
+                    if (op.visible) {
+                        workbookXml = workbookXml.replace(
+                            new RegExp(`(<sheet[^>]*name="${esc}"[^>]*?)\\s+state="(?:hidden|veryHidden)"`, 'g'), '$1');
+                    } else {
+                        const hasState = new RegExp(`<sheet[^>]*name="${esc}"[^>]*state=`).test(workbookXml);
+                        if (hasState) {
+                            workbookXml = workbookXml.replace(
+                                new RegExp(`(<sheet[^>]*name="${esc}"[^>]*)state="[^"]*"`, 'g'), '$1state="hidden"');
+                        } else {
+                            workbookXml = workbookXml.replace(
+                                new RegExp(`(<sheet[^>]*name="${esc}"[^/]*)(/>)`, 'g'), '$1 state="hidden"$2');
+                        }
+                    }
+
+                    safeLog(`[PendingOps] Set "${op.sheetName}" visibility=${op.visible}`);
+                    break;
+                }
+            }
+        } catch (opError) {
+            safeError(`[PendingOps] Error processing ${op.type} "${op.sheetName}":`, opError.message);
+        }
+    }
+
+    // Write back
+    zip.file('xl/workbook.xml', workbookXml);
+    zip.file('xl/_rels/workbook.xml.rels', relsXml);
+    zip.file('[Content_Types].xml', contentTypesXml);
+
+    const outputBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+    fs.writeFileSync(filePath, outputBuffer);
+
+    safeLog(`[PendingOps] Applied ${operations.length} pending operations to ${path.basename(filePath)}`);
+    return { success: true };
+}
+
+/**
  * Exportiert mehrere Sheets mit xlwings/openpyxl
  * Öffnet Original-Datei, modifiziert Sheets und speichert unter neuem Pfad
  */
@@ -531,6 +758,16 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
         } catch (copyError) {
             safeError(`[Python] Fehler beim Kopieren:`, copyError.message);
             return { success: false, error: `Fehler beim Kopieren: ${copyError.message}` };
+        }
+    }
+    
+    // Deferred Sheet-Operationen anwenden (Add/Delete/Rename/Clone/Move/Visibility)
+    // Diese wurden im Offline-Modus nur im Speicher gehalten und müssen jetzt
+    // auf die Zieldatei angewendet werden, BEVOR die Sheet-Daten geschrieben werden.
+    if (options.pendingSheetOperations && options.pendingSheetOperations.length > 0) {
+        const opsResult = await applyPendingSheetOperations(targetPath, options.pendingSheetOperations);
+        if (!opsResult.success) {
+            return { success: false, error: `Fehler bei Sheet-Operationen: ${opsResult.error}` };
         }
     }
     

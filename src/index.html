@@ -8366,6 +8366,8 @@
             // Operations Queues für serielle Abarbeitung
             columnOperationsQueue: [],  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X, headerName: ''}]
             rowOperationsQueue: [],  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X}]
+            // Pending Sheet-Operationen (Offline-Modus: erst beim Export anwenden)
+            pendingSheetOperations: [],  // [{type: 'add'|'delete'|'rename'|'clone'|'move'|'visibility', ...params}]
             // LIVE SESSION MODE - Operationen werden sofort in Excel ausgeführt
             liveSessionActive: false,  // true wenn Live-Session aktiv ist
             liveSessionReady: false,   // true wenn Session bereit für Operationen
@@ -9308,23 +9310,55 @@
             if (!name) return;
             
             try {
-                const result = await window.electronAPI.addSheet({
-                    filePath: explorerState.filePath,
-                    sheetName: name
-                });
-                
-                if (result.success) {
-                    explorerState.sheets = result.sheets;
-                    updateSheetDropdown();
-                    updateSheetManageList();
-                    showNotification(`Arbeitsblatt "${name}" hinzugefügt`, 'success');
-                    
-                    // Automatisch zum neuen Sheet wechseln
-                    await loadExplorerSheet(name);
-                    updateSheetManageList();
-                } else {
-                    showNotification(result.error, 'error');
+                // Prüfe ob Name bereits existiert
+                if (explorerState.sheets.includes(name)) {
+                    showNotification('Ein Arbeitsblatt mit diesem Namen existiert bereits', 'error');
+                    return;
                 }
+                
+                if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                    // Live-Session: direkt in Excel
+                    const result = await window.electronAPI.addSheet({
+                        filePath: explorerState.filePath,
+                        sheetName: name
+                    });
+                    if (result.success) {
+                        explorerState.sheets = result.sheets;
+                    } else {
+                        showNotification(result.error, 'error');
+                        return;
+                    }
+                } else {
+                    // Offline: nur im Speicher
+                    explorerState.sheets.push(name);
+                    explorerState.pendingSheetOperations.push({ type: 'add', sheetName: name });
+                    // Leeres Sheet im Cache anlegen
+                    explorerState.sheetDataCache.set(name, {
+                        headers: [],
+                        data: [],
+                        originalData: [],
+                        editedCells: new Map(),
+                        rowHighlights: new Map(),
+                        visibleColumns: [],
+                        columnOrder: [],
+                        cellStyles: {},
+                        cellFormulas: {},
+                        cellHyperlinks: {},
+                        richTextCells: {},
+                        hiddenRows: new Set(),
+                        autoFilterRange: null,
+                        mergedCells: [],
+                        dataValidations: {}
+                    });
+                }
+                
+                updateSheetDropdown();
+                updateSheetManageList();
+                showNotification(`Arbeitsblatt "${name}" hinzugefügt`, 'success');
+                
+                // Automatisch zum neuen Sheet wechseln
+                await loadExplorerSheet(name);
+                updateSheetManageList();
             } catch (error) {
                 showNotification('Fehler beim Hinzufügen: ' + error.message, 'error');
             }
@@ -9337,25 +9371,50 @@
             if (!newName || newName === selectedSheetForManagement) return;
             
             try {
-                const result = await window.electronAPI.renameSheet({
-                    filePath: explorerState.filePath,
-                    oldName: selectedSheetForManagement,
-                    newName: newName
-                });
-                
-                if (result.success) {
-                    const wasActive = explorerState.selectedSheet === selectedSheetForManagement;
-                    explorerState.sheets = result.sheets;
-                    if (wasActive) {
-                        explorerState.selectedSheet = newName;
-                    }
-                    selectedSheetForManagement = newName;
-                    updateSheetDropdown();
-                    updateSheetManageList();
-                    showNotification(`Arbeitsblatt umbenannt zu "${newName}"`, 'success');
-                } else {
-                    showNotification(result.error, 'error');
+                // Prüfe ob neuer Name bereits existiert
+                if (explorerState.sheets.includes(newName)) {
+                    showNotification('Ein Arbeitsblatt mit diesem Namen existiert bereits', 'error');
+                    return;
                 }
+                
+                if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                    // Live-Session: direkt in Excel
+                    const result = await window.electronAPI.renameSheet({
+                        filePath: explorerState.filePath,
+                        oldName: selectedSheetForManagement,
+                        newName: newName
+                    });
+                    if (!result.success) {
+                        showNotification(result.error, 'error');
+                        return;
+                    }
+                    explorerState.sheets = result.sheets;
+                } else {
+                    // Offline: nur im Speicher
+                    const idx = explorerState.sheets.indexOf(selectedSheetForManagement);
+                    if (idx >= 0) explorerState.sheets[idx] = newName;
+                    explorerState.pendingSheetOperations.push({ type: 'rename', oldName: selectedSheetForManagement, newName: newName });
+                    // Cache-Key umhängen
+                    const cached = explorerState.sheetDataCache.get(selectedSheetForManagement);
+                    if (cached) {
+                        explorerState.sheetDataCache.delete(selectedSheetForManagement);
+                        explorerState.sheetDataCache.set(newName, cached);
+                    }
+                    // hiddenSheets aktualisieren
+                    if (explorerState.hiddenSheets.has(selectedSheetForManagement)) {
+                        explorerState.hiddenSheets.delete(selectedSheetForManagement);
+                        explorerState.hiddenSheets.add(newName);
+                    }
+                }
+                
+                const wasActive = explorerState.selectedSheet === selectedSheetForManagement;
+                if (wasActive) {
+                    explorerState.selectedSheet = newName;
+                }
+                selectedSheetForManagement = newName;
+                updateSheetDropdown();
+                updateSheetManageList();
+                showNotification(`Arbeitsblatt umbenannt zu "${newName}"`, 'success');
             } catch (error) {
                 showNotification('Fehler beim Umbenennen: ' + error.message, 'error');
             }
@@ -9368,24 +9427,64 @@
             if (!newName) return;
             
             try {
-                const result = await window.electronAPI.cloneSheet({
-                    filePath: explorerState.filePath,
-                    sheetName: selectedSheetForManagement,
-                    newName: newName
-                });
-                
-                if (result.success) {
-                    explorerState.sheets = result.sheets;
-                    updateSheetDropdown();
-                    updateSheetManageList();
-                    showNotification(`Arbeitsblatt kopiert als "${newName}"`, 'success');
-                    
-                    // Automatisch zum kopierten Sheet wechseln
-                    await loadExplorerSheet(newName);
-                    updateSheetManageList();
-                } else {
-                    showNotification(result.error, 'error');
+                // Prüfe ob Name bereits existiert
+                if (explorerState.sheets.includes(newName)) {
+                    showNotification('Ein Arbeitsblatt mit diesem Namen existiert bereits', 'error');
+                    return;
                 }
+                
+                if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                    // Live-Session: direkt in Excel
+                    const result = await window.electronAPI.cloneSheet({
+                        filePath: explorerState.filePath,
+                        sheetName: selectedSheetForManagement,
+                        newName: newName
+                    });
+                    if (!result.success) {
+                        showNotification(result.error, 'error');
+                        return;
+                    }
+                    explorerState.sheets = result.sheets;
+                } else {
+                    // Offline: nur im Speicher
+                    // Sheet hinter dem Original einfügen
+                    const srcIdx = explorerState.sheets.indexOf(selectedSheetForManagement);
+                    explorerState.sheets.splice(srcIdx + 1, 0, newName);
+                    explorerState.pendingSheetOperations.push({ type: 'clone', sourceSheet: selectedSheetForManagement, newName: newName });
+                    // Cache-Daten kopieren (falls vorhanden)
+                    const srcCache = explorerState.sheetDataCache.get(selectedSheetForManagement);
+                    if (srcCache) {
+                        explorerState.sheetDataCache.set(newName, {
+                            headers: [...srcCache.headers],
+                            data: srcCache.data.map(row => [...row]),
+                            originalData: srcCache.originalData.map(row => [...row]),
+                            editedCells: new Map(),
+                            rowHighlights: new Map(srcCache.rowHighlights),
+                            visibleColumns: [...(srcCache.visibleColumns || [])],
+                            columnOrder: [...(srcCache.columnOrder || [])],
+                            cellStyles: { ...srcCache.cellStyles },
+                            cellFormulas: { ...srcCache.cellFormulas },
+                            cellHyperlinks: { ...srcCache.cellHyperlinks },
+                            richTextCells: { ...srcCache.richTextCells },
+                            hiddenRows: new Set(srcCache.hiddenRows || []),
+                            autoFilterRange: srcCache.autoFilterRange,
+                            mergedCells: [...(srcCache.mergedCells || [])],
+                            dataValidations: { ...srcCache.dataValidations }
+                        });
+                    }
+                    // Sichtbarkeit kopieren
+                    if (explorerState.hiddenSheets.has(selectedSheetForManagement)) {
+                        explorerState.hiddenSheets.add(newName);
+                    }
+                }
+                
+                updateSheetDropdown();
+                updateSheetManageList();
+                showNotification(`Arbeitsblatt kopiert als "${newName}"`, 'success');
+                
+                // Automatisch zum kopierten Sheet wechseln
+                await loadExplorerSheet(newName);
+                updateSheetManageList();
             } catch (error) {
                 showNotification('Fehler beim Kopieren: ' + error.message, 'error');
             }
@@ -9400,21 +9499,29 @@
             if (newIndex < 0 || newIndex >= explorerState.sheets.length) return;
             
             try {
-                const result = await window.electronAPI.moveSheet({
-                    filePath: explorerState.filePath,
-                    sheetName: selectedSheetForManagement,
-                    newIndex: newIndex
-                });
-                
-                if (result.success) {
+                if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                    // Live-Session: direkt in Excel
+                    const result = await window.electronAPI.moveSheet({
+                        filePath: explorerState.filePath,
+                        sheetName: selectedSheetForManagement,
+                        newIndex: newIndex
+                    });
+                    if (!result.success) {
+                        showNotification(result.error, 'error');
+                        return;
+                    }
                     explorerState.sheets = result.sheets;
-                    updateSheetDropdown();
-                    updateSheetManageList();
-                    updateSheetManageButtons();
-                    showNotification(`Arbeitsblatt verschoben`, 'success');
                 } else {
-                    showNotification(result.error, 'error');
+                    // Offline: nur im Speicher
+                    explorerState.sheets.splice(currentIndex, 1);
+                    explorerState.sheets.splice(newIndex, 0, selectedSheetForManagement);
+                    explorerState.pendingSheetOperations.push({ type: 'move', sheetName: selectedSheetForManagement, newIndex: newIndex });
                 }
+                
+                updateSheetDropdown();
+                updateSheetManageList();
+                updateSheetManageButtons();
+                showNotification(`Arbeitsblatt verschoben`, 'success');
             } catch (error) {
                 showNotification('Fehler beim Verschieben: ' + error.message, 'error');
             }
@@ -9433,28 +9540,38 @@
             try {
                 const wasActive = explorerState.selectedSheet === selectedSheetForManagement;
                 
-                const result = await window.electronAPI.deleteSheet({
-                    filePath: explorerState.filePath,
-                    sheetName: selectedSheetForManagement
-                });
-                
-                if (result.success) {
-                    explorerState.sheets = result.sheets;
-                    selectedSheetForManagement = null;
-                    
-                    // Wenn das aktive Sheet gelöscht wurde, das erste laden
-                    if (wasActive && explorerState.sheets.length > 0) {
-                        explorerState.selectedSheet = explorerState.sheets[0];
-                        await loadExplorerSheet(explorerState.sheets[0]);
+                if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                    // Live-Session: direkt in Excel
+                    const result = await window.electronAPI.deleteSheet({
+                        filePath: explorerState.filePath,
+                        sheetName: selectedSheetForManagement
+                    });
+                    if (!result.success) {
+                        showNotification(result.error, 'error');
+                        return;
                     }
-                    
-                    updateSheetDropdown();
-                    updateSheetManageList();
-                    updateSheetManageButtons();
-                    showNotification(`Arbeitsblatt gelöscht`, 'success');
+                    explorerState.sheets = result.sheets;
                 } else {
-                    showNotification(result.error, 'error');
+                    // Offline: nur im Speicher
+                    explorerState.sheets = explorerState.sheets.filter(s => s !== selectedSheetForManagement);
+                    explorerState.pendingSheetOperations.push({ type: 'delete', sheetName: selectedSheetForManagement });
+                    // Aus Cache entfernen
+                    explorerState.sheetDataCache.delete(selectedSheetForManagement);
+                    explorerState.hiddenSheets.delete(selectedSheetForManagement);
                 }
+                
+                selectedSheetForManagement = null;
+                
+                // Wenn das aktive Sheet gelöscht wurde, das erste laden
+                if (wasActive && explorerState.sheets.length > 0) {
+                    explorerState.selectedSheet = explorerState.sheets[0];
+                    await loadExplorerSheet(explorerState.sheets[0]);
+                }
+                
+                updateSheetDropdown();
+                updateSheetManageList();
+                updateSheetManageButtons();
+                showNotification(`Arbeitsblatt gelöscht`, 'success');
             } catch (error) {
                 showNotification('Fehler beim Löschen: ' + error.message, 'error');
             }
@@ -9476,38 +9593,33 @@
             }
             
             try {
-                let result;
                 if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                     // Live-Session: über xlwings
-                    result = await window.electronAPI.liveSessionSetSheetVisibility(selectedSheetForManagement, newVisible);
+                    const result = await window.electronAPI.liveSessionSetSheetVisibility(selectedSheetForManagement, newVisible);
+                    if (!result.success) {
+                        showNotification(result.error, 'error');
+                        return;
+                    }
                 } else {
-                    // Offline: über JSZip-basierte Manipulation
-                    result = await window.electronAPI.setSheetVisibility({
-                        filePath: explorerState.filePath,
-                        sheetName: selectedSheetForManagement,
-                        visible: newVisible
-                    });
+                    // Offline: nur im Speicher (wird beim Export angewendet)
+                    explorerState.pendingSheetOperations.push({ type: 'visibility', sheetName: selectedSheetForManagement, visible: newVisible });
                 }
                 
-                if (result.success) {
-                    if (newVisible) {
-                        explorerState.hiddenSheets.delete(selectedSheetForManagement);
-                        showNotification(`Arbeitsblatt "${selectedSheetForManagement}" eingeblendet`, 'success');
-                    } else {
-                        explorerState.hiddenSheets.add(selectedSheetForManagement);
-                        showNotification(`Arbeitsblatt "${selectedSheetForManagement}" ausgeblendet`, 'success');
-                    }
-                    updateSheetDropdown();
-                    updateSheetManageList();
-                    updateSheetManageButtons();
-                    
-                    // Bei Einblenden: zum eingeblendeten Sheet wechseln
-                    if (newVisible) {
-                        await loadExplorerSheet(selectedSheetForManagement);
-                        updateSheetManageList();
-                    }
+                if (newVisible) {
+                    explorerState.hiddenSheets.delete(selectedSheetForManagement);
+                    showNotification(`Arbeitsblatt "${selectedSheetForManagement}" eingeblendet`, 'success');
                 } else {
-                    showNotification(result.error, 'error');
+                    explorerState.hiddenSheets.add(selectedSheetForManagement);
+                    showNotification(`Arbeitsblatt "${selectedSheetForManagement}" ausgeblendet`, 'success');
+                }
+                updateSheetDropdown();
+                updateSheetManageList();
+                updateSheetManageButtons();
+                
+                // Bei Einblenden: zum eingeblendeten Sheet wechseln
+                if (newVisible) {
+                    await loadExplorerSheet(selectedSheetForManagement);
+                    updateSheetManageList();
                 }
             } catch (error) {
                 showNotification('Fehler beim Ein-/Ausblenden: ' + error.message, 'error');
@@ -9565,6 +9677,7 @@
             explorerState.rowMapping = null;  // Mapping: neue Position -> Original Excel-Zeile
             explorerState.columnOperationsQueue = [];  // Reset Queue
             explorerState.rowOperationsQueue = [];  // Reset Queue
+            explorerState.pendingSheetOperations = [];  // Reset Pending Sheet Ops
             
             // UI zurücksetzen
             if (elements.explorerSheetSelect) {
@@ -9691,7 +9804,8 @@
                 
                 // Nur speichern wenn es Änderungen gibt
                 const totalChanges = countAllChanges();
-                if (totalChanges === 0) {
+                const hasPendingOps = explorerState.pendingSheetOperations.length > 0;
+                if (totalChanges === 0 && !hasPendingOps) {
                     // Keine Änderungen - Recovery-Daten löschen
                     localStorage.removeItem(EXPLORER_RECOVERY_KEY);
                     return;
@@ -9728,7 +9842,9 @@
                     columnOrder: explorerState.columnOrder,
                     editedCells: editedCellsArray,
                     rowHighlights: rowHighlightsArray,
-                    sheetDataCache: sheetCacheArray
+                    sheetDataCache: sheetCacheArray,
+                    pendingSheetOperations: explorerState.pendingSheetOperations,
+                    hiddenSheets: Array.from(explorerState.hiddenSheets)
                 };
                 
                 localStorage.setItem(EXPLORER_RECOVERY_KEY, JSON.stringify(recoveryData));
@@ -9775,6 +9891,8 @@
             // Map/Set aus Arrays wiederherstellen
             explorerState.editedCells = new Map(data.editedCells || []);
             explorerState.rowHighlights = new Map(data.rowHighlights || []);
+            explorerState.pendingSheetOperations = data.pendingSheetOperations || [];
+            explorerState.hiddenSheets = new Set(data.hiddenSheets || []);
             
             // Sheet-Cache wiederherstellen
             explorerState.sheetDataCache.clear();
@@ -13345,6 +13463,9 @@
         
         // Prüft ob es ungespeicherte Änderungen in irgendeinem Sheet gibt
         function hasUnsavedChanges() {
+            // Pending Sheet-Operationen prüfen
+            if (explorerState.pendingSheetOperations.length > 0) return true;
+            
             // Aktuelles Sheet prüfen
             if (explorerState.editedCells.size > 0) return true;
             
@@ -13365,6 +13486,9 @@
                     total += cached.editedCells.size;
                 }
             }
+            
+            // Pending Sheet-Operationen zählen
+            total += explorerState.pendingSheetOperations.length;
             
             return total;
         }
@@ -17087,7 +17211,8 @@
                     targetPath: savePath,
                     sheets: sheetsToExport,
                     password: exportPassword,
-                    sourcePassword: explorerState.filePassword
+                    sourcePassword: explorerState.filePassword,
+                    pendingSheetOperations: explorerState.pendingSheetOperations || []
                 });
                 
                 } // Ende if (!result) — Fallback-Block
@@ -17151,6 +17276,7 @@
                             explorerState.sheetDataCache.clear();
                             explorerState.rowMapping = null;
                             explorerState.affectedRows?.clear();
+                            explorerState.pendingSheetOperations = [];
                             
                             // Sortierung wiederherstellen
                             if (currentSort.column !== null) {
@@ -17190,6 +17316,7 @@
                             explorerState.editedCells.clear();
                             explorerState.affectedRows?.clear();
                             explorerState.rowMapping = null;
+                            explorerState.pendingSheetOperations = [];
                             
                             // Cache aktualisieren
                             saveCurrentSheetToCache();
