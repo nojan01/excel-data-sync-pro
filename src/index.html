@@ -17114,6 +17114,7 @@
                                     sheetName: sheetName,
                                     headers: [...explorerState.headers],
                                     data: allData,
+                                    changedCells: changedCells,  // WICHTIG: changedCells mitsenden für xlwings Fallback
                                     visibleColumns: [...(explorerState.visibleColumns || [])],
                                     hiddenRows: currentHiddenRows,
                                     hiddenColumns: hiddenCols,
