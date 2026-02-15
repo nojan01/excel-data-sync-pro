@@ -631,10 +631,32 @@ async function applyPendingSheetOperations(filePath, operations) {
                     if (!srcFile) break;
                     let clonedXml = await srcFile.async('string');
 
-                    // Strip <tableParts> from cloned sheet (references original tables → conflict)
+                    // Strip elements that reference shared resources (tables, drawings, slicers)
+                    // These can't be duplicated by simple copy and cause Excel repair errors
+
+                    // 1. <tableParts> — references original tables → conflict
                     clonedXml = clonedXml.replace(/<tableParts[\s\S]*?<\/tableParts>/g, '');
-                    // Also strip self-closing <tableParts ... />
                     clonedXml = clonedXml.replace(/<tableParts[^>]*\/>/g, '');
+
+                    // 2. <drawing r:id="..."/> — references drawing via removed relationship
+                    clonedXml = clonedXml.replace(/<drawing\s[^>]*\/>/g, '');
+                    clonedXml = clonedXml.replace(/<drawing[\s\S]*?<\/drawing>/g, '');
+
+                    // 3. <legacyDrawing r:id="..."/> — legacy drawing shapes (comments, form controls)
+                    clonedXml = clonedXml.replace(/<legacyDrawing\s[^>]*\/>/g, '');
+
+                    // 4. Slicer/timeline extensions in <extLst> that reference removed relationships
+                    // Remove <ext> blocks containing slicer or timeline references
+                    clonedXml = clonedXml.replace(/<ext\s[^>]*>[\s\S]*?<\/ext>/g, (match) => {
+                        if (/slicer|timeline/i.test(match)) return '';
+                        return match;
+                    });
+                    // Clean up empty <extLst> after removing extensions
+                    clonedXml = clonedXml.replace(/<extLst>\s*<\/extLst>/g, '');
+
+                    // 5. <oleObjects>, <controls> — embedded objects referencing removed rels
+                    clonedXml = clonedXml.replace(/<oleObjects[\s\S]*?<\/oleObjects>/g, '');
+                    clonedXml = clonedXml.replace(/<controls[\s\S]*?<\/controls>/g, '');
 
                     // New file
                     const wsFiles = Object.keys(zip.files).filter(f => /^xl\/worksheets\/sheet\d+\.xml$/.test(f));
