@@ -15211,7 +15211,8 @@
                     richText: richTextByRow[styleRowIdx] || {},
                     formulas: formulasByRow[styleRowIdx] || {},
                     hyperlinks: hyperlinksByRow[styleRowIdx] || {},
-                    isHidden: explorerState.hiddenRows?.has(i) || false
+                    isHidden: explorerState.hiddenRows?.has(i) || false,
+                    highlight: explorerState.rowHighlights.get(i) || null
                 };
                 
                 rowBundles.push(bundle);
@@ -15251,6 +15252,7 @@
             explorerState.cellFormulas = {};
             explorerState.cellHyperlinks = {};
             explorerState.hiddenRows = new Set();
+            explorerState.rowHighlights = new Map();
             
             // Header-Styles behalten (Key "0-x")
             for (const [key, value] of Object.entries(previousCellStyles)) {
@@ -15268,6 +15270,11 @@
                 
                 if (bundle.isHidden) {
                     explorerState.hiddenRows.add(newRowIdx);
+                }
+                
+                // Highlight mit neuem Index
+                if (bundle.highlight) {
+                    explorerState.rowHighlights.set(newRowIdx, bundle.highlight);
                 }
                 
                 // Styles mit neuem Key
