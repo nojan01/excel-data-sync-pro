@@ -1176,6 +1176,17 @@ class ExcelLiveSession:
                 row_range.color = rgb
                 self._log(f"Zeile {excel_row} markiert mit {color}")
             
+            # Workbook NICHT als geändert markieren!
+            # Farbmarkierungen sind nur visuell und sollen die
+            # Originaldatei nicht verändern (kein Auto-Save/Speichern-Dialog).
+            try:
+                if platform.system() == 'Windows':
+                    self.workbook.api.Saved = True
+                else:
+                    self.workbook.api.saved.set(True)
+            except Exception as saved_err:
+                self._log(f"Saved-Flag Fehler (ignoriert): {saved_err}")
+            
             return {'success': True, 'row': row_index, 'color': color}
             
         except Exception as e:
