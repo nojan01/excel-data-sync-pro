@@ -18638,7 +18638,10 @@
             // Schließen-Buttons (✕) für Spalten- und Filter-Panel
             const btnCloseColumnPanel = document.getElementById('btnCloseColumnPanel');
             if (btnCloseColumnPanel) {
-                btnCloseColumnPanel.onclick = toggleColumnPanel;
+                btnCloseColumnPanel.onclick = function() {
+                    toggleColumnPanel();
+                    saveCurrentSheetToCache();
+                };
             }
             const btnCloseFilterPanel = document.getElementById('btnCloseFilterPanel');
             if (btnCloseFilterPanel) {
