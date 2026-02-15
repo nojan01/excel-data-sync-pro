@@ -10002,17 +10002,17 @@
             
             // Live-Session: Zeile sofort in Excel einfügen
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                // insertIndex ist 0-basiert, Python rechnet selbst +2 für Excel
+                // In der Live-Session sind GUI-Daten und Excel synchron.
+                // insertIndex ist die korrekte 0-basierte Datenposition.
+                // Python rechnet +2 für die Excel-Zeile (Header + 1-basiert).
                 try {
-                    const excelInsertPos = getExcelRowPosition(insertIndex < explorerState.data.length ? insertIndex : rowIndex);
-                    const excelPos = position === 'above' ? excelInsertPos : excelInsertPos + 1;
-                    const result = await window.electronAPI.liveSessionInsertRow(excelPos, 1);
+                    const result = await window.electronAPI.liveSessionInsertRow(insertIndex, 1);
                     if (!result || !result.success) {
                         console.error('[LiveSession] insertRow failed:', result);
                         showFloatingStatus('❌ Fehler beim Einfügen in Excel', 'error');
                         return;
                     }
-                    console.log(`[LiveSession] Row inserted: dataIndex=${insertIndex}, excelPos=${excelPos}`);
+                    console.log(`[LiveSession] Row inserted: dataIndex=${insertIndex}`);
                 } catch (error) {
                     console.error('[LiveSession] insertRow error:', error);
                     showFloatingStatus('❌ Fehler beim Einfügen in Excel', 'error');
