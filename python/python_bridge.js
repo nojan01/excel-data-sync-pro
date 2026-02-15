@@ -842,7 +842,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                     changes: {
                         headers: sheet.headers || [],
                         data: sheet.data || [],
-                        editedCells: {},
+                        editedCells: sheet.changedCells || {},  // WICHTIG: editedCells mitsenden für Zeilen-Verschiebung ohne Block-Write
                         cellStyles: {},
                         rowHighlights: {},
                         deletedColumns: [],  // Keine Spalten-Ops im ersten Durchlauf

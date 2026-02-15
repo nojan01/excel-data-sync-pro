@@ -310,7 +310,11 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
         # SCHRITT 2: ZEILEN VERSCHIEBEN (rowOrder)
         # Physisch die Zeilen in Excel verschieben (erhält Formatierung!)
         # rowOrder[newPos] = originalPos (0-basiert für Daten, Excel = pos + 2)
+        # WICHTIG: Nach erfolgreicher physischer Verschiebung wird KEIN Block-Write gemacht!
+        # copy_range kopiert Werte UND Formatierung - ein Block-Write würde die Formatierung
+        # auf macOS zerstören (genau wie bei Spalten-Verschiebung in Schritt 8)
         rows_reordered = False
+        data_block_written = False  # Trackt ob ein Block-Write stattfand
         if row_order and len(row_order) > 0:
             print(f"[xlwings_writer] rowOrder erkannt", file=sys.stderr)
             
@@ -332,6 +336,7 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                         last_col = max(last_col, ws.used_range.last_cell.column)
                     last_col_letter = _get_column_letter(last_col)
                     
+                    physical_move_ok = True
                     try:
                         for target_pos in range(num_data_rows):
                             source_original_idx = row_order[target_pos]
@@ -377,16 +382,26 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                         
                         print(f"[xlwings_writer] Zeilen-Verschiebung abgeschlossen", file=sys.stderr)
                     except Exception as move_err:
+                        physical_move_ok = False
                         print(f"[xlwings_writer] Physische Verschiebung fehlgeschlagen: {move_err}", file=sys.stderr)
                         print(f"[xlwings_writer] Fallback: Daten als Block schreiben", file=sys.stderr)
-                
-                # Daten schreiben (Werte aktualisieren nach physischer Verschiebung)
-                # xlwings .value setzt nur Werte, Formatierung bleibt erhalten
-                if data and len(data) > 0:
-                    num_rows = len(data)
-                    num_cols = len(data[0]) if data[0] else len(headers)
-                    ws.range((2, 1), (num_rows + 1, num_cols)).value = data
-                    print(f"[xlwings_writer] Daten nach Verschiebung geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
+                    
+                    if not physical_move_ok:
+                        # Fallback: Daten als Block schreiben (Werte korrekt, Formatierung am Originalplatz)
+                        if data and len(data) > 0:
+                            num_rows = len(data)
+                            num_cols = len(data[0]) if data[0] else len(headers)
+                            ws.range((2, 1), (num_rows + 1, num_cols)).value = data
+                            data_block_written = True
+                            print(f"[xlwings_writer] Fallback: Daten nach fehlgeschlagener Verschiebung geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
+                    else:
+                        # Physische Verschiebung OK: KEIN Block-Write!
+                        # copy_range hat Werte + Formatierung bereits korrekt verschoben
+                        # (analog zu Spalten-Verschiebung in Schritt 8, die auch keinen Block-Write macht)
+                        print(f"[xlwings_writer] Physische Verschiebung OK - kein Block-Write nötig", file=sys.stderr)
+                else:
+                    # Keine Umordnung nötig (row_order == sorted) - nichts zu tun
+                    print(f"[xlwings_writer] rowOrder vorhanden aber keine Umordnung nötig", file=sys.stderr)
             else:
                 # Gemischter Fall mit eingefügten Zeilen: Daten als Block schreiben (Fallback)
                 # Formatierung geht für verschobene Zeilen verloren
@@ -394,6 +409,7 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                     num_rows = len(data)
                     num_cols = len(data[0]) if data[0] else len(headers)
                     ws.range((2, 1), (num_rows + 1, num_cols)).value = data
+                    data_block_written = True
                     print(f"[xlwings_writer] Eingefügte+verschobene Zeilen: Daten als Block geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
             
             rows_reordered = True
@@ -427,6 +443,7 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                     num_rows = len(data)
                     num_cols = len(data[0]) if data[0] else len(headers)
                     ws.range((2, 1), (num_rows + 1, num_cols)).value = data
+                    data_block_written = True
                     print(f"[xlwings_writer] Daten nach Zeilen-Einfügung geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
         
         # SCHRITT 5: ZEILEN MARKIEREN (ROW HIGHLIGHTS)
@@ -646,11 +663,14 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
             ws.range(f'{first_row_to_delete}:{last_row_to_delete}').delete()
         
         # SCHRITT 12: ZELL-EDITS (geänderte Zellen)
-        # NUR wenn nicht bereits durch Block-Write geschrieben (columnOrder, rowsInserted, rowsReordered)
+        # NUR wenn nicht bereits durch Block-Write geschrieben (columnOrder oder data_block_written)
         # OPTIMIERUNG: Gruppiere nach Spalten und schreibe spaltenweise statt zellweise
         # Bei fullRewrite+changedCells (z.B. Bulk-Replace >100 Zellen) werden NUR die
         # geänderten Zellen geschrieben - das erhält die Formatierung aller anderen Zellen!
-        if edited_cells and not column_order_applied and not rows_inserted and not rows_reordered:
+        # WICHTIG: Bei erfolgreicher physischer Zeilen-Verschiebung (rows_reordered=True aber
+        # data_block_written=False) MÜSSEN editierte Zellen einzeln geschrieben werden,
+        # da kein Block-Write die Werte aktualisiert hat!
+        if edited_cells and not column_order_applied and not data_block_written:
             print(f"[xlwings_writer] Schreibe {len(edited_cells)} geänderte Zellen...", file=sys.stderr)
             
             # Gruppiere Zellen nach Spaltenindex
