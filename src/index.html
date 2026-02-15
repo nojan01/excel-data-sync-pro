@@ -11351,38 +11351,80 @@
                 });
             }
             
-            // Markierung dass Spalte gelöscht wurde - speichere als Array für mehrere Löschungen
-            // WICHTIG: Wir speichern die ORIGINAL-Spaltenindizes (bezogen auf die ursprüngliche Datei)
-            // colIndex ist der aktuelle Index nach vorherigen Löschungen im Frontend
-            // Wir müssen den Original-Index berechnen
-            const existingDeleted = explorerState.editedCells.get('_columnDeleted');
-            let deletedOriginalIndices = [];
-            if (existingDeleted && Array.isArray(existingDeleted.originalIndices)) {
-                deletedOriginalIndices = existingDeleted.originalIndices.slice();
-            }
+            // ========== _columnInserted anpassen und prüfen ob eingefügte Spalte gelöscht wird ==========
+            const insertedInfo = explorerState.editedCells.get('_columnInserted');
+            let isDeletingInsertedColumn = false;
             
-            // Berechne den Original-Index: 
-            // Für jeden vorherigen gelöschten Original-Index, der <= aktuellem+Offset war, erhöhe den Offset
-            let originalIndex = colIndex;
-            for (const prevOrigIdx of deletedOriginalIndices.sort((a, b) => a - b)) {
-                if (prevOrigIdx <= originalIndex) {
-                    originalIndex++;
+            if (insertedInfo && insertedInfo.operations) {
+                // Prüfe ob die gelöschte Spalte eine EINGEFÜGTE Spalte ist (nicht aus der Originaldatei)
+                const insertedOpIndex = insertedInfo.operations.findIndex(op => op.position === colIndex);
+                
+                if (insertedOpIndex !== -1) {
+                    isDeletingInsertedColumn = true;
+                    // Entferne die Operation für die gelöschte eingefügte Spalte
+                    insertedInfo.operations.splice(insertedOpIndex, 1);
+                    console.log(`[deleteColumn] Eingefügte Spalte an Position ${colIndex} wird gelöscht (kein Original-Index nötig)`);
+                }
+                
+                // Positionen aller verbleibenden Operationen anpassen (die nach der gelöschten liegen)
+                insertedInfo.operations.forEach(op => {
+                    if (op.position > colIndex) {
+                        op.position -= 1;
+                    }
+                    if (op.sourceColumn > colIndex) {
+                        op.sourceColumn -= 1;
+                    }
+                });
+                
+                insertedInfo.totalCount = insertedInfo.operations.length;
+                
+                if (insertedInfo.operations.length === 0) {
+                    // Keine eingefügten Spalten mehr übrig
+                    explorerState.editedCells.delete('_columnInserted');
+                } else {
+                    explorerState.editedCells.set('_columnInserted', insertedInfo);
                 }
             }
             
-            deletedOriginalIndices.push(originalIndex);
-            
-            explorerState.editedCells.set('_columnDeleted', { 
-                originalIndices: deletedOriginalIndices,  // Array der ORIGINAL-Spalten-Indices (0-basiert)
-                count: deletedOriginalIndices.length,
-                originalHeaderCount: (existingDeleted?.originalHeaderCount) || (explorerState.headers.length + 1)
-            });
-            
-            // Zur Operations-Queue hinzufügen
-            explorerState.columnOperationsQueue.push({
-                type: 'delete',
-                originalIndex: originalIndex
-            });
+            if (!isDeletingInsertedColumn) {
+                // ========== Original-Spalte gelöscht: _columnDeleted aktualisieren ==========
+                const existingDeleted = explorerState.editedCells.get('_columnDeleted');
+                let deletedOriginalIndices = [];
+                if (existingDeleted && Array.isArray(existingDeleted.originalIndices)) {
+                    deletedOriginalIndices = existingDeleted.originalIndices.slice();
+                }
+                
+                // Berechne den Original-Index:
+                // 1. Eingefügte Spalten VOR colIndex abziehen (die existieren nicht in der Originaldatei)
+                let insertsBefore = 0;
+                if (insertedInfo && insertedInfo.operations) {
+                    // Positionen < colIndex sind nach der Anpassung unverändert (nur > colIndex wurde dekrementiert)
+                    insertsBefore = insertedInfo.operations.filter(op => op.position < colIndex).length;
+                }
+                
+                let originalIndex = colIndex - insertsBefore;
+                
+                // 2. Für jeden vorherigen gelöschten Original-Index, der <= aktuellem+Offset war, erhöhe den Offset
+                for (const prevOrigIdx of deletedOriginalIndices.sort((a, b) => a - b)) {
+                    if (prevOrigIdx <= originalIndex) {
+                        originalIndex++;
+                    }
+                }
+                
+                deletedOriginalIndices.push(originalIndex);
+                
+                explorerState.editedCells.set('_columnDeleted', { 
+                    originalIndices: deletedOriginalIndices,  // Array der ORIGINAL-Spalten-Indices (0-basiert)
+                    count: deletedOriginalIndices.length,
+                    originalHeaderCount: (existingDeleted?.originalHeaderCount) || (explorerState.headers.length + 1)
+                });
+                
+                // Zur Operations-Queue hinzufügen
+                explorerState.columnOperationsQueue.push({
+                    type: 'delete',
+                    originalIndex: originalIndex
+                });
+            }
             
             // UI aktualisieren
             filterExplorerData();
