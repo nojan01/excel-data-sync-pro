@@ -990,6 +990,16 @@ class ExcelLiveSession:
             self._log(f"Füge {count} Zeile(n) bei {excel_row_start} ein")
             self.worksheet.range(f'{excel_row_start}:{excel_row_end}').insert(shift='down')
             
+            # Formatierung der neuen Zeile(n) löschen
+            # Excel übernimmt bei Insert die Formatierung der darüberliegenden Zeile
+            # (inkl. Hintergrundfarbe), was zu doppelten Farbmarkierungen führt.
+            try:
+                new_rows = self.worksheet.range(f'{excel_row_start}:{excel_row_end}')
+                new_rows.color = None  # Hintergrundfarbe entfernen
+                self._log(f"Formatierung der neuen Zeile(n) {excel_row_start}:{excel_row_end} bereinigt")
+            except Exception as fmt_err:
+                self._log(f"Formatierung-Bereinigung Fehler (ignoriert): {fmt_err}")
+            
             # Journal-Eintrag
             self._journal_add('insertRow', {'rowIndex': row_index, 'count': count})
             self._check_auto_save()

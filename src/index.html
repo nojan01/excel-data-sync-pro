@@ -9941,10 +9941,10 @@
                 return;
             }
             
-            // LIVE SESSION: Markiere Zeile sofort in Excel
-            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                liveSessionExecute('highlightRow', getExcelRowPosition(rowIndex), color);
-            }
+            // KEIN Live-Session-Aufruf an Excel!
+            // Farbige Markierungen werden nur in der GUI angezeigt und erst
+            // beim expliziten Export/Speichern in die Datei geschrieben.
+            // So wird die Originaldatei nicht sofort verändert.
             
             explorerState.rowHighlights.set(rowIndex, color);
             // Strukturelle Änderung markieren für Export
@@ -9953,10 +9953,9 @@
         }
         
         function clearRowHighlight(rowIndex) {
-            // LIVE SESSION: Entferne Markierung sofort in Excel
-            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                liveSessionExecute('highlightRow', getExcelRowPosition(rowIndex), null);
-            }
+            // KEIN Live-Session-Aufruf an Excel!
+            // Farbmarkierungen bleiben rein in der GUI und werden nicht
+            // sofort in der Originaldatei gespeichert.
             
             explorerState.rowHighlights.delete(rowIndex);
             // Strukturelle Änderung markieren für Export
