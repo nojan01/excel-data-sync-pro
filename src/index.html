@@ -10038,6 +10038,84 @@
             });
             explorerState.rowHighlights = newHighlights;
             
+            // CellStyles anpassen (Zeilen-Indizes verschieben)
+            // Style-Keys: "styleRowIdx-colIdx" wobei styleRowIdx = dataRowIdx + 1 (Header = 0)
+            const newCellStyles = {};
+            for (const [key, style] of Object.entries(explorerState.cellStyles || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (row === 0) {
+                    // Header behalten
+                    newCellStyles[key] = style;
+                } else if (row - 1 >= insertIndex) {
+                    // Zeile nach Einfügepunkt: Index + 1
+                    newCellStyles[`${row + 1}-${col}`] = style;
+                } else {
+                    newCellStyles[key] = style;
+                }
+            }
+            explorerState.cellStyles = newCellStyles;
+            
+            // CellFormulas anpassen
+            const newCellFormulas = {};
+            for (const [key, formula] of Object.entries(explorerState.cellFormulas || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (row === 0) {
+                    newCellFormulas[key] = formula;
+                } else if (row - 1 >= insertIndex) {
+                    newCellFormulas[`${row + 1}-${col}`] = formula;
+                } else {
+                    newCellFormulas[key] = formula;
+                }
+            }
+            explorerState.cellFormulas = newCellFormulas;
+            
+            // CellHyperlinks anpassen
+            const newCellHyperlinks = {};
+            for (const [key, link] of Object.entries(explorerState.cellHyperlinks || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (row === 0) {
+                    newCellHyperlinks[key] = link;
+                } else if (row - 1 >= insertIndex) {
+                    newCellHyperlinks[`${row + 1}-${col}`] = link;
+                } else {
+                    newCellHyperlinks[key] = link;
+                }
+            }
+            explorerState.cellHyperlinks = newCellHyperlinks;
+            
+            // RichTextCells anpassen
+            const newRichTextCells = {};
+            for (const [key, rt] of Object.entries(explorerState.richTextCells || {})) {
+                const [rowStr, colStr] = key.split('-');
+                const row = parseInt(rowStr);
+                const col = parseInt(colStr);
+                if (row === 0) {
+                    newRichTextCells[key] = rt;
+                } else if (row - 1 >= insertIndex) {
+                    newRichTextCells[`${row + 1}-${col}`] = rt;
+                } else {
+                    newRichTextCells[key] = rt;
+                }
+            }
+            explorerState.richTextCells = newRichTextCells;
+            
+            // HiddenRows anpassen
+            const newHiddenRows = new Set();
+            explorerState.hiddenRows.forEach(idx => {
+                if (idx >= insertIndex) {
+                    newHiddenRows.add(idx + 1);
+                } else {
+                    newHiddenRows.add(idx);
+                }
+            });
+            explorerState.hiddenRows = newHiddenRows;
+            
             // EditedCells anpassen
             const newEditedCells = new Map();
             explorerState.editedCells.forEach((value, key) => {
