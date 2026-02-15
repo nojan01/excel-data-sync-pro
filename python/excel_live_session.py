@@ -2388,7 +2388,19 @@ end tell'''
                 except Exception as e2:
                     self._log(f"Windows: Rows.Hidden Fehler: {e2}")
             
-            # Schritt 5: Screen-Refresh
+            # Schritt 5: Scroll-Position auf A1 zurücksetzen
+            # Nach Filter-Reset springt Excel oft auf einen leeren Bereich
+            # am Ende der Tabelle. Daher explizit auf A1 scrollen.
+            try:
+                self.worksheet.api.Range("A1").Select()
+                app = self.workbook.app.api
+                app.ActiveWindow.ScrollRow = 1
+                app.ActiveWindow.ScrollColumn = 1
+                self._log("Windows: Scroll-Position auf A1 zurückgesetzt")
+            except Exception as e:
+                self._log(f"Windows: Scroll-Reset Fehler (ignoriert): {e}")
+            
+            # Schritt 6: Screen-Refresh
             try:
                 app = self.workbook.app.api
                 app.ScreenUpdating = True
@@ -2469,6 +2481,24 @@ end tell'''
             
             if not unhidden:
                 return {'success': False, 'error': 'Konnte Zeilen nicht einblenden'}
+            
+            # Scroll-Position auf A1 zurücksetzen
+            # Nach Filter-Reset springt Excel oft auf einen leeren Bereich
+            try:
+                import subprocess
+                script = '''
+                    tell application "Microsoft Excel"
+                        tell active window
+                            set scroll row of active pane to 1
+                            set scroll column of active pane to 1
+                        end tell
+                        select range "A1" of active sheet
+                    end tell
+                '''
+                subprocess.run(['osascript', '-e', script], timeout=5, capture_output=True)
+                self._log("macOS: Scroll-Position auf A1 zurückgesetzt")
+            except Exception as e:
+                self._log(f"macOS: Scroll-Reset Fehler (ignoriert): {e}")
             
             self._log("macOS: clear_autofilter OK")
             return {'success': True, 'filterCount': 0}
