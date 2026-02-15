@@ -308,17 +308,93 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                 ws.range(f'{excel_row}:{excel_row}').delete()
         
         # SCHRITT 2: ZEILEN VERSCHIEBEN (rowOrder)
-        # Die Daten wurden bereits im Frontend umgeordnet - schreibe als Block
+        # Physisch die Zeilen in Excel verschieben (erhält Formatierung!)
+        # rowOrder[newPos] = originalPos (0-basiert für Daten, Excel = pos + 2)
         rows_reordered = False
         if row_order and len(row_order) > 0:
-            print(f"[xlwings_writer] rowOrder erkannt - schreibe umgeordnete Daten", file=sys.stderr)
+            print(f"[xlwings_writer] rowOrder erkannt", file=sys.stderr)
             
-            # Alle Daten als Block schreiben (schnell!)
-            if data and len(data) > 0:
-                num_rows = len(data)
-                num_cols = len(data[0]) if data[0] else len(headers)
-                ws.range((2, 1), (num_rows + 1, num_cols)).value = data
-                print(f"[xlwings_writer] Daten nach Zeilen-Verschiebung geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
+            # Prüfe ob eingefügte Zeilen vorhanden sind (-1 = neue Zeile ohne Original)
+            has_inserted_in_order = any(idx < 0 for idx in row_order)
+            
+            if not has_inserted_in_order:
+                # Reine Zeilen-Verschiebung (ggf. nach Löschung in Schritt 1)
+                # Nach Schritt 1 sind die verbleibenden Zeilen in aufsteigender Original-Reihenfolge
+                current_order = sorted(row_order)
+                original_sorted = list(current_order)
+                
+                if list(row_order) != original_sorted:
+                    # Tatsächliche Umordnung nötig - physisch verschieben wie bei Spalten (Schritt 8)
+                    print(f"[xlwings_writer] Verschiebe Zeilen physisch (erhält Formatierung)", file=sys.stderr)
+                    num_data_rows = len(row_order)
+                    last_col = len(headers) if headers else 1
+                    if ws.used_range:
+                        last_col = max(last_col, ws.used_range.last_cell.column)
+                    last_col_letter = _get_column_letter(last_col)
+                    
+                    try:
+                        for target_pos in range(num_data_rows):
+                            source_original_idx = row_order[target_pos]
+                            current_pos = current_order.index(source_original_idx)
+                            
+                            if current_pos != target_pos:
+                                source_excel = current_pos + 2  # +2 für Header (Zeile 1) und 1-basiert
+                                target_excel = target_pos + 2
+                                
+                                if current_pos > target_pos:
+                                    # Nach oben verschieben
+                                    # 1. Insert leere Zeile bei Ziel
+                                    ws.range(f'{target_excel}:{target_excel}').insert(shift='down')
+                                    # Dadurch verschiebt sich source um 1 nach unten
+                                    new_source_excel = source_excel + 1
+                                    # 2. Kopiere Quell-Zeile zur Ziel-Zeile (mit Formatierung)
+                                    source_rng = ws.range(f'A{new_source_excel}:{last_col_letter}{new_source_excel}')
+                                    dest_rng = ws.range(f'A{target_excel}')
+                                    if platform.system() == 'Windows':
+                                        source_rng.api.Copy(Destination=dest_rng.api)
+                                    else:
+                                        source_rng.api.copy_range(destination=dest_rng.api)
+                                    # 3. Lösche die alte Zeile
+                                    ws.range(f'{new_source_excel}:{new_source_excel}').delete()
+                                else:
+                                    # Nach unten verschieben
+                                    # 1. Insert leere Zeile NACH dem Ziel (target+1)
+                                    after_target_excel = target_excel + 1
+                                    ws.range(f'{after_target_excel}:{after_target_excel}').insert(shift='down')
+                                    # 2. Kopiere Quell-Zeile zur neuen Position (mit Formatierung)
+                                    source_rng = ws.range(f'A{source_excel}:{last_col_letter}{source_excel}')
+                                    dest_rng = ws.range(f'A{after_target_excel}')
+                                    if platform.system() == 'Windows':
+                                        source_rng.api.Copy(Destination=dest_rng.api)
+                                    else:
+                                        source_rng.api.copy_range(destination=dest_rng.api)
+                                    # 3. Lösche die alte Zeile
+                                    ws.range(f'{source_excel}:{source_excel}').delete()
+                                
+                                # Update current_order
+                                val = current_order.pop(current_pos)
+                                current_order.insert(target_pos, val)
+                        
+                        print(f"[xlwings_writer] Zeilen-Verschiebung abgeschlossen", file=sys.stderr)
+                    except Exception as move_err:
+                        print(f"[xlwings_writer] Physische Verschiebung fehlgeschlagen: {move_err}", file=sys.stderr)
+                        print(f"[xlwings_writer] Fallback: Daten als Block schreiben", file=sys.stderr)
+                
+                # Daten schreiben (Werte aktualisieren nach physischer Verschiebung)
+                # xlwings .value setzt nur Werte, Formatierung bleibt erhalten
+                if data and len(data) > 0:
+                    num_rows = len(data)
+                    num_cols = len(data[0]) if data[0] else len(headers)
+                    ws.range((2, 1), (num_rows + 1, num_cols)).value = data
+                    print(f"[xlwings_writer] Daten nach Verschiebung geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
+            else:
+                # Gemischter Fall mit eingefügten Zeilen: Daten als Block schreiben (Fallback)
+                # Formatierung geht für verschobene Zeilen verloren
+                if data and len(data) > 0:
+                    num_rows = len(data)
+                    num_cols = len(data[0]) if data[0] else len(headers)
+                    ws.range((2, 1), (num_rows + 1, num_cols)).value = data
+                    print(f"[xlwings_writer] Eingefügte+verschobene Zeilen: Daten als Block geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
             
             rows_reordered = True
         
