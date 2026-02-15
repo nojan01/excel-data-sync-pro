@@ -17317,6 +17317,17 @@
                             explorerState.affectedRows?.clear();
                             explorerState.rowMapping = null;
                             explorerState.pendingSheetOperations = [];
+                            explorerState.columnOperationsQueue = [];
+                            explorerState.rowOperationsQueue = [];
+                            
+                            // Cache-Sheets: editedCells ebenfalls zurücksetzen
+                            for (const [, cached] of explorerState.sheetDataCache) {
+                                cached.editedCells.clear();
+                                // originalData = aktuelle Daten (sind jetzt die neuen "Originale")
+                                if (cached.data) {
+                                    cached.originalData = cached.data.map(row => [...row]);
+                                }
+                            }
                             
                             // Cache aktualisieren
                             saveCurrentSheetToCache();
