@@ -992,9 +992,14 @@ def restore_external_links_from_original(output_path, original_path, structural_
                 ws_modified = False
                 
                 if structural_change:
-                    # === MERGE-Modus: openpyxl's rId-Referenzen beibehalten ===
-                    # Nur FEHLENDE Elemente ergänzen (mit gemappten rIds).
+                    # === MERGE-Modus ===
                     # tableParts und pageSetup NICHT ersetzen — openpyxl hat korrekte rIds.
+                    # ABER: <drawing>, <legacyDrawing>, <picture> IMMER aus Original
+                    # wiederherstellen (mit gemappten rIds), weil:
+                    #   1. xl/drawings/ wird IMMER aus dem Original kopiert
+                    #   2. openpyxl kann ohne Pillow die Drawing-Rels ändern/entfernen
+                    #   3. Bei Spaltenops verschiebt openpyxl Anker → rId-Mismatch
+                    # Nur der gemappte Original-rId zeigt zum richtigen Drawing.
                     rels_fn = f"{ws_file}.rels"
                     mapping = ws_rid_mappings.get(rels_fn, {})
                     
@@ -1006,38 +1011,47 @@ def restore_external_links_from_original(output_path, original_path, structural_
                             return f'r:id="{mapped}"'
                         return re.sub(r'r:id="([^"]+)"', _rid_replacer, element_str)
                     
-                    # <drawing> nur ergänzen wenn openpyxl es entfernt hat
+                    # <drawing> IMMER aus Original wiederherstellen (mit gemapptem rId)
+                    # Grund: xl/drawings/ kommt aus dem Original, also muss der rId
+                    # zum Original-Drawing passen (nicht zu openpyxl's möglicherweise
+                    # geändertem/entferntem Drawing-Rel).
                     drawing_match = re.search(r'<drawing\s+[^>]*/\s*>', orig_ws_content)
                     if not drawing_match:
                         drawing_match = re.search(r'<drawing\s+[^>]*>.*?</drawing>', orig_ws_content, re.DOTALL)
                     if drawing_match:
-                        if not re.search(r'<drawing[\s>]', dest_ws_content):
-                            # openpyxl hat <drawing> entfernt → mit gemapptem rId ergänzen
-                            drawing_el = _map_rid(drawing_match.group(0))
-                            dest_ws_content = _insert_ws_element(dest_ws_content, drawing_el, 'drawing')
-                            ws_modified = True
-                            sys.stderr.write(f"[restore] {ws_file}: <drawing> ergänzt (fehlte): {drawing_el}\n")
+                        drawing_el = _map_rid(drawing_match.group(0))
+                        if re.search(r'<drawing[\s>]', dest_ws_content):
+                            # Ersetze openpyxl's <drawing> mit Original (gemappter rId)
+                            dest_ws_content = re.sub(r'<drawing\s+[^>]*/\s*>', drawing_el, dest_ws_content)
+                            dest_ws_content = re.sub(r'<drawing\s+[^>]*>.*?</drawing>', drawing_el, dest_ws_content, flags=re.DOTALL)
                         else:
-                            sys.stderr.write(f"[restore] {ws_file}: <drawing> bereits vorhanden (openpyxl-rId beibehalten)\n")
+                            dest_ws_content = _insert_ws_element(dest_ws_content, drawing_el, 'drawing')
+                        ws_modified = True
+                        sys.stderr.write(f"[restore] {ws_file}: <drawing> aus Original wiederhergestellt: {drawing_el}\n")
                     
-                    # <legacyDrawing> nur ergänzen wenn fehlend
+                    # <legacyDrawing> IMMER aus Original wiederherstellen
                     legacy_match = re.search(r'<legacyDrawing\s+[^>]*/\s*>', orig_ws_content)
                     if not legacy_match:
                         legacy_match = re.search(r'<legacyDrawing\s+[^>]*>.*?</legacyDrawing>', orig_ws_content, re.DOTALL)
                     if legacy_match:
-                        if not re.search(r'<legacyDrawing[\s>]', dest_ws_content):
-                            legacy_el = _map_rid(legacy_match.group(0))
+                        legacy_el = _map_rid(legacy_match.group(0))
+                        if re.search(r'<legacyDrawing[\s>]', dest_ws_content):
+                            dest_ws_content = re.sub(r'<legacyDrawing\s+[^>]*/\s*>', legacy_el, dest_ws_content)
+                            dest_ws_content = re.sub(r'<legacyDrawing\s+[^>]*>.*?</legacyDrawing>', legacy_el, dest_ws_content, flags=re.DOTALL)
+                        else:
                             dest_ws_content = _insert_ws_element(dest_ws_content, legacy_el, 'legacyDrawing')
-                            ws_modified = True
-                            sys.stderr.write(f"[restore] {ws_file}: <legacyDrawing> ergänzt (fehlte)\n")
+                        ws_modified = True
+                        sys.stderr.write(f"[restore] {ws_file}: <legacyDrawing> aus Original wiederhergestellt\n")
                     
-                    # <picture> nur ergänzen wenn fehlend (Hintergrundbilder)
+                    # <picture> IMMER aus Original wiederherstellen (Hintergrundbilder)
                     picture_match = re.search(r'<picture\s+[^>]*/\s*>', orig_ws_content)
                     if picture_match:
-                        if not re.search(r'<picture[\s>]', dest_ws_content):
-                            picture_el = _map_rid(picture_match.group(0))
+                        picture_el = _map_rid(picture_match.group(0))
+                        if re.search(r'<picture[\s>]', dest_ws_content):
+                            dest_ws_content = re.sub(r'<picture\s+[^>]*/\s*>', picture_el, dest_ws_content)
+                        else:
                             dest_ws_content = _insert_ws_element(dest_ws_content, picture_el, 'picture')
-                            ws_modified = True
+                        ws_modified = True
                     
                     # tableParts und pageSetup NICHT ersetzen!
                     # openpyxl's Rels sind beibehalten, daher stimmen openpyxl's rId-Referenzen
