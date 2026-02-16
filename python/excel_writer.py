@@ -3775,13 +3775,23 @@ def _apply_cell_fonts(ws, cell_fonts):
 
 def _apply_imported_cell_styles(ws, cell_styles):
     """
-    Wendet Zell-Hintergrundfarben aus dem Frontend auf Zellen an.
-    Wird für importierte Spalten (Data Join) verwendet.
+    Wendet KOMPLETTE Zell-Formatierung aus dem Frontend auf Zellen an.
+    Unterstützt sowohl altes Format (String = nur Hintergrundfarbe)
+    als auch neues Format (Object = komplette Formatierung inkl. Font, Fill, Alignment).
+    
+    Neues Format-Objekt kann enthalten:
+    - fill: Hintergrundfarbe (#RRGGBB oder ARGB)
+    - bold, italic, underline, strikethrough: Font-Eigenschaften
+    - fontSize, fontName, fontColor: Font-Details
+    - textAlign: Horizontale Ausrichtung (left, center, right)
+    - verticalAlign: Vertikale Ausrichtung (top, center, bottom)
+    - wrapText: Textumbruch (true/false)
     """
     if not cell_styles:
         return
     
-    for key, color in cell_styles.items():
+    applied = 0
+    for key, style_data in cell_styles.items():
         try:
             parts = key.split('-')
             if len(parts) != 2:
@@ -3790,15 +3800,89 @@ def _apply_imported_cell_styles(ws, cell_styles):
             col_idx = int(parts[1])
             cell = ws.cell(row=row_idx + 2, column=col_idx + 1)
             
-            # Color kann #RRGGBB oder ARGB sein
-            if isinstance(color, str):
+            # Altes Format: String = nur Hintergrundfarbe
+            if isinstance(style_data, str):
+                color = style_data
                 if color.startswith('#'):
                     argb = hex_to_argb(color)
                 else:
                     argb = color if len(color) == 8 else f'FF{color}'
                 cell.fill = PatternFill(start_color=argb, end_color=argb, fill_type='solid')
-        except Exception:
-            pass
+                applied += 1
+                continue
+            
+            # Neues Format: Komplettes Style-Objekt
+            if not isinstance(style_data, dict):
+                continue
+            
+            # === FILL (Hintergrundfarbe) ===
+            fill_color = style_data.get('fill')
+            if fill_color and fill_color != 'transparent':
+                if isinstance(fill_color, str):
+                    if fill_color.startswith('#'):
+                        argb = hex_to_argb(fill_color)
+                    else:
+                        argb = fill_color if len(fill_color) == 8 else f'FF{fill_color}'
+                    cell.fill = PatternFill(start_color=argb, end_color=argb, fill_type='solid')
+            
+            # === FONT (Schriftformatierung) ===
+            has_font_info = any(style_data.get(k) is not None for k in 
+                              ['bold', 'italic', 'underline', 'strikethrough', 'fontSize', 'fontName', 'fontColor'])
+            if has_font_info:
+                # Bestehende Font-Eigenschaften als Basis verwenden
+                existing_font = cell.font
+                font_kwargs = {
+                    'name': existing_font.name,
+                    'size': existing_font.size,
+                    'bold': existing_font.bold,
+                    'italic': existing_font.italic,
+                    'underline': existing_font.underline,
+                    'strikethrough': existing_font.strikethrough,
+                    'color': existing_font.color,
+                }
+                
+                if style_data.get('fontName'):
+                    font_kwargs['name'] = style_data['fontName']
+                if style_data.get('fontSize'):
+                    font_kwargs['size'] = style_data['fontSize']
+                if 'bold' in style_data:
+                    font_kwargs['bold'] = bool(style_data['bold'])
+                if 'italic' in style_data:
+                    font_kwargs['italic'] = bool(style_data['italic'])
+                if 'underline' in style_data:
+                    font_kwargs['underline'] = 'single' if style_data['underline'] else None
+                if 'strikethrough' in style_data:
+                    font_kwargs['strikethrough'] = bool(style_data['strikethrough'])
+                if style_data.get('fontColor'):
+                    color_val = style_data['fontColor']
+                    if isinstance(color_val, str) and color_val.startswith('#'):
+                        color_val = color_val[1:]
+                    if isinstance(color_val, str) and len(color_val) == 6:
+                        color_val = 'FF' + color_val
+                    font_kwargs['color'] = color_val
+                
+                cell.font = Font(**font_kwargs)
+            
+            # === ALIGNMENT (Ausrichtung) ===
+            has_alignment = any(style_data.get(k) is not None for k in 
+                              ['textAlign', 'verticalAlign', 'wrapText'])
+            if has_alignment:
+                align_kwargs = {}
+                if style_data.get('textAlign'):
+                    align_kwargs['horizontal'] = style_data['textAlign']
+                if style_data.get('verticalAlign'):
+                    align_kwargs['vertical'] = style_data['verticalAlign']
+                if 'wrapText' in style_data:
+                    align_kwargs['wrap_text'] = bool(style_data['wrapText'])
+                if align_kwargs:
+                    cell.alignment = Alignment(**align_kwargs)
+            
+            applied += 1
+        except Exception as e:
+            sys.stderr.write(f"[CellStyles] Fehler bei {key}: {e}\n")
+    
+    if applied > 0:
+        sys.stderr.write(f"[CellStyles] {applied} von {len(cell_styles)} Zell-Styles angewendet\n")
 
 
 def _apply_imported_merged_cells(ws, merged_cells_list):

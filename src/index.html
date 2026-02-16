@@ -17255,7 +17255,8 @@
                                     }
                                 }
                                 
-                                // CellStyles für geänderte Zellen (kopierte Hintergründe etc.)
+                                // CellStyles für geänderte Zellen — KOMPLETT senden (Font, Fill, Alignment, Borders)
+                                // Genau wie RichText: vollständiges Style-Objekt, nicht nur Teilinfos
                                 const cellStylesForChanged = {};
                                 for (const cellKey of explorerState.editedCells.keys()) {
                                     if (cellKey.startsWith('_')) continue;
@@ -17265,36 +17266,23 @@
                                     
                                     if (explorerState.cellStyles && explorerState.cellStyles[styleKey]) {
                                         const style = explorerState.cellStyles[styleKey];
-                                        // Hintergrundfarbe (fill) extrahieren
-                                        if (style.fill && style.fill !== 'transparent') {
-                                            cellStylesForChanged[cellKey] = style.fill;
+                                        // Komplettes Style-Objekt senden (alle Eigenschaften)
+                                        if (Object.keys(style).length > 0) {
+                                            cellStylesForChanged[cellKey] = style;
                                         }
                                     }
                                 }
                                 
-                                // CellFonts für geänderte Zellen (kopierte Schriftformatierungen)
+                                // CellFonts: aus cellFonts oder als Fallback aus cellStyles extrahieren
                                 const cellFontsForChanged = {};
                                 for (const cellKey of explorerState.editedCells.keys()) {
                                     if (cellKey.startsWith('_')) continue;
                                     const [rowStr, colStr] = cellKey.split('-');
                                     const styleKey = `${parseInt(rowStr) + 1}-${colStr}`;
                                     
-                                    // Primär aus cellFonts (explizit gesetzt)
+                                    // Primär aus cellFonts (explizit gesetzt, z.B. Data Join)
                                     if (explorerState.cellFonts && explorerState.cellFonts[styleKey]) {
                                         cellFontsForChanged[cellKey] = explorerState.cellFonts[styleKey];
-                                    }
-                                    // Fallback: Font-Infos aus cellStyles extrahieren (z.B. bei Copy-Paste)
-                                    else if (explorerState.cellStyles && explorerState.cellStyles[styleKey]) {
-                                        const s = explorerState.cellStyles[styleKey];
-                                        const fontInfo = {};
-                                        if (s.fontName) fontInfo.name = s.fontName;
-                                        if (s.fontSize) fontInfo.size = s.fontSize;
-                                        if (s.bold) fontInfo.bold = s.bold;
-                                        if (s.italic) fontInfo.italic = s.italic;
-                                        if (s.fontColor) fontInfo.color = s.fontColor;
-                                        if (Object.keys(fontInfo).length > 0) {
-                                            cellFontsForChanged[cellKey] = fontInfo;
-                                        }
                                     }
                                 }
                                 
