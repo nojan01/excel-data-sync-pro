@@ -665,13 +665,37 @@ def restore_external_links_from_original(output_path, original_path):
                             sys.stderr.write(f"[restore_ext] workbook.xml.rels: {target_val} aus Original kopiert\n")
             
             if missing_rels:
+                # rId-Konflikte vermeiden: bestehende rIds sammeln
+                existing_rids = set(re.findall(r'Id="(rId\d+)"', dest_rels_content))
+                max_rid = 0
+                for rid in existing_rids:
+                    num = int(rid.replace('rId', ''))
+                    if num > max_rid:
+                        max_rid = num
+                
+                # Fehlende Rels mit konfliktfreien rIds einfügen
+                renumbered_rels = []
+                for rel_el in missing_rels:
+                    rid_m = re.search(r'Id="(rId\d+)"', rel_el)
+                    if rid_m and rid_m.group(1) in existing_rids:
+                        # Konflikt: neuen rId vergeben
+                        max_rid += 1
+                        new_rid = f'rId{max_rid}'
+                        old_rid = rid_m.group(1)
+                        rel_el = rel_el.replace(f'Id="{old_rid}"', f'Id="{new_rid}"', 1)
+                        existing_rids.add(new_rid)
+                        sys.stderr.write(f"[restore_ext] workbook.xml.rels: rId-Konflikt {old_rid} → {new_rid}\n")
+                    elif rid_m:
+                        existing_rids.add(rid_m.group(1))
+                    renumbered_rels.append(rel_el)
+                
                 # Vor </Relationships> einfügen
-                insert_str = '\n'.join(missing_rels)
+                insert_str = '\n'.join(renumbered_rels)
                 dest_rels_content = dest_rels_content.replace('</Relationships>', insert_str + '\n</Relationships>')
                 with open(rels_path, 'w', encoding='utf-8') as f:
                     f.write(dest_rels_content)
                 fixed_count += 1
-                sys.stderr.write(f"[restore_ext] workbook.xml.rels: {len(missing_rels)} fehlende Relationships ergänzt\n")
+                sys.stderr.write(f"[restore_ext] workbook.xml.rels: {len(renumbered_rels)} fehlende Relationships ergänzt\n")
         
         # [Content_Types].xml Merge wird NACH den Datei-Kopien durchgeführt (s.u.)
         # Grund: Override-Einträge prüfen ob die Datei existiert.
@@ -735,6 +759,19 @@ def restore_external_links_from_original(output_path, original_path):
         if os.path.exists(orig_metadata):
             shutil.copy2(orig_metadata, dest_metadata)
             sys.stderr.write(f"[restore_ext] xl/metadata.xml aus Original kopiert\n")
+            fixed_count += 1
+        
+        # Kopiere xl/printerSettings aus Original (Druckeinstellungen)
+        # Worksheet-Rels aus dem Original referenzieren printerSettings-Dateien.
+        # Wenn diese fehlen, erzeugt Excel "Reparatur auf Dateiebene".
+        orig_printer_dir = os.path.join(orig_temp_dir, 'xl', 'printerSettings')
+        dest_printer_dir = os.path.join(temp_dir, 'xl', 'printerSettings')
+        if os.path.exists(orig_printer_dir):
+            printer_files = os.listdir(orig_printer_dir)
+            sys.stderr.write(f"[restore_ext] xl/printerSettings im Original gefunden: {len(printer_files)} Dateien\n")
+            if os.path.exists(dest_printer_dir):
+                shutil.rmtree(dest_printer_dir)
+            shutil.copytree(orig_printer_dir, dest_printer_dir)
             fixed_count += 1
         
         # Kopiere Worksheet-Relationships aus Original (enthält Drawing-Referenzen)
@@ -1069,6 +1106,48 @@ def restore_external_links_from_original(output_path, original_path):
                 with open(wb_rels_file, 'w', encoding='utf-8') as f:
                     f.write(new_rels)
                 sys.stderr.write(f"[restore_ext] workbook.xml.rels bereinigt\n")
+        
+        # WORKSHEET RELS KONSISTENZ: Fehlende referenzierte Dateien prüfen
+        # Worksheet-Rels wurden aus dem Original kopiert und referenzieren evtl.
+        # Dateien (printerSettings, comments, ctrlProps etc.) die im Output fehlen.
+        ws_rels_check_dir = os.path.join(temp_dir, 'xl', 'worksheets', '_rels')
+        if os.path.exists(ws_rels_check_dir):
+            for ws_rels_fn in os.listdir(ws_rels_check_dir):
+                if not ws_rels_fn.endswith('.rels'):
+                    continue
+                ws_rels_fp = os.path.join(ws_rels_check_dir, ws_rels_fn)
+                with open(ws_rels_fp, 'r', encoding='utf-8') as f:
+                    ws_rels_content = f.read()
+                
+                def _ws_rels_fixer(m, _fn=ws_rels_fn):
+                    nonlocal fixed_count
+                    full_el = m.group(0)
+                    target = m.group(1)
+                    if 'TargetMode="External"' in full_el:
+                        return full_el
+                    if target.startswith('http://') or target.startswith('https://') or target.startswith('mailto:'):
+                        return full_el
+                    # Targets sind relativ zu xl/worksheets/
+                    target_file = os.path.normpath(os.path.join(temp_dir, 'xl', 'worksheets', target))
+                    if os.path.exists(target_file):
+                        return full_el
+                    # Aus Original kopieren
+                    orig_target = os.path.normpath(os.path.join(orig_temp_dir, 'xl', 'worksheets', target))
+                    if os.path.exists(orig_target):
+                        os.makedirs(os.path.dirname(target_file), exist_ok=True)
+                        shutil.copy2(orig_target, target_file)
+                        sys.stderr.write(f"[restore_ext] WS-Rels-Konsistenz: {_fn} → {target} aus Original kopiert\n")
+                        fixed_count += 1
+                        return full_el
+                    else:
+                        sys.stderr.write(f"[restore_ext] WS-Rels-Konsistenz: {_fn} → {target} entfernt (nicht gefunden)\n")
+                        return ''
+                
+                new_ws_rels = re.sub(r'<Relationship\s[^>]*?Target="([^"]+)"[^>]*/>\s*', _ws_rels_fixer, ws_rels_content)
+                if new_ws_rels != ws_rels_content:
+                    with open(ws_rels_fp, 'w', encoding='utf-8') as f:
+                        f.write(new_ws_rels)
+                    sys.stderr.write(f"[restore_ext] {ws_rels_fn} bereinigt\n")
         
         sys.stderr.write(f"[restore_ext] fixed_count={fixed_count}\n")
         
