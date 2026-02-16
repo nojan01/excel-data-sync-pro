@@ -429,6 +429,75 @@ async function writeExcel(config) {
             try {
                 const result = JSON.parse(stdout);
                 result.method = useXlwings ? 'xlwings' : 'openpyxl';
+                
+                // Nach xlwings-Erfolg: RichText und CellStyles via openpyxl nachträglich anwenden
+                // xlwings kann diese Formatierungen nicht setzen, openpyxl schon
+                if (useXlwings && result.success) {
+                    const hasRichText = config.changes && config.changes.richTextCells && Object.keys(config.changes.richTextCells).length > 0;
+                    const hasCellStyles = config.changes && config.changes.cellStyles && Object.keys(config.changes.cellStyles).length > 0;
+                    
+                    if (hasRichText || hasCellStyles) {
+                        safeLog(`[Python] xlwings fertig - wende RichText/CellStyles via openpyxl nach an...`);
+                        safeLog(`[Python] RichText: ${Object.keys(config.changes.richTextCells || {}).length} Zellen, CellStyles: ${Object.keys(config.changes.cellStyles || {}).length} Zellen`);
+                        
+                        // Temp-Backup der xlwings-Datei für Table-XML-Wiederherstellung
+                        const outputFile = config.outputPath || config.filePath;
+                        const tempBackup = outputFile + '.xlwings-backup.xlsx';
+                        
+                        try {
+                            fs.copyFileSync(outputFile, tempBackup);
+                            
+                            // Minimale Config: nur cellStyles und richTextCells, keine strukturellen Änderungen
+                            const postProcessConfig = {
+                                filePath: outputFile,
+                                outputPath: outputFile,
+                                originalPath: tempBackup,  // xlwings-Backup für korrekte XML-Wiederherstellung
+                                sheetName: config.sheetName,
+                                changes: {
+                                    headers: [],
+                                    data: [],
+                                    editedCells: {},
+                                    cellStyles: config.changes.cellStyles || {},
+                                    richTextCells: config.changes.richTextCells || {},
+                                    rowHighlights: null,  // null um Fill-Clearing zu vermeiden
+                                    deletedColumns: [],
+                                    insertedColumns: null,
+                                    deletedRowIndices: [],
+                                    insertedRowInfo: null,
+                                    rowOrder: null,
+                                    hiddenColumns: null,   // null um bestehende Sichtbarkeit zu erhalten
+                                    hiddenRows: null,      // null um bestehende Sichtbarkeit zu erhalten
+                                    rowMapping: null,
+                                    fromFile: false,
+                                    fullRewrite: false,
+                                    structuralChange: false,
+                                    clearedRowHighlights: [],
+                                    columnOrder: null,
+                                    affectedRows: [],
+                                    autoFilterRange: null
+                                }
+                            };
+                            
+                            const postResult = await writeExcelOpenpyxl(postProcessConfig);
+                            if (postResult.success) {
+                                safeLog(`[Python] RichText/CellStyles erfolgreich via openpyxl angewendet`);
+                                result.method = 'xlwings + openpyxl (styles)';
+                            } else {
+                                safeError(`[Python] RichText/CellStyles Post-Processing fehlgeschlagen:`, postResult.error);
+                                // Nicht fatal - xlwings hat die Daten bereits gespeichert
+                            }
+                            
+                            // Temp-Backup löschen
+                            try { fs.unlinkSync(tempBackup); } catch(e) {}
+                        } catch (postError) {
+                            safeError(`[Python] RichText/CellStyles Post-Processing Fehler:`, postError.message);
+                            // Temp-Backup aufräumen
+                            try { fs.unlinkSync(tempBackup); } catch(e) {}
+                            // Nicht fatal - xlwings hat die Daten bereits gespeichert
+                        }
+                    }
+                }
+                
                 resolve(result);
             } catch (parseError) {
                 safeError(`[Python] JSON parse error:`, parseError.message);
