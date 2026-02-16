@@ -532,38 +532,40 @@ def restore_external_links_from_original(output_path, original_path):
         fixed_count = 0
         
         if os.path.exists(orig_ext_links_dir) and os.path.exists(ext_links_dir):
-            # Kopiere NUR FEHLENDE externalLink*.xml Dateien
-            # NICHT überschreiben! openpyxl aktualisiert cached values korrekt.
-            # Überschreiben mit Original → alte cached values → Excel-Reparaturmodus!
+            # externalLink-Dateien NICHT aus Original kopieren!
+            # openpyxl erstellt seine eigenen Versionen mit konsistenten cached values.
+            # Kopieren aus Original → stale cached values → Excel-Reparaturmodus!
+            # Wenn openpyxl eine externalLink-Datei NICHT erstellt hat, fehlt auch
+            # die Referenz in workbook.xml/rels → konsistent ohne die Datei.
             for f in os.listdir(orig_ext_links_dir):
                 if f.startswith('externalLink') and f.endswith('.xml'):
-                    orig_file = os.path.join(orig_ext_links_dir, f)
                     dest_file = os.path.join(ext_links_dir, f)
-                    if not os.path.exists(dest_file):
-                        shutil.copy2(orig_file, dest_file)
-                        sys.stderr.write(f"[restore_ext] externalLink kopiert (fehlend): {f}\n")
-                        fixed_count += 1
-                    else:
+                    if os.path.exists(dest_file):
                         sys.stderr.write(f"[restore_ext] externalLink beibehalten (openpyxl): {f}\n")
+                    else:
+                        sys.stderr.write(f"[restore_ext] externalLink übersprungen (nicht von openpyxl erstellt): {f}\n")
             
-            # Auch _rels: NUR fehlende kopieren
+            # _rels: Auch NUR bestehende behalten (Konsistenz mit externalLink-Dateien)
             orig_rels_dir = os.path.join(orig_ext_links_dir, '_rels')
             dest_rels_dir = os.path.join(ext_links_dir, '_rels')
-            if os.path.exists(orig_rels_dir):
-                if not os.path.exists(dest_rels_dir):
-                    os.makedirs(dest_rels_dir)
+            if os.path.exists(orig_rels_dir) and os.path.exists(dest_rels_dir):
                 for f in os.listdir(orig_rels_dir):
                     if f.endswith('.xml.rels'):
-                        orig_rels = os.path.join(orig_rels_dir, f)
                         dest_rels = os.path.join(dest_rels_dir, f)
                         if not os.path.exists(dest_rels):
-                            shutil.copy2(orig_rels, dest_rels)
-                            fixed_count += 1
+                            # Zugehörige externalLink-Datei prüfen
+                            link_name = f.replace('.rels', '')  # z.B. externalLink7.xml
+                            link_file = os.path.join(ext_links_dir, link_name)
+                            if os.path.exists(link_file):
+                                # Datei existiert aber rels fehlt → aus Original kopieren
+                                orig_rels = os.path.join(orig_rels_dir, f)
+                                shutil.copy2(orig_rels, dest_rels)
+                                fixed_count += 1
         elif os.path.exists(orig_ext_links_dir) and not os.path.exists(ext_links_dir):
-            # openpyxl hat externalLinks komplett verloren → alles kopieren
-            shutil.copytree(orig_ext_links_dir, ext_links_dir)
-            sys.stderr.write(f"[restore_ext] externalLinks komplett aus Original kopiert (fehlten)\n")
-            fixed_count += 1
+            # openpyxl hat externalLinks komplett verloren
+            # NICHT blind kopieren! Nur loggen. openpyxl's workbook.xml referenziert
+            # sie auch nicht → konsistent ohne die Dateien.
+            sys.stderr.write(f"[restore_ext] externalLinks komplett von openpyxl entfernt (NICHT aus Original kopiert)\n")
         
         # Kopiere slicerCaches aus dem Original (openpyxl verliert Slicers komplett)
         orig_slicer_dir = os.path.join(orig_temp_dir, 'xl', 'slicerCaches')
@@ -592,28 +594,129 @@ def restore_external_links_from_original(output_path, original_path):
             shutil.copy2(orig_shared_strings, dest_shared_strings)
             fixed_count += 1
         
-        # Stelle workbook.xml aus Original wieder her (behält definedNames, externalReferences, slicerCaches-Refs)
+        # Stelle workbook.xml SELEKTIV wieder her
+        # NICHT blind kopieren! openpyxl aktualisiert externalReferences cached values.
+        # Nur Namespace-Deklarationen und definedNames vom Original übernehmen.
         workbook_path = os.path.join(temp_dir, 'xl', 'workbook.xml')
         orig_workbook_path = os.path.join(orig_temp_dir, 'xl', 'workbook.xml')
         
         if os.path.exists(workbook_path) and os.path.exists(orig_workbook_path):
-            # Kopiere komplett das Original workbook.xml
-            shutil.copy2(orig_workbook_path, workbook_path)
-            fixed_count += 1
+            with open(workbook_path, 'r', encoding='utf-8') as f:
+                dest_wb_content = f.read()
+            with open(orig_workbook_path, 'r', encoding='utf-8') as f:
+                orig_wb_content = f.read()
+            
+            wb_modified = False
+            
+            # 1. Namespace-Deklarationen vom Original übernehmen
+            orig_wb_root = re.search(r'(<workbook\b[^>]+>)', orig_wb_content)
+            dest_wb_root = re.search(r'(<workbook\b[^>]+>)', dest_wb_content)
+            if orig_wb_root and dest_wb_root and orig_wb_root.group(1) != dest_wb_root.group(1):
+                dest_wb_content = dest_wb_content.replace(dest_wb_root.group(1), orig_wb_root.group(1), 1)
+                wb_modified = True
+                sys.stderr.write(f"[restore_ext] workbook.xml: Namespaces vom Original wiederhergestellt\n")
+            
+            # 2. definedNames vom Original übernehmen (openpyxl verliert localSheetId etc.)
+            orig_dn = re.search(r'<definedNames>.*?</definedNames>', orig_wb_content, re.DOTALL)
+            dest_dn = re.search(r'<definedNames>.*?</definedNames>', dest_wb_content, re.DOTALL)
+            if orig_dn:
+                if dest_dn:
+                    dest_wb_content = dest_wb_content.replace(dest_dn.group(0), orig_dn.group(0))
+                else:
+                    # Füge vor </workbook> ein
+                    dest_wb_content = dest_wb_content.replace('</workbook>', orig_dn.group(0) + '\n</workbook>')
+                wb_modified = True
+                sys.stderr.write(f"[restore_ext] workbook.xml: definedNames vom Original wiederhergestellt\n")
+            
+            if wb_modified:
+                with open(workbook_path, 'w', encoding='utf-8') as f:
+                    f.write(dest_wb_content)
+                fixed_count += 1
         
-        # Stelle workbook.xml.rels aus Original wieder her (enthält slicerCache Referenzen)
+        # Stelle workbook.xml.rels SELEKTIV wieder her
+        # NICHT blind kopieren! Nur fehlende Relationships ergänzen (z.B. slicerCaches).
+        # externalLinks-Relationships NICHT überschreiben (openpyxl hat korrekte rIds).
         rels_path = os.path.join(temp_dir, 'xl', '_rels', 'workbook.xml.rels')
         orig_rels_path = os.path.join(orig_temp_dir, 'xl', '_rels', 'workbook.xml.rels')
-        if os.path.exists(orig_rels_path):
-            shutil.copy2(orig_rels_path, rels_path)
-            fixed_count += 1
+        if os.path.exists(rels_path) and os.path.exists(orig_rels_path):
+            with open(rels_path, 'r', encoding='utf-8') as f:
+                dest_rels_content = f.read()
+            with open(orig_rels_path, 'r', encoding='utf-8') as f:
+                orig_rels_content = f.read()
+            
+            # Sammle alle Targets die openpyxl bereits hat
+            dest_targets = set(re.findall(r'Target="([^"]+)"', dest_rels_content))
+            
+            # Finde fehlende Relationships aus dem Original
+            missing_rels = []
+            for rel_match in re.finditer(r'<Relationship\s[^>]+/>', orig_rels_content):
+                rel_el = rel_match.group(0)
+                target_m = re.search(r'Target="([^"]+)"', rel_el)
+                if target_m and target_m.group(1) not in dest_targets:
+                    target_val = target_m.group(1)
+                    # externalLinks NICHT ergänzen (openpyxl hat korrekte cached values)
+                    if 'externalLinks/' in target_val:
+                        sys.stderr.write(f"[restore_ext] workbook.xml.rels: externalLink übersprungen: {target_val}\n")
+                        continue
+                    # Nur ergänzen wenn die Zieldatei existiert (oder extern ist)
+                    is_external = 'TargetMode="External"' in rel_el
+                    if is_external:
+                        missing_rels.append(rel_el)
+                    else:
+                        target_file_check = os.path.normpath(os.path.join(temp_dir, 'xl', target_val))
+                        orig_target_check = os.path.normpath(os.path.join(orig_temp_dir, 'xl', target_val))
+                        if os.path.exists(target_file_check):
+                            missing_rels.append(rel_el)
+                        elif os.path.exists(orig_target_check):
+                            # Datei aus Original kopieren (z.B. slicerCache)
+                            os.makedirs(os.path.dirname(target_file_check), exist_ok=True)
+                            shutil.copy2(orig_target_check, target_file_check)
+                            missing_rels.append(rel_el)
+                            sys.stderr.write(f"[restore_ext] workbook.xml.rels: {target_val} aus Original kopiert\n")
+            
+            if missing_rels:
+                # Vor </Relationships> einfügen
+                insert_str = '\n'.join(missing_rels)
+                dest_rels_content = dest_rels_content.replace('</Relationships>', insert_str + '\n</Relationships>')
+                with open(rels_path, 'w', encoding='utf-8') as f:
+                    f.write(dest_rels_content)
+                fixed_count += 1
+                sys.stderr.write(f"[restore_ext] workbook.xml.rels: {len(missing_rels)} fehlende Relationships ergänzt\n")
         
-        # Stelle [Content_Types].xml aus Original wieder her (enthält slicerCache ContentTypes)
+        # Stelle [Content_Types].xml SELEKTIV wieder her
+        # NICHT blind kopieren! Nur fehlende Einträge ergänzen (z.B. richData, slicerCaches).
         content_types_path = os.path.join(temp_dir, '[Content_Types].xml')
         orig_content_types_path = os.path.join(orig_temp_dir, '[Content_Types].xml')
-        if os.path.exists(orig_content_types_path):
-            shutil.copy2(orig_content_types_path, content_types_path)
-            fixed_count += 1
+        if os.path.exists(content_types_path) and os.path.exists(orig_content_types_path):
+            with open(content_types_path, 'r', encoding='utf-8') as f:
+                dest_ct_content = f.read()
+            with open(orig_content_types_path, 'r', encoding='utf-8') as f:
+                orig_ct_content = f.read()
+            
+            # Sammle alle PartNames die openpyxl bereits hat
+            dest_parts = set(re.findall(r'PartName="([^"]+)"', dest_ct_content))
+            
+            # Finde fehlende Override-Einträge aus dem Original
+            missing_overrides = []
+            for ov_match in re.finditer(r'<Override\s[^/]*/>', orig_ct_content):
+                ov_el = ov_match.group(0)
+                pn_m = re.search(r'PartName="([^"]+)"', ov_el)
+                if pn_m and pn_m.group(1) not in dest_parts:
+                    part_name = pn_m.group(1)
+                    # Nur ergänzen wenn die Datei tatsächlich existiert
+                    rel_path_ct = part_name.lstrip('/')
+                    dest_file_check = os.path.join(temp_dir, rel_path_ct.replace('/', os.sep))
+                    if os.path.exists(dest_file_check):
+                        missing_overrides.append(ov_el)
+                        sys.stderr.write(f"[restore_ext] ContentTypes: {part_name} ergänzt\n")
+            
+            if missing_overrides:
+                insert_str = '\n'.join(missing_overrides)
+                dest_ct_content = dest_ct_content.replace('</Types>', insert_str + '\n</Types>')
+                with open(content_types_path, 'w', encoding='utf-8') as f:
+                    f.write(dest_ct_content)
+                fixed_count += 1
+                sys.stderr.write(f"[restore_ext] [Content_Types].xml: {len(missing_overrides)} fehlende Einträge ergänzt\n")
         
         # Kopiere xl/media aus Original (Bilder/Images - openpyxl kann diese verlieren)
         orig_media_dir = os.path.join(orig_temp_dir, 'xl', 'media')
@@ -880,6 +983,10 @@ def restore_external_links_from_original(output_path, original_path):
                 dest_file_ct = os.path.join(temp_dir, rel_path.replace('/', os.sep))
                 if os.path.exists(dest_file_ct):
                     return m.group(0)  # Datei existiert, Eintrag behalten
+                # externalLinks NIEMALS aus Original kopieren (stale cached values!)
+                if 'externalLinks/' in part_name:
+                    sys.stderr.write(f"[restore_ext] ContentTypes-Konsistenz: {part_name} entfernt (externalLink, nicht kopieren)\n")
+                    return ''
                 # Datei fehlt — aus Original kopieren
                 orig_file_ct = os.path.join(orig_temp_dir, rel_path.replace('/', os.sep))
                 if os.path.exists(orig_file_ct):
@@ -918,6 +1025,10 @@ def restore_external_links_from_original(output_path, original_path):
                 target_file_r = os.path.normpath(os.path.join(temp_dir, 'xl', target))
                 if os.path.exists(target_file_r):
                     return full_el  # Datei existiert
+                # externalLinks NIEMALS aus Original kopieren (stale cached values!)
+                if 'externalLinks/' in target:
+                    sys.stderr.write(f"[restore_ext] Rels-Konsistenz: xl/{target} entfernt (externalLink, nicht kopieren)\n")
+                    return ''
                 orig_target_r = os.path.normpath(os.path.join(orig_temp_dir, 'xl', target))
                 if os.path.exists(orig_target_r):
                     os.makedirs(os.path.dirname(target_file_r), exist_ok=True)
