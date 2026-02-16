@@ -2042,8 +2042,15 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             const AdmZip2 = require('adm-zip');
             const pivotBuf = await fs.promises.readFile(filePath);
             const pivotZip = new AdmZip2(pivotBuf);
-            hasPivotTables = pivotZip.getEntries().some(e => e.entryName.includes('pivotTable') || e.entryName.includes('pivotCache'));
-        } catch (_) { /* ignore - passwortgeschützte Dateien können nicht gescannt werden */ }
+            const pivotEntries = pivotZip.getEntries().filter(e => e.entryName.includes('pivotTable') || e.entryName.includes('pivotCache'));
+            hasPivotTables = pivotEntries.length > 0;
+            console.log(`[readFile] Pivot-Scan: ${pivotEntries.length} Einträge gefunden, hasPivotTables=${hasPivotTables}`);
+            if (hasPivotTables) {
+                console.log('[readFile] Pivot-Einträge:', pivotEntries.map(e => e.entryName));
+            }
+        } catch (pivotErr) {
+            console.log('[readFile] Pivot-Scan Fehler:', pivotErr.message);
+        }
 
         return {
             success: true,
