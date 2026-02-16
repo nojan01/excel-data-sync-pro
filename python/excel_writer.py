@@ -673,67 +673,10 @@ def restore_external_links_from_original(output_path, original_path):
                 fixed_count += 1
                 sys.stderr.write(f"[restore_ext] workbook.xml.rels: {len(missing_rels)} fehlende Relationships ergänzt\n")
         
-        # Stelle [Content_Types].xml SELEKTIV wieder her
-        # NICHT blind kopieren! Nur fehlende Einträge ergänzen (z.B. richData, slicerCaches).
-        content_types_path = os.path.join(temp_dir, '[Content_Types].xml')
-        orig_content_types_path = os.path.join(orig_temp_dir, '[Content_Types].xml')
-        if os.path.exists(content_types_path) and os.path.exists(orig_content_types_path):
-            with open(content_types_path, 'r', encoding='utf-8') as f:
-                dest_ct_content = f.read()
-            with open(orig_content_types_path, 'r', encoding='utf-8') as f:
-                orig_ct_content = f.read()
-            
-            ct_modified = False
-            
-            # A. Fehlende <Default Extension="..."> Einträge ergänzen
-            # KRITISCH für VML-Zeichnungen (.vml), Metafiles (.emf, .wmf) etc.
-            # openpyxl kennt diese Formate nicht und schreibt keine Default-Einträge.
-            # Ohne Content-Type erkennt Excel die Dateien nicht → "Entfernter Teil: Zeichnungsform"
-            dest_extensions = set(re.findall(r'<Default\s+Extension="([^"]+)"', dest_ct_content))
-            missing_defaults = []
-            for df_match in re.finditer(r'<Default\s[^>]*/>', orig_ct_content):
-                df_el = df_match.group(0)
-                ext_m = re.search(r'Extension="([^"]+)"', df_el)
-                if ext_m and ext_m.group(1) not in dest_extensions:
-                    missing_defaults.append(df_el)
-                    sys.stderr.write(f"[restore_ext] ContentTypes Default: Extension=\"{ext_m.group(1)}\" ergänzt\n")
-            
-            if missing_defaults:
-                # Default-Einträge VOR den Override-Einträgen einfügen
-                first_override = re.search(r'<Override\s', dest_ct_content)
-                if first_override:
-                    insert_str = '\n'.join(missing_defaults) + '\n'
-                    dest_ct_content = dest_ct_content[:first_override.start()] + insert_str + dest_ct_content[first_override.start():]
-                else:
-                    insert_str = '\n'.join(missing_defaults)
-                    dest_ct_content = dest_ct_content.replace('</Types>', insert_str + '\n</Types>')
-                ct_modified = True
-            
-            # B. Fehlende <Override PartName="..."> Einträge ergänzen
-            dest_parts = set(re.findall(r'PartName="([^"]+)"', dest_ct_content))
-            missing_overrides = []
-            for ov_match in re.finditer(r'<Override\s[^>]*/>', orig_ct_content):
-                ov_el = ov_match.group(0)
-                pn_m = re.search(r'PartName="([^"]+)"', ov_el)
-                if pn_m and pn_m.group(1) not in dest_parts:
-                    part_name = pn_m.group(1)
-                    # Nur ergänzen wenn die Datei tatsächlich existiert
-                    rel_path_ct = part_name.lstrip('/')
-                    dest_file_check = os.path.join(temp_dir, rel_path_ct.replace('/', os.sep))
-                    if os.path.exists(dest_file_check):
-                        missing_overrides.append(ov_el)
-                        sys.stderr.write(f"[restore_ext] ContentTypes Override: {part_name} ergänzt\n")
-            
-            if missing_overrides:
-                insert_str = '\n'.join(missing_overrides)
-                dest_ct_content = dest_ct_content.replace('</Types>', insert_str + '\n</Types>')
-                ct_modified = True
-            
-            if ct_modified:
-                with open(content_types_path, 'w', encoding='utf-8') as f:
-                    f.write(dest_ct_content)
-                fixed_count += 1
-                sys.stderr.write(f"[restore_ext] [Content_Types].xml: {len(missing_defaults)} Default + {len(missing_overrides)} Override Einträge ergänzt\n")
+        # [Content_Types].xml Merge wird NACH den Datei-Kopien durchgeführt (s.u.)
+        # Grund: Override-Einträge prüfen ob die Datei existiert.
+        # Wenn der Merge VOR dem Kopieren von drawings/media/richData läuft,
+        # fehlen die Dateien noch → Override wird übersprungen → "Entfernter Teil: Zeichnungsform"
         
         # Kopiere xl/media aus Original (Bilder/Images - openpyxl kann diese verlieren)
         orig_media_dir = os.path.join(orig_temp_dir, 'xl', 'media')
@@ -807,6 +750,70 @@ def restore_external_links_from_original(output_path, original_path):
             fixed_count += 1
         else:
             sys.stderr.write(f"[restore_ext] xl/worksheets/_rels im Original NICHT vorhanden\n")
+        
+        # =====================================================================
+        # [Content_Types].xml SELEKTIV wiederherstellen
+        # MUSS NACH allen Datei-Kopien laufen! Override-Einträge prüfen ob die
+        # Datei existiert. Wenn dieser Block VOR dem Kopieren von drawings/media/
+        # richData läuft, fehlen die Dateien → Override übersprungen →
+        # "Entfernter Teil: Zeichnungsform"
+        # =====================================================================
+        content_types_path = os.path.join(temp_dir, '[Content_Types].xml')
+        orig_content_types_path = os.path.join(orig_temp_dir, '[Content_Types].xml')
+        if os.path.exists(content_types_path) and os.path.exists(orig_content_types_path):
+            with open(content_types_path, 'r', encoding='utf-8') as f:
+                dest_ct_content = f.read()
+            with open(orig_content_types_path, 'r', encoding='utf-8') as f:
+                orig_ct_content = f.read()
+            
+            ct_modified = False
+            
+            # A. Fehlende <Default Extension="..."> Einträge ergänzen
+            # KRITISCH für VML-Zeichnungen (.vml), Metafiles (.emf, .wmf) etc.
+            dest_extensions = set(re.findall(r'<Default\s+Extension="([^"]+)"', dest_ct_content))
+            missing_defaults = []
+            for df_match in re.finditer(r'<Default\s[^>]*/>', orig_ct_content):
+                df_el = df_match.group(0)
+                ext_m = re.search(r'Extension="([^"]+)"', df_el)
+                if ext_m and ext_m.group(1) not in dest_extensions:
+                    missing_defaults.append(df_el)
+                    sys.stderr.write(f"[restore_ext] ContentTypes Default: Extension=\"{ext_m.group(1)}\" ergänzt\n")
+            
+            if missing_defaults:
+                first_override = re.search(r'<Override\s', dest_ct_content)
+                if first_override:
+                    insert_str = '\n'.join(missing_defaults) + '\n'
+                    dest_ct_content = dest_ct_content[:first_override.start()] + insert_str + dest_ct_content[first_override.start():]
+                else:
+                    insert_str = '\n'.join(missing_defaults)
+                    dest_ct_content = dest_ct_content.replace('</Types>', insert_str + '\n</Types>')
+                ct_modified = True
+            
+            # B. Fehlende <Override PartName="..."> Einträge ergänzen
+            dest_parts = set(re.findall(r'PartName="([^"]+)"', dest_ct_content))
+            missing_overrides = []
+            for ov_match in re.finditer(r'<Override\s[^>]*/>', orig_ct_content):
+                ov_el = ov_match.group(0)
+                pn_m = re.search(r'PartName="([^"]+)"', ov_el)
+                if pn_m and pn_m.group(1) not in dest_parts:
+                    part_name = pn_m.group(1)
+                    # Nur ergänzen wenn die Datei tatsächlich existiert
+                    rel_path_ct = part_name.lstrip('/')
+                    dest_file_check = os.path.join(temp_dir, rel_path_ct.replace('/', os.sep))
+                    if os.path.exists(dest_file_check):
+                        missing_overrides.append(ov_el)
+                        sys.stderr.write(f"[restore_ext] ContentTypes Override: {part_name} ergänzt\n")
+            
+            if missing_overrides:
+                insert_str = '\n'.join(missing_overrides)
+                dest_ct_content = dest_ct_content.replace('</Types>', insert_str + '\n</Types>')
+                ct_modified = True
+            
+            if ct_modified:
+                with open(content_types_path, 'w', encoding='utf-8') as f:
+                    f.write(dest_ct_content)
+                fixed_count += 1
+                sys.stderr.write(f"[restore_ext] [Content_Types].xml: {len(missing_defaults)} Default + {len(missing_overrides)} Override Einträge ergänzt\n")
         
         # KRITISCH: <drawing> und <legacyDrawing> Elemente in Worksheet-XMLs wiederherstellen
         # openpyxl ENTFERNT diese Elemente beim Speichern wenn Pillow nicht installiert ist.
