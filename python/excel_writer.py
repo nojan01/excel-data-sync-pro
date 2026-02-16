@@ -4053,17 +4053,6 @@ def _apply_imported_rich_text(ws, rich_text_cells):
     
     if applied > 0:
         sys.stderr.write(f"[RichText] {applied} RichText-Zellen angewendet\n")
-    max_col = ws.max_column
-    
-    for excel_row in range(2, max_row + 1):  # Ab Zeile 2 (nach Header)
-        if excel_row in highlighted_rows:
-            continue  # Diese Zeile behält ihr Highlight
-        
-        # Entferne Fill von allen Zellen in dieser Zeile
-        for col_idx in range(1, max_col + 1):
-            cell = ws.cell(row=excel_row, column=col_idx)
-            # Setze auf "keine Füllung"
-            cell.fill = PatternFill(fill_type=None)
 
 
 def _apply_row_highlights(ws, row_highlights, num_columns):
