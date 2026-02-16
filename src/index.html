@@ -17317,8 +17317,8 @@
                     sheetsToExport.push(sheetData);
                 }
                 
-                // FALLBACK MODUS: xlwings/Python für Export verwenden (CF-Erhaltung)
-                console.log('[Export] Fallback-Modus - verwende xlwings/Python für CF-Erhaltung...');
+                // FALLBACK MODUS: openpyxl/Python für Export verwenden (kein Excel verfügbar)
+                console.log('[Export] Fallback-Modus - verwende openpyxl/Python für Export...');
                 
                 // Warnung bei Pivot-Tabellen im Fallback-Modus (ohne Live-Session können Pivot-Tabellen beschädigt werden)
                 console.log('[Export Fallback] explorerState.hasPivotTables =', explorerState.hasPivotTables);
