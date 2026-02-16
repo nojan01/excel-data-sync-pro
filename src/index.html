@@ -11918,8 +11918,21 @@
                     // Style kopieren (mit styleKey = 1-basiert)
                     if (cell.style) {
                         explorerState.cellStyles[styleKey] = { ...cell.style };
+                        
+                        // Font-Infos auch in cellFonts speichern (Backend erwartet diese separat)
+                        const fontInfo = {};
+                        if (cell.style.fontName) fontInfo.name = cell.style.fontName;
+                        if (cell.style.fontSize) fontInfo.size = cell.style.fontSize;
+                        if (cell.style.bold) fontInfo.bold = cell.style.bold;
+                        if (cell.style.italic) fontInfo.italic = cell.style.italic;
+                        if (cell.style.fontColor) fontInfo.color = cell.style.fontColor;
+                        if (Object.keys(fontInfo).length > 0) {
+                            if (!explorerState.cellFonts) explorerState.cellFonts = {};
+                            explorerState.cellFonts[styleKey] = fontInfo;
+                        }
                     } else {
                         delete explorerState.cellStyles[styleKey];
+                        if (explorerState.cellFonts) delete explorerState.cellFonts[styleKey];
                     }
                     
                     // Formel kopieren
@@ -17261,13 +17274,26 @@
                                 
                                 // CellFonts für geänderte Zellen (kopierte Schriftformatierungen)
                                 const cellFontsForChanged = {};
-                                if (explorerState.cellFonts) {
-                                    for (const cellKey of explorerState.editedCells.keys()) {
-                                        if (cellKey.startsWith('_')) continue;
-                                        const [rowStr, colStr] = cellKey.split('-');
-                                        const styleKey = `${parseInt(rowStr) + 1}-${colStr}`;
-                                        if (explorerState.cellFonts[styleKey]) {
-                                            cellFontsForChanged[cellKey] = explorerState.cellFonts[styleKey];
+                                for (const cellKey of explorerState.editedCells.keys()) {
+                                    if (cellKey.startsWith('_')) continue;
+                                    const [rowStr, colStr] = cellKey.split('-');
+                                    const styleKey = `${parseInt(rowStr) + 1}-${colStr}`;
+                                    
+                                    // Primär aus cellFonts (explizit gesetzt)
+                                    if (explorerState.cellFonts && explorerState.cellFonts[styleKey]) {
+                                        cellFontsForChanged[cellKey] = explorerState.cellFonts[styleKey];
+                                    }
+                                    // Fallback: Font-Infos aus cellStyles extrahieren (z.B. bei Copy-Paste)
+                                    else if (explorerState.cellStyles && explorerState.cellStyles[styleKey]) {
+                                        const s = explorerState.cellStyles[styleKey];
+                                        const fontInfo = {};
+                                        if (s.fontName) fontInfo.name = s.fontName;
+                                        if (s.fontSize) fontInfo.size = s.fontSize;
+                                        if (s.bold) fontInfo.bold = s.bold;
+                                        if (s.italic) fontInfo.italic = s.italic;
+                                        if (s.fontColor) fontInfo.color = s.fontColor;
+                                        if (Object.keys(fontInfo).length > 0) {
+                                            cellFontsForChanged[cellKey] = fontInfo;
                                         }
                                     }
                                 }
@@ -17306,7 +17332,7 @@
                                     fullRewrite: false,
                                     mergedCells: explorerState.mergedCells || []
                                 };
-                                console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${Object.keys(cellStylesForChanged).length} CellStyles, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, ${clearedRowHighlights.length} entfernte Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
+                                console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${Object.keys(cellStylesForChanged).length} CellStyles, ${Object.keys(cellFontsForChanged).length} CellFonts, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, ${clearedRowHighlights.length} entfernte Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
                             console.log(`[Export] mergedCells für Zell-Edits: ${(explorerState.mergedCells || []).length} Einträge`, JSON.stringify(explorerState.mergedCells || []));
                             }
                         }

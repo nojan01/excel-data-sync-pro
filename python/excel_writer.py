@@ -3722,6 +3722,9 @@ def _apply_cell_fonts(ws, cell_fonts):
     if not cell_fonts:
         return
     
+    sys.stderr.write(f"[CellFonts] Starte: {len(cell_fonts)} Font-Einträge zu verarbeiten\n")
+    applied = 0
+    
     for key, font_info in cell_fonts.items():
         try:
             parts = key.split('-')
@@ -3731,23 +3734,43 @@ def _apply_cell_fonts(ws, cell_fonts):
             col_idx = int(parts[1])
             cell = ws.cell(row=row_idx + 2, column=col_idx + 1)
             
-            # Erstelle Font-Objekt aus font_info
-            font_kwargs = {}
+            # Bestehende Font-Eigenschaften beibehalten und nur überschreiben was wir haben
+            existing_font = cell.font
+            font_kwargs = {
+                'name': existing_font.name,
+                'size': existing_font.size,
+                'bold': existing_font.bold,
+                'italic': existing_font.italic,
+                'color': existing_font.color,
+                'underline': existing_font.underline,
+                'strikethrough': existing_font.strikethrough,
+            }
+            
+            # Neue Werte überschreiben
             if font_info.get('name'):
                 font_kwargs['name'] = font_info['name']
             if font_info.get('size'):
                 font_kwargs['size'] = font_info['size']
-            if font_info.get('bold'):
+            if 'bold' in font_info:
                 font_kwargs['bold'] = font_info['bold']
-            if font_info.get('italic'):
+            if 'italic' in font_info:
                 font_kwargs['italic'] = font_info['italic']
             if font_info.get('color'):
-                font_kwargs['color'] = font_info['color']
+                color_val = font_info['color']
+                # #RRGGBB → RRGGBB konvertieren (openpyxl erwartet kein #)
+                if isinstance(color_val, str) and color_val.startswith('#'):
+                    color_val = color_val[1:]
+                # Zu ARGB konvertieren wenn nötig
+                if isinstance(color_val, str) and len(color_val) == 6:
+                    color_val = 'FF' + color_val
+                font_kwargs['color'] = color_val
             
-            if font_kwargs:
-                cell.font = Font(**font_kwargs)
-        except Exception:
-            pass
+            cell.font = Font(**font_kwargs)
+            applied += 1
+        except Exception as e:
+            sys.stderr.write(f"[CellFonts] Fehler bei {key}: {e}\n")
+    
+    sys.stderr.write(f"[CellFonts] Fertig: {applied} von {len(cell_fonts)} Fonts angewendet\n")
 
 
 def _apply_imported_cell_styles(ws, cell_styles):
