@@ -395,7 +395,7 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
                         if f == 'restored.xlsx':
                             continue
                         full_path = os.path.join(root, f)
-                        arc_name = full_path.replace(temp_dir + os.sep, '')
+                        arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
                         zf.write(full_path, arc_name)
             
             shutil.copy2(temp_xlsx, output_path)
@@ -417,11 +417,17 @@ def restore_external_links_from_original(output_path, original_path):
     import zipfile
     import re
     
+    sys.stderr.write(f"[restore_ext] START: output_path={output_path}, original_path={original_path}\n")
+    
     if not original_path or original_path == output_path:
+        sys.stderr.write(f"[restore_ext] SKIPPED: original_path leer oder gleich output_path\n")
         return
     
     if not os.path.exists(original_path):
+        sys.stderr.write(f"[restore_ext] SKIPPED: original_path existiert nicht: {original_path}\n")
         return
+    
+    sys.stderr.write(f"[restore_ext] Original existiert, starte Wiederherstellung...\n")
     
     temp_dir = None
     orig_temp_dir = None
@@ -517,29 +523,41 @@ def restore_external_links_from_original(output_path, original_path):
         orig_media_dir = os.path.join(orig_temp_dir, 'xl', 'media')
         dest_media_dir = os.path.join(temp_dir, 'xl', 'media')
         if os.path.exists(orig_media_dir):
+            media_files = os.listdir(orig_media_dir)
+            sys.stderr.write(f"[restore_ext] xl/media im Original gefunden: {len(media_files)} Dateien: {media_files}\n")
             if os.path.exists(dest_media_dir):
                 shutil.rmtree(dest_media_dir)
             shutil.copytree(orig_media_dir, dest_media_dir)
             fixed_count += 1
+        else:
+            sys.stderr.write(f"[restore_ext] xl/media im Original NICHT vorhanden\n")
         
         # Kopiere xl/drawings aus Original (Drawing-XML mit Bild-Positionen/Ankern)
         orig_drawings_dir = os.path.join(orig_temp_dir, 'xl', 'drawings')
         dest_drawings_dir = os.path.join(temp_dir, 'xl', 'drawings')
         if os.path.exists(orig_drawings_dir):
+            drawings_files = os.listdir(orig_drawings_dir)
+            sys.stderr.write(f"[restore_ext] xl/drawings im Original gefunden: {len(drawings_files)} Dateien: {drawings_files}\n")
             if os.path.exists(dest_drawings_dir):
                 shutil.rmtree(dest_drawings_dir)
             shutil.copytree(orig_drawings_dir, dest_drawings_dir)
             fixed_count += 1
+        else:
+            sys.stderr.write(f"[restore_ext] xl/drawings im Original NICHT vorhanden\n")
         
         # Kopiere Worksheet-Relationships aus Original (enthält Drawing-Referenzen)
         # openpyxl kann Drawing-Relationships verlieren, was dazu führt dass Bilder fehlen
         orig_ws_rels_dir = os.path.join(orig_temp_dir, 'xl', 'worksheets', '_rels')
         dest_ws_rels_dir = os.path.join(temp_dir, 'xl', 'worksheets', '_rels')
         if os.path.exists(orig_ws_rels_dir):
+            rels_files = os.listdir(orig_ws_rels_dir)
+            sys.stderr.write(f"[restore_ext] xl/worksheets/_rels im Original gefunden: {len(rels_files)} Dateien: {rels_files}\n")
             if os.path.exists(dest_ws_rels_dir):
                 shutil.rmtree(dest_ws_rels_dir)
             shutil.copytree(orig_ws_rels_dir, dest_ws_rels_dir)
             fixed_count += 1
+        else:
+            sys.stderr.write(f"[restore_ext] xl/worksheets/_rels im Original NICHT vorhanden\n")
         
         # KRITISCH: <drawing> und <legacyDrawing> Elemente in Worksheet-XMLs wiederherstellen
         # openpyxl ENTFERNT diese Elemente beim Speichern wenn Pillow nicht installiert ist.
@@ -595,6 +613,8 @@ def restore_external_links_from_original(output_path, original_path):
                         f.write(dest_ws_content)
                     fixed_count += 1
         
+        sys.stderr.write(f"[restore_ext] fixed_count={fixed_count}\n")
+        
         if fixed_count > 0:
             
             # Erstelle neue XLSX
@@ -604,10 +624,11 @@ def restore_external_links_from_original(output_path, original_path):
                         if f == 'restored.xlsx':
                             continue
                         full_path = os.path.join(root, f)
-                        arc_name = full_path.replace(temp_dir + os.sep, '')
+                        arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
                         zf.write(full_path, arc_name)
             
             shutil.copy2(temp_xlsx, output_path)
+            sys.stderr.write(f"[restore_ext] XLSX wiederhergestellt und gespeichert\n")
     
     finally:
         if temp_dir:
