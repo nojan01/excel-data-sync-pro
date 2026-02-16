@@ -440,7 +440,37 @@ def restore_external_links_from_original(output_path, original_path):
         with zipfile.ZipFile(output_path, 'r') as zf:
             zf.extractall(temp_dir)
         with zipfile.ZipFile(original_path, 'r') as zf:
+            # DEBUG: Zeige alle Dateien im Original-ZIP die mit Bildern/Drawings zu tun haben
+            all_names = zf.namelist()
+            drawing_related = [n for n in all_names if any(k in n.lower() for k in ['draw', 'media', 'image', 'picture', 'vml', 'richdata', 'rdrichvalue'])]
+            sys.stderr.write(f"[restore_ext] Original-ZIP Dateien (drawing/media-related): {drawing_related}\n")
+            sys.stderr.write(f"[restore_ext] Original-ZIP alle xl/ Dateien: {[n for n in all_names if n.startswith('xl/')]}\n")
             zf.extractall(orig_temp_dir)
+        
+        # DEBUG: Inhalt von sheet1.xml.rels anzeigen
+        orig_rels_file = os.path.join(orig_temp_dir, 'xl', 'worksheets', '_rels', 'sheet1.xml.rels')
+        if os.path.exists(orig_rels_file):
+            with open(orig_rels_file, 'r', encoding='utf-8') as f:
+                rels_content = f.read()
+            sys.stderr.write(f"[restore_ext] sheet1.xml.rels Inhalt: {rels_content[:500]}\n")
+        
+        # DEBUG: Prüfe ob <drawing> Element in original sheet1.xml vorhanden
+        orig_sheet1 = os.path.join(orig_temp_dir, 'xl', 'worksheets', 'sheet1.xml')
+        if os.path.exists(orig_sheet1):
+            with open(orig_sheet1, 'r', encoding='utf-8') as f:
+                sheet1_content = f.read()
+            has_drawing = '<drawing ' in sheet1_content or '<drawing>' in sheet1_content
+            has_legacy = '<legacyDrawing ' in sheet1_content
+            has_picture = '<picture ' in sheet1_content
+            sys.stderr.write(f"[restore_ext] Original sheet1.xml: <drawing>={has_drawing}, <legacyDrawing>={has_legacy}, <picture>={has_picture}\n")
+        
+        # DEBUG: Prüfe ob <drawing> Element in output sheet1.xml vorhanden
+        dest_sheet1 = os.path.join(temp_dir, 'xl', 'worksheets', 'sheet1.xml')
+        if os.path.exists(dest_sheet1):
+            with open(dest_sheet1, 'r', encoding='utf-8') as f:
+                dest_sheet1_content = f.read()
+            has_drawing_dest = '<drawing ' in dest_sheet1_content or '<drawing>' in dest_sheet1_content
+            sys.stderr.write(f"[restore_ext] Output sheet1.xml: <drawing>={has_drawing_dest}\n")
         
         ext_links_dir = os.path.join(temp_dir, 'xl', 'externalLinks')
         orig_ext_links_dir = os.path.join(orig_temp_dir, 'xl', 'externalLinks')
@@ -545,6 +575,39 @@ def restore_external_links_from_original(output_path, original_path):
         else:
             sys.stderr.write(f"[restore_ext] xl/drawings im Original NICHT vorhanden\n")
         
+        # KRITISCH: Kopiere xl/richData aus Original (Excel 365 Zellbilder)
+        # Moderne Excel 365 Zellbilder verwenden richData statt drawings:
+        # - xl/richData/rdrichvalue.xml (Bild-Werte)
+        # - xl/richData/rdRichValueStructure.xml (Struktur)
+        # - xl/richData/rdRichValueTypes.xml (Typen)
+        # - xl/richData/richValueRel.xml (Beziehungen zu media/)
+        # - xl/richData/_rels/richValueRel.xml.rels (tatsächliche Datei-Referenzen)
+        # openpyxl kennt richData NICHT und entfernt alles komplett!
+        orig_richdata_dir = os.path.join(orig_temp_dir, 'xl', 'richData')
+        dest_richdata_dir = os.path.join(temp_dir, 'xl', 'richData')
+        if os.path.exists(orig_richdata_dir):
+            richdata_files = []
+            for root_dir, dirs, files_list in os.walk(orig_richdata_dir):
+                for ff in files_list:
+                    rel_path = os.path.relpath(os.path.join(root_dir, ff), orig_richdata_dir)
+                    richdata_files.append(rel_path)
+            sys.stderr.write(f"[restore_ext] xl/richData im Original gefunden: {len(richdata_files)} Dateien: {richdata_files}\n")
+            if os.path.exists(dest_richdata_dir):
+                shutil.rmtree(dest_richdata_dir)
+            shutil.copytree(orig_richdata_dir, dest_richdata_dir)
+            fixed_count += 1
+        else:
+            sys.stderr.write(f"[restore_ext] xl/richData im Original NICHT vorhanden\n")
+        
+        # KRITISCH: Kopiere xl/metadata.xml aus Original (benötigt für richData/vm-Attribute)
+        # metadata.xml definiert die Value Metadata Typen die richData-Zellbilder referenzieren
+        orig_metadata = os.path.join(orig_temp_dir, 'xl', 'metadata.xml')
+        dest_metadata = os.path.join(temp_dir, 'xl', 'metadata.xml')
+        if os.path.exists(orig_metadata):
+            shutil.copy2(orig_metadata, dest_metadata)
+            sys.stderr.write(f"[restore_ext] xl/metadata.xml aus Original kopiert\n")
+            fixed_count += 1
+        
         # Kopiere Worksheet-Relationships aus Original (enthält Drawing-Referenzen)
         # openpyxl kann Drawing-Relationships verlieren, was dazu führt dass Bilder fehlen
         orig_ws_rels_dir = os.path.join(orig_temp_dir, 'xl', 'worksheets', '_rels')
@@ -607,6 +670,49 @@ def restore_external_links_from_original(output_path, original_path):
                 if picture_match and not re.search(r'<picture[\s>]', dest_ws_content):
                     dest_ws_content = dest_ws_content.replace('</worksheet>', picture_match.group(0) + '\n</worksheet>')
                     ws_modified = True
+                
+                # KRITISCH: vm-Attribute auf Zellen wiederherstellen (Excel 365 Zellbilder)
+                # openpyxl kennt vm-Attribute NICHT und entfernt sie komplett beim Speichern.
+                # vm="N" auf <c>-Elementen verweist auf xl/metadata.xml → xl/richData/ → Bilder
+                # Ohne vm-Attribute werden Zellbilder trotz vorhandener richData nicht angezeigt.
+                if 'vm=' in orig_ws_content:
+                    # Sammle alle Zellen mit vm-Attribut aus dem Original
+                    vm_cells = {}
+                    # Zwei mögliche Attribut-Reihenfolgen: r="..." vm="..." oder vm="..." r="..."
+                    for vm_match in re.finditer(r'<c\s[^>]*?r="([A-Z]+\d+)"[^>]*?\bvm="(\d+)"', orig_ws_content):
+                        vm_cells[vm_match.group(1)] = vm_match.group(2)
+                    for vm_match in re.finditer(r'<c\s[^>]*?\bvm="(\d+)"[^>]*?r="([A-Z]+\d+)"', orig_ws_content):
+                        if vm_match.group(2) not in vm_cells:
+                            vm_cells[vm_match.group(2)] = vm_match.group(1)
+                    
+                    if vm_cells:
+                        vm_restored = 0
+                        vm_created = 0
+                        for cell_ref, vm_val in vm_cells.items():
+                            # Finde die Zelle in der Zieldatei und füge vm-Attribut hinzu
+                            cell_pattern = re.compile(r'(<c\s[^>]*?r="' + re.escape(cell_ref) + '"[^>]*?)(/?>)')
+                            match = cell_pattern.search(dest_ws_content)
+                            if match and 'vm=' not in match.group(0):
+                                new_attr = match.group(1) + f' vm="{vm_val}"' + match.group(2)
+                                dest_ws_content = dest_ws_content[:match.start()] + new_attr + dest_ws_content[match.end():]
+                                vm_restored += 1
+                                ws_modified = True
+                            elif not match:
+                                # Zelle existiert nicht in Zieldatei (openpyxl hat sie entfernt)
+                                # Erstelle das Zell-Element in der passenden Zeile
+                                row_num_match = re.search(r'(\d+)$', cell_ref)
+                                if row_num_match:
+                                    row_num = row_num_match.group(1)
+                                    row_pattern = re.compile(r'(<row\s[^>]*?\br="' + re.escape(row_num) + '"[^>]*?>)')
+                                    row_match = row_pattern.search(dest_ws_content)
+                                    if row_match:
+                                        cell_el = f'<c r="{cell_ref}" vm="{vm_val}"/>'
+                                        insert_pos = row_match.end()
+                                        dest_ws_content = dest_ws_content[:insert_pos] + cell_el + dest_ws_content[insert_pos:]
+                                        vm_created += 1
+                                        ws_modified = True
+                        if vm_restored > 0 or vm_created > 0:
+                            sys.stderr.write(f"[restore] {ws_file}: {vm_restored} vm-Attribute wiederhergestellt, {vm_created} vm-Zellen neu erstellt (von {len(vm_cells)} im Original)\n")
                 
                 if ws_modified:
                     with open(dest_ws_file, 'w', encoding='utf-8') as f:
