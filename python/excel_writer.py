@@ -532,26 +532,38 @@ def restore_external_links_from_original(output_path, original_path):
         fixed_count = 0
         
         if os.path.exists(orig_ext_links_dir) and os.path.exists(ext_links_dir):
-            # Kopiere alle externalLink*.xml Dateien
+            # Kopiere NUR FEHLENDE externalLink*.xml Dateien
+            # NICHT überschreiben! openpyxl aktualisiert cached values korrekt.
+            # Überschreiben mit Original → alte cached values → Excel-Reparaturmodus!
             for f in os.listdir(orig_ext_links_dir):
                 if f.startswith('externalLink') and f.endswith('.xml'):
                     orig_file = os.path.join(orig_ext_links_dir, f)
                     dest_file = os.path.join(ext_links_dir, f)
-                    if os.path.exists(dest_file):
+                    if not os.path.exists(dest_file):
                         shutil.copy2(orig_file, dest_file)
+                        sys.stderr.write(f"[restore_ext] externalLink kopiert (fehlend): {f}\n")
                         fixed_count += 1
+                    else:
+                        sys.stderr.write(f"[restore_ext] externalLink beibehalten (openpyxl): {f}\n")
             
-            # WICHTIG: Auch die _rels Dateien kopieren (openpyxl verliert Relationships)
+            # Auch _rels: NUR fehlende kopieren
             orig_rels_dir = os.path.join(orig_ext_links_dir, '_rels')
             dest_rels_dir = os.path.join(ext_links_dir, '_rels')
-            if os.path.exists(orig_rels_dir) and os.path.exists(dest_rels_dir):
+            if os.path.exists(orig_rels_dir):
+                if not os.path.exists(dest_rels_dir):
+                    os.makedirs(dest_rels_dir)
                 for f in os.listdir(orig_rels_dir):
                     if f.endswith('.xml.rels'):
                         orig_rels = os.path.join(orig_rels_dir, f)
                         dest_rels = os.path.join(dest_rels_dir, f)
-                        if os.path.exists(dest_rels):
+                        if not os.path.exists(dest_rels):
                             shutil.copy2(orig_rels, dest_rels)
                             fixed_count += 1
+        elif os.path.exists(orig_ext_links_dir) and not os.path.exists(ext_links_dir):
+            # openpyxl hat externalLinks komplett verloren → alles kopieren
+            shutil.copytree(orig_ext_links_dir, ext_links_dir)
+            sys.stderr.write(f"[restore_ext] externalLinks komplett aus Original kopiert (fehlten)\n")
+            fixed_count += 1
         
         # Kopiere slicerCaches aus dem Original (openpyxl verliert Slicers komplett)
         orig_slicer_dir = os.path.join(orig_temp_dir, 'xl', 'slicerCaches')

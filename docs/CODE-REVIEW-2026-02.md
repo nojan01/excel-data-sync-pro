@@ -175,3 +175,32 @@
 | 18 | P3 | Python-Timeout | ✅ |
 | 19 | P3 | Encoding-Probleme | ✅ |
 | 20 | P3 | xlsx-populate Ablösung | ⬜ (langfristig) |
+
+---
+
+## 📋 To-Do: Bild-in-Zelle (richData) Wiederherstellung
+
+### Erledigt ✅
+
+| Commit | Beschreibung |
+|--------|-------------|
+| `ae40d28` | rId-Mismatch Fix: tableParts/pageSetup/Namespaces vom Original wiederherstellen |
+| `d5e4f2a` | Diagnostik-Dump für Image-Debugging hinzugefügt |
+| `592f756` | Windows-Pfad-Robustheit: `os.path.relpath` + `os.path.normpath` × 3 |
+| `978fba0` | Content_Types/Rels Konsistenz + FALL 1 restore (siehe unten) |
+
+### Fix-Details (978fba0)
+
+1. **Content_Types Konsistenz** — `[Content_Types].xml` wird vom Original kopiert, referenziert aber Dateien die openpyxl nicht erzeugt (z.B. `calcChain.xml`). Excel findet die fehlende Datei → Reparaturmodus → richData/Bilder werden entfernt. **Fix:** Fehlende Dateien aus Original nachkopieren, inexistente Einträge entfernen.
+
+2. **workbook.xml.rels Konsistenz** — Gleiche Problematik für `xl/_rels/workbook.xml.rels`.
+
+3. **FALL 1 (fromFile) restore fehlte** — Wenn ein Sheet als `fromFile: true` verarbeitet wird, fehlten `restore_table_xml_from_original()` und `restore_external_links_from_original()` Aufrufe komplett. Ergänzt.
+
+### Offen ⬜
+
+- [ ] Windows-Test: Bestätigen dass Bild nach Export sichtbar ist (kein Placeholder-Icon)
+- [ ] Test mit mehreren Bildern / mehreren Sheets
+- [ ] Test: "Speichern" (gleiche Datei) vs "Speichern unter" (neue Datei)
+- [ ] Test: Zelle mit Bild editieren → Speichern → Bild erhalten?
+- [ ] XlsxPopulate Passwortschutz prüfen (Zeile 997 python_bridge.js) — könnte richData nach restore zerstören
