@@ -513,6 +513,34 @@ def restore_external_links_from_original(output_path, original_path):
             shutil.copy2(orig_content_types_path, content_types_path)
             fixed_count += 1
         
+        # Kopiere xl/media aus Original (Bilder/Images - openpyxl kann diese verlieren)
+        orig_media_dir = os.path.join(orig_temp_dir, 'xl', 'media')
+        dest_media_dir = os.path.join(temp_dir, 'xl', 'media')
+        if os.path.exists(orig_media_dir):
+            if os.path.exists(dest_media_dir):
+                shutil.rmtree(dest_media_dir)
+            shutil.copytree(orig_media_dir, dest_media_dir)
+            fixed_count += 1
+        
+        # Kopiere xl/drawings aus Original (Drawing-XML mit Bild-Positionen/Ankern)
+        orig_drawings_dir = os.path.join(orig_temp_dir, 'xl', 'drawings')
+        dest_drawings_dir = os.path.join(temp_dir, 'xl', 'drawings')
+        if os.path.exists(orig_drawings_dir):
+            if os.path.exists(dest_drawings_dir):
+                shutil.rmtree(dest_drawings_dir)
+            shutil.copytree(orig_drawings_dir, dest_drawings_dir)
+            fixed_count += 1
+        
+        # Kopiere Worksheet-Relationships aus Original (enthält Drawing-Referenzen)
+        # openpyxl kann Drawing-Relationships verlieren, was dazu führt dass Bilder fehlen
+        orig_ws_rels_dir = os.path.join(orig_temp_dir, 'xl', 'worksheets', '_rels')
+        dest_ws_rels_dir = os.path.join(temp_dir, 'xl', 'worksheets', '_rels')
+        if os.path.exists(orig_ws_rels_dir):
+            if os.path.exists(dest_ws_rels_dir):
+                shutil.rmtree(dest_ws_rels_dir)
+            shutil.copytree(orig_ws_rels_dir, dest_ws_rels_dir)
+            fixed_count += 1
+        
         if fixed_count > 0:
             
             # Erstelle neue XLSX
@@ -3567,7 +3595,8 @@ def _apply_imported_cell_styles(ws, cell_styles):
 def _apply_imported_merged_cells(ws, merged_cells_list):
     """
     Wendet Merged Cells aus dem Frontend auf das Worksheet an.
-    Ersetzt alle bestehenden Merges durch den vollständigen Zustand aus der GUI.
+    Verwendet differentiellen Ansatz: nur Änderungen anwenden statt alles neu zu mergen.
+    So bleibt die Textformatierung bestehender Merges erhalten.
     
     Frontend-Format: [{ startRow, startCol, endRow, endCol, rowSpan, colSpan }]
     startRow/startCol sind 0-basiert (0 = Excel-Zeile 1 = Header).
@@ -3578,44 +3607,50 @@ def _apply_imported_merged_cells(ws, merged_cells_list):
     
     sys.stderr.write(f"[MergedCells] Starte: {len(merged_cells_list)} Merges zu verarbeiten\n")
     
-    # Bestehende Merges loggen
-    existing = list(ws.merged_cells.ranges)
-    sys.stderr.write(f"[MergedCells] Bestehende Merges im Sheet: {len(existing)}\n")
-    for mr in existing[:5]:
-        sys.stderr.write(f"[MergedCells] Bestehend: {mr}\n")
+    # Bestehende Merges als String-Set
+    existing_ranges = set(str(mr) for mr in ws.merged_cells.ranges)
+    sys.stderr.write(f"[MergedCells] Bestehende Merges im Sheet: {len(existing_ranges)}\n")
+    for mr_str in list(existing_ranges)[:5]:
+        sys.stderr.write(f"[MergedCells] Bestehend: {mr_str}\n")
     
-    # Alle bestehenden Merges entfernen
-    for merged_range in existing:
-        try:
-            ws.unmerge_cells(str(merged_range))
-        except Exception as e:
-            sys.stderr.write(f"[MergedCells] Fehler beim Unmerge {merged_range}: {e}\n")
-    
-    # Alle Merges aus dem Frontend anwenden
-    applied = 0
+    # Ziel-Merges als String-Set aufbauen
+    target_ranges = set()
     for merge in merged_cells_list:
-        try:
-            start_row = merge.get('startRow', 0) + 1  # 0-basiert -> 1-basiert
-            start_col = merge.get('startCol', 0) + 1
-            end_row = merge.get('endRow', 0) + 1
-            end_col = merge.get('endCol', 0) + 1
-            
-            sys.stderr.write(f"[MergedCells] Anwende: startRow={merge.get('startRow')} -> {start_row}, startCol={merge.get('startCol')} -> {start_col}, endRow={merge.get('endRow')} -> {end_row}, endCol={merge.get('endCol')} -> {end_col}\n")
-            
-            if start_row > 0 and start_col > 0 and end_row >= start_row and end_col >= start_col:
-                ws.merge_cells(
-                    start_row=start_row,
-                    start_column=start_col,
-                    end_row=end_row,
-                    end_column=end_col
-                )
-                applied += 1
-            else:
-                sys.stderr.write(f"[MergedCells] Übersprungen (ungültig): ({start_row},{start_col}):({end_row},{end_col})\n")
-        except Exception as e:
-            sys.stderr.write(f"[MergedCells] Fehler beim Mergen: {e}\n")
+        start_row = merge.get('startRow', 0) + 1  # 0-basiert -> 1-basiert
+        start_col = merge.get('startCol', 0) + 1
+        end_row = merge.get('endRow', 0) + 1
+        end_col = merge.get('endCol', 0) + 1
+        
+        if start_row > 0 and start_col > 0 and end_row >= start_row and end_col >= start_col:
+            cell_range = f"{get_column_letter(start_col)}{start_row}:{get_column_letter(end_col)}{end_row}"
+            target_ranges.add(cell_range)
+        else:
+            sys.stderr.write(f"[MergedCells] Übersprungen (ungültig): ({start_row},{start_col}):({end_row},{end_col})\n")
     
-    sys.stderr.write(f"[MergedCells] {applied} von {len(merged_cells_list)} Merged Cells angewendet\n")
+    # Differenz berechnen
+    to_remove = existing_ranges - target_ranges  # Merges die entfernt werden müssen
+    to_add = target_ranges - existing_ranges      # Neue Merges die hinzugefügt werden
+    unchanged = existing_ranges & target_ranges   # Merges die bleiben (nicht anfassen!)
+    
+    sys.stderr.write(f"[MergedCells] Differenz: {len(unchanged)} unverändert, {len(to_remove)} entfernen, {len(to_add)} hinzufügen\n")
+    
+    # Nur nicht mehr benötigte Merges entfernen
+    for mr_str in to_remove:
+        try:
+            ws.unmerge_cells(mr_str)
+            sys.stderr.write(f"[MergedCells] Entfernt: {mr_str}\n")
+        except Exception as e:
+            sys.stderr.write(f"[MergedCells] Fehler beim Unmerge {mr_str}: {e}\n")
+    
+    # Nur neue Merges hinzufügen
+    for mr_str in to_add:
+        try:
+            ws.merge_cells(mr_str)
+            sys.stderr.write(f"[MergedCells] Hinzugefügt: {mr_str}\n")
+        except Exception as e:
+            sys.stderr.write(f"[MergedCells] Fehler beim Mergen {mr_str}: {e}\n")
+    
+    sys.stderr.write(f"[MergedCells] Fertig: {len(unchanged) + len(to_add)} Merged Cells im Ergebnis\n")
 
 
 def _apply_imported_rich_text(ws, rich_text_cells):
