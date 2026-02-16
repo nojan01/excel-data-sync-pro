@@ -4617,11 +4617,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         # NUR wenn das Frontend _hasFormatChanges gesetzt hat (Paste-mit-Format,
         # Data Join Styles, oder Highlight-Fill-Löschung), sind echte
         # Formatierungsänderungen vorhanden → FALL 3b nötig.
-        has_format_flag = edited_cells.get('_hasFormatChanges', False) if edited_cells else False
+        has_format_flag = changes.get('hasFormatChanges', False)
         has_extra_changes = has_format_flag
         has_highlight_changes = bool(cleared_row_highlights)  # Nur wenn Highlights explizit entfernt
         
-        sys.stderr.write(f"[GATE] _hasFormatChanges={has_format_flag}, has_extra_changes={has_extra_changes}, has_highlight_changes={has_highlight_changes}\n")
+        sys.stderr.write(f"[GATE] hasFormatChanges={has_format_flag}, has_extra_changes={has_extra_changes}, has_highlight_changes={has_highlight_changes}\n")
         sys.stderr.write(f"[GATE] real_edits={len(real_edits)}, cellStyles={len(imported_cell_styles)}, mergedCells={len(imported_merged_cells)}\n")
         
         # =====================================================================

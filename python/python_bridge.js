@@ -957,7 +957,8 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                         clearedRowHighlights: sheet.clearedRowHighlights || [],
                         columnOrder: sheet.columnOrder || null,
                         affectedRows: sheet.affectedRows || [],
-                        autoFilterRange: sheet.autoFilterRange || null
+                        autoFilterRange: sheet.autoFilterRange || null,
+                        hasFormatChanges: sheet.hasFormatChanges || false
                     }
                 };
                 
