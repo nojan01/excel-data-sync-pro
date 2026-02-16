@@ -1321,21 +1321,74 @@ def restore_external_links_from_original(output_path, original_path, structural_
         
         sys.stderr.write(f"[restore_ext] fixed_count={fixed_count}\n")
         
-        if fixed_count > 0:
+        # =================================================================
+        # ROBUST RE-ZIP: ZIP-to-ZIP Ansatz ab dem ORIGINAL
+        #
+        # Statt nur Dateien aus temp_dir einzupacken (wo Dateien fehlen
+        # können die nie explizit kopiert wurden), starten wir vom
+        # ORIGINAL-ZIP und ersetzen nur Einträge, für die eine
+        # modifizierte Version in temp_dir existiert.
+        #
+        # Dadurch bleiben ALLE Original-Dateien erhalten:
+        # - xl/drawings/ (Drawing-XMLs + _rels)
+        # - xl/media/ (Bilder)
+        # - xl/embeddings/ (eingebettete Objekte)
+        # - xl/ctrlProps/ (Formular-Steuerelemente)
+        # - xl/charts/ (Diagramme)
+        # - xl/richData/ (Excel 365 Zellbilder)
+        # - xl/activeX/ (ActiveX-Controls)
+        # - xl/diagrams/ (SmartArt)
+        # und alle anderen Dateien, die openpyxl ohne Pillow
+        # nicht korrekt verarbeitet.
+        #
+        # → Beseitigt "Entfernter Teil: Zeichnungsform" definitiv.
+        # =================================================================
+        
+        # Sammle alle Dateien in temp_dir (modifizierte Versionen)
+        temp_files = {}
+        for root, dirs, files_list in os.walk(temp_dir):
+            dirs[:] = [d for d in dirs if d != '__MACOSX']
+            for fname in files_list:
+                if fname == 'restored.xlsx' or fname == '.DS_Store' or fname.startswith('._'):
+                    continue
+                full_path = os.path.join(root, fname)
+                arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
+                temp_files[arc_name] = full_path
+        
+        written = set()
+        with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as new_zf:
+            # Phase 1: Alle Einträge aus dem ORIGINAL-ZIP durchgehen.
+            # Wenn eine modifizierte Version in temp_dir existiert → diese nehmen,
+            # sonst Original-Bytes 1:1 übernehmen (insbesondere drawings, media etc.)
+            with zipfile.ZipFile(original_path, 'r') as orig_zf:
+                for item in orig_zf.infolist():
+                    if item.filename.endswith('/'):
+                        continue  # Verzeichnis-Einträge überspringen
+                    name = item.filename
+                    if name.startswith('__MACOSX') or name.endswith('.DS_Store') or \
+                       name.split('/')[-1].startswith('._'):
+                        continue
+                    
+                    if name in temp_files:
+                        # Modifizierte Version aus temp_dir verwenden
+                        new_zf.write(temp_files[name], name)
+                    else:
+                        # Original-Bytes 1:1 übernehmen (drawings, embeddings etc.)
+                        data = orig_zf.read(name)
+                        info = item
+                        info.compress_type = zipfile.ZIP_DEFLATED
+                        new_zf.writestr(info, data)
+                    written.add(name)
             
-            # Erstelle neue XLSX
-            with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for root, dirs, files in os.walk(temp_dir):
-                    dirs[:] = [d for d in dirs if d != '__MACOSX']
-                    for f in files:
-                        if f == 'restored.xlsx' or f == '.DS_Store' or f.startswith('._'):
-                            continue
-                        full_path = os.path.join(root, f)
-                        arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
-                        zf.write(full_path, arc_name)
-            
-            shutil.copy2(temp_xlsx, output_path)
-            sys.stderr.write(f"[restore_ext] XLSX wiederhergestellt und gespeichert\n")
+            # Phase 2: Neue Dateien aus temp_dir die NICHT im Original waren
+            # (z.B. neue Tables, neue Sheets, geänderte sharedStrings)
+            for arc_name, full_path in temp_files.items():
+                if arc_name not in written:
+                    new_zf.write(full_path, arc_name)
+                    written.add(arc_name)
+        
+        shutil.copy2(temp_xlsx, output_path)
+        sys.stderr.write(f"[restore_ext] XLSX wiederhergestellt (ZIP-to-ZIP, {len(written)} Einträge)\n")
         
         # DIAGNOSE: Dump des endgültigen ZIP-Inhalts für Image-Debugging
         # Läuft IMMER (auch wenn fixed_count == 0), um den Endzustand zu zeigen
@@ -4719,18 +4772,26 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         has_format_flag = changes.get('hasFormatChanges', False)
         has_extra_changes = has_format_flag
         has_highlight_changes = bool(cleared_row_highlights)  # Nur wenn Highlights explizit entfernt
+        has_visibility_changes = bool(hidden_rows) or bool(hidden_columns)
         
         sys.stderr.write(f"[GATE] hasFormatChanges={has_format_flag}, has_extra_changes={has_extra_changes}, has_highlight_changes={has_highlight_changes}\n")
         sys.stderr.write(f"[GATE] real_edits={len(real_edits)}, cellStyles={len(imported_cell_styles)}, mergedCells={len(imported_merged_cells)}\n")
+        sys.stderr.write(f"[GATE] has_visibility_changes={has_visibility_changes} (hidden_rows={len(hidden_rows) if hidden_rows else 0}, hidden_cols={len(hidden_columns) if hidden_columns else 0})\n")
         
         # =====================================================================
-        # FALL 3a: NUR Zell-Edits → Direkte XML-Bearbeitung (kein openpyxl-Roundtrip)
+        # FALL 3a: Zell-Edits ODER Visibility-Änderungen → Direkte XML-Bearbeitung
+        # (kein openpyxl-Roundtrip)
         # Dies vermeidet das Überschreiben von Rels, Namespaces, SharedStrings etc.
-        # Die Original-Datei bleibt zu 100% intakt, nur die Zellwerte werden geändert.
+        # Die Original-Datei bleibt zu 100% intakt, nur die Zellwerte und
+        # hidden-Attribute werden geändert.
+        #
+        # AUCH für reine Visibility-Änderungen (hideRow/hideColumn ohne Edits):
+        # openpyxl-Roundtrip verliert Drawings ohne Pillow → "Zeichnungsform entfernt".
+        # ZIP-to-ZIP preserviert ALLES aus dem Original.
         # =====================================================================
-        if real_edits and not has_extra_changes and not has_highlight_changes:
+        if (real_edits or has_visibility_changes) and not has_extra_changes and not has_highlight_changes:
             wb.close()  # openpyxl Workbook nicht mehr benötigt
-            sys.stderr.write(f"[FALL 3a] Direkte XML-Bearbeitung für {len(real_edits)} Zell-Edits\n")
+            sys.stderr.write(f"[FALL 3a] Direkte XML-Bearbeitung für {len(real_edits)} Zell-Edits, visibility={has_visibility_changes}\n")
             
             try:
                 result = _direct_xml_cell_edit(
