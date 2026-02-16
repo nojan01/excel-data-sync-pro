@@ -4613,9 +4613,16 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         #
         # Diese Daten sind KEINE neuen Änderungen - sie sind pre-existierend!
         # FALL 3a preserviert sie automatisch aus dem Original.
-        # Nur cleared_row_highlights zeigen echte Änderungen an (Highlights entfernt).
-        has_extra_changes = False  # Pre-existierende Daten blockieren FALL 3a nicht
+        #
+        # NUR wenn das Frontend _hasFormatChanges gesetzt hat (Paste-mit-Format,
+        # Data Join Styles, oder Highlight-Fill-Löschung), sind echte
+        # Formatierungsänderungen vorhanden → FALL 3b nötig.
+        has_format_flag = edited_cells.get('_hasFormatChanges', False) if edited_cells else False
+        has_extra_changes = has_format_flag
         has_highlight_changes = bool(cleared_row_highlights)  # Nur wenn Highlights explizit entfernt
+        
+        sys.stderr.write(f"[GATE] _hasFormatChanges={has_format_flag}, has_extra_changes={has_extra_changes}, has_highlight_changes={has_highlight_changes}\n")
+        sys.stderr.write(f"[GATE] real_edits={len(real_edits)}, cellStyles={len(imported_cell_styles)}, mergedCells={len(imported_merged_cells)}\n")
         
         # =====================================================================
         # FALL 3a: NUR Zell-Edits → Direkte XML-Bearbeitung (kein openpyxl-Roundtrip)

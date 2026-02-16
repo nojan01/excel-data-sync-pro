@@ -9050,6 +9050,7 @@
                             // CellStyles (Hintergrundfarbe)
                             if (dataJoinState.sourceCellStyles[srcStyleKey]) {
                                 explorerState.cellStyles[targetStyleKey] = dataJoinState.sourceCellStyles[srcStyleKey];
+                                explorerState.editedCells.set('_hasFormatChanges', true);
                             }
                             
                             // CellFonts (Schriftart)
@@ -10076,6 +10077,7 @@
             explorerState.rowHighlights.set(rowIndex, color);
             // Strukturelle Änderung markieren für Export
             explorerState.editedCells.set('_rowHighlightChanged', true);
+            explorerState.editedCells.set('_hasFormatChanges', true);
             applyRowHighlights();
         }
         
@@ -10088,6 +10090,7 @@
             explorerState.rowHighlights.delete(rowIndex);
             // Strukturelle Änderung markieren für Export
             explorerState.editedCells.set('_rowHighlightChanged', true);
+            explorerState.editedCells.set('_hasFormatChanges', true);
             
             // Fill aus cellStyles für alle Zellen dieser Zeile entfernen
             // (damit die inline-Styles nicht die Entfernung überschreiben)
@@ -11988,6 +11991,9 @@
             }
             
             console.log(`[Paste] explorerState.mergedCells NACHHER:`, JSON.stringify(explorerState.mergedCells));
+            
+            // Formatierungsänderung markieren (Style/Merge/RichText von Paste)
+            explorerState.editedCells.set('_hasFormatChanges', true);
             
             // Undo speichern
             if (undoActions.length > 0) {
