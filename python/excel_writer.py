@@ -3225,6 +3225,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             if imported_cell_styles:
                 _apply_imported_cell_styles(ws, imported_cell_styles)
             
+            # RichText aus Copy-Paste anwenden
+            imported_rich_text = changes.get('richTextCells', {})
+            if imported_rich_text:
+                _apply_imported_rich_text(ws, imported_rich_text)
+            
             # ================================================================
             # SCHRITT 9: CLEARED ROW HIGHLIGHTS (Markierungen entfernen)
             # ================================================================
@@ -3347,6 +3352,16 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         # Versteckte Spalten/Zeilen setzen
         _apply_hidden_columns(ws, hidden_columns)
         _apply_hidden_rows(ws, hidden_rows)
+        
+        # Kopierte Zell-Hintergründe anwenden (aus Copy-Paste)
+        imported_cell_styles = changes.get('cellStyles', {})
+        if imported_cell_styles:
+            _apply_imported_cell_styles(ws, imported_cell_styles)
+        
+        # Kopierte RichText-Formatierung anwenden (aus Copy-Paste)
+        imported_rich_text = changes.get('richTextCells', {})
+        if imported_rich_text:
+            _apply_imported_rich_text(ws, imported_rich_text)
         
         # Row Highlights
         if row_highlights:
@@ -3507,6 +3522,78 @@ def _apply_imported_cell_styles(ws, cell_styles):
                 cell.fill = PatternFill(start_color=argb, end_color=argb, fill_type='solid')
         except Exception:
             pass
+
+
+def _apply_imported_rich_text(ws, rich_text_cells):
+    """
+    Wendet RichText-Formatierung aus dem Frontend auf Zellen an.
+    Wird für kopierte RichText-Zellen verwendet.
+    
+    Frontend-Format: { "row-col": [{ text: "...", styles: { bold, italic, ... } }] }
+    Keys sind 0-basiert (wie editedCells).
+    """
+    if not rich_text_cells:
+        return
+    
+    try:
+        from openpyxl.cell.rich_text import CellRichText, TextBlock
+        from openpyxl.cell.text import InlineFont
+    except ImportError:
+        sys.stderr.write("[RichText] openpyxl CellRichText nicht verfügbar - überspringe RichText\n")
+        return
+    
+    applied = 0
+    for key, parts in rich_text_cells.items():
+        try:
+            key_parts = key.split('-')
+            if len(key_parts) != 2:
+                continue
+            row_idx = int(key_parts[0])
+            col_idx = int(key_parts[1])
+            cell = ws.cell(row=row_idx + 2, column=col_idx + 1)
+            
+            if not isinstance(parts, list) or len(parts) == 0:
+                continue
+            
+            # Konvertiere Frontend-Format zu CellRichText
+            text_blocks = []
+            for part in parts:
+                text = part.get('text', '')
+                styles = part.get('styles', {})
+                
+                font_kwargs = {}
+                if styles.get('bold'):
+                    font_kwargs['b'] = True
+                if styles.get('italic'):
+                    font_kwargs['i'] = True
+                if styles.get('underline'):
+                    font_kwargs['u'] = 'single'
+                if styles.get('strikethrough'):
+                    font_kwargs['strike'] = True
+                if styles.get('fontSize'):
+                    font_kwargs['sz'] = styles['fontSize']
+                if styles.get('fontName'):
+                    font_kwargs['rFont'] = styles['fontName']
+                if styles.get('color'):
+                    color_val = styles['color']
+                    if isinstance(color_val, str) and color_val.startswith('#'):
+                        font_kwargs['color'] = color_val[1:]  # Entferne #
+                    elif isinstance(color_val, str):
+                        font_kwargs['color'] = color_val
+                
+                if font_kwargs:
+                    inline_font = InlineFont(**font_kwargs)
+                    text_blocks.append(TextBlock(inline_font, text))
+                else:
+                    text_blocks.append(text)
+            
+            cell.value = CellRichText(*text_blocks)
+            applied += 1
+        except Exception as e:
+            sys.stderr.write(f"[RichText] Fehler bei {key}: {e}\n")
+    
+    if applied > 0:
+        sys.stderr.write(f"[RichText] {applied} RichText-Zellen angewendet\n")
     max_col = ws.max_column
     
     for excel_row in range(2, max_row + 1):  # Ab Zeile 2 (nach Header)

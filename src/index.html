@@ -17219,13 +17219,36 @@
                                 };
                             } else {
                                 // RichText für geänderte Zellen
+                                // WICHTIG: editedCells nutzt 0-basierte Keys ("row-col"),
+                                // aber richTextCells nutzt 1-basierte Keys ("(row+1)-col") wegen Header-Zeile!
                                 const richTextForChanged = {};
                                 for (const cellKey of explorerState.editedCells.keys()) {
                                     // Überspringe spezielle Marker-Keys
                                     if (cellKey.startsWith('_')) continue;
                                     
-                                    if (explorerState.richTextCells && explorerState.richTextCells[cellKey]) {
-                                        richTextForChanged[cellKey] = explorerState.richTextCells[cellKey];
+                                    // Konvertiere 0-basierten cellKey zu 1-basiertem styleKey
+                                    const [rowStr, colStr] = cellKey.split('-');
+                                    const styleKey = `${parseInt(rowStr) + 1}-${colStr}`;
+                                    
+                                    if (explorerState.richTextCells && explorerState.richTextCells[styleKey]) {
+                                        richTextForChanged[cellKey] = explorerState.richTextCells[styleKey];
+                                    }
+                                }
+                                
+                                // CellStyles für geänderte Zellen (kopierte Hintergründe etc.)
+                                const cellStylesForChanged = {};
+                                for (const cellKey of explorerState.editedCells.keys()) {
+                                    if (cellKey.startsWith('_')) continue;
+                                    
+                                    const [rowStr, colStr] = cellKey.split('-');
+                                    const styleKey = `${parseInt(rowStr) + 1}-${colStr}`;
+                                    
+                                    if (explorerState.cellStyles && explorerState.cellStyles[styleKey]) {
+                                        const style = explorerState.cellStyles[styleKey];
+                                        // Nur senden wenn Hintergrundfarbe vorhanden
+                                        if (style.bgColor && style.bgColor !== 'transparent') {
+                                            cellStylesForChanged[cellKey] = style.bgColor;
+                                        }
                                     }
                                 }
                                 
@@ -17253,6 +17276,7 @@
                                     sheetName: sheetName,
                                     changedCells: changedCells,
                                     richTextCells: Object.keys(richTextForChanged).length > 0 ? richTextForChanged : undefined,
+                                    cellStyles: Object.keys(cellStylesForChanged).length > 0 ? cellStylesForChanged : undefined,
                                     hiddenColumns: hiddenCols,
                                     hiddenRows: currentHiddenRows,
                                     rowHighlights: exportRowHighlights,
@@ -17260,7 +17284,7 @@
                                     autoFilterRange: explorerState.autoFilterRange,
                                     fullRewrite: false
                                 };
-                                console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, ${clearedRowHighlights.length} entfernte Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
+                                console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${Object.keys(cellStylesForChanged).length} CellStyles, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, ${clearedRowHighlights.length} entfernte Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
                             }
                         }
                     } else if (cachedSheet) {
