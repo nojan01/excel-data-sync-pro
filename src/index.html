@@ -17245,9 +17245,9 @@
                                     
                                     if (explorerState.cellStyles && explorerState.cellStyles[styleKey]) {
                                         const style = explorerState.cellStyles[styleKey];
-                                        // Nur senden wenn Hintergrundfarbe vorhanden
-                                        if (style.bgColor && style.bgColor !== 'transparent') {
-                                            cellStylesForChanged[cellKey] = style.bgColor;
+                                        // Hintergrundfarbe (fill) extrahieren
+                                        if (style.fill && style.fill !== 'transparent') {
+                                            cellStylesForChanged[cellKey] = style.fill;
                                         }
                                     }
                                 }
