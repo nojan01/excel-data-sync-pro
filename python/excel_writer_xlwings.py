@@ -315,6 +315,7 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
         # auf macOS zerstören (genau wie bei Spalten-Verschiebung in Schritt 8)
         rows_reordered = False
         data_block_written = False  # Trackt ob ein Block-Write stattfand
+        rows_inserted = False  # Trackt ob Zeilen bereits eingefügt wurden (Mixed Case in Step 2)
         if row_order and len(row_order) > 0:
             print(f"[xlwings_writer] rowOrder erkannt", file=sys.stderr)
             
@@ -401,14 +402,86 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                     # Keine Umordnung nötig (row_order == sorted) - nichts zu tun
                     print(f"[xlwings_writer] rowOrder vorhanden aber keine Umordnung nötig", file=sys.stderr)
             else:
-                # Gemischter Fall mit eingefügten Zeilen: Daten als Block schreiben (Fallback)
-                # Formatierung geht für verschobene Zeilen verloren
-                if data and len(data) > 0:
-                    num_rows = len(data)
-                    num_cols = len(data[0]) if data[0] else len(headers)
-                    ws.range((2, 1), (num_rows + 1, num_cols)).value = data
-                    data_block_written = True
-                    print(f"[xlwings_writer] Eingefügte+verschobene Zeilen: Daten als Block geschrieben: {num_rows}x{num_cols}", file=sys.stderr)
+                # Gemischter Fall: Eingefügte UND verschobene Zeilen
+                # KEIN Block-Write! Stattdessen:
+                # 1. Physische Verschiebung NUR für existierende Zeilen (ohne -1)
+                # 2. Leere Zeilen an den -1-Positionen einfügen
+                # 3. Step 12 (editedCells) schreibt die Zellwerte
+                print(f"[xlwings_writer] Gemischter Fall: Verschiebung + Einfügung", file=sys.stderr)
+                
+                # Filtere -1 Einträge raus → move_only_order für existierende Zeilen
+                move_only_order = [idx for idx in row_order if idx >= 0]
+                # Positionen der -1 Einträge im finalen rowOrder (= Insert-Positionen)
+                insert_final_positions = [i for i, idx in enumerate(row_order) if idx < 0]
+                
+                current_order = sorted(move_only_order)
+                original_sorted = list(current_order)
+                
+                # Physische Verschiebung der existierenden Zeilen
+                if move_only_order != original_sorted:
+                    print(f"[xlwings_writer] Mixed: Verschiebe {len(move_only_order)} existierende Zeilen physisch", file=sys.stderr)
+                    num_data_rows = len(move_only_order)
+                    
+                    physical_move_ok = True
+                    try:
+                        for target_pos in range(num_data_rows):
+                            source_original_idx = move_only_order[target_pos]
+                            current_pos = current_order.index(source_original_idx)
+                            
+                            if current_pos != target_pos:
+                                source_excel = current_pos + 2
+                                target_excel = target_pos + 2
+                                
+                                if current_pos > target_pos:
+                                    ws.range(f'{target_excel}:{target_excel}').insert(shift='down')
+                                    new_source_excel = source_excel + 1
+                                    source_rng = ws.range(f'{new_source_excel}:{new_source_excel}')
+                                    dest_rng = ws.range(f'A{target_excel}')
+                                    if platform.system() == 'Windows':
+                                        source_rng.api.Copy(Destination=dest_rng.api)
+                                    else:
+                                        source_rng.api.copy_range(destination=dest_rng.api)
+                                    ws.range(f'{new_source_excel}:{new_source_excel}').delete()
+                                else:
+                                    after_target_excel = target_excel + 1
+                                    ws.range(f'{after_target_excel}:{after_target_excel}').insert(shift='down')
+                                    source_rng = ws.range(f'{source_excel}:{source_excel}')
+                                    dest_rng = ws.range(f'A{after_target_excel}')
+                                    if platform.system() == 'Windows':
+                                        source_rng.api.Copy(Destination=dest_rng.api)
+                                    else:
+                                        source_rng.api.copy_range(destination=dest_rng.api)
+                                    ws.range(f'{source_excel}:{source_excel}').delete()
+                                
+                                val = current_order.pop(current_pos)
+                                current_order.insert(target_pos, val)
+                        
+                        print(f"[xlwings_writer] Mixed: Physische Verschiebung OK", file=sys.stderr)
+                    except Exception as move_err:
+                        physical_move_ok = False
+                        print(f"[xlwings_writer] Mixed: Physische Verschiebung fehlgeschlagen: {move_err}", file=sys.stderr)
+                    
+                    if not physical_move_ok:
+                        # Fallback: Block-Write (Werte korrekt, Formatierung am Originalplatz)
+                        if data and len(data) > 0:
+                            num_rows = len(data)
+                            num_cols = len(data[0]) if data[0] else len(headers)
+                            ws.range((2, 1), (num_rows + 1, num_cols)).value = data
+                            data_block_written = True
+                            rows_inserted = True  # Step 4 überspringen (Block-Write hat alles)
+                            print(f"[xlwings_writer] Mixed Fallback: Block-Write {num_rows}x{num_cols}", file=sys.stderr)
+                else:
+                    print(f"[xlwings_writer] Mixed: Keine Umordnung der existierenden Zeilen nötig", file=sys.stderr)
+                
+                # Leere Zeilen an den -1-Positionen einfügen (aufsteigend sortiert)
+                # Die -1-Positionen sind FINALE Positionen im rowOrder → von oben nach unten einfügen
+                # Jede Einfügung verschiebt nachfolgende Zeilen automatisch korrekt
+                if not data_block_written and insert_final_positions:
+                    for pos in sorted(insert_final_positions):
+                        excel_row = pos + 2  # +2 für Header und 1-basiert
+                        ws.range(f'{excel_row}:{excel_row}').insert(shift='down')
+                    rows_inserted = True  # Step 4 überspringen (hier bereits erledigt)
+                    print(f"[xlwings_writer] Mixed: {len(insert_final_positions)} Zeilen eingefügt bei finalen Positionen {insert_final_positions}", file=sys.stderr)
             
             rows_reordered = True
         
@@ -422,8 +495,8 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
         # Operationen werden in CHRONOLOGISCHER Reihenfolge verarbeitet (wie gespeichert),
         # da die Positionen im kumulativen Koordinatensystem sind (jede Position
         # berücksichtigt bereits alle vorherigen Einfügungen). KEIN Offset nötig!
-        rows_inserted = False
-        if inserted_rows:
+        # WICHTIG: Überspringe wenn rows_inserted bereits True (Mixed Case in Schritt 2 hat Inserts erledigt)
+        if inserted_rows and not rows_inserted:
             operations = inserted_rows.get('operations', [])
             if operations:
                 # Verarbeite in chronologischer Reihenfolge (NICHT sortieren, KEIN Offset!)
