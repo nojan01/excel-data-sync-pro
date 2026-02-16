@@ -405,6 +405,42 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
         shutil.rmtree(orig_temp_dir, ignore_errors=True)
 
 
+# Worksheet-Element-Reihenfolge nach ECMA-376 (OpenXML Schema)
+# Diese Elemente müssen am Ende von <worksheet> in genau dieser Reihenfolge stehen.
+_WORKSHEET_END_ELEMENTS = [
+    'drawing', 'legacyDrawing', 'legacyDrawingHF', 'drawingHF',
+    'picture', 'oleObjects', 'controls', 'webPublishItems',
+    'tableParts', 'extLst'
+]
+
+
+def _insert_ws_element(ws_content, element_xml, element_name):
+    """
+    Fügt ein Element in Worksheet-XML an der schema-konformen Position ein.
+    
+    Excel repariert Dateien mit falscher Element-Reihenfolge — dabei können
+    Elemente (z.B. <drawing>) verloren gehen. Deshalb muss das Element
+    VOR allen Elementen eingefügt werden, die im Schema DANACH kommen.
+    """
+    try:
+        idx = _WORKSHEET_END_ELEMENTS.index(element_name)
+    except ValueError:
+        # Unbekanntes Element → sicher vor </worksheet> einfügen
+        return ws_content.replace('</worksheet>', element_xml + '\n</worksheet>')
+    
+    # Finde die früheste Position eines nachfolgenden Elements
+    for after_elem in _WORKSHEET_END_ELEMENTS[idx + 1:]:
+        # Suche nach <elementName (mit Leerzeichen oder >) um Verwechslung zu vermeiden
+        import re
+        pos_match = re.search(r'<' + re.escape(after_elem) + r'[\s>/]', ws_content)
+        if pos_match:
+            insert_pos = pos_match.start()
+            return ws_content[:insert_pos] + element_xml + '\n' + ws_content[insert_pos:]
+    
+    # Kein nachfolgendes Element gefunden → vor </worksheet>
+    return ws_content.replace('</worksheet>', element_xml + '\n</worksheet>')
+
+
 def restore_external_links_from_original(output_path, original_path):
     """
     Kopiert die externalLinks-Dateien, slicerCaches und definedNames aus dem Original zurück.
@@ -419,13 +455,30 @@ def restore_external_links_from_original(output_path, original_path):
     
     sys.stderr.write(f"[restore_ext] START: output_path={output_path}, original_path={original_path}\n")
     
-    if not original_path or original_path == output_path:
-        sys.stderr.write(f"[restore_ext] SKIPPED: original_path leer oder gleich output_path\n")
+    if not original_path:
+        sys.stderr.write(f"[restore_ext] SKIPPED: original_path leer\n")
         return
     
     if not os.path.exists(original_path):
         sys.stderr.write(f"[restore_ext] SKIPPED: original_path existiert nicht: {original_path}\n")
         return
+    
+    # Wenn original_path == output_path ("Speichern" statt "Speichern unter"),
+    # müssen wir eine temporäre Backup-Kopie erstellen, da openpyxl die Datei
+    # bereits überschrieben hat. Die Backup-Kopie enthält noch die Original-Daten
+    # WENN sie VOR dem openpyxl-Save erstellt wurde (siehe _backup_original_path).
+    backup_path = None
+    if original_path == output_path:
+        sys.stderr.write(f"[restore_ext] original_path == output_path — verwende _backup_original_path\n")
+        # Prüfe ob ein Backup vor dem Save erstellt wurde
+        backup_candidate = getattr(restore_external_links_from_original, '_backup_original_path', None)
+        if backup_candidate and os.path.exists(backup_candidate):
+            original_path = backup_candidate
+            backup_path = backup_candidate
+            sys.stderr.write(f"[restore_ext] Verwende Backup: {backup_path}\n")
+        else:
+            sys.stderr.write(f"[restore_ext] SKIPPED: Kein Backup verfügbar und original==output\n")
+            return
     
     sys.stderr.write(f"[restore_ext] Original existiert, starte Wiederherstellung...\n")
     
@@ -659,8 +712,9 @@ def restore_external_links_from_original(output_path, original_path):
                         dest_ws_content = re.sub(r'<drawing\s+[^>]*/\s*>', drawing_el, dest_ws_content)
                         dest_ws_content = re.sub(r'<drawing\s+[^>]*>.*?</drawing>', drawing_el, dest_ws_content, flags=re.DOTALL)
                     else:
-                        # Füge neues Element ein
-                        dest_ws_content = dest_ws_content.replace('</worksheet>', drawing_el + '\n</worksheet>')
+                        # Füge neues Element ein — SCHEMA-REIHENFOLGE beachten!
+                        # <drawing> muss VOR <tableParts>, <extLst> etc. kommen
+                        dest_ws_content = _insert_ws_element(dest_ws_content, drawing_el, 'drawing')
                     ws_modified = True
                     sys.stderr.write(f"[restore] {ws_file}: <drawing> Element wiederhergestellt: {drawing_el}\n")
                 
@@ -675,7 +729,8 @@ def restore_external_links_from_original(output_path, original_path):
                         dest_ws_content = re.sub(r'<legacyDrawing\s+[^>]*/\s*>', legacy_el, dest_ws_content)
                         dest_ws_content = re.sub(r'<legacyDrawing\s+[^>]*>.*?</legacyDrawing>', legacy_el, dest_ws_content, flags=re.DOTALL)
                     else:
-                        dest_ws_content = dest_ws_content.replace('</worksheet>', legacy_el + '\n</worksheet>')
+                        # SCHEMA-REIHENFOLGE: <legacyDrawing> VOR <tableParts>, <extLst>
+                        dest_ws_content = _insert_ws_element(dest_ws_content, legacy_el, 'legacyDrawing')
                     ws_modified = True
                     sys.stderr.write(f"[restore] {ws_file}: <legacyDrawing> Element wiederhergestellt\n")
                 
@@ -686,7 +741,8 @@ def restore_external_links_from_original(output_path, original_path):
                     if re.search(r'<picture[\s>]', dest_ws_content):
                         dest_ws_content = re.sub(r'<picture\s+[^>]*/\s*>', picture_el, dest_ws_content)
                     else:
-                        dest_ws_content = dest_ws_content.replace('</worksheet>', picture_el + '\n</worksheet>')
+                        # SCHEMA-REIHENFOLGE: <picture> VOR <tableParts>, <extLst>
+                        dest_ws_content = _insert_ws_element(dest_ws_content, picture_el, 'picture')
                     ws_modified = True
                 
                 # KRITISCH: vm-Attribute auf Zellen wiederherstellen (Excel 365 Zellbilder)
@@ -1381,6 +1437,20 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
     if original_path is None:
         original_path = file_path
     
+    # KRITISCH: Wenn original_path == file_path == output_path (Speichern in gleicher Datei),
+    # muss eine Backup-Kopie erstellt werden BEVOR openpyxl die Datei überschreibt.
+    # Sonst kann restore_external_links_from_original nichts wiederherstellen.
+    _backup_file = None
+    if original_path == output_path:
+        import tempfile
+        _backup_file = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
+        _backup_path = _backup_file.name
+        _backup_file.close()
+        import shutil
+        shutil.copy2(original_path, _backup_path)
+        sys.stderr.write(f"[WRITE_SHEET] Backup erstellt: {_backup_path} (original==output)\\n")
+        # Speichere Backup-Pfad als Funktionsattribut für restore_external_links_from_original
+        restore_external_links_from_original._backup_original_path = _backup_path
     
     try:
         # Original-Workbook laden
@@ -3693,6 +3763,16 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             'error': error_msg,
             'traceback': tb
         }
+    finally:
+        # Backup-Datei aufräumen (erstellt für Speichern-in-gleicher-Datei Szenario)
+        if _backup_file is not None:
+            try:
+                os.unlink(_backup_path)
+                sys.stderr.write(f"[WRITE_SHEET] Backup gelöscht: {_backup_path}\\n")
+            except Exception:
+                pass
+            # Funktionsattribut zurücksetzen
+            restore_external_links_from_original._backup_original_path = None
 
 
 def _apply_hidden_columns(ws, hidden_columns, max_cols=None):
