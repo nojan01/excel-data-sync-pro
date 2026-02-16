@@ -581,12 +581,15 @@ def restore_external_links_from_original(output_path, original_path):
             shutil.copytree(orig_slicers_dir, dest_slicers_dir)
             fixed_count += 1
         
-        # Kopiere sharedStrings.xml (Original verwendet shared strings, openpyxl inline strings)
-        orig_shared_strings = os.path.join(orig_temp_dir, 'xl', 'sharedStrings.xml')
-        dest_shared_strings = os.path.join(temp_dir, 'xl', 'sharedStrings.xml')
-        if os.path.exists(orig_shared_strings):
-            shutil.copy2(orig_shared_strings, dest_shared_strings)
-            fixed_count += 1
+        # sharedStrings.xml NICHT vom Original kopieren!
+        # openpyxl erzeugt beim Speichern eine NEUE sharedStrings.xml mit neu
+        # nummerierten Indizes. Die Worksheet-Zellen referenzieren diese neuen
+        # Indizes (<c t="s"><v>N</v></c>). Wenn wir die Original-sharedStrings.xml
+        # zurückkopieren, zeigen die Indizes auf falsche Strings →
+        # Excel meldet "Reparatur auf Dateiebene".
+        # (openpyxl schreibt reguläre Strings als shared strings, NICHT inline!
+        #  Nur CellRichText-Objekte werden als inlineStr geschrieben.)
+        sys.stderr.write(f"[restore_ext] sharedStrings.xml: NICHT kopiert (openpyxl-Indizes beibehalten)\n")
         
         # Stelle workbook.xml SELEKTIV wieder her
         # NICHT blind kopieren! openpyxl aktualisiert externalReferences cached values.
