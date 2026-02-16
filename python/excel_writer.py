@@ -217,7 +217,7 @@ def fix_xlsx_relationships(xlsx_path):
                         if f == 'fixed.xlsx':
                             continue
                         full_path = os.path.join(root, f)
-                        arc_name = full_path.replace(temp_dir + os.sep, '')
+                        arc_name = full_path.replace(temp_dir + os.sep, '').replace('\\', '/')
                         zf.write(full_path, arc_name)
             
             # Ersetze Original mit reparierter Version
@@ -744,6 +744,51 @@ def restore_external_links_from_original(output_path, original_path):
                         # SCHEMA-REIHENFOLGE: <picture> VOR <tableParts>, <extLst>
                         dest_ws_content = _insert_ws_element(dest_ws_content, picture_el, 'picture')
                     ws_modified = True
+                
+                # KRITISCH: <tableParts> vom Original wiederherstellen (rId-Konsistenz)
+                # openpyxl nummeriert rIds in Worksheet-Rels um (z.B. rId1=table statt rId2=table).
+                # Da wir die Worksheet-Rels aus dem Original kopieren, müssen die <tablePart r:id="..."/>
+                # Referenzen im Sheet-XML auch die rIds des Originals verwenden.
+                # Ohne diesen Fix: tablePart r:id zeigt auf drawing statt table → Excel repariert → Bilder weg!
+                orig_tp_match = re.search(r'<tableParts\b[^>]*>.*?</tableParts>', orig_ws_content, re.DOTALL)
+                if not orig_tp_match:
+                    orig_tp_match = re.search(r'<tableParts\b[^/]*/>', orig_ws_content)
+                if orig_tp_match:
+                    orig_tp = orig_tp_match.group(0)
+                    # Entferne existierende tableParts aus Ziel
+                    dest_ws_content = re.sub(r'<tableParts\b[^>]*>.*?</tableParts>', '', dest_ws_content, flags=re.DOTALL)
+                    dest_ws_content = re.sub(r'<tableParts\b[^/]*/>', '', dest_ws_content)
+                    # Füge Original tableParts an schema-korrekter Position ein
+                    dest_ws_content = _insert_ws_element(dest_ws_content, orig_tp, 'tableParts')
+                    ws_modified = True
+                    sys.stderr.write(f"[restore] {ws_file}: <tableParts> vom Original wiederhergestellt (rId-Konsistenz)\n")
+                
+                # <pageSetup> r:id vom Original wiederherstellen (Drucker-Einstellungen)
+                # pageSetup kann r:id="rIdX" enthalten, das auf printerSettings verweist.
+                # Nach rels-Restore muss auch dieser rId stimmen.
+                orig_ps_match = re.search(r'<pageSetup\s[^>]*/\s*>', orig_ws_content)
+                if orig_ps_match:
+                    orig_ps = orig_ps_match.group(0)
+                    dest_ps_match = re.search(r'<pageSetup\s[^>]*/\s*>', dest_ws_content)
+                    if dest_ps_match:
+                        dest_ws_content = dest_ws_content.replace(dest_ps_match.group(0), orig_ps)
+                        ws_modified = True
+                        sys.stderr.write(f"[restore] {ws_file}: <pageSetup> vom Original wiederhergestellt\n")
+                
+                # KRITISCH: Namespace-Deklarationen vom Original-Worksheet wiederherstellen
+                # openpyxl schreibt nur minimal: xmlns="..." xmlns:r="..."
+                # Excel benötigt aber: xmlns:mc, mc:Ignorable, xmlns:x14ac, xmlns:xr etc.
+                # Ohne diese Namespaces erkennt Excel vm-Attribute und andere Erweiterungen nicht.
+                # re.search statt re.match weil XML-Header vor <worksheet> stehen kann
+                orig_root_match = re.search(r'(<worksheet\b[^>]+>)', orig_ws_content)
+                dest_root_match = re.search(r'(<worksheet\b[^>]+>)', dest_ws_content)
+                if orig_root_match and dest_root_match:
+                    orig_root = orig_root_match.group(1)
+                    dest_root = dest_root_match.group(1)
+                    if orig_root != dest_root:
+                        dest_ws_content = dest_ws_content.replace(dest_root, orig_root, 1)
+                        ws_modified = True
+                        sys.stderr.write(f"[restore] {ws_file}: Worksheet-Namespaces vom Original wiederhergestellt\n")
                 
                 # KRITISCH: vm-Attribute auf Zellen wiederherstellen (Excel 365 Zellbilder)
                 # openpyxl kennt vm-Attribute NICHT und entfernt sie komplett beim Speichern.
