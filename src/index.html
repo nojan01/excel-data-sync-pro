@@ -11948,6 +11948,8 @@
             });
             
             // Merged Cells am Ziel anlegen (GUI-seitig)
+            console.log(`[Paste] copiedCellsWithFormat.mergedCells:`, JSON.stringify(copiedCellsWithFormat.mergedCells));
+            console.log(`[Paste] explorerState.mergedCells VORHER:`, JSON.stringify(explorerState.mergedCells));
             // Alte Merges im Zielbereich entfernen
             const maxRelRow = Math.max(...copiedCellsWithFormat.cells.map(c => c.relRow));
             const maxRelCol = Math.max(...copiedCellsWithFormat.cells.map(c => c.relCol));
@@ -11971,6 +11973,8 @@
                     });
                 });
             }
+            
+            console.log(`[Paste] explorerState.mergedCells NACHHER:`, JSON.stringify(explorerState.mergedCells));
             
             // Undo speichern
             if (undoActions.length > 0) {
@@ -17289,6 +17293,7 @@
                                     mergedCells: explorerState.mergedCells || []
                                 };
                                 console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${Object.keys(cellStylesForChanged).length} CellStyles, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, ${clearedRowHighlights.length} entfernte Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
+                            console.log(`[Export] mergedCells für Zell-Edits: ${(explorerState.mergedCells || []).length} Einträge`, JSON.stringify(explorerState.mergedCells || []));
                             }
                         }
                     } else if (cachedSheet) {
@@ -17305,7 +17310,8 @@
                             cellHyperlinks: {},
                             richTextCells: {},
                             affectedRows: [],
-                            autoFilterRange: cachedSheet.autoFilterRange || null
+                            autoFilterRange: cachedSheet.autoFilterRange || null,
+                            mergedCells: cachedSheet.mergedCells || []
                         };
                     } else {
                         // Sheet nicht im Cache - Backend soll aus Datei lesen

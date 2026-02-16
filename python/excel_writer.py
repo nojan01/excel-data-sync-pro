@@ -1189,6 +1189,15 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         sys.stderr.write(f"[WRITE_SHEET] deleted_rows={deleted_rows}, inserted_rows={bool(inserted_rows)}, row_order={bool(row_order)}\n")
         sys.stderr.write(f"[WRITE_SHEET] deleted_columns={deleted_columns}, inserted_columns={bool(inserted_columns)}, column_order={bool(column_order)}\n")
         
+        # DEBUG: mergedCells vom Frontend
+        imported_mc_debug = changes.get('mergedCells', [])
+        sys.stderr.write(f"[WRITE_SHEET] mergedCells count={len(imported_mc_debug)}\n")
+        if imported_mc_debug:
+            for i, mc in enumerate(imported_mc_debug[:5]):
+                sys.stderr.write(f"[WRITE_SHEET] mergedCells[{i}]: startRow={mc.get('startRow')}, startCol={mc.get('startCol')}, endRow={mc.get('endRow')}, endCol={mc.get('endCol')}\n")
+            if len(imported_mc_debug) > 5:
+                sys.stderr.write(f"[WRITE_SHEET] ... und {len(imported_mc_debug) - 5} weitere\n")
+        
         # =====================================================================
         # FALL 1: fromFile - Nur versteckte Spalten/Zeilen setzen
         # =====================================================================
@@ -3546,14 +3555,23 @@ def _apply_imported_merged_cells(ws, merged_cells_list):
     startRow/startCol sind 0-basiert (0 = Excel-Zeile 1 = Header).
     """
     if not merged_cells_list:
+        sys.stderr.write(f"[MergedCells] Liste leer - übersprungen\n")
         return
     
+    sys.stderr.write(f"[MergedCells] Starte: {len(merged_cells_list)} Merges zu verarbeiten\n")
+    
+    # Bestehende Merges loggen
+    existing = list(ws.merged_cells.ranges)
+    sys.stderr.write(f"[MergedCells] Bestehende Merges im Sheet: {len(existing)}\n")
+    for mr in existing[:5]:
+        sys.stderr.write(f"[MergedCells] Bestehend: {mr}\n")
+    
     # Alle bestehenden Merges entfernen
-    for merged_range in list(ws.merged_cells.ranges):
+    for merged_range in existing:
         try:
             ws.unmerge_cells(str(merged_range))
-        except Exception:
-            pass
+        except Exception as e:
+            sys.stderr.write(f"[MergedCells] Fehler beim Unmerge {merged_range}: {e}\n")
     
     # Alle Merges aus dem Frontend anwenden
     applied = 0
@@ -3564,6 +3582,8 @@ def _apply_imported_merged_cells(ws, merged_cells_list):
             end_row = merge.get('endRow', 0) + 1
             end_col = merge.get('endCol', 0) + 1
             
+            sys.stderr.write(f"[MergedCells] Anwende: startRow={merge.get('startRow')} -> {start_row}, startCol={merge.get('startCol')} -> {start_col}, endRow={merge.get('endRow')} -> {end_row}, endCol={merge.get('endCol')} -> {end_col}\n")
+            
             if start_row > 0 and start_col > 0 and end_row >= start_row and end_col >= start_col:
                 ws.merge_cells(
                     start_row=start_row,
@@ -3572,11 +3592,12 @@ def _apply_imported_merged_cells(ws, merged_cells_list):
                     end_column=end_col
                 )
                 applied += 1
+            else:
+                sys.stderr.write(f"[MergedCells] Übersprungen (ungültig): ({start_row},{start_col}):({end_row},{end_col})\n")
         except Exception as e:
             sys.stderr.write(f"[MergedCells] Fehler beim Mergen: {e}\n")
     
-    if applied > 0:
-        sys.stderr.write(f"[MergedCells] {applied} Merged Cells angewendet\n")
+    sys.stderr.write(f"[MergedCells] {applied} von {len(merged_cells_list)} Merged Cells angewendet\n")
 
 
 def _apply_imported_rich_text(ws, rich_text_cells):
