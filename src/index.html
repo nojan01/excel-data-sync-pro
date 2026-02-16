@@ -17285,6 +17285,16 @@
                                     fullRewrite: false
                                 };
                                 console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${Object.keys(cellStylesForChanged).length} CellStyles, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, ${clearedRowHighlights.length} entfernte Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
+                                
+                                // DEBUG: Detaillierte Ausgabe der kopierten Styles und RichText
+                                console.log('[DEBUG Export] editedCells Keys (first 5):', JSON.stringify([...explorerState.editedCells.keys()].slice(0,5)));
+                                console.log('[DEBUG Export] cellStyles Keys (first 5):', JSON.stringify(Object.keys(explorerState.cellStyles).slice(0,5)));
+                                console.log('[DEBUG Export] cellStyles sample:', JSON.stringify(Object.entries(explorerState.cellStyles).slice(0,2)));
+                                console.log('[DEBUG Export] richTextCells Keys (first 5):', JSON.stringify(Object.keys(explorerState.richTextCells).slice(0,5)));
+                                console.log('[DEBUG Export] richTextForChanged:', JSON.stringify(richTextForChanged));
+                                console.log('[DEBUG Export] cellStylesForChanged:', JSON.stringify(cellStylesForChanged));
+                                console.log('[DEBUG Export] sheetData.richTextCells:', JSON.stringify(sheetData.richTextCells));
+                                console.log('[DEBUG Export] sheetData.cellStyles:', JSON.stringify(sheetData.cellStyles));
                             }
                         }
                     } else if (cachedSheet) {
