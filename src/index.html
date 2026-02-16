@@ -13037,6 +13037,16 @@
             explorerState.hasPivotTables = result.hasPivotTables || false;
             console.log('[LOAD] hasPivotTables =', explorerState.hasPivotTables, '(from result:', result.hasPivotTables, ')');
             
+            // Pivot-Warnung beim Öffnen
+            if (explorerState.hasPivotTables) {
+                const isEn = currentLanguage === 'en';
+                showFloatingStatus(
+                    isEn ? '⚠️ This file contains pivot tables — they may be lost or corrupted when saving without Live Mode!'
+                         : '⚠️ Diese Datei enthält Pivot-Tabellen — ohne Live-Modus können sie beim Speichern verloren gehen oder beschädigt werden!',
+                    'warning', 8000
+                );
+            }
+            
             // UI aktualisieren
             document.getElementById('explorerFileName').textContent = explorerState.fileName;
             
@@ -13188,6 +13198,16 @@
             explorerState.sheets = result.sheets;
             explorerState.hasPivotTables = result.hasPivotTables || false;
             console.log('[LOAD] hasPivotTables =', explorerState.hasPivotTables, '(from result:', result.hasPivotTables, ')');
+            
+            // Pivot-Warnung beim Öffnen
+            if (explorerState.hasPivotTables) {
+                const isEn = currentLanguage === 'en';
+                showFloatingStatus(
+                    isEn ? '⚠️ This file contains pivot tables — they may be lost or corrupted when saving without Live Mode!'
+                         : '⚠️ Diese Datei enthält Pivot-Tabellen — ohne Live-Modus können sie beim Speichern verloren gehen oder beschädigt werden!',
+                    'warning', 8000
+                );
+            }
             
             // Element frisch abfragen (kann durch setLanguage ersetzt worden sein)
             const explorerFileNameEl = document.getElementById('explorerFileName');
