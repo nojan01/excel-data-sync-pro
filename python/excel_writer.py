@@ -100,6 +100,27 @@ THEME_COLORS = [
 ]
 
 
+def _check_zip_drawings(zip_path, label):
+    """Diagnose-Helper: Prüft ob ein ZIP drawing-relevante Dateien enthält."""
+    import zipfile
+    import re
+    import sys
+    try:
+        with zipfile.ZipFile(zip_path, 'r') as zf:
+            names = zf.namelist()
+            drawings = [n for n in names if 'drawing' in n.lower() or 'media/' in n.lower()]
+            has_drawing_el = False
+            for n in names:
+                if n.startswith('xl/worksheets/') and n.endswith('.xml') and '/_rels/' not in n:
+                    content = zf.read(n).decode('utf-8', errors='replace')
+                    if re.search(r'<drawing[\s>]', content):
+                        has_drawing_el = True
+                        break
+            sys.stderr.write(f"[CHECKPOINT {label}] drawings/media files: {drawings}, <drawing> in sheet XML: {has_drawing_el}\n")
+    except Exception as e:
+        sys.stderr.write(f"[CHECKPOINT {label}] Fehler: {e}\n")
+
+
 def fix_xlsx_relationships(xlsx_path):
     """
     Repariert openpyxl-gespeicherte XLSX-Dateien.
@@ -112,6 +133,10 @@ def fix_xlsx_relationships(xlsx_path):
     4. Setzt xmlns an falsche Position (muss am Anfang des table-Elements sein)
     
     Dies führt dazu, dass Excel die Datei als beschädigt erkennt und Tables/AutoFilter entfernt.
+    
+    Verwendet ZIP-to-ZIP Re-Zip um sicherzustellen, dass KEINE Dateien verloren gehen
+    (insbesondere drawings, media, embeddings etc. die openpyxl ohne Pillow nicht korrekt
+    verarbeitet).
     """
     import zipfile
     import tempfile
@@ -209,17 +234,44 @@ def fix_xlsx_relationships(xlsx_path):
                         fp.write(content)
         
         if fixed_count > 0:
+            # ZIP-to-ZIP Re-Zip: Starte vom INPUT-ZIP und ersetze modifizierte Dateien.
+            # Dadurch bleiben ALLE Einträge erhalten (auch drawings, media, embeddings etc.
+            # die openpyxl ohne Pillow nicht schreibt und die beim temp_dir-Walk fehlen würden).
+            temp_files = {}
+            for root, dirs, files in os.walk(temp_dir):
+                dirs[:] = [d for d in dirs if d != '__MACOSX']
+                for f in files:
+                    if f == 'fixed.xlsx' or f == '.DS_Store' or f.startswith('._'):
+                        continue
+                    full_path = os.path.join(root, f)
+                    arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
+                    temp_files[arc_name] = full_path
             
-            # Erstelle neue XLSX aus den reparierten Dateien
-            with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for root, dirs, files in os.walk(temp_dir):
-                    dirs[:] = [d for d in dirs if d != '__MACOSX']
-                    for f in files:
-                        if f == 'fixed.xlsx' or f == '.DS_Store' or f.startswith('._'):
+            written = set()
+            with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as new_zf:
+                # Phase 1: Alle Einträge aus dem INPUT-ZIP durchgehen
+                with zipfile.ZipFile(xlsx_path, 'r') as orig_zf:
+                    for item in orig_zf.infolist():
+                        if item.filename.endswith('/'):
                             continue
-                        full_path = os.path.join(root, f)
-                        arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
-                        zf.write(full_path, arc_name)
+                        name = item.filename
+                        if name.startswith('__MACOSX') or name.endswith('.DS_Store') or \
+                           name.split('/')[-1].startswith('._'):
+                            continue
+                        if name in temp_files:
+                            new_zf.write(temp_files[name], name)
+                        else:
+                            data = orig_zf.read(name)
+                            info = item
+                            info.compress_type = zipfile.ZIP_DEFLATED
+                            new_zf.writestr(info, data)
+                        written.add(name)
+                
+                # Phase 2: Neue Dateien aus temp_dir die NICHT im Input waren
+                for arc_name, full_path in temp_files.items():
+                    if arc_name not in written:
+                        new_zf.write(full_path, arc_name)
+                        written.add(arc_name)
             
             # Ersetze Original mit reparierter Version
             shutil.copy2(temp_xlsx, xlsx_path)
@@ -250,9 +302,19 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
     import sys
     
     # Prüfe ob original_path gültig ist
-    if not original_path or os.path.normpath(original_path) == os.path.normpath(output_path):
-        sys.stderr.write(f"[restore_table_xml] Übersprungen: original_path={original_path}, output_path={output_path}\n")
+    if not original_path:
+        sys.stderr.write(f"[restore_table_xml] Übersprungen: original_path leer\n")
         return
+    
+    # Wenn original_path == output_path: Nutze Backup von restore_external_links
+    if os.path.normpath(original_path) == os.path.normpath(output_path):
+        backup_candidate = getattr(restore_external_links_from_original, '_backup_original_path', None)
+        if backup_candidate and os.path.exists(backup_candidate):
+            original_path = backup_candidate
+            sys.stderr.write(f"[restore_table_xml] Verwende Backup: {backup_candidate}\n")
+        else:
+            sys.stderr.write(f"[restore_table_xml] Übersprungen: original==output und kein Backup\n")
+            return
     
     if not os.path.exists(original_path):
         sys.stderr.write(f"[restore_table_xml] Original existiert nicht: {original_path}\n")
@@ -389,16 +451,43 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
         
         
         if fixed_count > 0:
-            # Erstelle neue XLSX
-            with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for root, dirs, files in os.walk(temp_dir):
-                    dirs[:] = [d for d in dirs if d != '__MACOSX']
-                    for f in files:
-                        if f == 'restored.xlsx' or f == '.DS_Store' or f.startswith('._'):
+            # ZIP-to-ZIP Re-Zip: Starte vom INPUT-ZIP und ersetze modifizierte Dateien.
+            # Bewahrt ALLE Einträge (drawings, media, embeddings etc.)
+            temp_files = {}
+            for root, dirs, files in os.walk(temp_dir):
+                dirs[:] = [d for d in dirs if d != '__MACOSX']
+                for f in files:
+                    if f == 'restored.xlsx' or f == '.DS_Store' or f.startswith('._'):
+                        continue
+                    full_path = os.path.join(root, f)
+                    arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
+                    temp_files[arc_name] = full_path
+            
+            written = set()
+            with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as new_zf:
+                # Phase 1: Alle Einträge aus dem OUTPUT-ZIP durchgehen
+                with zipfile.ZipFile(output_path, 'r') as input_zf:
+                    for item in input_zf.infolist():
+                        if item.filename.endswith('/'):
                             continue
-                        full_path = os.path.join(root, f)
-                        arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
-                        zf.write(full_path, arc_name)
+                        name = item.filename
+                        if name.startswith('__MACOSX') or name.endswith('.DS_Store') or \
+                           name.split('/')[-1].startswith('._'):
+                            continue
+                        if name in temp_files:
+                            new_zf.write(temp_files[name], name)
+                        else:
+                            data = input_zf.read(name)
+                            info = item
+                            info.compress_type = zipfile.ZIP_DEFLATED
+                            new_zf.writestr(info, data)
+                        written.add(name)
+                
+                # Phase 2: Neue Dateien aus temp_dir die NICHT im Input waren
+                for arc_name, full_path in temp_files.items():
+                    if arc_name not in written:
+                        new_zf.write(full_path, arc_name)
+                        written.add(arc_name)
             
             shutil.copy2(temp_xlsx, output_path)
     
@@ -423,20 +512,31 @@ def _insert_ws_element(ws_content, element_xml, element_name):
     Excel repariert Dateien mit falscher Element-Reihenfolge — dabei können
     Elemente (z.B. <drawing>) verloren gehen. Deshalb muss das Element
     VOR allen Elementen eingefügt werden, die im Schema DANACH kommen.
+    
+    WICHTIG: Sucht nur im TAIL-Bereich des Worksheets (nach </sheetData>),
+    um Verwechslung mit verschachtelten Elementen wie <extLst> innerhalb
+    von <sheetViews>, <conditionalFormatting> etc. zu vermeiden.
     """
+    import re
     try:
         idx = _WORKSHEET_END_ELEMENTS.index(element_name)
     except ValueError:
         # Unbekanntes Element → sicher vor </worksheet> einfügen
         return ws_content.replace('</worksheet>', element_xml + '\n</worksheet>')
     
-    # Finde die früheste Position eines nachfolgenden Elements
+    # KRITISCH: Nur im TAIL suchen (nach </sheetData>), um verschachtelte
+    # Elemente wie <extLst> innerhalb <sheetViews> nicht zu treffen.
+    tail_start = 0
+    sd_match = re.search(r'</sheetData>', ws_content)
+    if sd_match:
+        tail_start = sd_match.end()
+    
+    # Finde die früheste Position eines nachfolgenden Elements IM TAIL
     for after_elem in _WORKSHEET_END_ELEMENTS[idx + 1:]:
         # Suche nach <elementName (mit Leerzeichen oder >) um Verwechslung zu vermeiden
-        import re
-        pos_match = re.search(r'<' + re.escape(after_elem) + r'[\s>/]', ws_content)
+        pos_match = re.search(r'<' + re.escape(after_elem) + r'[\s>/]', ws_content[tail_start:])
         if pos_match:
-            insert_pos = pos_match.start()
+            insert_pos = tail_start + pos_match.start()
             return ws_content[:insert_pos] + element_xml + '\n' + ws_content[insert_pos:]
     
     # Kein nachfolgendes Element gefunden → vor </worksheet>
@@ -2993,14 +3093,18 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             sys.stderr.write(f"[PIPELINE] Schritt 13: Speichern\n")
             wb.save(output_path)
             wb.close()
+            _check_zip_drawings(output_path, "nach wb.save()")
             fix_xlsx_relationships(output_path)
+            _check_zip_drawings(output_path, "nach fix_xlsx_relationships()")
             
             # ===== SCHRITT 14: XML restore =====
             sys.stderr.write(f"[PIPELINE] Schritt 14: XML restore\n")
             if table_changes:
                 restore_table_xml_from_original(output_path, original_path, table_changes)
+                _check_zip_drawings(output_path, "nach restore_table_xml()")
             
             restore_external_links_from_original(output_path, original_path, structural_change=True)
+            _check_zip_drawings(output_path, "nach restore_external_links()")
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-pipeline'}
         
