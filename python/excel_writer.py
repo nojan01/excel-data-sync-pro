@@ -1153,9 +1153,33 @@ def restore_external_links_from_original(output_path, original_path, structural_
                             dest_ws_content = _insert_ws_element(dest_ws_content, picture_el, 'picture')
                         ws_modified = True
                     
-                    # tableParts und pageSetup NICHT ersetzen!
-                    # openpyxl's Rels sind beibehalten, daher stimmen openpyxl's rId-Referenzen
-                    # in tableParts, pageSetup, hyperlinks, oleObjects, comments etc.
+                    # <tableParts> aus Original wiederherstellen (mit gemappten rIds)
+                    # KRITISCH: openpyxl's interne rIds stimmen nach MERGE nicht mehr,
+                    # wenn openpyxl keine Rels-Datei für ein Sheet geschrieben hat
+                    # (alle Rels wurden aus dem Original mit neuen rIds ergänzt).
+                    # → tablePart r:id="rId2" zeigt dann auf Drawing statt Table
+                    # → Excel repariert → "Entfernter Teil: Zeichnungsform"
+                    orig_tp_match = re.search(r'<tableParts\b[^>]*>.*?</tableParts>', orig_ws_content, re.DOTALL)
+                    if not orig_tp_match:
+                        orig_tp_match = re.search(r'<tableParts\b[^/]*/>', orig_ws_content)
+                    if orig_tp_match:
+                        orig_tp = _map_rid(orig_tp_match.group(0))
+                        dest_ws_content = re.sub(r'<tableParts\b[^>]*>.*?</tableParts>', '', dest_ws_content, flags=re.DOTALL)
+                        dest_ws_content = re.sub(r'<tableParts\b[^/]*/>', '', dest_ws_content)
+                        dest_ws_content = _insert_ws_element(dest_ws_content, orig_tp, 'tableParts')
+                        ws_modified = True
+                        sys.stderr.write(f"[restore] {ws_file}: <tableParts> aus Original wiederhergestellt (mapped rIds): {orig_tp}\n")
+                    
+                    # <pageSetup> r:id aus Original wiederherstellen (mit gemapptem rId)
+                    # openpyxl verliert oft die r:id-Referenz zu printerSettings
+                    orig_ps_match = re.search(r'<pageSetup\s[^>]*/\s*>', orig_ws_content)
+                    if orig_ps_match:
+                        orig_ps = _map_rid(orig_ps_match.group(0))
+                        dest_ps_match = re.search(r'<pageSetup\s[^>]*/\s*>', dest_ws_content)
+                        if dest_ps_match:
+                            dest_ws_content = dest_ws_content.replace(dest_ps_match.group(0), orig_ps)
+                            ws_modified = True
+                            sys.stderr.write(f"[restore] {ws_file}: <pageSetup> r:id aus Original wiederhergestellt\n")
                 
                 else:
                     # === REPLACE-Modus: Alle Elemente aus Original übernehmen ===
