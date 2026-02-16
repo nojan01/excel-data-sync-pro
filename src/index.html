@@ -17259,6 +17259,19 @@
                                     }
                                 }
                                 
+                                // CellFonts für geänderte Zellen (kopierte Schriftformatierungen)
+                                const cellFontsForChanged = {};
+                                if (explorerState.cellFonts) {
+                                    for (const cellKey of explorerState.editedCells.keys()) {
+                                        if (cellKey.startsWith('_')) continue;
+                                        const [rowStr, colStr] = cellKey.split('-');
+                                        const styleKey = `${parseInt(rowStr) + 1}-${colStr}`;
+                                        if (explorerState.cellFonts[styleKey]) {
+                                            cellFontsForChanged[cellKey] = explorerState.cellFonts[styleKey];
+                                        }
+                                    }
+                                }
+                                
                                 // RowHighlights für Zell-Edits Export vorbereiten
                                 const exportRowHighlights = {};
                                 if (explorerState.rowHighlights && explorerState.rowHighlights.size > 0) {
@@ -17284,6 +17297,7 @@
                                     changedCells: changedCells,
                                     richTextCells: Object.keys(richTextForChanged).length > 0 ? richTextForChanged : undefined,
                                     cellStyles: Object.keys(cellStylesForChanged).length > 0 ? cellStylesForChanged : undefined,
+                                    cellFonts: Object.keys(cellFontsForChanged).length > 0 ? cellFontsForChanged : undefined,
                                     hiddenColumns: hiddenCols,
                                     hiddenRows: currentHiddenRows,
                                     rowHighlights: exportRowHighlights,

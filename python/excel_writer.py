@@ -541,6 +541,60 @@ def restore_external_links_from_original(output_path, original_path):
             shutil.copytree(orig_ws_rels_dir, dest_ws_rels_dir)
             fixed_count += 1
         
+        # KRITISCH: <drawing> und <legacyDrawing> Elemente in Worksheet-XMLs wiederherstellen
+        # openpyxl ENTFERNT diese Elemente beim Speichern wenn Pillow nicht installiert ist.
+        # Ohne <drawing r:id="..."/> im Worksheet-XML zeigt Excel keine Bilder an,
+        # selbst wenn xl/media/, xl/drawings/ und _rels wiederhergestellt wurden.
+        orig_ws_dir = os.path.join(orig_temp_dir, 'xl', 'worksheets')
+        dest_ws_dir = os.path.join(temp_dir, 'xl', 'worksheets')
+        if os.path.exists(orig_ws_dir) and os.path.exists(dest_ws_dir):
+            for ws_file in os.listdir(orig_ws_dir):
+                if not ws_file.endswith('.xml'):
+                    continue
+                orig_ws_file = os.path.join(orig_ws_dir, ws_file)
+                dest_ws_file = os.path.join(dest_ws_dir, ws_file)
+                if not os.path.exists(dest_ws_file):
+                    continue
+                
+                with open(orig_ws_file, 'r', encoding='utf-8') as f:
+                    orig_ws_content = f.read()
+                with open(dest_ws_file, 'r', encoding='utf-8') as f:
+                    dest_ws_content = f.read()
+                
+                ws_modified = False
+                
+                # <drawing r:id="rIdX"/> Element vom Original wiederherstellen
+                drawing_match = re.search(r'<drawing\s+[^>]*/\s*>', orig_ws_content)
+                if not drawing_match:
+                    # Auch geschlossene Form: <drawing r:id="rId1"></drawing>
+                    drawing_match = re.search(r'<drawing\s+[^>]*>.*?</drawing>', orig_ws_content, re.DOTALL)
+                if drawing_match and not re.search(r'<drawing[\s>]', dest_ws_content):
+                    drawing_el = drawing_match.group(0)
+                    # Vor </worksheet> einfügen
+                    dest_ws_content = dest_ws_content.replace('</worksheet>', drawing_el + '\n</worksheet>')
+                    ws_modified = True
+                    sys.stderr.write(f"[restore] {ws_file}: <drawing> Element wiederhergestellt: {drawing_el}\n")
+                
+                # <legacyDrawing r:id="..."/> Element vom Original wiederherstellen
+                legacy_match = re.search(r'<legacyDrawing\s+[^>]*/\s*>', orig_ws_content)
+                if not legacy_match:
+                    legacy_match = re.search(r'<legacyDrawing\s+[^>]*>.*?</legacyDrawing>', orig_ws_content, re.DOTALL)
+                if legacy_match and not re.search(r'<legacyDrawing[\s>]', dest_ws_content):
+                    dest_ws_content = dest_ws_content.replace('</worksheet>', legacy_match.group(0) + '\n</worksheet>')
+                    ws_modified = True
+                    sys.stderr.write(f"[restore] {ws_file}: <legacyDrawing> Element wiederhergestellt\n")
+                
+                # <picture r:id="..."/> Element vom Original wiederherstellen (Hintergrundbilder)
+                picture_match = re.search(r'<picture\s+[^>]*/\s*>', orig_ws_content)
+                if picture_match and not re.search(r'<picture[\s>]', dest_ws_content):
+                    dest_ws_content = dest_ws_content.replace('</worksheet>', picture_match.group(0) + '\n</worksheet>')
+                    ws_modified = True
+                
+                if ws_modified:
+                    with open(dest_ws_file, 'w', encoding='utf-8') as f:
+                        f.write(dest_ws_content)
+                    fixed_count += 1
+        
         if fixed_count > 0:
             
             # Erstelle neue XLSX
@@ -3402,6 +3456,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         imported_cell_styles = changes.get('cellStyles', {})
         if imported_cell_styles:
             _apply_imported_cell_styles(ws, imported_cell_styles)
+        
+        # Kopierte Schriftformatierungen anwenden (aus Copy-Paste)
+        cell_fonts = changes.get('cellFonts', {})
+        if cell_fonts:
+            _apply_cell_fonts(ws, cell_fonts)
         
         # Kopierte RichText-Formatierung anwenden (aus Copy-Paste)
         imported_rich_text = changes.get('richTextCells', {})
