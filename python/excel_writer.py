@@ -850,6 +850,79 @@ def restore_external_links_from_original(output_path, original_path):
                         f.write(dest_ws_content)
                     fixed_count += 1
         
+        # =====================================================================
+        # CONTENT_TYPES KONSISTENZ: Fehlende referenzierte Dateien nachkopieren
+        # openpyxl erzeugt nicht alle Dateien des Originals (z.B. calcChain.xml).
+        # Wenn [Content_Types].xml vom Original kopiert wird aber Dateien fehlen,
+        # löst Excel den "Reparatur"-Modus aus → richData/Bilder werden entfernt!
+        # =====================================================================
+        ct_file = os.path.join(temp_dir, '[Content_Types].xml')
+        if os.path.exists(ct_file):
+            with open(ct_file, 'r', encoding='utf-8') as f:
+                ct_content = f.read()
+            
+            def _ct_override_fixer(m):
+                nonlocal fixed_count
+                part_name = m.group(1)  # z.B. "/xl/calcChain.xml"
+                rel_path = part_name.lstrip('/')
+                dest_file_ct = os.path.join(temp_dir, rel_path.replace('/', os.sep))
+                if os.path.exists(dest_file_ct):
+                    return m.group(0)  # Datei existiert, Eintrag behalten
+                # Datei fehlt — aus Original kopieren
+                orig_file_ct = os.path.join(orig_temp_dir, rel_path.replace('/', os.sep))
+                if os.path.exists(orig_file_ct):
+                    os.makedirs(os.path.dirname(dest_file_ct), exist_ok=True)
+                    shutil.copy2(orig_file_ct, dest_file_ct)
+                    sys.stderr.write(f"[restore_ext] ContentTypes-Konsistenz: {part_name} aus Original kopiert\n")
+                    fixed_count += 1
+                    return m.group(0)  # Datei jetzt vorhanden, Eintrag behalten
+                else:
+                    # Datei existiert nirgends — Eintrag entfernen
+                    sys.stderr.write(f"[restore_ext] ContentTypes-Konsistenz: {part_name} entfernt (nirgends vorhanden)\n")
+                    return ''
+            
+            new_ct = re.sub(r'<Override\s+PartName="(/[^"]+)"[^/]*/>\s*', _ct_override_fixer, ct_content)
+            if new_ct != ct_content:
+                with open(ct_file, 'w', encoding='utf-8') as f:
+                    f.write(new_ct)
+                sys.stderr.write(f"[restore_ext] [Content_Types].xml bereinigt\n")
+        
+        # WORKBOOK.XML.RELS KONSISTENZ: Fehlende referenzierte Dateien nachkopieren
+        wb_rels_file = os.path.join(temp_dir, 'xl', '_rels', 'workbook.xml.rels')
+        if os.path.exists(wb_rels_file):
+            with open(wb_rels_file, 'r', encoding='utf-8') as f:
+                wb_rels_ct = f.read()
+            
+            def _rels_fixer(m):
+                nonlocal fixed_count
+                full_el = m.group(0)
+                target = m.group(1)
+                # Externe URLs und TargetMode="External" überspringen
+                if 'TargetMode="External"' in full_el:
+                    return full_el
+                if target.startswith('http://') or target.startswith('https://') or target.startswith('mailto:'):
+                    return full_el
+                # Relativer Pfad: relativ zu xl/
+                target_file_r = os.path.normpath(os.path.join(temp_dir, 'xl', target))
+                if os.path.exists(target_file_r):
+                    return full_el  # Datei existiert
+                orig_target_r = os.path.normpath(os.path.join(orig_temp_dir, 'xl', target))
+                if os.path.exists(orig_target_r):
+                    os.makedirs(os.path.dirname(target_file_r), exist_ok=True)
+                    shutil.copy2(orig_target_r, target_file_r)
+                    sys.stderr.write(f"[restore_ext] Rels-Konsistenz: xl/{target} aus Original kopiert\n")
+                    fixed_count += 1
+                    return full_el
+                else:
+                    sys.stderr.write(f"[restore_ext] Rels-Konsistenz: xl/{target} entfernt (nicht gefunden)\n")
+                    return ''
+            
+            new_rels = re.sub(r'<Relationship\s[^>]*?Target="([^"]+)"[^/]*/>\s*', _rels_fixer, wb_rels_ct)
+            if new_rels != wb_rels_ct:
+                with open(wb_rels_file, 'w', encoding='utf-8') as f:
+                    f.write(new_rels)
+                sys.stderr.write(f"[restore_ext] workbook.xml.rels bereinigt\n")
+        
         sys.stderr.write(f"[restore_ext] fixed_count={fixed_count}\n")
         
         if fixed_count > 0:
@@ -1625,6 +1698,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             wb.save(output_path)
             wb.close()
             fix_xlsx_relationships(output_path)
+            # WICHTIG: Auch bei fromFile richData/Bilder/Namespaces wiederherstellen!
+            # openpyxl verliert beim Speichern richData, metadata, vm-Attribute etc.
+            restore_table_xml_from_original(output_path, original_path, table_changes=None)
+            restore_external_links_from_original(output_path, original_path)
             return {'success': True, 'outputPath': output_path}
         
         # =====================================================================
