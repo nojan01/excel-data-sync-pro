@@ -3398,6 +3398,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     cell = ws.cell(row=excel_row, column=col_idx)
                     cell.fill = PatternFill()  # Keine Füllung
         
+        # Merged Cells VOR save loggen
+        mc_before_save = list(ws.merged_cells.ranges)
+        sys.stderr.write(f"[FALL 3] Merged Cells VOR wb.save(): {len(mc_before_save)} Merges\n")
+        for mr in mc_before_save:
+            sys.stderr.write(f"[FALL 3]   {mr}\n")
+        
         wb.save(output_path)
         wb.close()
         fix_xlsx_relationships(output_path)
@@ -3410,6 +3416,18 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         # WICHTIG: Auch workbook.xml, slicerCaches, etc. vom Original wiederherstellen!
         # openpyxl verliert Slicers, Extensions und viele Namespaces
         restore_external_links_from_original(output_path, original_path)
+        
+        # POST-SAVE: Verifiziere Merged Cells in der gespeicherten Datei
+        try:
+            verify_wb = load_workbook(output_path)
+            verify_ws = verify_wb[sheet_name]
+            mc_after = list(verify_ws.merged_cells.ranges)
+            sys.stderr.write(f"[VERIFY] Merged Cells NACH save+restore: {len(mc_after)} Merges\n")
+            for mr in mc_after:
+                sys.stderr.write(f"[VERIFY]   {mr}\n")
+            verify_wb.close()
+        except Exception as ve:
+            sys.stderr.write(f"[VERIFY] Fehler bei Verifizierung: {ve}\n")
         
         return {'success': True, 'outputPath': output_path}
         

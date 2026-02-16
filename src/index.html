@@ -17365,6 +17365,11 @@
                     const engineInfo = result.method ? ` [${result.method}]` : '';
                     elements.explorerStatus.textContent = `✓ ${selectedSheets.length} Arbeitsblatt/blätter exportiert${pwInfo}${engineInfo}: ${savePath}`;
                     
+                    // Python Debug-Logs anzeigen (MergedCells, etc.)
+                    if (result.debugLog) {
+                        console.log('[Python Debug]', result.debugLog);
+                    }
+                    
                     // Im Live-Modus: State bereinigen, aber Datei nicht neu laden
                     if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                         console.log('[Export] Live-Session: Änderungsmarkierungen zurücksetzen...');

@@ -429,6 +429,7 @@ async function writeExcel(config) {
             try {
                 const result = JSON.parse(stdout);
                 result.method = useXlwings ? 'xlwings' : 'openpyxl';
+                result.debugLog = stderr || '';  // Python stderr für Debugging
                 resolve(result);
             } catch (parseError) {
                 safeError(`[Python] JSON parse error:`, parseError.message);
@@ -488,6 +489,7 @@ async function writeExcelOpenpyxl(config) {
             try {
                 const result = JSON.parse(stdout);
                 result.method = 'openpyxl';
+                result.debugLog = stderr || '';  // Python stderr für Debugging
                 resolve(result);
             } catch (parseError) {
                 reject(new Error(`Failed to parse Python output: ${parseError.message}`));
@@ -778,6 +780,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
     let hasError = false;
     let errorMessage = '';
     let actualMethod = null; // Track the ACTUAL method used, not what was planned
+    let debugLogs = null; // Collect Python stderr debug output
     
     // Original-Datei für Style-Wiederherstellung (falls Markierungen entfernt werden)
     const originalSourcePath = options.originalSourcePath || sourcePath;
@@ -915,6 +918,11 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                     results.push(sheet.sheetName);
                     // Track actual method used
                     if (colResult.method) actualMethod = colResult.method;
+                    // Collect debug logs from Python stderr
+                    if (colResult.debugLog) {
+                        if (!debugLogs) debugLogs = [];
+                        debugLogs.push(colResult.debugLog);
+                    }
                     safeLog(`[Python] Spalten-Ops für "${sheet.sheetName}" erfolgreich (${colResult.method})`);
                 }
                 
@@ -961,6 +969,11 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                     results.push(sheet.sheetName);
                     // Track actual method used
                     if (result.method) actualMethod = result.method;
+                    // Collect debug logs from Python stderr
+                    if (result.debugLog) {
+                        if (!debugLogs) debugLogs = [];
+                        debugLogs.push(result.debugLog);
+                    }
                     safeLog(`[Python] Sheet "${sheet.sheetName}" erfolgreich (${result.method})`);
                 }
             }
@@ -996,7 +1009,8 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
         success: true,
         message: `${results.length} Sheet(s) exportiert`,
         sheetsExported: results,
-        method: finalMethod
+        method: finalMethod,
+        debugLog: debugLogs ? debugLogs.join('\n---\n') : ''
     };
 }
 
