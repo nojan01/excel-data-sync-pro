@@ -13037,13 +13037,16 @@
             explorerState.hasPivotTables = result.hasPivotTables || false;
             console.log('[LOAD] hasPivotTables =', explorerState.hasPivotTables, '(from result:', result.hasPivotTables, ')');
             
-            // Pivot-Warnung beim Öffnen
+            // Pivot-Warnung beim Öffnen (gleicher Dialog wie beim Speichern)
             if (explorerState.hasPivotTables) {
                 const isEn = currentLanguage === 'en';
-                showFloatingStatus(
-                    isEn ? '⚠️ This file contains pivot tables — they may be lost or corrupted when saving without Live Mode!'
-                         : '⚠️ Diese Datei enthält Pivot-Tabellen — ohne Live-Modus können sie beim Speichern verloren gehen oder beschädigt werden!',
-                    'warning', 8000
+                showConfirmDialog(
+                    '⚠️ ' + (isEn ? 'Pivot Tables detected' : 'Pivot-Tabellen erkannt'),
+                    isEn
+                        ? 'This file contains pivot tables!\n\nWithout Live Mode, pivot tables may be lost or corrupted when saving.\n\nRecommendation: Use Live Mode or create a backup copy.'
+                        : 'Diese Datei enthält Pivot-Tabellen!\n\nOhne Live-Modus können Pivot-Tabellen beim Speichern verloren gehen oder beschädigt werden.\n\nEmpfehlung: Verwenden Sie den Live Modus oder erstellen Sie eine Sicherheitskopie.',
+                    'OK',
+                    null  // Kein Abbrechen-Button — nur Info-Dialog
                 );
             }
             
@@ -13199,13 +13202,16 @@
             explorerState.hasPivotTables = result.hasPivotTables || false;
             console.log('[LOAD] hasPivotTables =', explorerState.hasPivotTables, '(from result:', result.hasPivotTables, ')');
             
-            // Pivot-Warnung beim Öffnen
+            // Pivot-Warnung beim Öffnen (gleicher Dialog wie beim Speichern)
             if (explorerState.hasPivotTables) {
                 const isEn = currentLanguage === 'en';
-                showFloatingStatus(
-                    isEn ? '⚠️ This file contains pivot tables — they may be lost or corrupted when saving without Live Mode!'
-                         : '⚠️ Diese Datei enthält Pivot-Tabellen — ohne Live-Modus können sie beim Speichern verloren gehen oder beschädigt werden!',
-                    'warning', 8000
+                showConfirmDialog(
+                    '⚠️ ' + (isEn ? 'Pivot Tables detected' : 'Pivot-Tabellen erkannt'),
+                    isEn
+                        ? 'This file contains pivot tables!\n\nWithout Live Mode, pivot tables may be lost or corrupted when saving.\n\nRecommendation: Use Live Mode or create a backup copy.'
+                        : 'Diese Datei enthält Pivot-Tabellen!\n\nOhne Live-Modus können Pivot-Tabellen beim Speichern verloren gehen oder beschädigt werden.\n\nEmpfehlung: Verwenden Sie den Live Modus oder erstellen Sie eine Sicherheitskopie.',
+                    'OK',
+                    null  // Kein Abbrechen-Button — nur Info-Dialog
                 );
             }
             
