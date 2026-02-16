@@ -417,43 +417,28 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
         
         # SCHRITT 4: ZEILEN EINFÜGEN
         # insert(shift='down') verschiebt existierende Zeilen nach unten (mit Formatierung!)
-        # WICHTIG: Danach KEIN Block-Write über alle Daten! Das würde die Formatierung der
-        # existierenden Zeilen zerstören (gleiche Ursache wie bei Zeilen-Verschiebung).
-        # Stattdessen: Nur die NEU EINGEFÜGTEN Zeilen mit Daten befüllen.
-        # Editierte Zellen werden separat über Schritt 12 geschrieben.
+        # WICHTIG: Kein Daten-Write nötig! Die eingefügten Zeilen sind leer und alle
+        # Zell-Werte werden über Schritt 12 (editedCells) geschrieben.
+        # Operationen werden in CHRONOLOGISCHER Reihenfolge verarbeitet (wie gespeichert),
+        # da die Positionen im kumulativen Koordinatensystem sind (jede Position
+        # berücksichtigt bereits alle vorherigen Einfügungen). KEIN Offset nötig!
         rows_inserted = False
-        inserted_positions = []  # Trackt die finalen Positionen der eingefügten Zeilen
         if inserted_rows:
             operations = inserted_rows.get('operations', [])
             if operations:
-                # Sortiere nach Position aufsteigend
-                inserted_offset = 0
-                for op in sorted(operations, key=lambda x: x['position']):
-                    pos = op['position'] + inserted_offset
+                # Verarbeite in chronologischer Reihenfolge (NICHT sortieren, KEIN Offset!)
+                # Jede Position ist im kumulativen Koordinatensystem (post-alle-vorherigen-Inserts)
+                for op in operations:
+                    pos = op['position']
                     count = op.get('count', 1)
                     excel_row_start = pos + 2  # +2 für Header und 1-basiert
                     excel_row_end = excel_row_start + count - 1
                     
-                    print(f"[xlwings_writer] Füge {count} Zeile(n) bei Zeile {excel_row_start} ein", file=sys.stderr)
+                    print(f"[xlwings_writer] Füge {count} Zeile(n) bei Excel-Zeile {excel_row_start} ein (Daten-Position {pos})", file=sys.stderr)
                     ws.range(f'{excel_row_start}:{excel_row_end}').insert(shift='down')
-                    
-                    # Tracke die Positionen für späteres Beschreiben
-                    for i in range(count):
-                        inserted_positions.append(pos + i)  # 0-basierter Daten-Index
-                    inserted_offset += count
                 
                 rows_inserted = True
-                
-                # NUR die eingefügten Zeilen mit Daten befüllen (nicht alle!)
-                # insert(shift='down') hat existierende Zeilen bereits korrekt verschoben
-                if data and len(data) > 0:
-                    num_cols = len(data[0]) if data[0] else len(headers)
-                    for ins_pos in inserted_positions:
-                        if ins_pos < len(data):
-                            excel_row = ins_pos + 2  # +2 für Header und 1-basiert
-                            row_data = [data[ins_pos]]  # 2D-Array für xlwings
-                            ws.range((excel_row, 1), (excel_row, num_cols)).value = row_data
-                    print(f"[xlwings_writer] {len(inserted_positions)} eingefügte Zeile(n) mit Daten befüllt", file=sys.stderr)
+                print(f"[xlwings_writer] {len(operations)} Einfüge-Operation(en) abgeschlossen", file=sys.stderr)
         
         # SCHRITT 5: ZEILEN MARKIEREN (ROW HIGHLIGHTS)
         if row_highlights and len(row_highlights) > 0:
