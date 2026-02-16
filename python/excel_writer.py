@@ -1902,6 +1902,10 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
     - Tables, Slicers, External Links
     - Conditional Formatting, Styles, Fonts
     
+    Verwendet ZIP-to-ZIP Entry-Kopie: Liest Einträge direkt aus dem Original-ZIP
+    und schreibt sie in ein neues ZIP. Nur modifizierte XMLs werden ersetzt.
+    Keine Dateisystem-Extraktion nötig → keine .DS_Store, ._files, Permission-Probleme.
+    
     Kein fix_xlsx_relationships, kein restore_table_xml, kein restore_external_links nötig.
     
     Args:
@@ -1938,167 +1942,174 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
             ET.register_namespace(prefix, uri)
     ET.register_namespace('', MAIN_NS)
     
-    # 1. Kopiere Original 1:1 nach Output
-    if os.path.normpath(file_path) != os.path.normpath(output_path):
-        shutil.copy2(file_path, output_path)
+    # =========================================================================
+    # ZIP-to-ZIP Ansatz: Lese direkt aus dem ZIP, modifiziere im Speicher,
+    # schreibe in neues ZIP. Keine Dateisystem-Extraktion!
+    # =========================================================================
     
-    # 2. Finde das richtige Sheet-XML im ZIP
-    temp_dir = tempfile.mkdtemp()
+    # Temporäre Ausgabedatei (wird am Ende umbenannt)
+    temp_output = output_path + '.tmp'
+    
     try:
-        with zipfile.ZipFile(output_path, 'r') as zf:
-            zf.extractall(temp_dir)
-        
-        # Finde Sheet-Index über workbook.xml
-        wb_path = os.path.join(temp_dir, 'xl', 'workbook.xml')
-        # Parse workbook.xml mit Namespace-Bewusstsein
-        wb_tree = ET.parse(wb_path)
-        wb_root = wb_tree.getroot()
-        
-        # Finde das <sheet> Element mit dem richtigen Namen
-        sheet_rid = None
-        for sheet_el in wb_root.iter(f'{{{MAIN_NS}}}sheet'):
-            if sheet_el.get('name') == sheet_name:
-                sheet_rid = sheet_el.get(f'{{{NS["r"]}}}id')
-                break
-        
-        if not sheet_rid:
-            raise ValueError(f"Sheet '{sheet_name}' nicht in workbook.xml gefunden")
-        
-        sys.stderr.write(f"[DIRECT_XML] Sheet '{sheet_name}' hat rId={sheet_rid}\n")
-        
-        # Finde den Dateipfad über workbook.xml.rels
-        rels_path = os.path.join(temp_dir, 'xl', '_rels', 'workbook.xml.rels')
-        rels_tree = ET.parse(rels_path)
-        
-        sheet_file = None
-        rels_ns = 'http://schemas.openxmlformats.org/package/2006/relationships'
-        for rel_el in rels_tree.getroot().iter(f'{{{rels_ns}}}Relationship'):
-            if rel_el.get('Id') == sheet_rid:
-                sheet_file = rel_el.get('Target')
-                break
-        
-        if not sheet_file:
-            raise ValueError(f"Relationship {sheet_rid} nicht in workbook.xml.rels gefunden")
-        
-        # Sheet-Datei relativ zu xl/
-        sheet_xml_path = os.path.join(temp_dir, 'xl', sheet_file.replace('/', os.sep))
-        sys.stderr.write(f"[DIRECT_XML] Sheet-XML: {sheet_file}\n")
-        
-        # 3. Lese SharedStrings für Referenz (nur lesen, nicht ändern)
-        shared_strings = []
-        ss_path = os.path.join(temp_dir, 'xl', 'sharedStrings.xml')
-        has_shared_strings = os.path.exists(ss_path)
-        if has_shared_strings:
-            ss_tree = ET.parse(ss_path)
-            ss_root = ss_tree.getroot()
-            for si in ss_root.iter(f'{{{MAIN_NS}}}si'):
-                # Sammle den Text aus allen <t> Elementen
-                texts = []
-                for t in si.iter(f'{{{MAIN_NS}}}t'):
-                    if t.text:
-                        texts.append(t.text)
-                shared_strings.append(''.join(texts))
-        
-        # 4. Parse Sheet-XML
-        # WICHTIG: Wir müssen die Original-Datei byte-genau lesen und nur
-        # gezielt ändern. ElementTree verliert leider Namespace-Deklarationen
-        # und Attribut-Reihenfolgen. Deshalb verwenden wir Regex-basierte
-        # Bearbeitung auf dem rohen XML-String.
-        with open(sheet_xml_path, 'r', encoding='utf-8') as f:
-            sheet_content = f.read()
-        
-        # 5. Konvertiere Edits zu Excel-Koordinaten
-        # Edits sind "rowIdx-colIdx" (0-basiert, ohne Header)
-        # Excel-Zellen sind 1-basiert, Zeile 1 = Header → Daten ab Zeile 2
-        edits_by_ref = {}
-        for key, value in real_edits.items():
-            parts = key.split('-')
-            if len(parts) != 2:
-                continue
-            row_idx = int(parts[0])
-            col_idx = int(parts[1])
-            excel_row = row_idx + 2  # 0-basiert → 1-basiert + Header
-            excel_col = col_idx + 1  # 0-basiert → 1-basiert
-            col_letter = get_column_letter(excel_col)
-            cell_ref = f"{col_letter}{excel_row}"
-            edits_by_ref[cell_ref] = value
-        
-        sys.stderr.write(f"[DIRECT_XML] Zell-Referenzen: {list(edits_by_ref.keys())}\n")
-        
-        # 6. Für jede editierte Zelle: Wert im XML ändern
-        modified = False
-        for cell_ref, value in edits_by_ref.items():
-            # Bild-Platzhalter überspringen
-            if isinstance(value, str) and '🖼️' in value:
-                continue
+        with zipfile.ZipFile(file_path, 'r') as src_zip:
+            # 1. Finde Sheet-XML Pfad aus workbook.xml + workbook.xml.rels
+            wb_xml = src_zip.read('xl/workbook.xml').decode('utf-8')
+            wb_root = ET.fromstring(wb_xml)
             
-            sheet_content, was_modified = _replace_cell_value_in_xml(
-                sheet_content, cell_ref, value, MAIN_NS, shared_strings, has_shared_strings
-            )
-            if was_modified:
+            sheet_rid = None
+            for sheet_el in wb_root.iter(f'{{{MAIN_NS}}}sheet'):
+                if sheet_el.get('name') == sheet_name:
+                    sheet_rid = sheet_el.get(f'{{{NS["r"]}}}id')
+                    break
+            
+            if not sheet_rid:
+                raise ValueError(f"Sheet '{sheet_name}' nicht in workbook.xml gefunden")
+            
+            sys.stderr.write(f"[DIRECT_XML] Sheet '{sheet_name}' hat rId={sheet_rid}\n")
+            
+            rels_xml = src_zip.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+            rels_root = ET.fromstring(rels_xml)
+            rels_ns = 'http://schemas.openxmlformats.org/package/2006/relationships'
+            
+            sheet_file = None
+            for rel_el in rels_root.iter(f'{{{rels_ns}}}Relationship'):
+                if rel_el.get('Id') == sheet_rid:
+                    sheet_file = rel_el.get('Target')
+                    break
+            
+            if not sheet_file:
+                raise ValueError(f"Relationship {sheet_rid} nicht in workbook.xml.rels gefunden")
+            
+            # Sheet-Pfad normalisieren (Target ist relativ zu xl/)
+            sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+            # Normalisiere ../ etc.
+            parts = sheet_zip_path.split('/')
+            normalized = []
+            for p in parts:
+                if p == '..':
+                    if normalized:
+                        normalized.pop()
+                elif p != '.':
+                    normalized.append(p)
+            sheet_zip_path = '/'.join(normalized)
+            
+            sys.stderr.write(f"[DIRECT_XML] Sheet-ZIP-Pfad: {sheet_zip_path}\n")
+            
+            # 2. Lese SharedStrings (nur zum Referenzieren)
+            shared_strings = []
+            has_shared_strings = 'xl/sharedStrings.xml' in src_zip.namelist()
+            ss_content = None
+            if has_shared_strings:
+                ss_content = src_zip.read('xl/sharedStrings.xml').decode('utf-8')
+                ss_root = ET.fromstring(ss_content)
+                for si in ss_root.iter(f'{{{MAIN_NS}}}si'):
+                    texts = []
+                    for t in si.iter(f'{{{MAIN_NS}}}t'):
+                        if t.text:
+                            texts.append(t.text)
+                    shared_strings.append(''.join(texts))
+            
+            # 3. Lese Sheet-XML
+            sheet_content = src_zip.read(sheet_zip_path).decode('utf-8')
+            
+            # 4. Konvertiere Edits zu Excel-Koordinaten
+            edits_by_ref = {}
+            for key, value in real_edits.items():
+                parts = key.split('-')
+                if len(parts) != 2:
+                    continue
+                row_idx = int(parts[0])
+                col_idx = int(parts[1])
+                excel_row = row_idx + 2
+                excel_col = col_idx + 1
+                col_letter = get_column_letter(excel_col)
+                cell_ref = f"{col_letter}{excel_row}"
+                edits_by_ref[cell_ref] = value
+            
+            sys.stderr.write(f"[DIRECT_XML] Zell-Referenzen: {list(edits_by_ref.keys())}\n")
+            
+            # 5. Für jede editierte Zelle: Wert im XML ändern
+            modified = False
+            for cell_ref, value in edits_by_ref.items():
+                if isinstance(value, str) and '🖼️' in value:
+                    continue
+                
+                sheet_content, was_modified = _replace_cell_value_in_xml(
+                    sheet_content, cell_ref, value, MAIN_NS, shared_strings, has_shared_strings
+                )
+                if was_modified:
+                    modified = True
+            
+            # 6. Hidden Columns/Rows direkt im XML setzen
+            if hidden_columns is not None:
+                sheet_content = _set_hidden_cols_in_xml(sheet_content, hidden_columns, MAIN_NS)
                 modified = True
-        
-        # 7. Hidden Columns/Rows direkt im XML setzen
-        if hidden_columns is not None:
-            sheet_content = _set_hidden_cols_in_xml(sheet_content, hidden_columns, MAIN_NS)
-            modified = True
-        if hidden_rows is not None:
-            sheet_content = _set_hidden_rows_in_xml(sheet_content, hidden_rows, MAIN_NS)
-            modified = True
-        
-        if modified:
-            # 8. Schreibe modifiziertes Sheet-XML zurück
-            with open(sheet_xml_path, 'w', encoding='utf-8') as f:
-                f.write(sheet_content)
+            if hidden_rows is not None:
+                sheet_content = _set_hidden_rows_in_xml(sheet_content, hidden_rows, MAIN_NS)
+                modified = True
             
-            # 9. SharedStrings aktualisieren falls neue Strings hinzugefügt wurden
+            # 7. SharedStrings aktualisieren falls neue Strings hinzugefügt wurden
+            ss_modified = False
             if has_shared_strings and hasattr(_replace_cell_value_in_xml, '_new_strings'):
                 new_strings = _replace_cell_value_in_xml._new_strings
-                if new_strings:
-                    with open(ss_path, 'r', encoding='utf-8') as f:
-                        ss_content = f.read()
-                    
-                    # Aktualisiere count und uniqueCount
+                if new_strings and ss_content:
                     new_count = len(shared_strings) + len(new_strings)
                     ss_content = re.sub(r'count="\d+"', f'count="{new_count}"', ss_content)
                     ss_content = re.sub(r'uniqueCount="\d+"', f'uniqueCount="{new_count}"', ss_content)
                     
-                    # Neue <si> Elemente vor </sst> einfügen
                     new_si_xml = ''
                     for s in new_strings:
                         escaped = s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
                         new_si_xml += f'<si><t>{escaped}</t></si>'
                     ss_content = ss_content.replace('</sst>', new_si_xml + '</sst>')
-                    
-                    with open(ss_path, 'w', encoding='utf-8') as f:
-                        f.write(ss_content)
-                    
+                    ss_modified = True
                     sys.stderr.write(f"[DIRECT_XML] {len(new_strings)} neue SharedStrings hinzugefügt\n")
                 
-                # Aufräumen
                 _replace_cell_value_in_xml._new_strings = []
             
-            # 10. Neu-packen als XLSX
-            temp_xlsx = os.path.join(temp_dir, '_repacked.xlsx')
-            with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as zf:
-                for root_dir, dirs, files in os.walk(temp_dir):
-                    dirs[:] = [d for d in dirs if d != '__MACOSX']
-                    for f in files:
-                        if f == '_repacked.xlsx' or f == '.DS_Store' or f.startswith('._'):
-                            continue
-                        full_path = os.path.join(root_dir, f)
-                        arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
-                        zf.write(full_path, arc_name)
+            if not modified:
+                # Keine Änderungen → Original einfach kopieren
+                if os.path.normpath(file_path) != os.path.normpath(output_path):
+                    shutil.copy2(file_path, output_path)
+                sys.stderr.write(f"[DIRECT_XML] Keine Änderungen nötig\n")
+                return {'success': True, 'outputPath': output_path, 'method': 'direct-xml'}
             
-            shutil.copy2(temp_xlsx, output_path)
-            sys.stderr.write(f"[DIRECT_XML] Erfolgreich gespeichert: {output_path}\n")
-        else:
-            sys.stderr.write(f"[DIRECT_XML] Keine Änderungen nötig\n")
+            # 8. ZIP-to-ZIP: Kopiere alle Einträge, ersetze nur modifizierte
+            with zipfile.ZipFile(temp_output, 'w') as dst_zip:
+                for item in src_zip.infolist():
+                    # Überspringe macOS-Artefakte
+                    if item.filename.startswith('__MACOSX') or \
+                       item.filename.endswith('.DS_Store') or \
+                       '/.DS_Store' in item.filename or \
+                       item.filename.split('/')[-1].startswith('._'):
+                        continue
+                    
+                    if item.filename == sheet_zip_path:
+                        # Modifiziertes Sheet-XML schreiben
+                        item.compress_type = zipfile.ZIP_DEFLATED
+                        dst_zip.writestr(item, sheet_content.encode('utf-8'))
+                    elif item.filename == 'xl/sharedStrings.xml' and ss_modified:
+                        # Modifizierte SharedStrings schreiben
+                        item.compress_type = zipfile.ZIP_DEFLATED
+                        dst_zip.writestr(item, ss_content.encode('utf-8'))
+                    else:
+                        # Original-Bytes 1:1 kopieren
+                        data = src_zip.read(item.filename)
+                        dst_zip.writestr(item, data)
+        
+        # 9. Temporäre Datei an Zielort verschieben
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        shutil.move(temp_output, output_path)
+        sys.stderr.write(f"[DIRECT_XML] Erfolgreich gespeichert: {output_path}\n")
         
         return {'success': True, 'outputPath': output_path, 'method': 'direct-xml'}
     
-    finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+    except Exception:
+        # Aufräumen bei Fehler
+        if os.path.exists(temp_output):
+            os.remove(temp_output)
+        raise
 
 
 def _replace_cell_value_in_xml(sheet_content, cell_ref, value, main_ns, shared_strings, has_shared_strings):
@@ -4588,8 +4599,23 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         cell_fonts = changes.get('cellFonts', {})
         imported_rich_text = changes.get('richTextCells', {})
         imported_merged_cells = changes.get('mergedCells', [])
-        has_extra_changes = bool(imported_cell_styles) or bool(cell_fonts) or bool(imported_rich_text) or bool(imported_merged_cells)
-        has_highlight_changes = bool(row_highlights) or bool(cleared_row_highlights)
+        
+        # WICHTIG: FALL 3a (direkte XML-Bearbeitung) kopiert die Original-Datei 1:1
+        # und ändert NUR Zellwerte. Alle Styles, Fonts, MergedCells, Highlights,
+        # Drawings etc. bleiben aus dem Original erhalten.
+        #
+        # Das Frontend sendet IMMER die Original-Daten mit:
+        # - cellStyles: Original-Styles der editierten Zellen (zum Wiederherstellen in openpyxl)
+        # - cellFonts: Original-Fonts der editierten Zellen
+        # - richTextCells: Original-RichText der editierten Zellen
+        # - mergedCells: ALLE pre-existierenden Merged Cells
+        # - rowHighlights: ALLE aktuellen Highlights (auch pre-existierende)
+        #
+        # Diese Daten sind KEINE neuen Änderungen - sie sind pre-existierend!
+        # FALL 3a preserviert sie automatisch aus dem Original.
+        # Nur cleared_row_highlights zeigen echte Änderungen an (Highlights entfernt).
+        has_extra_changes = False  # Pre-existierende Daten blockieren FALL 3a nicht
+        has_highlight_changes = bool(cleared_row_highlights)  # Nur wenn Highlights explizit entfernt
         
         # =====================================================================
         # FALL 3a: NUR Zell-Edits → Direkte XML-Bearbeitung (kein openpyxl-Roundtrip)
