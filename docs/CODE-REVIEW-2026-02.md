@@ -188,6 +188,8 @@
 | `d5e4f2a` | Diagnostik-Dump für Image-Debugging hinzugefügt |
 | `592f756` | Windows-Pfad-Robustheit: `os.path.relpath` + `os.path.normpath` × 3 |
 | `978fba0` | Content_Types/Rels Konsistenz + FALL 1 restore (siehe unten) |
+| `4562567` | externalLinks nicht überschreiben (cached values erhalten) |
+| `24d956b` | **Selektiver Merge** statt blind-copy für workbook.xml/rels/ContentTypes (siehe unten) |
 
 ### Fix-Details (978fba0)
 
@@ -197,9 +199,21 @@
 
 3. **FALL 1 (fromFile) restore fehlte** — Wenn ein Sheet als `fromFile: true` verarbeitet wird, fehlten `restore_table_xml_from_original()` und `restore_external_links_from_original()` Aufrufe komplett. Ergänzt.
 
+### Fix-Details (24d956b) — Selektiver Merge
+
+**Kernproblem:** Excel-Reparaturmodus "Zwischengespeicherte Werte eines externen Formelbezugs" wurde durch blindes Kopieren von workbook.xml, workbook.xml.rels und Content_Types.xml vom Original verursacht. Die Konsistenz-Fixer kopierten dann externalLink-Dateien mit veralteten cached values aus dem Original.
+
+**Lösung — 3 Ebenen:**
+1. **workbook.xml**: Nur Namespace-Deklarationen und definedNames vom Original übernehmen. openpyxls externalReferences bleiben erhalten.
+2. **workbook.xml.rels**: Nur fehlende Relationships ergänzen (z.B. slicerCaches). externalLinks NICHT überschreiben.
+3. **Content_Types.xml**: Nur fehlende Override-Einträge ergänzen, und nur wenn die referenzierte Datei tatsächlich existiert.
+4. **Konsistenz-Fixer**: externalLink-Dateien werden NIE aus dem Original kopiert. Fehlende Einträge werden entfernt.
+5. **externalLinks-Sektion**: Fehlende externalLink-Dateien werden NICHT mehr aus dem Original kopiert.
+
 ### Offen ⬜
 
 - [ ] Windows-Test: Bestätigen dass Bild nach Export sichtbar ist (kein Placeholder-Icon)
+- [ ] Windows-Test: Bestätigen dass kein Excel-Reparaturmodus mehr auftritt
 - [ ] Test mit mehreren Bildern / mehreren Sheets
 - [ ] Test: "Speichern" (gleiche Datei) vs "Speichern unter" (neue Datei)
 - [ ] Test: Zelle mit Bild editieren → Speichern → Bild erhalten?
