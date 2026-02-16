@@ -691,7 +691,7 @@ def restore_external_links_from_original(output_path, original_path):
             # Ohne Content-Type erkennt Excel die Dateien nicht → "Entfernter Teil: Zeichnungsform"
             dest_extensions = set(re.findall(r'<Default\s+Extension="([^"]+)"', dest_ct_content))
             missing_defaults = []
-            for df_match in re.finditer(r'<Default\s[^/]*/>', orig_ct_content):
+            for df_match in re.finditer(r'<Default\s[^>]*/>', orig_ct_content):
                 df_el = df_match.group(0)
                 ext_m = re.search(r'Extension="([^"]+)"', df_el)
                 if ext_m and ext_m.group(1) not in dest_extensions:
@@ -712,7 +712,7 @@ def restore_external_links_from_original(output_path, original_path):
             # B. Fehlende <Override PartName="..."> Einträge ergänzen
             dest_parts = set(re.findall(r'PartName="([^"]+)"', dest_ct_content))
             missing_overrides = []
-            for ov_match in re.finditer(r'<Override\s[^/]*/>', orig_ct_content):
+            for ov_match in re.finditer(r'<Override\s[^>]*/>', orig_ct_content):
                 ov_el = ov_match.group(0)
                 pn_m = re.search(r'PartName="([^"]+)"', ov_el)
                 if pn_m and pn_m.group(1) not in dest_parts:
@@ -1017,7 +1017,7 @@ def restore_external_links_from_original(output_path, original_path):
                     sys.stderr.write(f"[restore_ext] ContentTypes-Konsistenz: {part_name} entfernt (nirgends vorhanden)\n")
                     return ''
             
-            new_ct = re.sub(r'<Override\s+PartName="(/[^"]+)"[^/]*/>\s*', _ct_override_fixer, ct_content)
+            new_ct = re.sub(r'<Override\s+PartName="(/[^"]+)"[^>]*/>\s*', _ct_override_fixer, ct_content)
             if new_ct != ct_content:
                 with open(ct_file, 'w', encoding='utf-8') as f:
                     f.write(new_ct)
@@ -1057,7 +1057,7 @@ def restore_external_links_from_original(output_path, original_path):
                     sys.stderr.write(f"[restore_ext] Rels-Konsistenz: xl/{target} entfernt (nicht gefunden)\n")
                     return ''
             
-            new_rels = re.sub(r'<Relationship\s[^>]*?Target="([^"]+)"[^/]*/>\s*', _rels_fixer, wb_rels_ct)
+            new_rels = re.sub(r'<Relationship\s[^>]*?Target="([^"]+)"[^>]*/>\s*', _rels_fixer, wb_rels_ct)
             if new_rels != wb_rels_ct:
                 with open(wb_rels_file, 'w', encoding='utf-8') as f:
                     f.write(new_rels)
