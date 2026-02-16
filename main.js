@@ -2365,7 +2365,7 @@ ipcMain.handle('excel:getFileMetadata', async (event, filePath) => {
 // - Theme-Farben werden korrekt behandelt
 // - Identisches Verhalten wie MS Excel
 // ======================================================================
-ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, originalSourcePath, targetPath, sheets, password = null, sourcePassword = null, pendingSheetOperations = [] }) => {
+ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, originalSourcePath, targetPath, sheets, password = null, sourcePassword = null, pendingSheetOperations = [], enginePreference = null }) => {
     // Sicherheitsprüfung: Pfade validieren
     if (!isValidFilePath(sourcePath) || !isValidFilePath(targetPath)) {
         return { success: false, error: 'Ungültiger Dateipfad' };
@@ -2373,6 +2373,11 @@ ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, origin
 
     try {
         const startTime = Date.now();
+        
+        // Engine-Preference vom Frontend übernehmen (für diesen Export)
+        if (enginePreference) {
+            pythonBridge.setExcelEngine(enginePreference);
+        }
         
         // Export mit Python/openpyxl durchführen
         const result = await pythonBridge.exportMultipleSheets(sourcePath, targetPath, sheets, { password, sourcePassword, originalSourcePath, pendingSheetOperations });
@@ -2412,6 +2417,8 @@ ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, origin
             success: true,
             message: result.message,
             sheetsExported: result.sheetsExported,
+            method: result.method || 'openpyxl',
+            debugLog: result.debugLog || '',
             passwordProtected: !!password,
             stats: { totalTimeMs: duration }
         };

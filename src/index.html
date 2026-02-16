@@ -17355,7 +17355,8 @@
                     sheets: sheetsToExport,
                     password: exportPassword,
                     sourcePassword: explorerState.filePassword,
-                    pendingSheetOperations: explorerState.pendingSheetOperations || []
+                    pendingSheetOperations: explorerState.pendingSheetOperations || [],
+                    enginePreference: localStorage.getItem('excelSyncEngine') || 'auto'
                 });
                 
                 } // Ende if (!result) — Fallback-Block
