@@ -645,14 +645,22 @@ def restore_external_links_from_original(output_path, original_path):
                 ws_modified = False
                 
                 # <drawing r:id="rIdX"/> Element vom Original wiederherstellen
+                # WICHTIG: Immer mit dem Original ersetzen, nicht nur einfügen wenn fehlend!
+                # openpyxl kann einen anderen rId verwenden als im Original,
+                # was die Verbindung zu den wiederhergestellten _rels bricht.
                 drawing_match = re.search(r'<drawing\s+[^>]*/\s*>', orig_ws_content)
                 if not drawing_match:
                     # Auch geschlossene Form: <drawing r:id="rId1"></drawing>
                     drawing_match = re.search(r'<drawing\s+[^>]*>.*?</drawing>', orig_ws_content, re.DOTALL)
-                if drawing_match and not re.search(r'<drawing[\s>]', dest_ws_content):
+                if drawing_match:
                     drawing_el = drawing_match.group(0)
-                    # Vor </worksheet> einfügen
-                    dest_ws_content = dest_ws_content.replace('</worksheet>', drawing_el + '\n</worksheet>')
+                    if re.search(r'<drawing[\s>]', dest_ws_content):
+                        # Ersetze existierendes Element mit dem Original
+                        dest_ws_content = re.sub(r'<drawing\s+[^>]*/\s*>', drawing_el, dest_ws_content)
+                        dest_ws_content = re.sub(r'<drawing\s+[^>]*>.*?</drawing>', drawing_el, dest_ws_content, flags=re.DOTALL)
+                    else:
+                        # Füge neues Element ein
+                        dest_ws_content = dest_ws_content.replace('</worksheet>', drawing_el + '\n</worksheet>')
                     ws_modified = True
                     sys.stderr.write(f"[restore] {ws_file}: <drawing> Element wiederhergestellt: {drawing_el}\n")
                 
@@ -660,15 +668,25 @@ def restore_external_links_from_original(output_path, original_path):
                 legacy_match = re.search(r'<legacyDrawing\s+[^>]*/\s*>', orig_ws_content)
                 if not legacy_match:
                     legacy_match = re.search(r'<legacyDrawing\s+[^>]*>.*?</legacyDrawing>', orig_ws_content, re.DOTALL)
-                if legacy_match and not re.search(r'<legacyDrawing[\s>]', dest_ws_content):
-                    dest_ws_content = dest_ws_content.replace('</worksheet>', legacy_match.group(0) + '\n</worksheet>')
+                if legacy_match:
+                    legacy_el = legacy_match.group(0)
+                    if re.search(r'<legacyDrawing[\s>]', dest_ws_content):
+                        # Ersetze existierendes Element mit dem Original
+                        dest_ws_content = re.sub(r'<legacyDrawing\s+[^>]*/\s*>', legacy_el, dest_ws_content)
+                        dest_ws_content = re.sub(r'<legacyDrawing\s+[^>]*>.*?</legacyDrawing>', legacy_el, dest_ws_content, flags=re.DOTALL)
+                    else:
+                        dest_ws_content = dest_ws_content.replace('</worksheet>', legacy_el + '\n</worksheet>')
                     ws_modified = True
                     sys.stderr.write(f"[restore] {ws_file}: <legacyDrawing> Element wiederhergestellt\n")
                 
                 # <picture r:id="..."/> Element vom Original wiederherstellen (Hintergrundbilder)
                 picture_match = re.search(r'<picture\s+[^>]*/\s*>', orig_ws_content)
-                if picture_match and not re.search(r'<picture[\s>]', dest_ws_content):
-                    dest_ws_content = dest_ws_content.replace('</worksheet>', picture_match.group(0) + '\n</worksheet>')
+                if picture_match:
+                    picture_el = picture_match.group(0)
+                    if re.search(r'<picture[\s>]', dest_ws_content):
+                        dest_ws_content = re.sub(r'<picture\s+[^>]*/\s*>', picture_el, dest_ws_content)
+                    else:
+                        dest_ws_content = dest_ws_content.replace('</worksheet>', picture_el + '\n</worksheet>')
                     ws_modified = True
                 
                 # KRITISCH: vm-Attribute auf Zellen wiederherstellen (Excel 365 Zellbilder)
@@ -711,6 +729,17 @@ def restore_external_links_from_original(output_path, original_path):
                                         dest_ws_content = dest_ws_content[:insert_pos] + cell_el + dest_ws_content[insert_pos:]
                                         vm_created += 1
                                         ws_modified = True
+                                    else:
+                                        # Zeile existiert auch nicht → Zeile UND Zelle in sheetData erstellen
+                                        # Dies passiert wenn openpyxl oder fix_xlsx_relationships leere Zeilen entfernt hat
+                                        sheet_data_end = re.search(r'</sheetData>', dest_ws_content)
+                                        if sheet_data_end:
+                                            row_el = f'<row r="{row_num}"><c r="{cell_ref}" vm="{vm_val}"/></row>'
+                                            insert_pos = sheet_data_end.start()
+                                            dest_ws_content = dest_ws_content[:insert_pos] + row_el + '\n' + dest_ws_content[insert_pos:]
+                                            vm_created += 1
+                                            ws_modified = True
+                                            sys.stderr.write(f"[restore] {ws_file}: Zeile {row_num} + Zelle {cell_ref} mit vm={vm_val} neu erstellt\n")
                         if vm_restored > 0 or vm_created > 0:
                             sys.stderr.write(f"[restore] {ws_file}: {vm_restored} vm-Attribute wiederhergestellt, {vm_created} vm-Zellen neu erstellt (von {len(vm_cells)} im Original)\n")
                 
@@ -1278,6 +1307,7 @@ def apply_cell_value(cell, value):
     Setzt den Wert einer Zelle mit korrektem Typ.
     OPTIMIERT für Performance bei großen Datenmengen.
     Überspringt MergedCell-Objekte (nur die obere linke Zelle ist beschreibbar).
+    Überspringt Bild-Platzhalter ('🖼️ Bild') damit Original-Zellwerte erhalten bleiben.
     """
     from datetime import date
     from openpyxl.cell.cell import MergedCell
@@ -1285,6 +1315,13 @@ def apply_cell_value(cell, value):
     
     # MergedCell überspringen - nur die obere linke Zelle einer Merged-Region ist beschreibbar
     if isinstance(cell, MergedCell):
+        return
+    
+    # Bild-Platzhalter überspringen — der Reader setzt '🖼️ Bild' für Zellen mit
+    # richData/vm-Bildern. Wenn wir diesen Wert schreiben, ändert sich der Zell-Typ
+    # von t="e" (error) zu t="inlineStr", was die vm-Attribut-Wiederherstellung und
+    # damit die Bildanzeige in Excel zerstört. Original-Zellwert beibehalten!
+    if isinstance(value, str) and '🖼️' in value:
         return
     
     # Schnelle Typchecks zuerst
