@@ -217,7 +217,7 @@ def fix_xlsx_relationships(xlsx_path):
                         if f == 'fixed.xlsx':
                             continue
                         full_path = os.path.join(root, f)
-                        arc_name = full_path.replace(temp_dir + os.sep, '').replace('\\', '/')
+                        arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
                         zf.write(full_path, arc_name)
             
             # Ersetze Original mit reparierter Version
@@ -249,7 +249,7 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
     import sys
     
     # Prüfe ob original_path gültig ist
-    if not original_path or original_path == output_path:
+    if not original_path or os.path.normpath(original_path) == os.path.normpath(output_path):
         sys.stderr.write(f"[restore_table_xml] Übersprungen: original_path={original_path}, output_path={output_path}\n")
         return
     
@@ -468,7 +468,8 @@ def restore_external_links_from_original(output_path, original_path):
     # bereits überschrieben hat. Die Backup-Kopie enthält noch die Original-Daten
     # WENN sie VOR dem openpyxl-Save erstellt wurde (siehe _backup_original_path).
     backup_path = None
-    if original_path == output_path:
+    # WINDOWS: normpath normalisiert Pfade (Slashes, Groß/Klein, trailing sep)
+    if os.path.normpath(original_path) == os.path.normpath(output_path):
         sys.stderr.write(f"[restore_ext] original_path == output_path — verwende _backup_original_path\n")
         # Prüfe ob ein Backup vor dem Save erstellt wurde
         backup_candidate = getattr(restore_external_links_from_original, '_backup_original_path', None)
@@ -1540,8 +1541,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
     # KRITISCH: Wenn original_path == file_path == output_path (Speichern in gleicher Datei),
     # muss eine Backup-Kopie erstellt werden BEVOR openpyxl die Datei überschreibt.
     # Sonst kann restore_external_links_from_original nichts wiederherstellen.
+    # WINDOWS: normpath normalisiert Pfade (Slashes, Groß/Klein, trailing sep)
     _backup_file = None
-    if original_path == output_path:
+    if os.path.normpath(original_path) == os.path.normpath(output_path):
         import tempfile
         _backup_file = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
         _backup_path = _backup_file.name
