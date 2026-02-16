@@ -3290,6 +3290,14 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     pass
             
             # ================================================================
+            # SCHRITT 10.5: MERGED CELLS AUS FRONTEND ANWENDEN
+            # Überschreibt alle Merges mit dem vollständigen GUI-Zustand
+            # ================================================================
+            imported_merged_cells = changes.get('mergedCells', [])
+            if imported_merged_cells:
+                _apply_imported_merged_cells(ws, imported_merged_cells)
+            
+            # ================================================================
             # SCHRITT 11: SAMMLE TABLE-INFOS FÜR RESTORE
             # ================================================================
             table_changes = {}
@@ -3362,6 +3370,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         imported_rich_text = changes.get('richTextCells', {})
         if imported_rich_text:
             _apply_imported_rich_text(ws, imported_rich_text)
+        
+        # Kopierte Merged Cells anwenden (aus Copy-Paste)
+        imported_merged_cells = changes.get('mergedCells', [])
+        if imported_merged_cells:
+            _apply_imported_merged_cells(ws, imported_merged_cells)
         
         # Row Highlights
         if row_highlights:
@@ -3522,6 +3535,48 @@ def _apply_imported_cell_styles(ws, cell_styles):
                 cell.fill = PatternFill(start_color=argb, end_color=argb, fill_type='solid')
         except Exception:
             pass
+
+
+def _apply_imported_merged_cells(ws, merged_cells_list):
+    """
+    Wendet Merged Cells aus dem Frontend auf das Worksheet an.
+    Ersetzt alle bestehenden Merges durch den vollständigen Zustand aus der GUI.
+    
+    Frontend-Format: [{ startRow, startCol, endRow, endCol, rowSpan, colSpan }]
+    startRow/startCol sind 0-basiert (0 = Excel-Zeile 1 = Header).
+    """
+    if not merged_cells_list:
+        return
+    
+    # Alle bestehenden Merges entfernen
+    for merged_range in list(ws.merged_cells.ranges):
+        try:
+            ws.unmerge_cells(str(merged_range))
+        except Exception:
+            pass
+    
+    # Alle Merges aus dem Frontend anwenden
+    applied = 0
+    for merge in merged_cells_list:
+        try:
+            start_row = merge.get('startRow', 0) + 1  # 0-basiert -> 1-basiert
+            start_col = merge.get('startCol', 0) + 1
+            end_row = merge.get('endRow', 0) + 1
+            end_col = merge.get('endCol', 0) + 1
+            
+            if start_row > 0 and start_col > 0 and end_row >= start_row and end_col >= start_col:
+                ws.merge_cells(
+                    start_row=start_row,
+                    start_column=start_col,
+                    end_row=end_row,
+                    end_column=end_col
+                )
+                applied += 1
+        except Exception as e:
+            sys.stderr.write(f"[MergedCells] Fehler beim Mergen: {e}\n")
+    
+    if applied > 0:
+        sys.stderr.write(f"[MergedCells] {applied} Merged Cells angewendet\n")
 
 
 def _apply_imported_rich_text(ws, rich_text_cells):

@@ -17170,7 +17170,9 @@
                                 rowMapping: filterRowMapping || (explorerState.rowMapping && explorerState.rowMapping.length > 0 ? explorerState.rowMapping : null),
                                 // Operations Queues für serielle Abarbeitung
                                 columnOperationsQueue: explorerState.columnOperationsQueue,
-                                rowOperationsQueue: explorerState.rowOperationsQueue
+                                rowOperationsQueue: explorerState.rowOperationsQueue,
+                                // Merged Cells (vollständiger Zustand aus GUI)
+                                mergedCells: explorerState.mergedCells || []
                             };
                             // Prüfe ob rowMapping gesendet wird
                             const hasRowMapping = !!(filterRowMapping || (explorerState.rowMapping && explorerState.rowMapping.length > 0));
@@ -17215,7 +17217,8 @@
                                     rowHighlights: {},
                                     autoFilterRange: explorerState.autoFilterRange,
                                     fullRewrite: true,
-                                    structuralChange: false  // Keine strukturelle Änderung, nur Daten-Update
+                                    structuralChange: false,  // Keine strukturelle Änderung, nur Daten-Update
+                                    mergedCells: explorerState.mergedCells || []
                                 };
                             } else {
                                 // RichText für geänderte Zellen
@@ -17282,7 +17285,8 @@
                                     rowHighlights: exportRowHighlights,
                                     clearedRowHighlights: clearedRowHighlights,
                                     autoFilterRange: explorerState.autoFilterRange,
-                                    fullRewrite: false
+                                    fullRewrite: false,
+                                    mergedCells: explorerState.mergedCells || []
                                 };
                                 console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${Object.keys(cellStylesForChanged).length} CellStyles, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, ${clearedRowHighlights.length} entfernte Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
                             }

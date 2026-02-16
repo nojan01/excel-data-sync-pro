@@ -887,6 +887,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                         cellStyles: sheet.cellStyles || {},
                         richTextCells: sheet.richTextCells || {},
                         rowHighlights: sheet.rowHighlights || {},
+                        mergedCells: sheet.mergedCells || [],
                         deletedColumns: sheet.deletedColumnIndices || [],
                         insertedColumns: sheet.insertedColumnInfo || null,
                         deletedRowIndices: [],  // Keine Zeilen-Ops mehr (schon erledigt)
@@ -931,6 +932,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                         cellStyles: sheet.cellStyles || {},
                         richTextCells: sheet.richTextCells || {},
                         rowHighlights: sheet.rowHighlights || {},
+                        mergedCells: sheet.mergedCells || [],
                         deletedColumns: sheet.deletedColumnIndices || [],
                         insertedColumns: sheet.insertedColumnInfo || null,
                         deletedRowIndices: sheet.deletedRowIndices || [],
