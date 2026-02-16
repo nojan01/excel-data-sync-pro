@@ -865,6 +865,61 @@ def restore_external_links_from_original(output_path, original_path):
             
             shutil.copy2(temp_xlsx, output_path)
             sys.stderr.write(f"[restore_ext] XLSX wiederhergestellt und gespeichert\n")
+        
+        # DIAGNOSE: Dump des endgültigen ZIP-Inhalts für Image-Debugging
+        # Läuft IMMER (auch wenn fixed_count == 0), um den Endzustand zu zeigen
+        try:
+            with zipfile.ZipFile(output_path, 'r') as zf:
+                all_names = zf.namelist()
+                img_related = [n for n in all_names if any(k in n.lower() for k in 
+                    ['draw', 'media', 'image', 'picture', 'vml', 'richdata', 'rdrichvalue', 'metadata', '_rels/sheet'])]
+                sys.stderr.write(f"[DIAGNOSE] === FINAL ZIP STATE ===\n")
+                sys.stderr.write(f"[DIAGNOSE] Image-relevante Dateien ({len(img_related)}):\n")
+                for n in sorted(img_related):
+                    size = zf.getinfo(n).file_size
+                    sys.stderr.write(f"[DIAGNOSE]   {n} ({size} bytes)\n")
+                
+                # Sheet XMLs prüfen
+                for n in sorted(all_names):
+                    if n.startswith('xl/worksheets/') and n.endswith('.xml') and '/_rels/' not in n:
+                        sheet_xml = zf.read(n).decode('utf-8', errors='replace')
+                        has_drawing = bool(re.search(r'<drawing[\s>]', sheet_xml))
+                        has_tp = bool(re.search(r'<tableParts', sheet_xml))
+                        has_vm = bool(re.search(r'\bvm=', sheet_xml))
+                        has_mc = 'mc:Ignorable' in sheet_xml
+                        
+                        # rId-Werte extrahieren
+                        dr_rid = re.search(r'<drawing r:id="(rId\d+)"', sheet_xml)
+                        tp_rids = re.findall(r'<tablePart[^>]*r:id="(rId\d+)"', sheet_xml)
+                        ps_rid = re.search(r'<pageSetup[^>]*r:id="(rId\d+)"', sheet_xml)
+                        vm_vals = re.findall(r'\bvm="(\d+)"', sheet_xml)
+                        
+                        # Namespace im Root
+                        root_m = re.search(r'(<worksheet\b[^>]{0,100})', sheet_xml)
+                        root_preview = root_m.group(1) if root_m else 'N/A'
+                        
+                        sys.stderr.write(f"[DIAGNOSE] {n}: drawing={has_drawing}({dr_rid.group(1) if dr_rid else '-'}), "
+                                        f"tableParts={has_tp}({','.join(tp_rids) if tp_rids else '-'}), "
+                                        f"vm={has_vm}({','.join(vm_vals[:3]) if vm_vals else '-'}), "
+                                        f"mc:Ignorable={has_mc}, "
+                                        f"pageSetup_rid={ps_rid.group(1) if ps_rid else '-'}\n")
+                        sys.stderr.write(f"[DIAGNOSE]   root: {root_preview}...\n")
+                        
+                        # Rels für dieses Sheet prüfen
+                        sheet_name_only = n.split('/')[-1]
+                        rels_name = f"xl/worksheets/_rels/{sheet_name_only}.rels"
+                        if rels_name in all_names:
+                            rels_xml = zf.read(rels_name).decode('utf-8', errors='replace')
+                            rels_entries = re.findall(r'Id="(rId\d+)"[^>]*Type="[^"]*?/(\w+)"[^>]*Target="([^"]*)"', rels_xml)
+                            sys.stderr.write(f"[DIAGNOSE]   rels ({rels_name}):\n")
+                            for rid, rtype, target in rels_entries:
+                                sys.stderr.write(f"[DIAGNOSE]     {rid} -> {rtype} ({target})\n")
+                        else:
+                            sys.stderr.write(f"[DIAGNOSE]   KEINE RELS DATEI für {sheet_name_only}\n")
+                
+                sys.stderr.write(f"[DIAGNOSE] === END ===\n")
+        except Exception as diag_err:
+            sys.stderr.write(f"[DIAGNOSE] Fehler: {diag_err}\n")
     
     finally:
         if temp_dir:
