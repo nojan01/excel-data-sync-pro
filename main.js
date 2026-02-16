@@ -2036,13 +2036,23 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             }
         }
 
+        // Pivot-Tabellen erkennen (ZIP-Einträge scannen)
+        let hasPivotTables = false;
+        try {
+            const AdmZip2 = require('adm-zip');
+            const pivotBuf = await fs.promises.readFile(filePath);
+            const pivotZip = new AdmZip2(pivotBuf);
+            hasPivotTables = pivotZip.getEntries().some(e => e.entryName.includes('pivotTable') || e.entryName.includes('pivotCache'));
+        } catch (_) { /* ignore - passwortgeschützte Dateien können nicht gescannt werden */ }
+
         return {
             success: true,
             fileName: path.basename(filePath),
             filePath: filePath,
             sheets: sheets,
             hiddenSheets: hiddenSheets,
-            isPasswordProtected: !!password
+            isPasswordProtected: !!password,
+            hasPivotTables: hasPivotTables
         };
     } catch (error) {
         // Prüfe ob es sich um eine passwortgeschützte Datei handelt

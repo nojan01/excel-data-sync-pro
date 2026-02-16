@@ -8363,6 +8363,8 @@
             hiddenSheets: new Set(),  // Set von Sheet-Namen die ausgeblendet sind
             // Passwort für passwortgeschützte Dateien
             filePassword: null,
+            // Pivot-Tabellen erkannt (Warnung vor Fallback-Export)
+            hasPivotTables: false,
             // Operations Queues für serielle Abarbeitung
             columnOperationsQueue: [],  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X, headerName: ''}]
             rowOperationsQueue: [],  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X}]
@@ -13032,6 +13034,7 @@
             explorerState.fileName = result.fileName;
             explorerState.sheets = result.sheets;
             explorerState.hiddenSheets = new Set(result.hiddenSheets || []);
+            explorerState.hasPivotTables = result.hasPivotTables || false;
             
             // UI aktualisieren
             document.getElementById('explorerFileName').textContent = explorerState.fileName;
@@ -13182,6 +13185,7 @@
             explorerState.filePath = filePath;
             explorerState.fileName = result.fileName;
             explorerState.sheets = result.sheets;
+            explorerState.hasPivotTables = result.hasPivotTables || false;
             
             // Element frisch abfragen (kann durch setLanguage ersetzt worden sein)
             const explorerFileNameEl = document.getElementById('explorerFileName');
@@ -17263,6 +17267,23 @@
                 
                 // FALLBACK MODUS: xlwings/Python für Export verwenden (CF-Erhaltung)
                 console.log('[Export] Fallback-Modus - verwende xlwings/Python für CF-Erhaltung...');
+                
+                // Warnung bei Pivot-Tabellen im Fallback-Modus (ohne Live-Session können Pivot-Tabellen beschädigt werden)
+                if (explorerState.hasPivotTables) {
+                    const isEn = currentLanguage === 'en';
+                    const confirmed = await showConfirmDialog(
+                        '⚠️ ' + (isEn ? 'Pivot Tables detected' : 'Pivot-Tabellen erkannt'),
+                        isEn
+                            ? 'This file contains pivot tables!\n\nWithout Live Mode, pivot tables may be lost or corrupted when saving.\n\nRecommendation: Use Live Mode or create a backup copy.'
+                            : 'Diese Datei enthält Pivot-Tabellen!\n\nOhne Live-Modus können Pivot-Tabellen beim Speichern verloren gehen oder beschädigt werden.\n\nEmpfehlung: Verwenden Sie den Live Modus oder erstellen Sie eine Sicherheitskopie.',
+                        isEn ? 'Save anyway' : 'Trotzdem speichern',
+                        isEn ? 'Cancel' : 'Abbrechen'
+                    );
+                    if (!confirmed) {
+                        elements.explorerStatus.textContent = isEn ? 'Save cancelled (pivot tables).' : 'Speichern abgebrochen (Pivot-Tabellen).';
+                        return;
+                    }
+                }
                 
                 result = await window.electronAPI.pythonExportMultipleSheets({
                     sourcePath: explorerState.filePath,
