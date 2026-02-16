@@ -13035,6 +13035,7 @@
             explorerState.sheets = result.sheets;
             explorerState.hiddenSheets = new Set(result.hiddenSheets || []);
             explorerState.hasPivotTables = result.hasPivotTables || false;
+            console.log('[LOAD] hasPivotTables =', explorerState.hasPivotTables, '(from result:', result.hasPivotTables, ')');
             
             // UI aktualisieren
             document.getElementById('explorerFileName').textContent = explorerState.fileName;
@@ -13186,6 +13187,7 @@
             explorerState.fileName = result.fileName;
             explorerState.sheets = result.sheets;
             explorerState.hasPivotTables = result.hasPivotTables || false;
+            console.log('[LOAD] hasPivotTables =', explorerState.hasPivotTables, '(from result:', result.hasPivotTables, ')');
             
             // Element frisch abfragen (kann durch setLanguage ersetzt worden sein)
             const explorerFileNameEl = document.getElementById('explorerFileName');

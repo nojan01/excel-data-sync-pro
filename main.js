@@ -1982,6 +1982,7 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
         let sheets;
         
         let hiddenSheets = [];
+        let hasPivotTables = false;
         
         if (password) {
             // Passwortgeschützte Dateien: xlsx-populate zum Entschlüsseln nötig
@@ -1991,6 +1992,16 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             hiddenSheets = workbook.sheets()
                 .filter(ws => ws.hidden())
                 .map(ws => ws.name());
+            // Pivot-Scan für passwortgeschützte Dateien (nach Entschlüsselung)
+            try {
+                const AdmZip = require('adm-zip');
+                const pivotZip = new AdmZip(fileBuffer);
+                const pivotEntries = pivotZip.getEntries().filter(e => e.entryName.includes('pivotTable') || e.entryName.includes('pivotCache'));
+                hasPivotTables = pivotEntries.length > 0;
+                console.log(`[readFile] Pivot-Scan (password): ${pivotEntries.length} Einträge, hasPivotTables=${hasPivotTables}`);
+            } catch (pivotErr) {
+                console.log('[readFile] Pivot-Scan Fehler (password):', pivotErr.message);
+            }
         } else {
             // PERFORMANCE: Sheet-Namen direkt aus ZIP extrahieren (ohne Zell-Parsing)
             // xlsx-populate parst die GESAMTE Datei (alle Zellen, Formeln, Styles)
@@ -2034,22 +2045,18 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
                     .filter(ws => ws.hidden())
                     .map(ws => ws.name());
             }
-        }
-
-        // Pivot-Tabellen erkennen (ZIP-Einträge scannen)
-        let hasPivotTables = false;
-        try {
-            const AdmZip2 = require('adm-zip');
-            const pivotBuf = await fs.promises.readFile(filePath);
-            const pivotZip = new AdmZip2(pivotBuf);
-            const pivotEntries = pivotZip.getEntries().filter(e => e.entryName.includes('pivotTable') || e.entryName.includes('pivotCache'));
-            hasPivotTables = pivotEntries.length > 0;
-            console.log(`[readFile] Pivot-Scan: ${pivotEntries.length} Einträge gefunden, hasPivotTables=${hasPivotTables}`);
-            if (hasPivotTables) {
-                console.log('[readFile] Pivot-Einträge:', pivotEntries.map(e => e.entryName));
+            
+            // Pivot-Tabellen erkennen (ZIP bereits geöffnet — wiederverwenden!)
+            try {
+                const pivotEntries = zip.getEntries().filter(e => e.entryName.includes('pivotTable') || e.entryName.includes('pivotCache'));
+                hasPivotTables = pivotEntries.length > 0;
+                console.log(`[readFile] Pivot-Scan: ${pivotEntries.length} Einträge gefunden, hasPivotTables=${hasPivotTables}`);
+                if (hasPivotTables) {
+                    console.log('[readFile] Pivot-Einträge:', pivotEntries.map(e => e.entryName));
+                }
+            } catch (pivotErr) {
+                console.log('[readFile] Pivot-Scan Fehler:', pivotErr.message);
             }
-        } catch (pivotErr) {
-            console.log('[readFile] Pivot-Scan Fehler:', pivotErr.message);
         }
 
         return {
