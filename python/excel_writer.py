@@ -213,8 +213,9 @@ def fix_xlsx_relationships(xlsx_path):
             # Erstelle neue XLSX aus den reparierten Dateien
             with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for root, dirs, files in os.walk(temp_dir):
+                    dirs[:] = [d for d in dirs if d != '__MACOSX']
                     for f in files:
-                        if f == 'fixed.xlsx':
+                        if f == 'fixed.xlsx' or f == '.DS_Store' or f.startswith('._'):
                             continue
                         full_path = os.path.join(root, f)
                         arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
@@ -391,8 +392,9 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
             # Erstelle neue XLSX
             with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for root, dirs, files in os.walk(temp_dir):
+                    dirs[:] = [d for d in dirs if d != '__MACOSX']
                     for f in files:
-                        if f == 'restored.xlsx':
+                        if f == 'restored.xlsx' or f == '.DS_Store' or f.startswith('._'):
                             continue
                         full_path = os.path.join(root, f)
                         arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
@@ -777,17 +779,102 @@ def restore_external_links_from_original(output_path, original_path):
             shutil.copytree(orig_printer_dir, dest_printer_dir)
             fixed_count += 1
         
-        # Kopiere Worksheet-Relationships aus Original (enthält Drawing-Referenzen)
-        # openpyxl kann Drawing-Relationships verlieren, was dazu führt dass Bilder fehlen
+        # =====================================================================
+        # Worksheet-Relationships: MERGE statt REPLACE
+        # openpyxl nummeriert rIds um. Wenn wir die Original-Rels komplett
+        # überschreiben, passen die rId-Referenzen im Worksheet-XML nicht mehr
+        # (Hyperlinks, OLE-Objects, Comments, etc. → rId-Mismatch → Reparatur).
+        # Stattdessen: openpyxl's Rels behalten, nur FEHLENDE Rels ergänzen.
+        # =====================================================================
         orig_ws_rels_dir = os.path.join(orig_temp_dir, 'xl', 'worksheets', '_rels')
         dest_ws_rels_dir = os.path.join(temp_dir, 'xl', 'worksheets', '_rels')
+        ws_rid_mappings = {}  # {rels_filename: {orig_rId: dest_rId}}
+        
         if os.path.exists(orig_ws_rels_dir):
-            rels_files = os.listdir(orig_ws_rels_dir)
-            sys.stderr.write(f"[restore_ext] xl/worksheets/_rels im Original gefunden: {len(rels_files)} Dateien: {rels_files}\n")
-            if os.path.exists(dest_ws_rels_dir):
-                shutil.rmtree(dest_ws_rels_dir)
-            shutil.copytree(orig_ws_rels_dir, dest_ws_rels_dir)
-            fixed_count += 1
+            if not os.path.exists(dest_ws_rels_dir):
+                os.makedirs(dest_ws_rels_dir)
+            
+            rels_files = [f for f in os.listdir(orig_ws_rels_dir) if f.endswith('.rels')]
+            sys.stderr.write(f"[restore_ext] xl/worksheets/_rels MERGE: {len(rels_files)} Dateien: {rels_files}\n")
+            
+            for rels_fn in rels_files:
+                orig_rels_fp = os.path.join(orig_ws_rels_dir, rels_fn)
+                dest_rels_fp = os.path.join(dest_ws_rels_dir, rels_fn)
+                
+                with open(orig_rels_fp, 'r', encoding='utf-8') as f:
+                    orig_rels_xml = f.read()
+                
+                # Parse Original-Rels
+                orig_rels = {}
+                for m in re.finditer(r'(<Relationship\s[^>]*?Id="([^"]+)"[^>]*?Target="([^"]+)"[^>]*?/>)', orig_rels_xml):
+                    orig_rels[m.group(2)] = {'target': m.group(3), 'el': m.group(1)}
+                
+                # Parse Dest-Rels (openpyxl's)
+                dest_rels = {}
+                if os.path.exists(dest_rels_fp):
+                    with open(dest_rels_fp, 'r', encoding='utf-8') as f:
+                        dest_rels_xml = f.read()
+                    for m in re.finditer(r'<Relationship\s[^>]*?Id="([^"]+)"[^>]*?Target="([^"]+)"[^>]*?/>', dest_rels_xml):
+                        dest_rels[m.group(1)] = m.group(2)
+                else:
+                    dest_rels_xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>'
+                
+                # Target→dest_rId Lookup (normalisiert)
+                target_to_dest_rid = {}
+                for rid, target in dest_rels.items():
+                    norm = target.replace('\\', '/').lower()
+                    target_to_dest_rid[norm] = rid
+                
+                # Mapping bauen und fehlende Rels finden
+                mapping = {}
+                missing_rels = []
+                existing_rids = set(dest_rels.keys())
+                max_rid_num = 0
+                for rid in existing_rids:
+                    num_m = re.search(r'\d+', rid)
+                    if num_m:
+                        max_rid_num = max(max_rid_num, int(num_m.group(0)))
+                
+                for orig_rid, orig_info in orig_rels.items():
+                    norm_target = orig_info['target'].replace('\\', '/').lower()
+                    if norm_target in target_to_dest_rid:
+                        # Rel existiert in dest → mapping
+                        mapping[orig_rid] = target_to_dest_rid[norm_target]
+                    else:
+                        # Rel fehlt in dest → mit neuem rId ergänzen
+                        max_rid_num += 1
+                        new_rid = f'rId{max_rid_num}'
+                        mapping[orig_rid] = new_rid
+                        
+                        # Neues Relationship-Element mit neuem rId
+                        new_el = re.sub(r'Id="[^"]+"', f'Id="{new_rid}"', orig_info['el'])
+                        missing_rels.append(new_el)
+                        existing_rids.add(new_rid)
+                        
+                        # Zieldatei aus Original kopieren falls nötig
+                        target_path = orig_info['target']
+                        dest_file = os.path.normpath(os.path.join(temp_dir, 'xl', 'worksheets', target_path))
+                        orig_file = os.path.normpath(os.path.join(orig_temp_dir, 'xl', 'worksheets', target_path))
+                        if not os.path.exists(dest_file) and os.path.exists(orig_file):
+                            os.makedirs(os.path.dirname(dest_file), exist_ok=True)
+                            shutil.copy2(orig_file, dest_file)
+                            sys.stderr.write(f"[restore_ext] MERGE {rels_fn}: Zieldatei kopiert: {target_path}\n")
+                
+                if missing_rels:
+                    insert_str = '\n'.join(missing_rels)
+                    dest_rels_xml = dest_rels_xml.replace('</Relationships>', insert_str + '\n</Relationships>')
+                    with open(dest_rels_fp, 'w', encoding='utf-8') as f:
+                        f.write(dest_rels_xml)
+                    fixed_count += 1
+                    sys.stderr.write(f"[restore_ext] MERGE {rels_fn}: {len(missing_rels)} fehlende Rels ergänzt\n")
+                elif not os.path.exists(dest_rels_fp):
+                    # Original hat Rels, dest nicht → komplett schreiben
+                    with open(dest_rels_fp, 'w', encoding='utf-8') as f:
+                        f.write(dest_rels_xml)
+                    fixed_count += 1
+                
+                ws_rid_mappings[rels_fn] = mapping
+                sys.stderr.write(f"[restore_ext] MERGE {rels_fn}: Mapping={mapping}\n")
         else:
             sys.stderr.write(f"[restore_ext] xl/worksheets/_rels im Original NICHT vorhanden\n")
         
@@ -877,83 +964,64 @@ def restore_external_links_from_original(output_path, original_path):
                 
                 ws_modified = False
                 
-                # <drawing r:id="rIdX"/> Element vom Original wiederherstellen
-                # WICHTIG: Immer mit dem Original ersetzen, nicht nur einfügen wenn fehlend!
-                # openpyxl kann einen anderen rId verwenden als im Original,
-                # was die Verbindung zu den wiederhergestellten _rels bricht.
+                # Rels-Mapping für dieses Sheet laden
+                rels_fn = f"{ws_file}.rels"
+                mapping = ws_rid_mappings.get(rels_fn, {})
+                
+                def _map_rid(element_str, _mapping=mapping):
+                    """Ersetzt rId-Referenzen im Element mit gemappten rIds."""
+                    def _rid_replacer(m):
+                        orig_rid = m.group(1)
+                        mapped = _mapping.get(orig_rid, orig_rid)
+                        return f'r:id="{mapped}"'
+                    return re.sub(r'r:id="([^"]+)"', _rid_replacer, element_str)
+                
+                # =====================================================================
+                # Worksheet-Elemente: NUR ERGÄNZEN wenn openpyxl sie entfernt hat.
+                # openpyxl's Rels wurden beibehalten (nur fehlende ergänzt).
+                # Daher sind openpyxl's rId-Referenzen (tableParts, pageSetup,
+                # hyperlinks, etc.) korrekt. Wir ersetzen sie NICHT mehr.
+                # Nur fehlende Elemente (drawing, legacyDrawing, picture) werden
+                # mit gemappten rIds aus dem Original eingefügt.
+                # =====================================================================
+                
+                # <drawing> nur ergänzen wenn openpyxl es entfernt hat
                 drawing_match = re.search(r'<drawing\s+[^>]*/\s*>', orig_ws_content)
                 if not drawing_match:
-                    # Auch geschlossene Form: <drawing r:id="rId1"></drawing>
                     drawing_match = re.search(r'<drawing\s+[^>]*>.*?</drawing>', orig_ws_content, re.DOTALL)
                 if drawing_match:
-                    drawing_el = drawing_match.group(0)
-                    if re.search(r'<drawing[\s>]', dest_ws_content):
-                        # Ersetze existierendes Element mit dem Original
-                        dest_ws_content = re.sub(r'<drawing\s+[^>]*/\s*>', drawing_el, dest_ws_content)
-                        dest_ws_content = re.sub(r'<drawing\s+[^>]*>.*?</drawing>', drawing_el, dest_ws_content, flags=re.DOTALL)
-                    else:
-                        # Füge neues Element ein — SCHEMA-REIHENFOLGE beachten!
-                        # <drawing> muss VOR <tableParts>, <extLst> etc. kommen
+                    if not re.search(r'<drawing[\s>]', dest_ws_content):
+                        # openpyxl hat <drawing> entfernt → mit gemapptem rId ergänzen
+                        drawing_el = _map_rid(drawing_match.group(0))
                         dest_ws_content = _insert_ws_element(dest_ws_content, drawing_el, 'drawing')
-                    ws_modified = True
-                    sys.stderr.write(f"[restore] {ws_file}: <drawing> Element wiederhergestellt: {drawing_el}\n")
+                        ws_modified = True
+                        sys.stderr.write(f"[restore] {ws_file}: <drawing> ergänzt (fehlte): {drawing_el}\n")
+                    else:
+                        sys.stderr.write(f"[restore] {ws_file}: <drawing> bereits vorhanden (openpyxl-rId beibehalten)\n")
                 
-                # <legacyDrawing r:id="..."/> Element vom Original wiederherstellen
+                # <legacyDrawing> nur ergänzen wenn fehlend
                 legacy_match = re.search(r'<legacyDrawing\s+[^>]*/\s*>', orig_ws_content)
                 if not legacy_match:
                     legacy_match = re.search(r'<legacyDrawing\s+[^>]*>.*?</legacyDrawing>', orig_ws_content, re.DOTALL)
                 if legacy_match:
-                    legacy_el = legacy_match.group(0)
-                    if re.search(r'<legacyDrawing[\s>]', dest_ws_content):
-                        # Ersetze existierendes Element mit dem Original
-                        dest_ws_content = re.sub(r'<legacyDrawing\s+[^>]*/\s*>', legacy_el, dest_ws_content)
-                        dest_ws_content = re.sub(r'<legacyDrawing\s+[^>]*>.*?</legacyDrawing>', legacy_el, dest_ws_content, flags=re.DOTALL)
-                    else:
-                        # SCHEMA-REIHENFOLGE: <legacyDrawing> VOR <tableParts>, <extLst>
+                    if not re.search(r'<legacyDrawing[\s>]', dest_ws_content):
+                        legacy_el = _map_rid(legacy_match.group(0))
                         dest_ws_content = _insert_ws_element(dest_ws_content, legacy_el, 'legacyDrawing')
-                    ws_modified = True
-                    sys.stderr.write(f"[restore] {ws_file}: <legacyDrawing> Element wiederhergestellt\n")
+                        ws_modified = True
+                        sys.stderr.write(f"[restore] {ws_file}: <legacyDrawing> ergänzt (fehlte)\n")
                 
-                # <picture r:id="..."/> Element vom Original wiederherstellen (Hintergrundbilder)
+                # <picture> nur ergänzen wenn fehlend (Hintergrundbilder)
                 picture_match = re.search(r'<picture\s+[^>]*/\s*>', orig_ws_content)
                 if picture_match:
-                    picture_el = picture_match.group(0)
-                    if re.search(r'<picture[\s>]', dest_ws_content):
-                        dest_ws_content = re.sub(r'<picture\s+[^>]*/\s*>', picture_el, dest_ws_content)
-                    else:
-                        # SCHEMA-REIHENFOLGE: <picture> VOR <tableParts>, <extLst>
+                    if not re.search(r'<picture[\s>]', dest_ws_content):
+                        picture_el = _map_rid(picture_match.group(0))
                         dest_ws_content = _insert_ws_element(dest_ws_content, picture_el, 'picture')
-                    ws_modified = True
-                
-                # KRITISCH: <tableParts> vom Original wiederherstellen (rId-Konsistenz)
-                # openpyxl nummeriert rIds in Worksheet-Rels um (z.B. rId1=table statt rId2=table).
-                # Da wir die Worksheet-Rels aus dem Original kopieren, müssen die <tablePart r:id="..."/>
-                # Referenzen im Sheet-XML auch die rIds des Originals verwenden.
-                # Ohne diesen Fix: tablePart r:id zeigt auf drawing statt table → Excel repariert → Bilder weg!
-                orig_tp_match = re.search(r'<tableParts\b[^>]*>.*?</tableParts>', orig_ws_content, re.DOTALL)
-                if not orig_tp_match:
-                    orig_tp_match = re.search(r'<tableParts\b[^/]*/>', orig_ws_content)
-                if orig_tp_match:
-                    orig_tp = orig_tp_match.group(0)
-                    # Entferne existierende tableParts aus Ziel
-                    dest_ws_content = re.sub(r'<tableParts\b[^>]*>.*?</tableParts>', '', dest_ws_content, flags=re.DOTALL)
-                    dest_ws_content = re.sub(r'<tableParts\b[^/]*/>', '', dest_ws_content)
-                    # Füge Original tableParts an schema-korrekter Position ein
-                    dest_ws_content = _insert_ws_element(dest_ws_content, orig_tp, 'tableParts')
-                    ws_modified = True
-                    sys.stderr.write(f"[restore] {ws_file}: <tableParts> vom Original wiederhergestellt (rId-Konsistenz)\n")
-                
-                # <pageSetup> r:id vom Original wiederherstellen (Drucker-Einstellungen)
-                # pageSetup kann r:id="rIdX" enthalten, das auf printerSettings verweist.
-                # Nach rels-Restore muss auch dieser rId stimmen.
-                orig_ps_match = re.search(r'<pageSetup\s[^>]*/\s*>', orig_ws_content)
-                if orig_ps_match:
-                    orig_ps = orig_ps_match.group(0)
-                    dest_ps_match = re.search(r'<pageSetup\s[^>]*/\s*>', dest_ws_content)
-                    if dest_ps_match:
-                        dest_ws_content = dest_ws_content.replace(dest_ps_match.group(0), orig_ps)
                         ws_modified = True
-                        sys.stderr.write(f"[restore] {ws_file}: <pageSetup> vom Original wiederhergestellt\n")
+                
+                # tableParts und pageSetup NICHT ersetzen!
+                # openpyxl's Rels sind beibehalten, daher stimmen openpyxl's rId-Referenzen
+                # in tableParts, pageSetup, hyperlinks, oleObjects, comments etc.
+                # Früher mussten diese ersetzt werden weil Rels komplett überschrieben wurden.
                 
                 # KRITISCH: Namespace-Deklarationen vom Original-Worksheet wiederherstellen
                 # openpyxl schreibt nur minimal: xmlns="..." xmlns:r="..."
@@ -1159,8 +1227,9 @@ def restore_external_links_from_original(output_path, original_path):
             # Erstelle neue XLSX
             with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for root, dirs, files in os.walk(temp_dir):
+                    dirs[:] = [d for d in dirs if d != '__MACOSX']
                     for f in files:
-                        if f == 'restored.xlsx':
+                        if f == 'restored.xlsx' or f == '.DS_Store' or f.startswith('._'):
                             continue
                         full_path = os.path.join(root, f)
                         arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
@@ -2013,8 +2082,9 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
             temp_xlsx = os.path.join(temp_dir, '_repacked.xlsx')
             with zipfile.ZipFile(temp_xlsx, 'w', zipfile.ZIP_DEFLATED) as zf:
                 for root_dir, dirs, files in os.walk(temp_dir):
+                    dirs[:] = [d for d in dirs if d != '__MACOSX']
                     for f in files:
-                        if f == '_repacked.xlsx':
+                        if f == '_repacked.xlsx' or f == '.DS_Store' or f.startswith('._'):
                             continue
                         full_path = os.path.join(root_dir, f)
                         arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
