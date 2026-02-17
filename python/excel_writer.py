@@ -816,24 +816,35 @@ def restore_external_links_from_original(output_path, original_path, structural_
             fixed_count += 1
         
         # Kopiere slicerCaches aus dem Original (openpyxl verliert Slicers komplett)
+        # Bei structural_change (Spaltenoperationen) NICHT kopieren:
+        # SlicerCaches referenzieren Tabellenspalten die sich geändert haben →
+        # invalide Referenzen → Excel kaskadiert: Cache → Slicer → Zeichnungsform.
+        # Ohne die Dateien gibt es nichts zum Reparieren.
         orig_slicer_dir = os.path.join(orig_temp_dir, 'xl', 'slicerCaches')
         dest_slicer_dir = os.path.join(temp_dir, 'xl', 'slicerCaches')
         if os.path.exists(orig_slicer_dir):
-            if not os.path.exists(dest_slicer_dir):
-                os.makedirs(dest_slicer_dir)
-            for f in os.listdir(orig_slicer_dir):
-                if f.endswith('.xml'):
-                    shutil.copy2(os.path.join(orig_slicer_dir, f), os.path.join(dest_slicer_dir, f))
-                    fixed_count += 1
+            if structural_change:
+                sys.stderr.write(f"[restore_ext] xl/slicerCaches: ÜBERSPRUNGEN (structural_change=True, invalide nach Spaltenoperation)\n")
+            else:
+                if not os.path.exists(dest_slicer_dir):
+                    os.makedirs(dest_slicer_dir)
+                for f in os.listdir(orig_slicer_dir):
+                    if f.endswith('.xml'):
+                        shutil.copy2(os.path.join(orig_slicer_dir, f), os.path.join(dest_slicer_dir, f))
+                        fixed_count += 1
         
         # Kopiere slicers Ordner auch (falls vorhanden)
+        # Bei structural_change: NICHT kopieren (gleicher Grund wie slicerCaches)
         orig_slicers_dir = os.path.join(orig_temp_dir, 'xl', 'slicers')
         dest_slicers_dir = os.path.join(temp_dir, 'xl', 'slicers')
         if os.path.exists(orig_slicers_dir):
-            if os.path.exists(dest_slicers_dir):
-                shutil.rmtree(dest_slicers_dir)
-            shutil.copytree(orig_slicers_dir, dest_slicers_dir)
-            fixed_count += 1
+            if structural_change:
+                sys.stderr.write(f"[restore_ext] xl/slicers: ÜBERSPRUNGEN (structural_change=True)\n")
+            else:
+                if os.path.exists(dest_slicers_dir):
+                    shutil.rmtree(dest_slicers_dir)
+                shutil.copytree(orig_slicers_dir, dest_slicers_dir)
+                fixed_count += 1
         
         # sharedStrings.xml NICHT vom Original kopieren!
         # openpyxl erzeugt beim Speichern eine NEUE sharedStrings.xml mit neu
@@ -905,6 +916,11 @@ def restore_external_links_from_original(output_path, original_path, structural_
                     # externalLinks NICHT ergänzen (openpyxl hat korrekte cached values)
                     if 'externalLinks/' in target_val:
                         sys.stderr.write(f"[restore_ext] workbook.xml.rels: externalLink übersprungen: {target_val}\n")
+                        continue
+                    # Bei structural_change: Slicer-Targets NICHT ergänzen
+                    # (SlicerCaches sind nach Spaltenoperationen invalide)
+                    if structural_change and 'slicer' in target_val.lower():
+                        sys.stderr.write(f"[restore_ext] workbook.xml.rels: Slicer übersprungen: {target_val}\n")
                         continue
                     # Nur ergänzen wenn die Zieldatei existiert (oder extern ist)
                     is_external = 'TargetMode="External"' in rel_el
@@ -1656,6 +1672,11 @@ def restore_external_links_from_original(output_path, original_path, structural_
                 if 'externalLinks/' in part_name:
                     sys.stderr.write(f"[restore_ext] ContentTypes-Konsistenz: {part_name} entfernt (externalLink, nicht kopieren)\n")
                     return ''
+                # Bei structural_change: Slicer-Dateien NICHT aus Original kopieren
+                # (SlicerCaches/Slicers sind nach Spaltenoperationen invalide)
+                if structural_change and 'slicer' in part_name.lower():
+                    sys.stderr.write(f"[restore_ext] ContentTypes-Konsistenz: {part_name} entfernt (Slicer bei structural_change)\n")
+                    return ''
                 # Datei fehlt — aus Original kopieren
                 orig_file_ct = os.path.join(orig_temp_dir, rel_path.replace('/', os.sep))
                 if os.path.exists(orig_file_ct):
@@ -1697,6 +1718,10 @@ def restore_external_links_from_original(output_path, original_path, structural_
                 # externalLinks NIEMALS aus Original kopieren (stale cached values!)
                 if 'externalLinks/' in target:
                     sys.stderr.write(f"[restore_ext] Rels-Konsistenz: xl/{target} entfernt (externalLink, nicht kopieren)\n")
+                    return ''
+                # Bei structural_change: Slicer-Dateien NICHT aus Original kopieren
+                if structural_change and 'slicer' in target.lower():
+                    sys.stderr.write(f"[restore_ext] Rels-Konsistenz: xl/{target} entfernt (Slicer bei structural_change)\n")
                     return ''
                 orig_target_r = os.path.normpath(os.path.join(orig_temp_dir, 'xl', target))
                 if os.path.exists(orig_target_r):
