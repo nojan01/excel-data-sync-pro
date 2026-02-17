@@ -931,6 +931,130 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                     safeLog(`[Python] Spalten-Ops für "${sheet.sheetName}" erfolgreich (${colResult.method})`);
                 }
                 
+            } else if (hasColOps && !hasRowOps && 
+                       sheet.changedCells && Object.keys(sheet.changedCells).some(k => !k.startsWith('_'))) {
+                // SPALTEN + ZELL-EDITS: Erst Spalten via XML-DIREKT, dann Zell-Edits via FALL 3a
+                // Ohne diese Trennung blockiert has_cell_edits den XML-DIREKT-Pfad,
+                // und der openpyxl-Roundtrip zerstört AutoFilter/Tabelle.
+                safeLog(`[Python] Spalten+Zell-Edits: Erst Spalten, dann Zell-Edits für "${sheet.sheetName}"`);
+                
+                // Separiere echte Zell-Edits von Marker-Einträgen (_columnDeleted etc.)
+                const onlyCellEdits = {};
+                if (sheet.changedCells) {
+                    for (const [key, value] of Object.entries(sheet.changedCells)) {
+                        if (!key.startsWith('_')) {
+                            onlyCellEdits[key] = value;
+                        }
+                    }
+                }
+                
+                // SCHRITT 1: Spalten-Operationen via XML-DIREKT (OHNE Zell-Edits)
+                const colOnlyConfig = {
+                    filePath: targetPath,
+                    outputPath: targetPath,
+                    originalPath: originalSourcePath,
+                    sheetName: sheet.sheetName,
+                    changes: {
+                        headers: sheet.headers || [],
+                        data: sheet.data || [],
+                        editedCells: {},  // KEINE Zell-Edits → only_column_ops = True → XML-DIREKT
+                        cellStyles: {},
+                        cellFonts: {},
+                        richTextCells: {},
+                        rowHighlights: {},
+                        mergedCells: [],
+                        deletedColumns: sheet.deletedColumnIndices || [],
+                        insertedColumns: sheet.insertedColumnInfo || null,
+                        deletedRowIndices: [],
+                        insertedRowInfo: null,
+                        rowOrder: null,
+                        hiddenColumns: [],
+                        hiddenRows: [],
+                        rowMapping: null,
+                        fromFile: false,
+                        fullRewrite: false,
+                        structuralChange: true,  // Nötig um in FALL 1/2 Block zu kommen
+                        clearedRowHighlights: [],
+                        columnOrder: sheet.columnOrder || null,
+                        affectedRows: [],
+                        autoFilterRange: null,
+                        hasFormatChanges: false
+                    }
+                };
+                
+                const colOnlyResult = await writeExcel(colOnlyConfig);
+                if (!colOnlyResult.success) {
+                    hasError = true;
+                    errorMessage = colOnlyResult.error;
+                    safeError(`[Python] Spalten-Ops für "${sheet.sheetName}" fehlgeschlagen:`, colOnlyResult.error);
+                    continue;
+                }
+                if (colOnlyResult.method) actualMethod = colOnlyResult.method;
+                safeLog(`[Python] Spalten-Ops für "${sheet.sheetName}" erfolgreich (${colOnlyResult.method})`);
+                
+                // SCHRITT 2: Zell-Edits + Highlights + Visibility via FALL 3a (OHNE Spalten-Ops)
+                // originalPath = targetPath → Pass 1 hat Spalten-Ops bereits in targetPath
+                const hasCellWork = Object.keys(onlyCellEdits).length > 0 ||
+                    (sheet.rowHighlights && Object.keys(sheet.rowHighlights).length > 0) ||
+                    (sheet.hiddenColumns && sheet.hiddenColumns.length > 0) ||
+                    (sheet.hiddenRows && sheet.hiddenRows.length > 0) ||
+                    (sheet.clearedRowHighlights && sheet.clearedRowHighlights.length > 0) ||
+                    sheet.hasFormatChanges;
+                
+                if (hasCellWork) {
+                    const cellConfig = {
+                        filePath: targetPath,
+                        outputPath: targetPath,
+                        originalPath: targetPath,  // WICHTIG: Von der bereits modifizierten Datei lesen
+                        sheetName: sheet.sheetName,
+                        changes: {
+                            headers: sheet.headers || [],
+                            data: [],
+                            editedCells: onlyCellEdits,
+                            cellStyles: sheet.cellStyles || {},
+                            cellFonts: sheet.cellFonts || {},
+                            richTextCells: sheet.richTextCells || {},
+                            rowHighlights: sheet.rowHighlights || {},
+                            mergedCells: sheet.mergedCells || [],
+                            deletedColumns: [],
+                            insertedColumns: null,
+                            deletedRowIndices: [],
+                            insertedRowInfo: null,
+                            rowOrder: null,
+                            hiddenColumns: sheet.hiddenColumns || [],
+                            hiddenRows: sheet.hiddenRows || [],
+                            rowMapping: null,
+                            fromFile: false,
+                            fullRewrite: false,  // KEIN Full-Rewrite → FALL 3
+                            structuralChange: false,  // KEIN Structural Change → FALL 3
+                            clearedRowHighlights: sheet.clearedRowHighlights || [],
+                            columnOrder: null,
+                            affectedRows: [],
+                            autoFilterRange: null,
+                            hasFormatChanges: sheet.hasFormatChanges || false
+                        }
+                    };
+                    
+                    const cellResult = await writeExcel(cellConfig);
+                    if (!cellResult.success) {
+                        hasError = true;
+                        errorMessage = cellResult.error;
+                        safeError(`[Python] Zell-Edits für "${sheet.sheetName}" fehlgeschlagen:`, cellResult.error);
+                    } else {
+                        results.push(sheet.sheetName);
+                        if (cellResult.method) actualMethod = cellResult.method;
+                        if (cellResult.debugLog) {
+                            if (!debugLogs) debugLogs = [];
+                            debugLogs.push(cellResult.debugLog);
+                        }
+                        safeLog(`[Python] Zell-Edits für "${sheet.sheetName}" erfolgreich (${cellResult.method})`);
+                    }
+                } else {
+                    // Nur Spalten-Ops, keine Zell-Edits → schon fertig
+                    results.push(sheet.sheetName);
+                    safeLog(`[Python] Nur Spalten-Ops für "${sheet.sheetName}" (keine Zell-Edits)`);
+                }
+                
             } else {
                 // EINZELNE OPERATIONEN: Normaler Aufruf (bestehender Code)
                 const config = {
