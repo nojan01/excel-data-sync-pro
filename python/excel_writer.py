@@ -543,6 +543,368 @@ def _insert_ws_element(ws_content, element_xml, element_name):
     return ws_content.replace('</worksheet>', element_xml + '\n</worksheet>')
 
 
+def _strip_slicers_from_zip(xlsx_path):
+    """
+    Entfernt ALLE Slicer-Infrastruktur aus einer fertiggestellten XLSX-Datei (ZIP-to-ZIP).
+    
+    Wird nach direct_xml_column_operations() aufgerufen, wenn Spalten gelöscht/eingefügt/
+    verschoben wurden. Spaltenoperationen invalidieren SlicerCache-Spaltenreferenzen →
+    orphaned Slicer-Einträge → Excel-Reparaturmodus.
+    
+    Entfernt werden:
+    1. xl/slicerCaches/*.xml Dateien
+    2. xl/slicers/*.xml Dateien
+    3. Slicer-Overrides aus [Content_Types].xml
+    4. Slicer-Relationships aus xl/_rels/workbook.xml.rels
+    5. Slicer-Relationships aus xl/worksheets/_rels/sheet*.xml.rels
+    6. Slicer-Shapes (mc:AlternateContent) aus xl/drawings/drawing*.xml
+    7. Slicer-Relationships aus xl/drawings/_rels/drawing*.xml.rels
+    8. Slicer-extLst aus xl/workbook.xml
+    9. Slicer-extLst aus xl/worksheets/sheet*.xml
+    """
+    import zipfile
+    import shutil
+    import re
+    import sys
+
+    SLICER_URIS = [
+        'http://schemas.microsoft.com/office/drawing/2010/slicer',
+        'http://schemas.microsoft.com/office/drawing/2014/slicer',
+    ]
+    # extLst URIs für Slicer in workbook.xml und sheet XMLs
+    SLICER_EXTLST_URIS = [
+        '{A8765BA9-456A-4dab-B4F3-ACF838C121DE}',   # x14:slicerList (Sheet)
+        '{79F54976-1DA5-4618-B6BA-64F0C8D81F0C}',   # x15:slicerCaches (Workbook)
+    ]
+
+    temp_output = xlsx_path + '.slicer_strip_tmp'
+    stripped_anything = False
+
+    try:
+        with zipfile.ZipFile(xlsx_path, 'r') as src_zip:
+            namelist = src_zip.namelist()
+
+            # Prüfe ob überhaupt Slicer-Dateien vorhanden
+            has_slicer_files = any(
+                n.startswith('xl/slicerCaches/') or n.startswith('xl/slicers/')
+                for n in namelist
+            )
+            has_slicer_ct = False
+            if '[Content_Types].xml' in namelist:
+                ct_content = src_zip.read('[Content_Types].xml').decode('utf-8')
+                has_slicer_ct = 'slicer' in ct_content.lower()
+
+            if not has_slicer_files and not has_slicer_ct:
+                sys.stderr.write(f"[SLICER_STRIP] Keine Slicer gefunden — übersprungen\n")
+                return False
+
+            # Dateien die komplett entfernt werden
+            skip_files = set()
+            for n in namelist:
+                if n.startswith('xl/slicerCaches/') or n.startswith('xl/slicers/'):
+                    skip_files.add(n)
+                    sys.stderr.write(f"[SLICER_STRIP] Datei entfernt: {n}\n")
+
+            if skip_files:
+                stripped_anything = True
+
+            # Modifizierte Dateien sammeln
+            modified_files = {}
+
+            # --- [Content_Types].xml: Slicer-Overrides entfernen ---
+            if '[Content_Types].xml' in namelist:
+                ct = src_zip.read('[Content_Types].xml').decode('utf-8')
+                ct_orig = ct
+                # Entferne Override-Einträge für slicerCaches und slicers
+                ct = re.sub(
+                    r'<Override\s[^>]*PartName="[^"]*slicer[^"]*"[^>]*/>\s*',
+                    '', ct, flags=re.IGNORECASE)
+                if ct != ct_orig:
+                    modified_files['[Content_Types].xml'] = ct.encode('utf-8')
+                    stripped_anything = True
+                    sys.stderr.write(f"[SLICER_STRIP] [Content_Types].xml: Slicer-Overrides entfernt\n")
+
+            # --- xl/_rels/workbook.xml.rels: Slicer-Rels entfernen ---
+            wb_rels_path = 'xl/_rels/workbook.xml.rels'
+            if wb_rels_path in namelist:
+                wb_rels = src_zip.read(wb_rels_path).decode('utf-8')
+                wb_rels_orig = wb_rels
+                for rel_m in list(re.finditer(r'<Relationship\s[^>]*/>', wb_rels)):
+                    rel_el = rel_m.group(0)
+                    type_m = re.search(r'Type="([^"]+)"', rel_el)
+                    target_m = re.search(r'Target="([^"]+)"', rel_el)
+                    is_slicer = False
+                    if type_m and 'slicer' in type_m.group(1).lower():
+                        is_slicer = True
+                    elif target_m and 'slicer' in target_m.group(1).lower():
+                        is_slicer = True
+                    if is_slicer:
+                        wb_rels = wb_rels.replace(rel_el, '')
+                        sys.stderr.write(f"[SLICER_STRIP] workbook.xml.rels: Slicer-Rel entfernt"
+                                         f" Target={target_m.group(1) if target_m else '?'}\n")
+                if wb_rels != wb_rels_orig:
+                    wb_rels = re.sub(r'\n\s*\n', '\n', wb_rels)
+                    modified_files[wb_rels_path] = wb_rels.encode('utf-8')
+                    stripped_anything = True
+
+            # --- xl/workbook.xml: Slicer-extLst entfernen ---
+            if 'xl/workbook.xml' in namelist:
+                wb_xml = src_zip.read('xl/workbook.xml').decode('utf-8')
+                wb_xml_orig = wb_xml
+                # Entferne <ext> Blöcke mit Slicer-URIs innerhalb von <extLst>
+                for uri in SLICER_EXTLST_URIS:
+                    escaped_uri = re.escape(uri)
+                    wb_xml = re.sub(
+                        r'<ext\s[^>]*uri="' + escaped_uri + r'"[^>]*>.*?</ext>\s*',
+                        '', wb_xml, flags=re.DOTALL | re.IGNORECASE)
+                # Entferne leere <extLst></extLst>
+                wb_xml = re.sub(r'<extLst>\s*</extLst>', '', wb_xml)
+                if wb_xml != wb_xml_orig:
+                    modified_files['xl/workbook.xml'] = wb_xml.encode('utf-8')
+                    stripped_anything = True
+                    sys.stderr.write(f"[SLICER_STRIP] workbook.xml: Slicer-extLst entfernt\n")
+
+            # --- Worksheet-Rels und Sheet-XMLs ---
+            for n in namelist:
+                # Worksheet _rels: Slicer-Rels entfernen
+                if re.match(r'xl/worksheets/_rels/sheet\d+\.xml\.rels$', n):
+                    ws_rels = src_zip.read(n).decode('utf-8')
+                    ws_rels_orig = ws_rels
+                    for rel_m in list(re.finditer(r'<Relationship\s[^>]*/>', ws_rels)):
+                        rel_el = rel_m.group(0)
+                        type_m = re.search(r'Type="([^"]+)"', rel_el)
+                        target_m = re.search(r'Target="([^"]+)"', rel_el)
+                        is_slicer = False
+                        if type_m and 'slicer' in type_m.group(1).lower():
+                            is_slicer = True
+                        elif target_m and 'slicer' in target_m.group(1).lower():
+                            is_slicer = True
+                        if is_slicer:
+                            ws_rels = ws_rels.replace(rel_el, '')
+                            sys.stderr.write(f"[SLICER_STRIP] {n}: Slicer-Rel entfernt\n")
+                    if ws_rels != ws_rels_orig:
+                        ws_rels = re.sub(r'\n\s*\n', '\n', ws_rels)
+                        modified_files[n] = ws_rels.encode('utf-8')
+                        stripped_anything = True
+
+                # Sheet XML: Slicer-extLst entfernen
+                if re.match(r'xl/worksheets/sheet\d+\.xml$', n):
+                    sheet_xml = src_zip.read(n).decode('utf-8')
+                    sheet_xml_orig = sheet_xml
+                    for uri in SLICER_EXTLST_URIS:
+                        escaped_uri = re.escape(uri)
+                        sheet_xml = re.sub(
+                            r'<ext\s[^>]*uri="' + escaped_uri + r'"[^>]*>.*?</ext>\s*',
+                            '', sheet_xml, flags=re.DOTALL | re.IGNORECASE)
+                    # Entferne leere <extLst></extLst>
+                    sheet_xml = re.sub(r'<extLst>\s*</extLst>', '', sheet_xml)
+                    if sheet_xml != sheet_xml_orig:
+                        modified_files[n] = sheet_xml.encode('utf-8')
+                        stripped_anything = True
+                        sys.stderr.write(f"[SLICER_STRIP] {n}: Slicer-extLst entfernt\n")
+
+            # --- Drawing-XMLs: Slicer-Shapes entfernen ---
+            for n in namelist:
+                if re.match(r'xl/drawings/drawing\d+\.xml$', n):
+                    drawing = src_zip.read(n).decode('utf-8')
+                    drawing_orig = drawing
+                    removed = 0
+
+                    # Anchor-Blöcke mit Slicer-URIs entfernen
+                    for anchor_tag in ['twoCellAnchor', 'oneCellAnchor', 'absoluteAnchor']:
+                        for prefix in ['xdr:', '']:
+                            pattern = f'<{prefix}{anchor_tag}[\\s>].*?</{prefix}{anchor_tag}>'
+                            pos = 0
+                            while True:
+                                m = re.search(pattern, drawing[pos:], re.DOTALL)
+                                if not m:
+                                    break
+                                block = m.group(0)
+                                abs_start = pos + m.start()
+                                abs_end = pos + m.end()
+                                if any(uri in block for uri in SLICER_URIS):
+                                    drawing = drawing[:abs_start] + drawing[abs_end:]
+                                    removed += 1
+                                else:
+                                    pos = abs_end
+
+                    # Standalone mc:AlternateContent mit Slicer
+                    pos = 0
+                    while True:
+                        m = re.search(r'<mc:AlternateContent\b[^>]*>.*?</mc:AlternateContent>',
+                                      drawing[pos:], re.DOTALL)
+                        if not m:
+                            break
+                        block = m.group(0)
+                        abs_start = pos + m.start()
+                        abs_end = pos + m.end()
+                        if any(uri in block for uri in SLICER_URIS):
+                            drawing = drawing[:abs_start] + drawing[abs_end:]
+                            removed += 1
+                        else:
+                            pos = abs_end
+
+                    if drawing != drawing_orig:
+                        modified_files[n] = drawing.encode('utf-8')
+                        stripped_anything = True
+                        sys.stderr.write(f"[SLICER_STRIP] {n}: {removed} Slicer-Shapes entfernt\n")
+
+                # Drawing rels: Slicer-Rels entfernen
+                if re.match(r'xl/drawings/_rels/drawing\d+\.xml\.rels$', n):
+                    dr_rels = src_zip.read(n).decode('utf-8')
+                    dr_rels_orig = dr_rels
+                    for rel_m in list(re.finditer(r'<Relationship\s[^>]*/>', dr_rels)):
+                        rel_el = rel_m.group(0)
+                        type_m = re.search(r'Type="([^"]+)"', rel_el)
+                        target_m = re.search(r'Target="([^"]+)"', rel_el)
+                        is_slicer = False
+                        if type_m and 'slicer' in type_m.group(1).lower():
+                            is_slicer = True
+                        elif target_m and 'slicer' in target_m.group(1).lower():
+                            is_slicer = True
+                        if is_slicer:
+                            dr_rels = dr_rels.replace(rel_el, '')
+                            sys.stderr.write(f"[SLICER_STRIP] {n}: Slicer-Rel entfernt\n")
+                    if dr_rels != dr_rels_orig:
+                        dr_rels = re.sub(r'\n\s*\n', '\n', dr_rels)
+                        modified_files[n] = dr_rels.encode('utf-8')
+                        stripped_anything = True
+
+            # --- Prüfe ob Drawings nach Slicer-Stripping leer geworden sind ---
+            # Wenn eine drawing*.xml keine Anchors mehr hat, müssen auch die
+            # Sheet-Referenzen (<drawing r:id="..."/>) und Content_Types-Overrides
+            # entfernt werden, sonst bleibt ein leeres Drawing-Artefakt.
+            empty_drawings = set()  # ZIP-Pfade von leeren Drawings
+            for n in list(modified_files.keys()):
+                if re.match(r'xl/drawings/drawing\d+\.xml$', n):
+                    drawing_content = modified_files[n].decode('utf-8')
+                    has_anchors = bool(re.search(
+                        r'<(?:xdr:)?(?:twoCellAnchor|oneCellAnchor|absoluteAnchor)[\s>]',
+                        drawing_content))
+                    if not has_anchors:
+                        empty_drawings.add(n)
+                        skip_files.add(n)  # Leere Drawing-Datei entfernen
+                        del modified_files[n]
+                        stripped_anything = True
+                        sys.stderr.write(f"[SLICER_STRIP] {n}: Leeres Drawing entfernt\n")
+                        # Auch zugehörige Rels-Datei entfernen
+                        rels_path_for_drawing = n.replace('drawings/', 'drawings/_rels/') + '.rels'
+                        if rels_path_for_drawing in namelist or rels_path_for_drawing in modified_files:
+                            skip_files.add(rels_path_for_drawing)
+                            modified_files.pop(rels_path_for_drawing, None)
+                            sys.stderr.write(f"[SLICER_STRIP] {rels_path_for_drawing}: Leere Drawing-Rels entfernt\n")
+
+            if empty_drawings:
+                # Drawing-Overrides aus Content_Types entfernen
+                ct_key = '[Content_Types].xml'
+                if ct_key in modified_files:
+                    ct = modified_files[ct_key].decode('utf-8')
+                elif ct_key in namelist:
+                    ct = src_zip.read(ct_key).decode('utf-8')
+                else:
+                    ct = None
+                if ct:
+                    ct_before = ct
+                    for dp in empty_drawings:
+                        part_name = '/' + dp  # e.g. /xl/drawings/drawing1.xml
+                        escaped_pn = re.escape(part_name)
+                        ct = re.sub(
+                            r'<Override\s[^>]*PartName="' + escaped_pn + r'"[^>]*/>\s*',
+                            '', ct)
+                    if ct != ct_before:
+                        modified_files[ct_key] = ct.encode('utf-8')
+                        sys.stderr.write(f"[SLICER_STRIP] [Content_Types].xml: Drawing-Overrides für leere Drawings entfernt\n")
+
+                # <drawing r:id="..."/> Referenzen aus Sheet-XMLs entfernen
+                for n in namelist:
+                    if not re.match(r'xl/worksheets/sheet\d+\.xml$', n):
+                        continue
+                    sheet_xml = modified_files.get(n)
+                    if sheet_xml:
+                        sheet_xml = sheet_xml.decode('utf-8')
+                    else:
+                        sheet_xml = src_zip.read(n).decode('utf-8')
+                    sheet_orig = sheet_xml
+                    # Finde den rId der Drawing-Referenz und prüfe ob die Ziel-Drawing leer ist
+                    drawing_ref_m = re.search(r'<drawing\s+[^>]*r:id="([^"]+)"[^>]*/>', sheet_xml)
+                    if not drawing_ref_m:
+                        drawing_ref_m = re.search(r'<drawing\s+[^>]*r:id="([^"]+)"[^>]*>.*?</drawing>', sheet_xml, re.DOTALL)
+                    if drawing_ref_m:
+                        dr_rid = drawing_ref_m.group(1)
+                        # Finde die Drawing-Datei über die Worksheet-Rels
+                        ws_rels_path = n.replace('worksheets/', 'worksheets/_rels/') + '.rels'
+                        ws_rels_content = None
+                        if ws_rels_path in modified_files:
+                            ws_rels_content = modified_files[ws_rels_path].decode('utf-8')
+                        elif ws_rels_path in namelist:
+                            ws_rels_content = src_zip.read(ws_rels_path).decode('utf-8')
+                        if ws_rels_content:
+                            target_m = re.search(
+                                r'Id="' + re.escape(dr_rid) + r'"[^>]*Target="([^"]+)"',
+                                ws_rels_content)
+                            if target_m:
+                                target = target_m.group(1)
+                                # Resolve relative path: ../drawings/drawing1.xml → xl/drawings/drawing1.xml
+                                if not target.startswith('/'):
+                                    resolved = 'xl/worksheets/' + target
+                                    rparts = resolved.split('/')
+                                    norm = []
+                                    for p in rparts:
+                                        if p == '..':
+                                            if norm:
+                                                norm.pop()
+                                        elif p != '.':
+                                            norm.append(p)
+                                    resolved = '/'.join(norm)
+                                else:
+                                    resolved = target.lstrip('/')
+                                if resolved in empty_drawings:
+                                    # Drawing-Referenz aus Sheet entfernen
+                                    sheet_xml = re.sub(r'<drawing\s+[^>]*/>', '', sheet_xml)
+                                    sheet_xml = re.sub(r'<drawing\s+[^>]*>.*?</drawing>', '', sheet_xml, flags=re.DOTALL)
+                                    # Auch die Drawing-Rel aus Worksheet-Rels entfernen
+                                    rel_pattern = r'<Relationship\s[^>]*Id="' + re.escape(dr_rid) + r'"[^>]*/>'
+                                    ws_rels_content = re.sub(rel_pattern, '', ws_rels_content)
+                                    ws_rels_content = re.sub(r'\n\s*\n', '\n', ws_rels_content)
+                                    modified_files[ws_rels_path] = ws_rels_content.encode('utf-8')
+                                    sys.stderr.write(f"[SLICER_STRIP] {n}: <drawing> Referenz entfernt (leere drawing)\n")
+                    if sheet_xml != sheet_orig:
+                        modified_files[n] = sheet_xml.encode('utf-8')
+
+            if not stripped_anything:
+                sys.stderr.write(f"[SLICER_STRIP] Keine Slicer-Artefakte gefunden — Datei unverändert\n")
+                return False
+
+            # ZIP neu schreiben ohne Slicer-Dateien, mit modifizierten Dateien
+            with zipfile.ZipFile(temp_output, 'w', zipfile.ZIP_DEFLATED) as dst_zip:
+                for item in src_zip.infolist():
+                    if item.filename.endswith('/'):
+                        continue
+                    if item.filename.startswith('__MACOSX') or item.filename.endswith('.DS_Store'):
+                        continue
+                    if item.filename in skip_files:
+                        continue
+                    if item.filename in modified_files:
+                        item.compress_type = zipfile.ZIP_DEFLATED
+                        dst_zip.writestr(item, modified_files[item.filename])
+                    else:
+                        dst_zip.writestr(item, src_zip.read(item.filename))
+
+        # Ersetze Original
+        os.remove(xlsx_path)
+        shutil.move(temp_output, xlsx_path)
+        sys.stderr.write(f"[SLICER_STRIP] Slicer-Infrastruktur erfolgreich entfernt aus {xlsx_path}\n")
+        return True
+
+    except Exception as e:
+        if os.path.exists(temp_output):
+            os.remove(temp_output)
+        sys.stderr.write(f"[SLICER_STRIP] Fehler: {e}\n")
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        return False
+
+
 def _strip_slicer_shapes_from_drawings(drawings_dir):
     """
     Entfernt Slicer-Shapes aus drawing*.xml Dateien.
@@ -3588,6 +3950,14 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         headers=headers,
                         data=data
                     )
+                    
+                    # Slicer-Infrastruktur entfernen nach Spaltenoperationen.
+                    # Spaltenänderungen invalidieren SlicerCache-Spaltenreferenzen →
+                    # orphaned Slicer-Einträge in Content_Types/Rels → Excel-Reparatur.
+                    try:
+                        _strip_slicers_from_zip(output_path)
+                    except Exception as slicer_err:
+                        sys.stderr.write(f"[XML-DIREKT] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
                     
                     # Row Highlights nachträglich anwenden (direkt im XML)
                     if row_highlights:
