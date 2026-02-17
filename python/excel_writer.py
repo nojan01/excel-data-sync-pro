@@ -604,23 +604,43 @@ def _strip_slicer_shapes_from_drawings(drawings_dir):
             # Verwende nicht-gierigen Match
             for prefix in ['xdr:', '']:
                 pattern = f'<{prefix}{anchor_tag}[\\s>].*?</{prefix}{anchor_tag}>'
-                for m in list(re.finditer(pattern, content, re.DOTALL)):
+                # While-Schleife mit search_start: nach jeder Entfernung
+                # bleibt search_start gleich; bei Nicht-Slicer überspringen wir den Block
+                anchor_search_start = 0
+                while True:
+                    m = re.search(pattern, content[anchor_search_start:], re.DOTALL)
+                    if not m:
+                        break
                     block = m.group(0)
+                    abs_start = anchor_search_start + m.start()
+                    abs_end = anchor_search_start + m.end()
                     is_slicer = any(uri in block for uri in SLICER_URIS)
                     if is_slicer:
-                        content = content[:m.start()] + content[m.end():]
+                        content = content[:abs_start] + content[abs_end:]
                         removed_count += 1
                         sys.stderr.write(f"[strip_slicer] {fname}: Slicer-Anchor ({prefix}{anchor_tag}) entfernt\n")
-                        break  # Pattern muss neu-evaluiert werden nach Entfernung
+                        # anchor_search_start bleibt gleich
+                    else:
+                        anchor_search_start = abs_end  # Nicht-Slicer → weiter suchen
         
         # Falls noch mc:AlternateContent mit Slicer außerhalb von Anchors existiert
-        for m in list(re.finditer(r'<mc:AlternateContent\b[^>]*>.*?</mc:AlternateContent>', content, re.DOTALL)):
+        # While-Schleife: nach jeder Entfernung String-Positionen neu berechnen
+        search_start = 0
+        while True:
+            m = re.search(r'<mc:AlternateContent\b[^>]*>.*?</mc:AlternateContent>', content[search_start:], re.DOTALL)
+            if not m:
+                break
             block = m.group(0)
+            abs_start = search_start + m.start()
+            abs_end = search_start + m.end()
             is_slicer = any(uri in block for uri in SLICER_URIS)
             if is_slicer:
-                content = content[:m.start()] + content[m.end():]
+                content = content[:abs_start] + content[abs_end:]
                 removed_count += 1
                 sys.stderr.write(f"[strip_slicer] {fname}: Standalone mc:AlternateContent mit Slicer entfernt\n")
+                # search_start bleibt gleich (nächste Suche ab gleicher Position)
+            else:
+                search_start = abs_end  # Nicht-Slicer → weiter suchen nach diesem Block
         
         if content != original_content:
             with open(fpath, 'w', encoding='utf-8') as f:
@@ -1179,6 +1199,27 @@ def restore_external_links_from_original(output_path, original_path, structural_
                             f.write(orig_rels_xml)
                         fixed_count += 1
                     
+                    # Bei structural_change: Slicer-Rels aus Worksheet-Rels entfernen.
+                    # Grund: slicer-Rels verbinden die Kette sheet→slicer→slicerCache→Tabellenspalte.
+                    # Nach Spaltenoperationen sind SlicerCaches invalide → Excel kaskadiert.
+                    if structural_change and os.path.exists(dest_rels_fp):
+                        with open(dest_rels_fp, 'r', encoding='utf-8') as f:
+                            ws_rels_content = f.read()
+                        ws_rels_orig = ws_rels_content
+                        for rel_m in list(re.finditer(r'<Relationship\s[^>]*/>', ws_rels_content)):
+                            rel_el = rel_m.group(0)
+                            type_m = re.search(r'Type="([^"]+)"', rel_el)
+                            if type_m:
+                                rel_type = type_m.group(1).lower()
+                                if 'slicer' in rel_type:
+                                    ws_rels_content = ws_rels_content.replace(rel_el, '')
+                                    target_m = re.search(r'Target="([^"]+)"', rel_el)
+                                    sys.stderr.write(f"[strip_slicer] {rels_fn}: Slicer-Rel entfernt: {target_m.group(1) if target_m else '?'}\n")
+                        if ws_rels_content != ws_rels_orig:
+                            ws_rels_content = re.sub(r'\n\s*\n', '\n', ws_rels_content)
+                            with open(dest_rels_fp, 'w', encoding='utf-8') as f:
+                                f.write(ws_rels_content)
+                    
                     ws_rid_mappings[rels_fn] = mapping
                     sys.stderr.write(f"[restore_ext] MERGE {rels_fn}: Mapping={mapping}\n")
             else:
@@ -1302,19 +1343,72 @@ def restore_external_links_from_original(output_path, original_path, structural_
                     # Grund: xl/drawings/ kommt aus dem Original, also muss der rId
                     # zum Original-Drawing passen (nicht zu openpyxl's möglicherweise
                     # geändertem/entferntem Drawing-Rel).
+                    # ABER: Wenn die drawing*.xml nach Slicer-Stripping leer ist
+                    # (keine Anchors/Shapes mehr), kein <drawing> einfügen.
                     drawing_match = re.search(r'<drawing\s+[^>]*/\s*>', orig_ws_content)
                     if not drawing_match:
                         drawing_match = re.search(r'<drawing\s+[^>]*>.*?</drawing>', orig_ws_content, re.DOTALL)
                     if drawing_match:
+                        # Prüfe ob die Ziel-drawing*.xml nach Slicer-Stripping noch Inhalt hat
                         drawing_el = _map_rid(drawing_match.group(0))
-                        if re.search(r'<drawing[\s>]', dest_ws_content):
-                            # Ersetze openpyxl's <drawing> mit Original (gemappter rId)
-                            dest_ws_content = re.sub(r'<drawing\s+[^>]*/\s*>', drawing_el, dest_ws_content)
-                            dest_ws_content = re.sub(r'<drawing\s+[^>]*>.*?</drawing>', drawing_el, dest_ws_content, flags=re.DOTALL)
+                        skip_drawing = False
+                        dr_rid_m = re.search(r'r:id="([^"]+)"', drawing_el)
+                        if dr_rid_m and structural_change:
+                            mapped_rid = dr_rid_m.group(1)
+                            # Finde den Target im dest-Rels
+                            dest_rels_fp_check = os.path.join(dest_ws_rels_dir, f"{ws_file}.rels")
+                            if os.path.exists(dest_rels_fp_check):
+                                with open(dest_rels_fp_check, 'r', encoding='utf-8') as f:
+                                    rels_check = f.read()
+                                target_m = re.search(r'Id="' + re.escape(mapped_rid) + r'"[^>]*Target="([^"]+)"', rels_check)
+                                if target_m:
+                                    drawing_target = target_m.group(1)
+                                    drawing_file_check = os.path.normpath(os.path.join(temp_dir, 'xl', 'worksheets', drawing_target))
+                                    if os.path.exists(drawing_file_check):
+                                        with open(drawing_file_check, 'r', encoding='utf-8') as f:
+                                            drawing_content_check = f.read()
+                                        has_anchors = bool(re.search(r'<(?:xdr:)?(?:twoCellAnchor|oneCellAnchor|absoluteAnchor)[\s>]', drawing_content_check))
+                                        has_slicer_uri = any(uri in drawing_content_check for uri in [
+                                            'schemas.microsoft.com/office/drawing/2010/slicer',
+                                            'schemas.microsoft.com/office/drawing/2014/slicer'])
+                                        if not has_anchors and not has_slicer_uri:
+                                            skip_drawing = True
+                                            sys.stderr.write(f"[restore] {ws_file}: <drawing> übersprungen (drawing*.xml leer nach Slicer-Stripping)\n")
+                                        elif has_slicer_uri and not has_anchors:
+                                            skip_drawing = True
+                                            sys.stderr.write(f"[restore] {ws_file}: <drawing> übersprungen (nur Slicer-Reste in drawing*.xml)\n")
+                        
+                        if not skip_drawing:
+                            if re.search(r'<drawing[\s>]', dest_ws_content):
+                                # Ersetze openpyxl's <drawing> mit Original (gemappter rId)
+                                dest_ws_content = re.sub(r'<drawing\s+[^>]*/\s*>', drawing_el, dest_ws_content)
+                                dest_ws_content = re.sub(r'<drawing\s+[^>]*>.*?</drawing>', drawing_el, dest_ws_content, flags=re.DOTALL)
+                            else:
+                                dest_ws_content = _insert_ws_element(dest_ws_content, drawing_el, 'drawing')
+                            ws_modified = True
+                            sys.stderr.write(f"[restore] {ws_file}: <drawing> aus Original wiederhergestellt: {drawing_el}\n")
                         else:
-                            dest_ws_content = _insert_ws_element(dest_ws_content, drawing_el, 'drawing')
-                        ws_modified = True
-                        sys.stderr.write(f"[restore] {ws_file}: <drawing> aus Original wiederhergestellt: {drawing_el}\n")
+                            # Drawing leer → auch openpyxl's <drawing> aus Sheet entfernen
+                            if re.search(r'<drawing[\s>]', dest_ws_content):
+                                dest_ws_content = re.sub(r'<drawing\s+[^>]*/\s*>', '', dest_ws_content)
+                                dest_ws_content = re.sub(r'<drawing\s+[^>]*>.*?</drawing>', '', dest_ws_content, flags=re.DOTALL)
+                                ws_modified = True
+                                sys.stderr.write(f"[restore] {ws_file}: <drawing> aus Sheet-XML entfernt (leere drawing*.xml)\n")
+                            # Drawing-Rel aus Worksheet-Rels entfernen
+                            if dr_rid_m and os.path.exists(dest_rels_fp_check):
+                                with open(dest_rels_fp_check, 'r', encoding='utf-8') as f:
+                                    ws_rels_for_drawing = f.read()
+                                ws_rels_before = ws_rels_for_drawing
+                                drawing_rel_pat = r'<Relationship\s[^>]*Id="' + re.escape(mapped_rid) + r'"[^>]*/>'
+                                ws_rels_for_drawing = re.sub(drawing_rel_pat, '', ws_rels_for_drawing)
+                                if ws_rels_for_drawing != ws_rels_before:
+                                    ws_rels_for_drawing = re.sub(r'\n\s*\n', '\n', ws_rels_for_drawing)
+                                    with open(dest_rels_fp_check, 'w', encoding='utf-8') as f:
+                                        f.write(ws_rels_for_drawing)
+                                    sys.stderr.write(f"[restore] {ws_file}: Drawing-Rel {mapped_rid} aus Worksheet-Rels entfernt\n")
+                            # Drawing-Datei NICHT löschen: Content_Types-Konsistenzprüfung
+                            # würde sie aus dem Original zurückkopieren (mit Slicer-Shapes!).
+                            # Die leere drawing*.xml bleibt, ist aber harmlos ohne Referenz.
                     
                     # <legacyDrawing> IMMER aus Original wiederherstellen
                     legacy_match = re.search(r'<legacyDrawing\s+[^>]*/\s*>', orig_ws_content)
