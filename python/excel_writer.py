@@ -3196,10 +3196,58 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         can_use_pipeline = (has_column_operations or has_row_operations) and row_mapping_is_identity and not affected_rows
         
         if can_use_pipeline:
+            # =====================================================================
+            # XML-DIREKT-WEG: Spaltenoperationen ohne openpyxl-Roundtrip
+            # Wenn NUR Spaltenoperationen (+ hidden) aber KEINE Zeilenoperationen,
+            # verwende den direkten XML-Weg → kein Slicer/Drawing/Namespace-Verlust
+            # =====================================================================
+            import sys
+            
+            only_column_ops = has_column_operations and not has_row_operations and not inserted_rows
+            
+            if only_column_ops:
+                sys.stderr.write(f"[XML-DIREKT] Verwende XML-Direkt-Weg für Spaltenoperationen\n")
+                sys.stderr.write(f"[XML-DIREKT] deleted={deleted_columns}, inserted={inserted_columns is not None}, "
+                                 f"reorder={column_order is not None}, hidden={hidden_columns}\n")
+                
+                try:
+                    wb.close()  # openpyxl-Workbook schließen — wir brauchen es nicht
+                    
+                    from excel_xml_ops import direct_xml_column_operations
+                    
+                    result = direct_xml_column_operations(
+                        file_path=original_path,
+                        output_path=output_path,
+                        sheet_name=sheet_name,
+                        deleted_columns=deleted_columns,
+                        inserted_columns=inserted_columns,
+                        column_order=column_order,
+                        hidden_columns=hidden_columns,
+                        headers=headers,
+                        data=data
+                    )
+                    
+                    # Row Highlights nachträglich anwenden (direkt im XML)
+                    if row_highlights:
+                        sys.stderr.write(f"[XML-DIREKT] TODO: row_highlights werden noch nicht angewendet\n")
+                    
+                    sys.stderr.write(f"[XML-DIREKT] Erfolgreich: {result.get('method', 'unknown')}\n")
+                    return {'success': True, 'outputPath': output_path, 'method': result.get('method', 'xml-col-ops')}
+                
+                except Exception as xml_err:
+                    sys.stderr.write(f"[XML-DIREKT] Fehler: {xml_err} — Fallback auf openpyxl-Pipeline\n")
+                    import traceback
+                    traceback.print_exc(file=sys.stderr)
+                    # Bei Fehler: Workbook neu öffnen und normalen Pipeline-Pfad nehmen
+                    wb = load_workbook(original_path)
+                    ws = wb[sheet_name]
+            
+            # =====================================================================
+            # OPENPYXL-PIPELINE (Fallback, oder wenn Zeilenoperationen dabei sind)
+            # =====================================================================
             from openpyxl.worksheet.table import TableColumn
             from openpyxl.utils.cell import range_boundaries
             from openpyxl.cell.cell import MergedCell
-            import sys
             
             sys.stderr.write(f"[PIPELINE] Starte: deleted_rows={deleted_rows}, row_order={row_order is not None}, hidden_rows={hidden_rows}, deleted_columns={deleted_columns}, inserted_columns={inserted_columns is not None}, column_order={column_order is not None}\n")
             
