@@ -171,27 +171,40 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map):
     """
     
     # ---- 1. <c r="..."> Zell-Referenzen ----
+    # Ermittle welche Spalten gelöscht werden (nicht im Mapping)
+    deleted_col_nums = set()
+    max_in_map = max(col_map.keys()) if col_map else 0
+    for c in range(1, max_in_map + 1):
+        if c not in col_map:
+            deleted_col_nums.add(c)
+    
+    # Entferne zuerst alle <c>-Elemente gelöschter Spalten komplett
+    if deleted_col_nums:
+        def _remove_deleted_cell(m):
+            col_letter = m.group(1)
+            col_num = _col_letter_to_num(col_letter)
+            if col_num in deleted_col_nums:
+                return ''  # Ganzes Element entfernen
+            return m.group(0)
+        # Selbstschließende <c .../> 
+        sheet_xml = re.sub(r'<c\s[^>]*?r="([A-Z]+)\d+"[^>]*/>', _remove_deleted_cell, sheet_xml)
+        # <c ...>...</c>
+        sheet_xml = re.sub(r'<c\s[^>]*?r="([A-Z]+)\d+"[^>]*>.*?</c>', _remove_deleted_cell, sheet_xml, flags=re.DOTALL)
+    
+    # Jetzt alle verbleibenden Zell-Referenzen remappen
     def _remap_cell(m):
-        prefix = m.group(1)  # z.B. '<c r="'
+        prefix = m.group(1)  # z.B. '<c r="' (alles vor dem Ref)
         ref_str = m.group(2)  # z.B. 'C5'
         dollar1, col_letter, dollar2, row_num = _parse_cell_ref(ref_str)
         if col_letter is None:
             return m.group(0)
         old_num = _col_letter_to_num(col_letter)
-        new_num = col_map.get(old_num)
-        if new_num is None:
-            return '<!-- deleted -->'  # Gelöschte Spalte markieren
+        new_num = col_map.get(old_num, old_num)
         new_letter = _num_to_col_letter(new_num)
         new_ref = f"{dollar1}{new_letter}{dollar2}{row_num}"
         return f'{prefix}{new_ref}"'
     
     sheet_xml = re.sub(r'(<c\s[^>]*?r=")([A-Z]+\d+)"', _remap_cell, sheet_xml)
-    
-    # Entferne gelöschte Zell-Elemente (<!-- deleted --> Marker)
-    # Selbstschließende Tags: <c .../> → <!-- deleted --> ... />
-    sheet_xml = re.sub(r'<!-- deleted -->[^>]*/>', '', sheet_xml)
-    # Tags mit Inhalt: <!-- deleted -->...</c>
-    sheet_xml = re.sub(r'<!-- deleted -->[^<]*(?:<[^/][^>]*>[^<]*)*</c>', '', sheet_xml)
     
     # ---- 2. <row spans="1:10"> ----
     def _remap_spans(m):
@@ -335,6 +348,37 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map):
     # definedName-Werte wie "Sheet1!$A$1:$J$100" in workbook.xml
     # werden hier NICHT geändert (workbook.xml wird separat behandelt)
     
+    # ---- 10. Zellen innerhalb jeder <row> nach Spalte sortieren ----
+    # Excel erwartet <c> Elemente in aufsteigender Spaltenreihenfolge!
+    # Nach Reorder können die physisch in falscher Reihenfolge stehen.
+    def _sort_cells_in_row(row_match):
+        row_tag = row_match.group(1)  # <row ...>
+        row_content = row_match.group(2)  # Alles zwischen <row> und </row>
+        
+        # Finde alle <c ...>...</c> und <c .../> Elemente
+        cells = []
+        for cm in re.finditer(r'<c\s[^>]*r="([A-Z]+)(\d+)"[^>]*/>' 
+                              r'|<c\s[^>]*r="([A-Z]+)(\d+)"[^>]*>.*?</c>', row_content, re.DOTALL):
+            col_letter = cm.group(1) or cm.group(3)
+            col_num = _col_letter_to_num(col_letter)
+            cells.append((col_num, cm.group(0)))
+        
+        if not cells:
+            return row_match.group(0)
+        
+        # Sortiere nach Spaltennummer
+        cells.sort(key=lambda x: x[0])
+        sorted_content = ''.join(cell_xml for _, cell_xml in cells)
+        
+        return f'{row_tag}{sorted_content}</row>'
+    
+    sheet_xml = re.sub(
+        r'(<row\s[^>]*>)(.*?)</row>',
+        _sort_cells_in_row,
+        sheet_xml,
+        flags=re.DOTALL
+    )
+    
     return sheet_xml
 
 
@@ -348,22 +392,43 @@ def _apply_col_map_to_table_xml(table_xml, col_map, new_headers=None):
     - <tableColumn id="..." name="..."> Reihenfolge/Anzahl
     """
     
-    # Table ref
-    table_xml = re.sub(
-        r'(<table\s[^>]*?)ref="([^"]+)"',
-        lambda m: m.group(1) + f'ref="{_remap_range_ref(m.group(2), col_map) or m.group(2)}"',
-        table_xml)
+    # Table ref — ermittle die neuen Grenzen korrekt
+    def _remap_table_range(m):
+        prefix = m.group(1)
+        ref = m.group(2)
+        if ':' not in ref:
+            return m.group(0)
+        start, end = ref.split(':')
+        d1s, col_s, d2s, row_s = _parse_cell_ref(start)
+        d1e, col_e, d2e, row_e = _parse_cell_ref(end)
+        if col_s is None or col_e is None:
+            return m.group(0)
+        old_min = _col_letter_to_num(col_s)
+        old_max = _col_letter_to_num(col_e)
+        # Sammle alle neuen Spaltenpositionen im Table-Bereich
+        new_cols = []
+        for oc in range(old_min, old_max + 1):
+            nc = col_map.get(oc)
+            if nc is not None:
+                new_cols.append(nc)
+        if not new_cols:
+            return m.group(0)
+        new_min = min(new_cols)
+        new_max = max(new_cols)
+        new_start = f"{d1s}{_num_to_col_letter(new_min)}{d2s}{row_s}"
+        new_end = f"{d1e}{_num_to_col_letter(new_max)}{d2e}{row_e}"
+        return f'{prefix}ref="{new_start}:{new_end}"'
     
-    # AutoFilter ref
-    table_xml = re.sub(
-        r'(<autoFilter\s[^>]*?)ref="([^"]+)"',
-        lambda m: m.group(1) + f'ref="{_remap_range_ref(m.group(2), col_map) or m.group(2)}"',
-        table_xml)
+    table_xml = re.sub(r'(<table\s[^>]*?)ref="([^"]+)"', _remap_table_range, table_xml)
+    table_xml = re.sub(r'(<autoFilter\s[^>]*?)ref="([^"]+)"', _remap_table_range, table_xml)
     
     # tableColumns neu aufbauen
     tc_match = re.search(r'<tableColumns\s[^>]*>(.*?)</tableColumns>', table_xml, re.DOTALL)
     if tc_match:
-        col_elements = list(re.finditer(r'<tableColumn\s[^>]*/>', tc_match.group(1)))
+        # Matche selbstschließende UND nicht-selbstschließende tableColumn-Elemente
+        col_elements = list(re.finditer(
+            r'<tableColumn\s[^>]*/>|<tableColumn\s[^>]*>.*?</tableColumn>',
+            tc_match.group(1), re.DOTALL))
         
         old_columns = []
         for i, tc_m in enumerate(col_elements):
@@ -388,8 +453,6 @@ def _apply_col_map_to_table_xml(table_xml, col_map, new_headers=None):
                 name = new_headers[new_id - 1]
             new_el = tc['xml']
             new_el = re.sub(r'id="\d+"', f'id="{new_id}"', new_el)
-            # Name NICHT ändern — Original-Name beibehalten!
-            # Nur bei explizit neuen Headers ändern (neue Spalten)
             tc_parts.append(new_el)
         
         new_tc_xml = f'<tableColumns count="{len(tc_parts)}">' + ''.join(tc_parts) + '</tableColumns>'
@@ -548,31 +611,33 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
             
             if sheet_rels_path in src_zip.namelist():
                 sheet_rels_content = src_zip.read(sheet_rels_path).decode('utf-8')
-                for rel_m in re.finditer(
-                    r'<Relationship\s[^>]*Id="([^"]+)"[^>]*Target="([^"]+)"'
-                    r'[^>]*Type="([^"]+)"[^>]*/>', sheet_rels_content):
-                    rid = rel_m.group(1)
-                    target = rel_m.group(2)
-                    rtype = rel_m.group(3)
-                    
-                    if not target.startswith('/'):
-                        resolved = 'xl/worksheets/' + target
-                        rparts = resolved.split('/')
-                        norm = []
-                        for p in rparts:
-                            if p == '..':
-                                if norm:
-                                    norm.pop()
-                            elif p != '.':
-                                norm.append(p)
-                        resolved = '/'.join(norm)
-                    else:
-                        resolved = target.lstrip('/')
-                    
-                    if 'table' in rtype.lower():
-                        table_files[rid] = resolved
-                    elif 'drawing' in rtype.lower():
-                        drawing_files[rid] = resolved
+                try:
+                    rels_el = ET.fromstring(sheet_rels_content)
+                    for rel_node in rels_el.iter(f'{{{RELS_NS}}}Relationship'):
+                        rid = rel_node.get('Id', '')
+                        target = rel_node.get('Target', '')
+                        rtype = rel_node.get('Type', '')
+                        
+                        if not target.startswith('/'):
+                            resolved = 'xl/worksheets/' + target
+                            rparts = resolved.split('/')
+                            norm = []
+                            for p in rparts:
+                                if p == '..':
+                                    if norm:
+                                        norm.pop()
+                                elif p != '.':
+                                    norm.append(p)
+                            resolved = '/'.join(norm)
+                        else:
+                            resolved = target.lstrip('/')
+                        
+                        if 'table' in rtype.lower():
+                            table_files[rid] = resolved
+                        elif 'drawing' in rtype.lower():
+                            drawing_files[rid] = resolved
+                except ET.ParseError as pe:
+                    sys.stderr.write(f"[XML_COL_OPS] WARNUNG: Sheet-Rels Parse-Fehler: {pe}\n")
             
             sys.stderr.write(f"[XML_COL_OPS] Tables: {list(table_files.values())}, "
                              f"Drawings: {list(drawing_files.values())}\n")
