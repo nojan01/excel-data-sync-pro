@@ -5597,6 +5597,15 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         has_highlight_changes = bool(cleared_row_highlights)  # Nur wenn Highlights explizit entfernt
         has_visibility_changes = bool(hidden_rows) or bool(hidden_columns)
         
+        # Safety-Net: Wenn hasFormatChanges NUR wegen Row-Highlights gesetzt wurde
+        # (keine echten Format-Änderungen wie Paste-Styles, Fonts, RichText),
+        # dann können wir den XML-Pfad nutzen → Slicers bleiben intakt.
+        if has_extra_changes and row_highlights and not has_highlight_changes:
+            # Prüfe ob echte Format-Änderungen vorliegen
+            if not cell_fonts and not imported_rich_text:
+                has_extra_changes = False
+                sys.stderr.write(f"[GATE] hasFormatChanges nur wegen Highlights → überschrieben für XML-Pfad\n")
+        
         sys.stderr.write(f"[GATE] hasFormatChanges={has_format_flag}, has_extra_changes={has_extra_changes}, has_highlight_changes={has_highlight_changes}\n")
         sys.stderr.write(f"[GATE] real_edits={len(real_edits)}, cellStyles={len(imported_cell_styles)}, mergedCells={len(imported_merged_cells)}\n")
         sys.stderr.write(f"[GATE] has_visibility_changes={has_visibility_changes} (hidden_rows={len(hidden_rows) if hidden_rows else 0}, hidden_cols={len(hidden_columns) if hidden_columns else 0})\n")

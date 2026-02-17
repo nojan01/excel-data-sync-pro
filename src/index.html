@@ -10077,7 +10077,9 @@
             explorerState.rowHighlights.set(rowIndex, color);
             // Strukturelle Änderung markieren für Export
             explorerState.editedCells.set('_rowHighlightChanged', true);
-            explorerState.editedCells.set('_hasFormatChanges', true);
+            // KEIN _hasFormatChanges hier! Row-Highlights werden via direktem XML-Pfad
+            // (FALL 3a) gesetzt — kein openpyxl-Roundtrip nötig → Slicers bleiben intakt.
+            // Nur clearRowHighlight setzt _hasFormatChanges (Fill-Löschung braucht openpyxl).
             applyRowHighlights();
         }
         
