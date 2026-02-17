@@ -69,16 +69,41 @@ def _remap_col_in_ref(ref, col_map):
 def _remap_range_ref(range_ref, col_map):
     """
     Wendet ein Spalten-Mapping auf eine Range-Referenz an (z.B. 'A1:C10').
-    Gibt None zurück wenn Start- oder Endspalte gelöscht wurde.
+    Bei gelöschten Randspalten wird der Bereich auf die verbleibenden Spalten geschrumpft.
+    Gibt None zurück nur wenn ALLE Spalten im Bereich gelöscht wurden.
     """
     if ':' not in range_ref:
         return _remap_col_in_ref(range_ref, col_map)
     parts = range_ref.split(':')
     new_start = _remap_col_in_ref(parts[0], col_map)
     new_end = _remap_col_in_ref(parts[1], col_map)
-    if new_start is None or new_end is None:
+    if new_start is not None and new_end is not None:
+        return f"{new_start}:{new_end}"
+
+    # Mindestens eine Randspalte wurde gelöscht →
+    # tatsächlichen Bereich aller verbleibenden Spalten ermitteln
+    d1s, col_s, d2s, row_s = _parse_cell_ref(parts[0])
+    d1e, col_e, d2e, row_e = _parse_cell_ref(parts[1])
+    if col_s is None or col_e is None:
         return None
-    return f"{new_start}:{new_end}"
+
+    old_min = _col_letter_to_num(col_s)
+    old_max = _col_letter_to_num(col_e)
+
+    mapped_cols = []
+    for c in range(old_min, old_max + 1):
+        nc = col_map.get(c)
+        if nc is not None:
+            mapped_cols.append(nc)
+
+    if not mapped_cols:
+        return None  # Alle Spalten im Bereich gelöscht
+
+    new_min_col = min(mapped_cols)
+    new_max_col = max(mapped_cols)
+    new_start_ref = f"{d1s}{_num_to_col_letter(new_min_col)}{d2s}{row_s}"
+    new_end_ref = f"{d1e}{_num_to_col_letter(new_max_col)}{d2e}{row_e}"
+    return f"{new_start_ref}:{new_end_ref}"
 
 
 def _remap_sqref(sqref, col_map):
@@ -170,6 +195,16 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map):
     - <dataValidation sqref="B2:B100">
     """
     
+    # ---- 0. <dimension ref="A1:J100"> aktualisieren ----
+    def _remap_dimension(m):
+        ref = m.group(1)
+        new_ref = _remap_range_ref(ref, col_map)
+        if new_ref is None:
+            return ''  # Dimension entfernen wenn alles gelöscht
+        return f'<dimension ref="{new_ref}"/>'
+
+    sheet_xml = re.sub(r'<dimension\s+ref="([^"]+)"\s*/>', _remap_dimension, sheet_xml)
+
     # ---- 1. <c r="..."> Zell-Referenzen ----
     # Ermittle welche Spalten gelöscht werden (nicht im Mapping)
     deleted_col_nums = set()
@@ -206,26 +241,8 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map):
     
     sheet_xml = re.sub(r'(<c\s[^>]*?r=")([A-Z]+\d+)"', _remap_cell, sheet_xml)
     
-    # ---- 2. <row spans="1:10"> ----
-    def _remap_spans(m):
-        spans_str = m.group(1)
-        new_spans = []
-        for span in spans_str.split():
-            if ':' in span:
-                parts = span.split(':')
-                try:
-                    s = int(parts[0])
-                    e = int(parts[1])
-                    ns = col_map.get(s, s)
-                    ne = col_map.get(e, e)
-                    new_spans.append(f"{min(ns, ne)}:{max(ns, ne)}")
-                except ValueError:
-                    new_spans.append(span)
-            else:
-                new_spans.append(span)
-        return f'spans="{" ".join(new_spans)}"'
-    
-    sheet_xml = re.sub(r'spans="([^"]+)"', _remap_spans, sheet_xml)
+    # ---- 2. <row spans="1:10"> — entfernen, Excel berechnet sie neu ----
+    sheet_xml = re.sub(r' spans="[^"]*"', '', sheet_xml)
     
     # ---- 3. <col min="1" max="1" ...> ----
     cols_match = re.search(r'<cols>(.*?)</cols>', sheet_xml, re.DOTALL)
