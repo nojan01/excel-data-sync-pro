@@ -3070,6 +3070,95 @@ def _set_hidden_rows_in_xml(sheet_content, hidden_rows, main_ns):
     return sheet_content
 
 
+def _apply_highlights_to_xlsx(xlsx_path, sheet_name, row_highlights):
+    """
+    Wendet Row-Highlights auf eine fertige XLSX-Datei an (ZIP-to-ZIP).
+    
+    Liest Sheet-XML und styles.xml, ruft _apply_row_highlights_xml auf,
+    schreibt die modifizierten Dateien zurück ins ZIP.
+    Kein openpyxl → Slicers/Drawings bleiben intakt.
+    """
+    import zipfile
+    import shutil
+    import tempfile
+    from xml.etree import ElementTree as ET
+    
+    MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
+    R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    
+    temp_output = xlsx_path + '.hl_tmp'
+    
+    with zipfile.ZipFile(xlsx_path, 'r') as src_zip:
+        # Sheet-ZIP-Pfad finden
+        wb_xml = src_zip.read('xl/workbook.xml').decode('utf-8')
+        wb_root = ET.fromstring(wb_xml)
+        
+        sheet_rid = None
+        for sheet_el in wb_root.iter(f'{{{MAIN_NS}}}sheet'):
+            if sheet_el.get('name') == sheet_name:
+                sheet_rid = sheet_el.get(f'{{{R_NS}}}id')
+                break
+        
+        if not sheet_rid:
+            raise ValueError(f"Sheet '{sheet_name}' nicht gefunden")
+        
+        rels_xml = src_zip.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+        rels_root = ET.fromstring(rels_xml)
+        
+        sheet_file = None
+        for rel_el in rels_root.iter(f'{{{RELS_NS}}}Relationship'):
+            if rel_el.get('Id') == sheet_rid:
+                sheet_file = rel_el.get('Target')
+                break
+        
+        if not sheet_file:
+            raise ValueError(f"Relationship {sheet_rid} nicht gefunden")
+        
+        sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+        parts = sheet_zip_path.split('/')
+        normalized = []
+        for p in parts:
+            if p == '..':
+                if normalized:
+                    normalized.pop()
+            elif p != '.':
+                normalized.append(p)
+        sheet_zip_path = '/'.join(normalized)
+        
+        # Sheet-XML und styles.xml lesen
+        sheet_content = src_zip.read(sheet_zip_path).decode('utf-8')
+        styles_content = src_zip.read('xl/styles.xml').decode('utf-8')
+        
+        # Highlights anwenden
+        result = _apply_row_highlights_xml(sheet_content, styles_content, row_highlights)
+        if result is None:
+            sys.stderr.write(f"[HL_XLSX] _apply_row_highlights_xml fehlgeschlagen\n")
+            return
+        
+        new_sheet, new_styles = result
+        
+        # ZIP-to-ZIP: Alle Einträge kopieren, Sheet+Styles ersetzen
+        with zipfile.ZipFile(temp_output, 'w') as dst_zip:
+            for item in src_zip.infolist():
+                if item.filename.startswith('__MACOSX') or item.filename.endswith('.DS_Store'):
+                    continue
+                
+                if item.filename == sheet_zip_path:
+                    item.compress_type = zipfile.ZIP_DEFLATED
+                    dst_zip.writestr(item, new_sheet.encode('utf-8'))
+                elif item.filename == 'xl/styles.xml':
+                    item.compress_type = zipfile.ZIP_DEFLATED
+                    dst_zip.writestr(item, new_styles.encode('utf-8'))
+                else:
+                    dst_zip.writestr(item, src_zip.read(item.filename))
+    
+    # Ersetze Original
+    os.remove(xlsx_path)
+    shutil.move(temp_output, xlsx_path)
+    sys.stderr.write(f"[HL_XLSX] Row-Highlights erfolgreich angewendet auf {xlsx_path}\n")
+
+
 def _apply_row_highlights_xml(sheet_content, styles_content, row_highlights):
     """
     Wendet Zeilen-Markierungen direkt im Sheet-XML und styles.xml an.
@@ -3461,7 +3550,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     
                     # Row Highlights nachträglich anwenden (direkt im XML)
                     if row_highlights:
-                        sys.stderr.write(f"[XML-DIREKT] TODO: row_highlights werden noch nicht angewendet\n")
+                        sys.stderr.write(f"[XML-DIREKT] {len(row_highlights)} row_highlights via XML anwenden\n")
+                        try:
+                            _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+                        except Exception as hl_err:
+                            sys.stderr.write(f"[XML-DIREKT] WARNUNG: row_highlights Fehler: {hl_err}\n")
                     
                     sys.stderr.write(f"[XML-DIREKT] Erfolgreich: {result.get('method', 'unknown')}\n")
                     return {'success': True, 'outputPath': output_path, 'method': result.get('method', 'xml-col-ops')}
