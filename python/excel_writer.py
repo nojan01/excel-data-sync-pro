@@ -4423,6 +4423,13 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             restore_external_links_from_original(output_path, original_path, structural_change=True)
             _check_zip_drawings(output_path, "nach restore_external_links()")
             
+            # Sicherheitsnetz: Slicer-Infrastruktur entfernen falls restore_external_links
+            # trotz structural_change noch Artefakte hinterlassen hat
+            try:
+                _strip_slicers_from_zip(output_path)
+            except Exception as slicer_err:
+                sys.stderr.write(f"[PIPELINE] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
+            
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-pipeline'}
         
         # =====================================================================
@@ -4590,6 +4597,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 restore_table_xml_from_original(output_path, original_path, table_changes)
             
             restore_external_links_from_original(output_path, original_path, structural_change=True)
+            
+            # Sicherheitsnetz: Slicer-Artefakte entfernen
+            try:
+                _strip_slicers_from_zip(output_path)
+            except Exception as slicer_err:
+                sys.stderr.write(f"[FALL 1.5] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-insert-only'}
         
@@ -4776,6 +4789,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             
             restore_external_links_from_original(output_path, original_path, structural_change=True)
             
+            # Sicherheitsnetz: Slicer-Artefakte entfernen
+            try:
+                _strip_slicers_from_zip(output_path)
+            except Exception as slicer_err:
+                sys.stderr.write(f"[FALL 1.9] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
+            
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-delete-and-insert'}
         
         # =====================================================================
@@ -4845,6 +4864,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             
             # Stelle externalLinks aus Original wieder her (openpyxl verliert Namespaces)
             restore_external_links_from_original(output_path, original_path, structural_change=True)
+            
+            # Sicherheitsnetz: Slicer-Artefakte entfernen
+            try:
+                _strip_slicers_from_zip(output_path)
+            except Exception as slicer_err:
+                sys.stderr.write(f"[FALL 1.6] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-delete-only'}
         
@@ -4957,6 +4982,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             
             # Stelle externalLinks aus Original wieder her
             restore_external_links_from_original(output_path, original_path, structural_change=True)
+            
+            # Sicherheitsnetz: Slicer-Artefakte entfernen
+            try:
+                _strip_slicers_from_zip(output_path)
+            except Exception as slicer_err:
+                sys.stderr.write(f"[FALL 1.7] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-column-order'}
         
@@ -5543,6 +5574,14 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                 sys.stderr.write(f"[ZIP-ANSATZ+XML-DIREKT] Spalten-Fehler: {col_err}\n")
                                 import traceback
                                 traceback.print_exc(file=sys.stderr)
+                        
+                        # Sicherheitsnetz: Slicer-Artefakte entfernen
+                        # KRITISCH: restore_external_links_from_original lief OHNE structural_change,
+                        # daher wurden Slicer-Dateien 1:1 kopiert und müssen hier entfernt werden
+                        try:
+                            _strip_slicers_from_zip(output_path)
+                        except Exception as slicer_err:
+                            sys.stderr.write(f"[ZIP-ANSATZ] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
                         
                         return {
                             'success': True,
@@ -6187,6 +6226,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             
             # Stelle externalLinks aus Original wieder her (openpyxl verliert Namespaces)
             restore_external_links_from_original(output_path, original_path, structural_change=True)
+            
+            # Sicherheitsnetz: Slicer-Artefakte entfernen
+            try:
+                _strip_slicers_from_zip(output_path)
+            except Exception as slicer_err:
+                sys.stderr.write(f"[FALL 2] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl'}
         
