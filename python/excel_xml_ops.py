@@ -352,6 +352,55 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map):
     
     sheet_xml = re.sub(r'<autoFilter\s+ref="([^"]+)"', _remap_autofilter, sheet_xml)
     
+    # ---- 6b. <filterColumn colId="X"> innerhalb <autoFilter> ----
+    # colId ist 0-basiert. Nach Spaltenoperationen müssen die colIds
+    # angepasst werden, sonst verwirft Excel den AutoFilter.
+    af_match = re.search(r'<autoFilter\s+ref="([^"]+)"', sheet_xml)
+    if af_match:
+        af_ref = af_match.group(1)
+        if ':' in af_ref:
+            af_start_cell = af_ref.split(':')[0]
+            _, af_start_col, _, _ = _parse_cell_ref(af_start_cell)
+            af_start_num = _col_letter_to_num(af_start_col) if af_start_col else 1
+        else:
+            af_start_num = 1
+        
+        # Baue Mapping: alter colId → neuer colId
+        # colId 0-based, Spalte = af_start_num + colId
+        new_positions = sorted(set(col_map.values()))
+        
+        def _remap_sheet_filter_column(m):
+            full = m.group(0)
+            old_colid = int(m.group(1))
+            old_col = af_start_num + old_colid
+            new_col = col_map.get(old_col)
+            if new_col is None:
+                return ''  # Spalte gelöscht → filterColumn entfernen
+            new_colid = new_positions.index(new_col) if new_col in new_positions else old_colid
+            return full.replace(f'colId="{old_colid}"', f'colId="{new_colid}"')
+        
+        sheet_xml = re.sub(
+            r'<filterColumn\s[^>]*colId="(\d+)"[^>]*/>\s*',
+            _remap_sheet_filter_column, sheet_xml)
+        sheet_xml = re.sub(
+            r'<filterColumn\s[^>]*colId="(\d+)"[^>]*>.*?</filterColumn>\s*',
+            _remap_sheet_filter_column, sheet_xml, flags=re.DOTALL)
+        
+        # sortState/sortCondition ref-Bereiche anpassen
+        def _remap_sort_ref_sheet(m):
+            prefix = m.group(1)
+            ref = m.group(2)
+            new_ref = _remap_range_ref(ref, col_map)
+            if new_ref is None:
+                return ''
+            return f'{prefix}ref="{new_ref}"'
+        
+        sheet_xml = re.sub(r'(<sortState\s[^>]*?)ref="([^"]+)"', _remap_sort_ref_sheet, sheet_xml)
+        sheet_xml = re.sub(r'(<sortCondition\s[^>]*?)ref="([^"]+)"', _remap_sort_ref_sheet, sheet_xml)
+        
+        # Leere autoFilter bereinigen
+        sheet_xml = re.sub(r'(<autoFilter\s[^>]*?)>\s*</autoFilter>', r'\1/>', sheet_xml)
+    
     # ---- 7. <hyperlink ref="A2" ...> ----
     def _remap_hyperlink(m):
         full = m.group(0)
@@ -473,6 +522,110 @@ def _apply_col_map_to_table_xml(table_xml, col_map, new_headers=None,
     
     table_xml = re.sub(r'(<table\s[^>]*?)ref="([^"]+)"', _remap_table_range, table_xml)
     table_xml = re.sub(r'(<autoFilter\s[^>]*?)ref="([^"]+)"', _remap_table_range, table_xml)
+    
+    # AutoFilter-Kinder anpassen: <filterColumn colId="X"> und <sortState>
+    # Nach Spaltenoperationen sind die colId-Werte ungültig → Excel verwirft
+    # die gesamte Tabelle! Wir remappen die colId-Werte basierend auf col_map.
+    # 
+    # colId ist 0-basiert relativ zum Tabellenbereich.
+    # Beispiel: Tabelle A1:J100, filterColumn colId="2" → Spalte C (3. Spalte der Tabelle)
+    #
+    # Bei gelöschten Spalten: filterColumn entfernen
+    # Bei verschobenen Spalten: colId neu berechnen
+    
+    # Ermittle den Tabellen-Startpunkt (alte und neue Spalte)
+    table_ref_m = re.search(r'<table\s[^>]*ref="([^"]+)"', table_xml)
+    if table_ref_m:
+        t_ref = table_ref_m.group(1)
+        if ':' in t_ref:
+            t_start = t_ref.split(':')[0]
+            _, t_start_col, _, _ = _parse_cell_ref(t_start)
+            new_table_start = _col_letter_to_num(t_start_col) if t_start_col else 1
+        else:
+            new_table_start = 1
+    else:
+        new_table_start = 1
+    
+    # Alle neuen Spaltenpositionen sortiert für colId-Berechnung
+    all_mapped_new = sorted(set(col_map.values()))
+    if inserted_col_info:
+        for nc, _ in inserted_col_info:
+            if nc not in all_mapped_new:
+                all_mapped_new.append(nc)
+        all_mapped_new.sort()
+    
+    # Baue Reverse-Map: old_col → new_0based_index_in_table
+    old_col_to_new_colid = {}
+    for old_col, new_col in col_map.items():
+        if new_col in all_mapped_new:
+            old_col_to_new_colid[old_col] = all_mapped_new.index(new_col)
+    
+    # Ermittle alte Tabellen-Startspalte aus dem Original-ref
+    # Wir brauchen das um colId (0-basiert) → alte Spalte (1-basiert) umzurechnen
+    # Das Original-ref wurde bereits geändert, also müssen wir die alte Startspalte
+    # aus den col_map Keys ableiten
+    old_table_start = min(col_map.keys()) if col_map else 1
+    
+    # filterColumn colId remappen
+    def _remap_filter_column(m):
+        full_match = m.group(0)
+        old_colid = int(m.group(1))
+        old_col = old_table_start + old_colid  # 1-basiert
+        if old_col in old_col_to_new_colid:
+            new_colid = old_col_to_new_colid[old_col]
+            return full_match.replace(f'colId="{old_colid}"', f'colId="{new_colid}"')
+        else:
+            # Spalte wurde gelöscht → filterColumn entfernen
+            return ''
+    
+    # Selbstschließende filterColumn UND filterColumn mit Inhalt
+    table_xml = re.sub(
+        r'<filterColumn\s[^>]*colId="(\d+)"[^>]*/>\s*',
+        _remap_filter_column, table_xml)
+    table_xml = re.sub(
+        r'<filterColumn\s[^>]*colId="(\d+)"[^>]*>.*?</filterColumn>\s*',
+        _remap_filter_column, table_xml, flags=re.DOTALL)
+    
+    # sortState/sortCondition ref-Bereiche anpassen
+    # Diese enthalten Zellbereiche die remapped werden müssen
+    def _remap_sort_ref(m):
+        prefix = m.group(1)
+        ref = m.group(2)
+        if ':' not in ref:
+            return m.group(0)
+        start, end = ref.split(':')
+        d1s, col_s, d2s, row_s = _parse_cell_ref(start)
+        d1e, col_e, d2e, row_e = _parse_cell_ref(end)
+        if col_s is None or col_e is None:
+            return m.group(0)
+        sc = _col_letter_to_num(col_s)
+        ec = _col_letter_to_num(col_e)
+        nc_s = col_map.get(sc)
+        nc_e = col_map.get(ec)
+        if nc_s is None:
+            # Start-Spalte gelöscht → nimm erste verfügbare
+            for c in range(sc, ec + 1):
+                nc_s = col_map.get(c)
+                if nc_s:
+                    break
+        if nc_e is None:
+            # End-Spalte gelöscht → nimm letzte verfügbare
+            for c in range(ec, sc - 1, -1):
+                nc_e = col_map.get(c)
+                if nc_e:
+                    break
+        if nc_s is None or nc_e is None:
+            return ''  # Alle Spalten gelöscht → Element entfernen
+        new_start = f"{d1s}{_num_to_col_letter(nc_s)}{d2s}{row_s}"
+        new_end = f"{d1e}{_num_to_col_letter(nc_e)}{d2e}{row_e}"
+        return f'{prefix}ref="{new_start}:{new_end}"'
+    
+    table_xml = re.sub(r'(<sortState\s[^>]*?)ref="([^"]+)"', _remap_sort_ref, table_xml)
+    table_xml = re.sub(r'(<sortCondition\s[^>]*?)ref="([^"]+)"', _remap_sort_ref, table_xml)
+    
+    # Leere autoFilter bereinigen (nur noch ref, keine Kinder)
+    # <autoFilter ref="..."></autoFilter> → <autoFilter ref="..."/>
+    table_xml = re.sub(r'(<autoFilter\s[^>]*?)>\s*</autoFilter>', r'\1/>', table_xml)
     
     # tableColumns neu aufbauen
     tc_match = re.search(r'<tableColumns\s[^>]*>(.*?)</tableColumns>', table_xml, re.DOTALL)

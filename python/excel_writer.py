@@ -390,6 +390,28 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
                     # AutoFilter ref
                     new_content = re.sub(r'(<autoFilter[^>]*\s)ref="[^"]+"', f'\\1ref="{new_ref}"', new_content)
                 
+                # filterColumn/sortState bereinigen bei Spaltenänderungen
+                # Wenn sich die Spaltenanzahl geändert hat, werden die colId-Werte
+                # ungültig → Excel verwirft die gesamte Tabelle
+                if new_columns:
+                    orig_col_count_m = re.search(r'<tableColumns\s+count="(\d+)"', orig_content)
+                    orig_col_count = int(orig_col_count_m.group(1)) if orig_col_count_m else 0
+                    if len(new_columns) != orig_col_count:
+                        # Spaltenanzahl hat sich geändert → filterColumn-Einträge entfernen
+                        # (colId-Werte sind nicht mehr gültig)
+                        new_content = re.sub(
+                            r'<filterColumn\s[^>]*colId="[^"]*"[^>]*/>\s*', '', new_content)
+                        new_content = re.sub(
+                            r'<filterColumn\s[^>]*colId="[^"]*"[^>]*>.*?</filterColumn>\s*',
+                            '', new_content, flags=re.DOTALL)
+                        # sortState/sortCondition auch entfernen
+                        new_content = re.sub(
+                            r'<sortState[^>]*>.*?</sortState>\s*',
+                            '', new_content, flags=re.DOTALL)
+                        # Leere autoFilter bereinigen
+                        new_content = re.sub(
+                            r'(<autoFilter\s[^>]*?)>\s*</autoFilter>', r'\1/>', new_content)
+                
                 # Aktualisiere tableColumns
                 if new_columns:
                     # Finde den tableColumns-Block
