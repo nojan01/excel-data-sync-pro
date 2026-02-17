@@ -3383,6 +3383,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
     Returns:
         Dict mit success und ggf. error
     """
+    import sys
+    
     # Wenn kein original_path gegeben, verwende file_path (Legacy-Kompatibilität)
     if original_path is None:
         original_path = file_path
