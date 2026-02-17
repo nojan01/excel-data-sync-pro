@@ -878,10 +878,14 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                 safeLog(`[Python] Zeilen-Ops für "${sheet.sheetName}" erfolgreich (${rowResult.method})`);
                 
                 // SCHRITT 2: Spalten-Operationen (mit allen Daten, fullRewrite=true)
+                // WICHTIG: originalPath = targetPath (NICHT originalSourcePath!)
+                // Pass 1 hat die Zeilen-Ops bereits in targetPath gespeichert.
+                // Wenn wir hier originalSourcePath verwenden, kopiert XML-DIREKT
+                // von der unveränderten Datei und überschreibt die Zeilen-Änderungen!
                 const colConfig = {
                     filePath: targetPath,
                     outputPath: targetPath,
-                    originalPath: originalSourcePath,
+                    originalPath: targetPath,
                     sheetName: sheet.sheetName,
                     changes: {
                         headers: sheet.headers || [],
