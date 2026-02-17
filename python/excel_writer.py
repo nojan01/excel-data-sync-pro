@@ -3561,7 +3561,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             # =====================================================================
             import sys
             
-            only_column_ops = has_column_operations and not has_row_operations and not inserted_rows
+            # Prüfe ob echte Zell-Edits vorhanden sind (Keys ohne _ Prefix)
+            has_cell_edits = bool(edited_cells and any(not k.startswith('_') for k in edited_cells))
+            has_copy_styles = bool(changes.get('cellStyles')) or bool(changes.get('cellFonts')) or bool(changes.get('richTextCells')) or bool(changes.get('mergedCells', []))
+            
+            only_column_ops = has_column_operations and not has_row_operations and not inserted_rows and not has_cell_edits and not has_copy_styles
             
             if only_column_ops:
                 sys.stderr.write(f"[XML-DIREKT] Verwende XML-Direkt-Weg für Spaltenoperationen\n")
@@ -3931,6 +3935,42 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             sys.stderr.write(f"[PIPELINE] Schritt 11: Row Highlights\n")
             if row_highlights:
                 _apply_row_highlights(ws, row_highlights, len(headers) if headers else 0)
+            
+            # ===== SCHRITT 11b: Zell-Edits und Copy-Paste-Daten anwenden =====
+            # Bei kombinierten Operationen (Zeilen+Spalten+Edits) werden editedCells,
+            # cellStyles, cellFonts, richTextCells und mergedCells hier angewendet.
+            # Der Pipeline-Pfad wurde bisher ohne Edits verlassen — sie gingen verloren.
+            real_edits = {k: v for k, v in edited_cells.items() if not k.startswith('_')} if edited_cells else {}
+            if real_edits:
+                sys.stderr.write(f"[PIPELINE] Schritt 11b: {len(real_edits)} Zell-Edits anwenden\n")
+                for key, value in real_edits.items():
+                    parts = key.split('-')
+                    if len(parts) != 2:
+                        continue
+                    row_idx = int(parts[0])
+                    col_idx = int(parts[1])
+                    cell = ws.cell(row=row_idx + 2, column=col_idx + 1)
+                    apply_cell_value(cell, value)
+            
+            imported_cell_styles_p = changes.get('cellStyles', {})
+            if imported_cell_styles_p:
+                sys.stderr.write(f"[PIPELINE] Schritt 11b: {len(imported_cell_styles_p)} cellStyles anwenden\n")
+                _apply_imported_cell_styles(ws, imported_cell_styles_p)
+            
+            cell_fonts_p = changes.get('cellFonts', {})
+            if cell_fonts_p:
+                sys.stderr.write(f"[PIPELINE] Schritt 11b: {len(cell_fonts_p)} cellFonts anwenden\n")
+                _apply_cell_fonts(ws, cell_fonts_p)
+            
+            imported_rich_text_p = changes.get('richTextCells', {})
+            if imported_rich_text_p:
+                sys.stderr.write(f"[PIPELINE] Schritt 11b: {len(imported_rich_text_p)} richTextCells anwenden\n")
+                _apply_imported_rich_text(ws, imported_rich_text_p)
+            
+            imported_merged_cells_p = changes.get('mergedCells', [])
+            if imported_merged_cells_p:
+                sys.stderr.write(f"[PIPELINE] Schritt 11b: {len(imported_merged_cells_p)} mergedCells anwenden\n")
+                _apply_imported_merged_cells(ws, imported_merged_cells_p)
             
             # ===== SCHRITT 12: Tables reparieren =====
             sys.stderr.write(f"[PIPELINE] Schritt 12: Tables reparieren\n")
