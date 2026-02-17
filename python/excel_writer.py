@@ -1820,6 +1820,12 @@ def restore_external_links_from_original(output_path, original_path, structural_
                     continue
                 full_path = os.path.join(root, fname)
                 arc_name = os.path.relpath(full_path, temp_dir).replace('\\', '/')
+                # Bei structural_change: Slicer-Dateien NICHT ins ZIP aufnehmen.
+                # Sicherheitsnetz: Falls ein Code-Pfad Slicer-Dateien nach temp_dir
+                # kopiert hat, werden sie hier gefiltert.
+                if structural_change and 'slicer' in arc_name.lower():
+                    sys.stderr.write(f"[re-zip] Slicer in temp_dir gefiltert: {arc_name}\n")
+                    continue
                 temp_files[arc_name] = full_path
         
         written = set()
@@ -1957,6 +1963,29 @@ def restore_external_links_from_original(output_path, original_path, structural_
                                 sys.stderr.write(f"[DIAGNOSE]     {rid} -> {rtype} ({target})\n")
                         else:
                             sys.stderr.write(f"[DIAGNOSE]   KEINE RELS DATEI für {sheet_name_only}\n")
+                
+                # Content_Types Slicer-Einträge prüfen
+                if '[Content_Types].xml' in all_names:
+                    ct_xml = zf.read('[Content_Types].xml').decode('utf-8', errors='replace')
+                    ct_slicer = [m.group(0) for m in re.finditer(r'<Override[^>]*slicer[^>]*/>', ct_xml, re.IGNORECASE)]
+                    if ct_slicer:
+                        sys.stderr.write(f"[DIAGNOSE] [Content_Types].xml hat {len(ct_slicer)} Slicer-Override(s):\n")
+                        for s in ct_slicer:
+                            sys.stderr.write(f"[DIAGNOSE]   {s}\n")
+                    else:
+                        sys.stderr.write(f"[DIAGNOSE] [Content_Types].xml: KEINE Slicer-Overrides\n")
+                
+                # workbook.xml.rels Slicer-Einträge prüfen
+                wb_rels_name = 'xl/_rels/workbook.xml.rels'
+                if wb_rels_name in all_names:
+                    wb_rels_xml = zf.read(wb_rels_name).decode('utf-8', errors='replace')
+                    wb_slicer_rels = re.findall(r'<Relationship[^>]*(?:slicer|Slicer)[^>]*/>', wb_rels_xml)
+                    if wb_slicer_rels:
+                        sys.stderr.write(f"[DIAGNOSE] workbook.xml.rels hat {len(wb_slicer_rels)} Slicer-Rel(s):\n")
+                        for r in wb_slicer_rels:
+                            sys.stderr.write(f"[DIAGNOSE]   {r}\n")
+                    else:
+                        sys.stderr.write(f"[DIAGNOSE] workbook.xml.rels: KEINE Slicer-Rels\n")
                 
                 sys.stderr.write(f"[DIAGNOSE] === END ===\n")
         except Exception as diag_err:
