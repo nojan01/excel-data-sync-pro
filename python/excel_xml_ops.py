@@ -147,8 +147,21 @@ def _build_col_map_for_insert(insert_operations, max_col=500):
     Baut ein Spalten-Mapping für Spalten-Einfügung.
     insert_operations: Liste von {position: 0-basiert, count: Anzahl}.
     Gibt dict zurück: alte 1-basierte Spaltennummer → neue 1-basierte Spaltennummer.
+    
+    WICHTIG: Die Frontend-Positionen sind kumulativ — jede Position bezieht sich
+    auf den Zustand NACH allen vorherigen Inserts. Daher müssen sie in
+    Original-Positionen konvertiert werden (Anzahl vorheriger Inserts abziehen).
     """
     inserts = sorted([(op['position'] + 1, op.get('count', 1)) for op in insert_operations])
+    
+    # Kumulative Positionen → Original-Positionen konvertieren
+    total_inserted_before = 0
+    adjusted = []
+    for pos, count in inserts:
+        adjusted.append((pos - total_inserted_before, count))
+        total_inserted_before += count
+    inserts = adjusted
+    
     col_map = {}
     shift = 0
     insert_idx = 0
