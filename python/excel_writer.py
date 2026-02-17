@@ -584,19 +584,36 @@ def _strip_slicers_from_zip(xlsx_path):
         with zipfile.ZipFile(xlsx_path, 'r') as src_zip:
             namelist = src_zip.namelist()
 
-            # Prüfe ob überhaupt Slicer-Dateien vorhanden
+            # Prüfe ob überhaupt Slicer-Artefakte vorhanden
+            # Breit prüfen: Dateien, Content_Types, workbook.xml, Drawings, Rels
             has_slicer_files = any(
                 n.startswith('xl/slicerCaches/') or n.startswith('xl/slicers/')
                 for n in namelist
             )
-            has_slicer_ct = False
-            if '[Content_Types].xml' in namelist:
-                ct_content = src_zip.read('[Content_Types].xml').decode('utf-8')
-                has_slicer_ct = 'slicer' in ct_content.lower()
+            has_slicer_refs = False
+            for check_path in ['[Content_Types].xml', 'xl/workbook.xml', 'xl/_rels/workbook.xml.rels']:
+                if check_path in namelist:
+                    check_content = src_zip.read(check_path).decode('utf-8').lower()
+                    if 'slicer' in check_content:
+                        has_slicer_refs = True
+                        break
+            if not has_slicer_refs:
+                # Auch in Worksheet-XMLs und Drawing-XMLs prüfen
+                for n in namelist:
+                    if (re.match(r'xl/worksheets/sheet\d+\.xml$', n) or
+                        re.match(r'xl/drawings/drawing\d+\.xml$', n) or
+                        re.match(r'xl/worksheets/_rels/sheet\d+\.xml\.rels$', n) or
+                        re.match(r'xl/drawings/_rels/drawing\d+\.xml\.rels$', n)):
+                        check_content = src_zip.read(n).decode('utf-8').lower()
+                        if 'slicer' in check_content:
+                            has_slicer_refs = True
+                            break
 
-            if not has_slicer_files and not has_slicer_ct:
+            if not has_slicer_files and not has_slicer_refs:
                 sys.stderr.write(f"[SLICER_STRIP] Keine Slicer gefunden — übersprungen\n")
                 return False
+            
+            sys.stderr.write(f"[SLICER_STRIP] Slicer-Artefakte erkannt: files={has_slicer_files}, refs={has_slicer_refs}\n")
 
             # Dateien die komplett entfernt werden
             skip_files = set()
@@ -1546,6 +1563,24 @@ def restore_external_links_from_original(output_path, original_path, structural_
                     
                     for orig_rid, orig_info in orig_rels.items():
                         norm_target = orig_info['target'].replace('\\', '/').lower()
+                        
+                        # Bei structural_change: Slicer-Rels NICHT ergänzen!
+                        # SlicerCaches/Slicers referenzieren Tabellenspalten die sich
+                        # geändert haben → invalide Referenzen → Excel-Reparatur.
+                        # Wenn wir die Rels ergänzen, werden auch die Slicer-Dateien
+                        # aus dem Original kopiert → orphaned Slicer-Einträge.
+                        if structural_change:
+                            orig_el = orig_info['el']
+                            type_m_sc = re.search(r'Type="([^"]+)"', orig_el)
+                            is_slicer_rel = False
+                            if type_m_sc and 'slicer' in type_m_sc.group(1).lower():
+                                is_slicer_rel = True
+                            elif 'slicer' in norm_target:
+                                is_slicer_rel = True
+                            if is_slicer_rel:
+                                sys.stderr.write(f"[restore_ext] MERGE {rels_fn}: Slicer-Rel übersprungen (structural_change): {orig_info['target']}\n")
+                                continue
+                        
                         if norm_target in target_to_dest_rid:
                             # Rel existiert in dest → mapping
                             mapping[orig_rid] = target_to_dest_rid[norm_target]
@@ -1662,6 +1697,12 @@ def restore_external_links_from_original(output_path, original_path, structural_
                 pn_m = re.search(r'PartName="([^"]+)"', ov_el)
                 if pn_m and pn_m.group(1) not in dest_parts:
                     part_name = pn_m.group(1)
+                    # Bei structural_change: Slicer-Overrides NICHT ergänzen!
+                    # SlicerCaches/Slicers sind nach Spaltenoperationen invalide.
+                    # Orphaned Overrides → Excel-Reparatur "Entfernter Teil: Datenschnitt".
+                    if structural_change and 'slicer' in part_name.lower():
+                        sys.stderr.write(f"[restore_ext] ContentTypes Override ÜBERSPRUNGEN (structural_change): {part_name}\n")
+                        continue
                     # Nur ergänzen wenn die Datei tatsächlich existiert
                     rel_path_ct = part_name.lstrip('/')
                     dest_file_check = os.path.join(temp_dir, rel_path_ct.replace('/', os.sep))
