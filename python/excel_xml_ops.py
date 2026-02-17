@@ -366,8 +366,16 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map):
     # werden hier NICHT geändert (workbook.xml wird separat behandelt)
     
     # ---- 10. Zellen innerhalb jeder <row> nach Spalte sortieren ----
-    # Excel erwartet <c> Elemente in aufsteigender Spaltenreihenfolge!
-    # Nach Reorder können die physisch in falscher Reihenfolge stehen.
+    sheet_xml = _sort_cells_in_rows(sheet_xml)
+    
+    return sheet_xml
+
+
+def _sort_cells_in_rows(sheet_xml):
+    """
+    Sortiert <c> Elemente innerhalb jeder <row> nach Spaltennummer.
+    Excel erwartet <c> Elemente in aufsteigender Spaltenreihenfolge!
+    """
     def _sort_cells_in_row(row_match):
         row_tag = row_match.group(1)  # <row ...>
         row_content = row_match.group(2)  # Alles zwischen <row> und </row>
@@ -389,17 +397,16 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map):
         
         return f'{row_tag}{sorted_content}</row>'
     
-    sheet_xml = re.sub(
+    return re.sub(
         r'(<row\s[^>]*>)(.*?)</row>',
         _sort_cells_in_row,
         sheet_xml,
         flags=re.DOTALL
     )
-    
-    return sheet_xml
 
 
-def _apply_col_map_to_table_xml(table_xml, col_map, new_headers=None):
+def _apply_col_map_to_table_xml(table_xml, col_map, new_headers=None,
+                                 inserted_col_info=None):
     """
     Wendet ein Spalten-Mapping auf eine Table-XML an.
     
@@ -407,7 +414,18 @@ def _apply_col_map_to_table_xml(table_xml, col_map, new_headers=None):
     - <table ref="A1:J100">
     - <autoFilter ref="A1:J100">
     - <tableColumn id="..." name="..."> Reihenfolge/Anzahl
+    
+    Args:
+        inserted_col_info: Liste von (new_col_1based, header_name) für eingefügte Spalten.
+            Dies sind Spalten die NEU sind und nicht aus col_map kommen.
     """
+    
+    # Alle Spalten die in der neuen Tabelle existieren
+    # = gemappte existierende + eingefügte neue
+    all_new_cols = set(col_map.values())
+    if inserted_col_info:
+        for new_col, _ in inserted_col_info:
+            all_new_cols.add(new_col)
     
     # Table ref — ermittle die neuen Grenzen korrekt
     def _remap_table_range(m):
@@ -428,6 +446,10 @@ def _apply_col_map_to_table_xml(table_xml, col_map, new_headers=None):
             nc = col_map.get(oc)
             if nc is not None:
                 new_cols.append(nc)
+        # Auch eingefügte Spalten berücksichtigen
+        if inserted_col_info:
+            for new_col, _ in inserted_col_info:
+                new_cols.append(new_col)
         if not new_cols:
             return m.group(0)
         new_min = min(new_cols)
@@ -454,21 +476,29 @@ def _apply_col_map_to_table_xml(table_xml, col_map, new_headers=None):
             name = name_m.group(1) if name_m else f'Column{i + 1}'
             old_columns.append({'xml': tc_el, 'name': name, 'old_col': i + 1})
         
-        # Sortiere nach neuer Position
-        new_columns = []
+        # Existierende Spalten mappen + sortieren
+        new_columns = []  # (new_position, xml_string)
         for tc in old_columns:
             new_col = col_map.get(tc['old_col'])
             if new_col is not None:
-                new_columns.append((new_col, tc))
+                new_el = tc['xml']
+                new_columns.append((new_col, tc['name'], new_el))
+        
+        # Eingefügte Spalten hinzufügen (einfache tableColumn-Elemente)
+        if inserted_col_info:
+            for new_col, header in inserted_col_info:
+                escaped_name = str(header).replace('&', '&amp;').replace(
+                    '<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
+                new_el = f'<tableColumn id="0" name="{escaped_name}"/>'
+                new_columns.append((new_col, header, new_el))
+        
         new_columns.sort(key=lambda x: x[0])
         
-        # Baue tableColumns XML neu
+        # Baue tableColumns XML neu mit korrekten IDs
         tc_parts = []
-        for new_id, (new_col, tc) in enumerate(new_columns, 1):
-            name = tc['name']
+        for new_id, (new_col, name, new_el) in enumerate(new_columns, 1):
             if new_headers and new_id - 1 < len(new_headers):
                 name = new_headers[new_id - 1]
-            new_el = tc['xml']
             new_el = re.sub(r'id="\d+"', f'id="{new_id}"', new_el)
             tc_parts.append(new_el)
         
@@ -719,6 +749,7 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                 sys.stderr.write(f"[XML_COL_OPS] Sheet-XML angepasst\n")
                 
                 # Neue Zellen bei Insert einfügen
+                inserted_col_info = []  # (new_col_1based, header) für Table-XML
                 if inserted_columns:
                     ops = inserted_columns.get('operations', [])
                     if not ops and inserted_columns.get('position') is not None:
@@ -728,11 +759,15 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                             'headers': inserted_columns.get('headers', []),
                         }]
                     
+                    # Sammle alle neuen Zellen pro Zeile (effizient)
+                    new_cells_by_row = {}  # excel_row → list of cell XML strings
+                    
                     for op in ops:
                         position = op['position']
                         count = op.get('count', 1)
                         op_headers = op.get('headers', [])
                         
+                        # Header-Zellen (Zeile 1)
                         for i, header in enumerate(op_headers):
                             col_num = position + 1 + i
                             col_letter = _num_to_col_letter(col_num)
@@ -741,12 +776,16 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                                 '&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
                             new_cell = (f'<c r="{cell_ref}" t="inlineStr">'
                                         f'<is><t>{escaped}</t></is></c>')
-                            row1_m = re.search(r'(<row\s[^>]*r="1"[^>]*>)', sheet_content)
-                            if row1_m:
-                                pos = row1_m.end()
-                                sheet_content = (sheet_content[:pos] + new_cell
-                                                 + sheet_content[pos:])
+                            new_cells_by_row.setdefault(1, []).append(new_cell)
+                            inserted_col_info.append((col_num, header))
                         
+                        # Falls keine headers, trotzdem die Position merken
+                        if not op_headers:
+                            for i in range(count):
+                                col_num = position + 1 + i
+                                inserted_col_info.append((col_num, f'Column{col_num}'))
+                        
+                        # Daten-Zellen
                         if data:
                             for row_idx, row_data in enumerate(data):
                                 excel_row = row_idx + 2
@@ -765,21 +804,37 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                                                 '<', '&lt;').replace('>', '&gt;')
                                             new_cell = (f'<c r="{cell_ref}" t="inlineStr">'
                                                         f'<is><t>{escaped}</t></is></c>')
-                                        
-                                        row_m = re.search(
-                                            rf'(<row\s[^>]*r="{excel_row}"[^>]*>)',
-                                            sheet_content)
-                                        if row_m:
-                                            pos = row_m.end()
-                                            sheet_content = (sheet_content[:pos] + new_cell
-                                                             + sheet_content[pos:])
+                                        new_cells_by_row.setdefault(excel_row, []).append(new_cell)
+                    
+                    # Alle neuen Zellen in einem Durchgang einfügen
+                    if new_cells_by_row:
+                        def _insert_cells_into_row(row_match):
+                            row_tag = row_match.group(1)
+                            row_content = row_match.group(2)
+                            row_num_m = re.search(r'r="(\d+)"', row_tag)
+                            if row_num_m:
+                                row_num = int(row_num_m.group(1))
+                                if row_num in new_cells_by_row:
+                                    extra = ''.join(new_cells_by_row[row_num])
+                                    row_content = extra + row_content
+                            return f'{row_tag}{row_content}</row>'
+                        
+                        sheet_content = re.sub(
+                            r'(<row\s[^>]*>)(.*?)</row>',
+                            _insert_cells_into_row,
+                            sheet_content, flags=re.DOTALL)
+                    
+                    # Nach dem Einfügen: Zellen sortieren
+                    sheet_content = _sort_cells_in_rows(sheet_content)
+                    sys.stderr.write(f"[XML_COL_OPS] {len(new_cells_by_row)} Zeilen mit neuen Zellen eingefügt\n")
                 
                 # Table-XMLs anpassen
                 for rid, table_path in table_files.items():
                     if table_path in src_zip.namelist():
                         table_content = src_zip.read(table_path).decode('utf-8')
                         table_content = _apply_col_map_to_table_xml(
-                            table_content, col_map, headers)
+                            table_content, col_map, headers,
+                            inserted_col_info=inserted_col_info if inserted_col_info else None)
                         modified_files[table_path] = table_content.encode('utf-8')
                         sys.stderr.write(f"[XML_COL_OPS] Table {table_path} angepasst\n")
                 
