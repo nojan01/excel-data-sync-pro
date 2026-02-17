@@ -3264,9 +3264,16 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 # SCHRITT 1: Alle Original-Zeilen komplett speichern (vor jeder Änderung!)
                 sys.stderr.write(f"[PIPELINE] Schritt 1: Speichere alle {original_max_row - 1} Original-Zeilen\n")
                 all_rows_backup = {}
+                row_heights_backup = {}
                 for excel_row in range(2, original_max_row + 1):  # Ab Zeile 2 (nach Header)
                     row_idx = excel_row - 2  # 0-basierter Index
                     all_rows_backup[row_idx] = {}
+                    
+                    # Zeilenhöhe sichern
+                    if excel_row in ws.row_dimensions:
+                        rd = ws.row_dimensions[excel_row]
+                        if rd.height is not None:
+                            row_heights_backup[row_idx] = rd.height
                     
                     for col in range(1, max_col + 1):
                         cell = ws.cell(row=excel_row, column=col)
@@ -3274,10 +3281,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             continue
                         all_rows_backup[row_idx][col] = {
                             'value': cell.value,
-                            'fill': copy(cell.fill) if cell.fill else None,
-                            'font': copy(cell.font) if cell.font else None,
-                            'alignment': copy(cell.alignment) if cell.alignment else None,
-                            'border': copy(cell.border) if cell.border else None,
+                            'fill': copy(cell.fill),
+                            'font': copy(cell.font),
+                            'alignment': copy(cell.alignment),
+                            'border': copy(cell.border),
                             'number_format': cell.number_format,
                             'hyperlink': cell.hyperlink.target if cell.hyperlink else None
                         }
@@ -3335,18 +3342,21 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         if isinstance(cell, MergedCell):
                             continue
                         cell.value = data_item['value']
-                        if data_item['fill']:
-                            cell.fill = data_item['fill']
-                        if data_item['font']:
-                            cell.font = data_item['font']
-                        if data_item['alignment']:
-                            cell.alignment = data_item['alignment']
-                        if data_item['border']:
-                            cell.border = data_item['border']
-                        if data_item['number_format']:
-                            cell.number_format = data_item['number_format']
+                        cell.fill = data_item['fill']
+                        cell.font = data_item['font']
+                        cell.alignment = data_item['alignment']
+                        cell.border = data_item['border']
+                        cell.number_format = data_item['number_format'] or 'General'
                         if data_item['hyperlink']:
                             cell.hyperlink = data_item['hyperlink']
+                        elif cell.hyperlink:
+                            cell.hyperlink = None
+                    
+                    # Zeilenhöhe wiederherstellen
+                    if original_idx in row_heights_backup:
+                        ws.row_dimensions[new_excel_row].height = row_heights_backup[original_idx]
+                    elif new_excel_row in ws.row_dimensions:
+                        ws.row_dimensions[new_excel_row].height = None
             
             # ===== SCHRITT 5: Zeilen EINFÜGEN =====
             if inserted_rows:
