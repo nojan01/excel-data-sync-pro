@@ -3098,6 +3098,16 @@ def _apply_row_highlights_xml(sheet_content, styles_content, row_highlights):
     # ---- Schritt 1: Fill-Einträge für Highlight-Farben ----
     unique_colors = sorted(set(row_highlights.values()))
     
+    # Farbnamen → ARGB Mapping (gleiche Zuordnung wie _apply_row_highlights)
+    highlight_colors = {
+        'green': 'FF90EE90',
+        'yellow': 'FFFFFF00',
+        'orange': 'FFFFA500',
+        'red': 'FFFF6B6B',
+        'blue': 'FF87CEEB',
+        'purple': 'FFDDA0DD'
+    }
+    
     # Parse <fills> Sektion
     fills_match = re.search(r'<fills\s+count="(\d+)">(.*?)</fills>', styles_content, re.DOTALL)
     if not fills_match:
@@ -3116,9 +3126,16 @@ def _apply_row_highlights_xml(sheet_content, styles_content, row_highlights):
     new_fills_xml = ''
     
     for color in unique_colors:
-        hex_color = color.lstrip('#').upper()
-        if len(hex_color) == 6:
-            hex_color = 'FF' + hex_color  # Alpha-Kanal hinzufügen
+        # Farbnamen in ARGB konvertieren (oder Hex direkt verwenden)
+        if color in highlight_colors:
+            hex_color = highlight_colors[color]
+        elif isinstance(color, str) and color.startswith('#'):
+            hex_color = color.lstrip('#').upper()
+            if len(hex_color) == 6:
+                hex_color = 'FF' + hex_color  # Alpha-Kanal hinzufügen
+        else:
+            hex_color = 'FFFFFF00'  # Fallback: Gelb
+            sys.stderr.write(f"[HL_XML] WARNUNG: Unbekannte Farbe '{color}', verwende Gelb\n")
         
         # Prüfe ob dieser Fill bereits existiert
         existing_idx = None
