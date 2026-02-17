@@ -962,6 +962,11 @@ def restore_external_links_from_original(output_path, original_path, structural_
                         sys.stderr.write(f"[restore_ext] workbook.xml.rels: rId-Konflikt {old_rid} → {new_rid}\n")
                     elif rid_m:
                         existing_rids.add(rid_m.group(1))
+                        # KRITISCH: max_rid aktualisieren! Sonst erzeugt max_rid+1
+                        # bei späteren Konflikten eine rId die schon vergeben ist.
+                        num = int(rid_m.group(1).replace('rId', ''))
+                        if num > max_rid:
+                            max_rid = num
                     renumbered_rels.append(rel_el)
                 
                 # Vor </Relationships> einfügen
