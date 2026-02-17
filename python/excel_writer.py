@@ -2587,7 +2587,8 @@ def apply_cell_value(cell, value):
 
 
 def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
-                          hidden_columns=None, hidden_rows=None):
+                          hidden_columns=None, hidden_rows=None,
+                          row_highlights=None):
     """
     Direkte XML-Bearbeitung von Zellwerten OHNE openpyxl-Roundtrip.
     
@@ -2613,6 +2614,7 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
         real_edits: Dict mit "rowIdx-colIdx" → value (0-basiert, ohne Header)
         hidden_columns: Liste versteckter Spalten (0-basiert) oder None
         hidden_rows: Liste versteckter Zeilen (0-basiert) oder None
+        row_highlights: Dict mit "rowIdx" → hexColor (0-basiert, ohne Header) oder None
     """
     import zipfile
     import tempfile
@@ -2746,6 +2748,25 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
                 sheet_content = _set_hidden_rows_in_xml(sheet_content, hidden_rows, MAIN_NS)
                 modified = True
             
+            # 6b. Row-Highlights direkt im XML setzen (ohne openpyxl!)
+            styles_content_mod = None
+            styles_modified = False
+            if row_highlights:
+                # styles.xml lesen
+                styles_zip_path = 'xl/styles.xml'
+                if styles_zip_path in src_zip.namelist():
+                    styles_raw = src_zip.read(styles_zip_path).decode('utf-8')
+                    result = _apply_row_highlights_xml(sheet_content, styles_raw, row_highlights)
+                    if result is not None:
+                        sheet_content, styles_content_mod = result
+                        styles_modified = True
+                        modified = True
+                        sys.stderr.write(f"[DIRECT_XML] Row-Highlights via XML angewendet\n")
+                    else:
+                        sys.stderr.write(f"[DIRECT_XML] WARNUNG: Row-Highlights XML-Anwendung fehlgeschlagen\n")
+                else:
+                    sys.stderr.write(f"[DIRECT_XML] WARNUNG: styles.xml nicht gefunden\n")
+            
             # 7. SharedStrings aktualisieren falls neue Strings hinzugefügt wurden
             ss_modified = False
             if has_shared_strings and hasattr(_replace_cell_value_in_xml, '_new_strings'):
@@ -2790,6 +2811,10 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
                         # Modifizierte SharedStrings schreiben
                         item.compress_type = zipfile.ZIP_DEFLATED
                         dst_zip.writestr(item, ss_content.encode('utf-8'))
+                    elif item.filename == 'xl/styles.xml' and styles_modified:
+                        # Modifizierte Styles schreiben (Row-Highlights)
+                        item.compress_type = zipfile.ZIP_DEFLATED
+                        dst_zip.writestr(item, styles_content_mod.encode('utf-8'))
                     else:
                         # Original-Bytes 1:1 kopieren
                         data = src_zip.read(item.filename)
@@ -3043,6 +3068,196 @@ def _set_hidden_rows_in_xml(sheet_content, hidden_rows, main_ns):
     # Nur <row ...> Opening-Tags matchen (nicht den Inhalt)
     sheet_content = re.sub(r'<row\s[^>]*?>', _fix_row, sheet_content)
     return sheet_content
+
+
+def _apply_row_highlights_xml(sheet_content, styles_content, row_highlights):
+    """
+    Wendet Zeilen-Markierungen direkt im Sheet-XML und styles.xml an.
+    
+    Vermeidet den openpyxl-Roundtrip komplett → SlicerCaches, Drawings,
+    RichData, externalLinks etc. bleiben 100% intakt aus dem Original.
+    
+    Strategie:
+    1. Für jede Highlight-Farbe einen neuen <fill> in styles.xml erstellen
+    2. Für jede (alter_style, farbe) Kombination einen neuen <xf> in <cellXfs> erstellen
+    3. Zell-Attribute s="..." im Sheet-XML auf neue <xf>-Indizes setzen
+    
+    Args:
+        sheet_content: Sheet-XML als String
+        styles_content: styles.xml als String
+        row_highlights: dict {row_idx_str: color} (0-basiert ohne Header)
+    
+    Returns:
+        (new_sheet_content, new_styles_content) oder None bei Parse-Fehler
+    """
+    import re
+    
+    if not row_highlights:
+        return sheet_content, styles_content
+    
+    # ---- Schritt 1: Fill-Einträge für Highlight-Farben ----
+    unique_colors = sorted(set(row_highlights.values()))
+    
+    # Parse <fills> Sektion
+    fills_match = re.search(r'<fills\s+count="(\d+)">(.*?)</fills>', styles_content, re.DOTALL)
+    if not fills_match:
+        sys.stderr.write(f"[HL_XML] FEHLER: <fills> nicht gefunden in styles.xml\n")
+        return None
+    
+    fills_count = int(fills_match.group(1))
+    fills_inner = fills_match.group(2)
+    
+    # Existierende Fills durchzählen um Indizes korrekt zu vergeben
+    existing_fills = re.findall(r'<fill\b[^/]*?>.*?</fill>', fills_inner, re.DOTALL)
+    existing_fills += re.findall(r'<fill\s*/>', fills_inner)
+    # fills_count sollte == len(existing_fills), aber wir verwenden fills_count als Basis
+    
+    color_to_fill_id = {}
+    new_fills_xml = ''
+    
+    for color in unique_colors:
+        hex_color = color.lstrip('#').upper()
+        if len(hex_color) == 6:
+            hex_color = 'FF' + hex_color  # Alpha-Kanal hinzufügen
+        
+        # Prüfe ob dieser Fill bereits existiert
+        existing_idx = None
+        for idx, fill_xml in enumerate(existing_fills):
+            if f'rgb="{hex_color}"' in fill_xml and 'patternType="solid"' in fill_xml:
+                existing_idx = idx
+                break
+        
+        if existing_idx is not None:
+            color_to_fill_id[color] = existing_idx
+            sys.stderr.write(f"[HL_XML] Farbe {color} → existierender fillId={existing_idx}\n")
+        else:
+            new_fill = f'<fill><patternFill patternType="solid"><fgColor rgb="{hex_color}"/><bgColor indexed="64"/></patternFill></fill>'
+            new_fills_xml += new_fill
+            color_to_fill_id[color] = fills_count
+            sys.stderr.write(f"[HL_XML] Farbe {color} → neuer fillId={fills_count}\n")
+            fills_count += 1
+    
+    # Fills in styles.xml aktualisieren
+    if new_fills_xml:
+        styles_content = styles_content.replace('</fills>', new_fills_xml + '</fills>')
+        styles_content = re.sub(r'(<fills\s+)count="\d+"', f'\\1count="{fills_count}"', styles_content)
+    
+    # ---- Schritt 2: cellXfs parsen und neue XF-Einträge erstellen ----
+    cellxfs_match = re.search(r'<cellXfs\s+count="(\d+)">(.*?)</cellXfs>', styles_content, re.DOTALL)
+    if not cellxfs_match:
+        sys.stderr.write(f"[HL_XML] FEHLER: <cellXfs> nicht gefunden in styles.xml\n")
+        return None
+    
+    cellxfs_count = int(cellxfs_match.group(1))
+    cellxfs_inner = cellxfs_match.group(2)
+    
+    # XF-Einträge parsen (self-closing und non-self-closing)
+    xf_entries = re.findall(r'<xf\b[^>]*(?:/>|>(?:.*?)</xf>)', cellxfs_inner, re.DOTALL)
+    
+    sys.stderr.write(f"[HL_XML] {len(xf_entries)} bestehende XF-Einträge, count={cellxfs_count}\n")
+    
+    # Highlighted Excel-Zeilen ermitteln (0-basiert → Excel-Zeile = idx + 2)
+    highlighted_excel_rows = set()
+    row_color_map = {}  # excel_row → color
+    for row_idx_str, color in row_highlights.items():
+        excel_row = int(row_idx_str) + 2
+        highlighted_excel_rows.add(excel_row)
+        row_color_map[excel_row] = color
+    
+    # Sammle alle (alter_style, farbe) Kombinationen die vorkommen
+    styles_needed = set()
+    for excel_row in highlighted_excel_rows:
+        color = row_color_map[excel_row]
+        # Finde Zellen in dieser Zeile
+        row_pattern = re.compile(
+            r'<row\s[^>]*?\br="' + str(excel_row) + r'"[^>]*?>(.*?)</row>',
+            re.DOTALL
+        )
+        row_match = row_pattern.search(sheet_content)
+        if row_match:
+            row_inner = row_match.group(1)
+            for cell_m in re.finditer(r'<c\s[^>]*?(?:/?>)', row_inner):
+                cell_el = cell_m.group(0)
+                s_m = re.search(r'\bs="(\d+)"', cell_el)
+                current_s = int(s_m.group(1)) if s_m else 0
+                styles_needed.add((current_s, color))
+    
+    sys.stderr.write(f"[HL_XML] {len(styles_needed)} einzigartige (style, farbe) Kombinationen\n")
+    
+    # Für jede Kombination einen neuen XF-Eintrag erstellen
+    style_map = {}  # (alter_s, farbe) → neuer_s
+    new_xfs_xml = ''
+    
+    for current_s, color in sorted(styles_needed):
+        fill_id = color_to_fill_id[color]
+        
+        if current_s < len(xf_entries):
+            old_xf = xf_entries[current_s]
+        else:
+            # Fallback: Standard-XF
+            old_xf = '<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'
+        
+        # fillId im XF ersetzen
+        if 'fillId="' in old_xf:
+            new_xf = re.sub(r'fillId="\d+"', f'fillId="{fill_id}"', old_xf)
+        else:
+            new_xf = old_xf.replace('<xf ', f'<xf fillId="{fill_id}" ', 1)
+        
+        # applyFill="1" setzen
+        if 'applyFill="' in new_xf:
+            new_xf = re.sub(r'applyFill="\d+"', 'applyFill="1"', new_xf)
+        else:
+            new_xf = new_xf.replace('<xf ', '<xf applyFill="1" ', 1)
+        
+        new_s = cellxfs_count
+        style_map[(current_s, color)] = new_s
+        new_xfs_xml += new_xf
+        cellxfs_count += 1
+    
+    # cellXfs in styles.xml aktualisieren
+    if new_xfs_xml:
+        styles_content = styles_content.replace('</cellXfs>', new_xfs_xml + '</cellXfs>')
+        styles_content = re.sub(r'(<cellXfs\s+)count="\d+"', f'\\1count="{cellxfs_count}"', styles_content)
+    
+    sys.stderr.write(f"[HL_XML] {len(style_map)} neue XF-Einträge erstellt, cellXfs count={cellxfs_count}\n")
+    
+    # ---- Schritt 3: Zell-Styles im Sheet-XML aktualisieren ----
+    for excel_row in sorted(highlighted_excel_rows):
+        color = row_color_map[excel_row]
+        
+        row_pattern = re.compile(
+            r'(<row\s[^>]*?\br="' + str(excel_row) + r'"[^>]*?>)(.*?)(</row>)',
+            re.DOTALL
+        )
+        row_match = row_pattern.search(sheet_content)
+        if row_match:
+            row_open = row_match.group(1)
+            row_inner = row_match.group(2)
+            row_close = row_match.group(3)
+            
+            # Jede Zelle in der Zeile aktualisieren
+            def _update_cell_style(cell_m, _color=color):
+                cell_el = cell_m.group(0)
+                s_m = re.search(r'\bs="(\d+)"', cell_el)
+                current_s = int(s_m.group(1)) if s_m else 0
+                new_s = style_map.get((current_s, _color))
+                
+                if new_s is None:
+                    return cell_el  # Keine Änderung
+                
+                if s_m:
+                    return re.sub(r'\bs="\d+"', f's="{new_s}"', cell_el)
+                else:
+                    # s-Attribut hinzufügen
+                    return cell_el.replace('<c ', f'<c s="{new_s}" ', 1)
+            
+            new_inner = re.sub(r'<c\s[^>]*?(?:/?>)', _update_cell_style, row_inner)
+            sheet_content = (sheet_content[:row_match.start()] + 
+                           row_open + new_inner + row_close + 
+                           sheet_content[row_match.end():])
+    
+    sys.stderr.write(f"[HL_XML] {len(highlighted_excel_rows)} Zeilen markiert\n")
+    return sheet_content, styles_content
 
 
 def write_sheet(file_path, output_path, sheet_name, changes, original_path=None):
@@ -5387,24 +5602,29 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         sys.stderr.write(f"[GATE] has_visibility_changes={has_visibility_changes} (hidden_rows={len(hidden_rows) if hidden_rows else 0}, hidden_cols={len(hidden_columns) if hidden_columns else 0})\n")
         
         # =====================================================================
-        # FALL 3a: Zell-Edits ODER Visibility-Änderungen → Direkte XML-Bearbeitung
-        # (kein openpyxl-Roundtrip)
+        # FALL 3a: Zell-Edits ODER Visibility-Änderungen ODER Row-Highlights
+        # → Direkte XML-Bearbeitung (kein openpyxl-Roundtrip)
         # Dies vermeidet das Überschreiben von Rels, Namespaces, SharedStrings etc.
-        # Die Original-Datei bleibt zu 100% intakt, nur die Zellwerte und
-        # hidden-Attribute werden geändert.
+        # Die Original-Datei bleibt zu 100% intakt, nur die Zellwerte,
+        # hidden-Attribute und Highlight-Fills werden geändert.
         #
         # AUCH für reine Visibility-Änderungen (hideRow/hideColumn ohne Edits):
         # openpyxl-Roundtrip verliert Drawings ohne Pillow → "Zeichnungsform entfernt".
         # ZIP-to-ZIP preserviert ALLES aus dem Original.
+        #
+        # NEU: Row-Highlights werden direkt in styles.xml + Sheet-XML gesetzt.
+        # Dadurch bleiben SlicerCaches, Slicers, Drawings etc. 100% intakt.
         # =====================================================================
-        if (real_edits or has_visibility_changes) and not has_extra_changes and not has_highlight_changes:
+        has_add_highlights = bool(row_highlights)
+        if (real_edits or has_visibility_changes or has_add_highlights) and not has_extra_changes and not has_highlight_changes:
             wb.close()  # openpyxl Workbook nicht mehr benötigt
-            sys.stderr.write(f"[FALL 3a] Direkte XML-Bearbeitung für {len(real_edits)} Zell-Edits, visibility={has_visibility_changes}\n")
+            sys.stderr.write(f"[FALL 3a] Direkte XML-Bearbeitung für {len(real_edits)} Zell-Edits, visibility={has_visibility_changes}, highlights={has_add_highlights}\n")
             
             try:
                 result = _direct_xml_cell_edit(
                     file_path, output_path, sheet_name, real_edits,
-                    hidden_columns, hidden_rows
+                    hidden_columns, hidden_rows,
+                    row_highlights=row_highlights
                 )
                 return result
             except Exception as xml_err:
