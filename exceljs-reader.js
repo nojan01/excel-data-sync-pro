@@ -548,6 +548,7 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
     const result = {
         columnCount: 1,
         hiddenColumns: [],
+        hiddenRows: [],  // 0-basierte Daten-Indizes (ohne Header)
         mergedCells: [],
         autoFilterRange: null,
         imageCells: []  // Zellen die Bild-Formeln enthalten (DISPIMG, IMAGE)
@@ -626,6 +627,23 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
             }
         }
         
+        // Versteckte Zeilen aus <row> Elementen in <sheetData>
+        // WICHTIG: ExcelJS Streaming Reader ignoriert row.hidden, daher hier extrahieren
+        const rowPattern = /<row\s([^>]*)>/g;
+        let rowM;
+        while ((rowM = rowPattern.exec(sheetXml)) !== null) {
+            const attrs = rowM[1];
+            if (/hidden="(1|true)"/i.test(attrs)) {
+                const rMatch = attrs.match(/\br="(\d+)"/);
+                if (rMatch) {
+                    const excelRow = parseInt(rMatch[1]);
+                    if (excelRow >= 2) {  // Zeile 1 = Header, ab Zeile 2 = Daten
+                        result.hiddenRows.push(excelRow - 2);  // 0-basierter Daten-Index
+                    }
+                }
+            }
+        }
+
         // AutoFilter direkt aus Sheet-XML
         const afMatch = sheetXml.match(/<autoFilter[^>]*ref="([^"]*)"/);
         if (afMatch) {
@@ -1053,12 +1071,13 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         const metadata = extractSheetMetadata(fileBuffer, sheetName);
         timings.metadata = Date.now() - t1;
         let actualColumnCount = metadata.columnCount || 1;
-        console.log(`[ExcelJS] Metadaten: ${actualColumnCount} Spalten, ${metadata.mergedCells.length} Merged Cells, ${metadata.hiddenColumns.length} Hidden Cols in ${timings.metadata}ms`);
+        console.log(`[ExcelJS] Metadaten: ${actualColumnCount} Spalten, ${metadata.mergedCells.length} Merged Cells, ${metadata.hiddenColumns.length} Hidden Cols, ${metadata.hiddenRows.length} Hidden Rows in ${timings.metadata}ms`);
         
         // Daten-Strukturen initialisieren
         const headers = [];
         const data = [];
-        const hiddenRows = [];
+        // Hidden Rows aus Metadaten verwenden (ExcelJS Streaming Reader ignoriert row.hidden!)
+        const hiddenRows = [...metadata.hiddenRows];
         const cellStyles = {};
         const cellFormulas = {};
         const cellHyperlinks = {};
@@ -1239,9 +1258,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     rowData[colIndex] = cellValue === null || cellValue === undefined ? '' : cellValue;
                 });
                 
-                if (row.hidden) {
-                    hiddenRows.push(currentDataRowIndex);
-                }
+                // Hidden Rows werden aus Metadaten (XML) geladen, nicht aus row.hidden
                 
                 data.push(rowData);
                 dataRowCounter++;
@@ -1648,10 +1665,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 rowData[colIndex] = cellValue === null || cellValue === undefined ? '' : cellValue;
             });
             
-            // Versteckte Zeilen - verwende dataRowCounter statt rowNumber
-            if (row.hidden) {
-                hiddenRows.push(currentDataRowIndex); // 0-basierter Index im Daten-Array
-            }
+            // Hidden Rows werden aus Metadaten (XML) geladen, nicht aus row.hidden
             
             data.push(rowData);
             dataRowCounter++; // Zähler für nächste Daten-Zeile erhöhen
