@@ -3101,6 +3101,150 @@ def apply_cell_value(cell, value):
         cell.value = str(value)
 
 
+def _filter_rows_xml_regex(sheet_content, row_mapping, new_max_row, hidden_rows=None):
+    """
+    Filtert und renummeriert Zeilen im Sheet-XML per Regex.
+    
+    Im Gegensatz zum lxml-Ansatz bleibt das EXAKTE XML-Format erhalten:
+    - Namespace-Deklarationen, Attribut-Reihenfolge, Whitespace
+    - Alle Zell-Attribute (s, t, vm, cm, ph, etc.)
+    - Alle Sub-Elemente (<f>, <is>, <extLst>, etc.)
+    
+    Args:
+        sheet_content: Sheet-XML als String
+        row_mapping: Liste wo row_mapping[new_idx] = original_idx (0-basiert, ohne Header)
+        new_max_row: Neue maximale Zeilenzahl (inkl. Header)
+        hidden_rows: Liste versteckter Zeilen (0-basiert) oder None
+    
+    Returns:
+        Modifizierter Sheet-XML String
+    """
+    import re
+    
+    # 1. Alle <row>...</row> und <row .../> Elemente extrahieren
+    row_pattern = re.compile(
+        r'(<row\s[^>]*?\br="(\d+)"[^>]*?)(\s*/>|>(.*?)</row\s*>)',
+        re.DOTALL
+    )
+    
+    original_rows = {}  # excel_row_num → full_match_string
+    for m in row_pattern.finditer(sheet_content):
+        row_num = int(m.group(2))
+        original_rows[row_num] = m.group(0)
+    
+    sys.stderr.write(f"[REGEX-FILTER] {len(original_rows)} Zeilen im Original gefunden\n")
+    
+    # 2. Rows-to-keep und Renumber-Map aufbauen
+    rows_to_keep = {1}  # Header immer behalten
+    row_renumber = {}    # old_excel_row → new_excel_row
+    
+    for new_idx, orig_idx in enumerate(row_mapping):
+        if orig_idx >= 0:
+            orig_excel_row = orig_idx + 2
+            new_excel_row = new_idx + 2
+            rows_to_keep.add(orig_excel_row)
+            row_renumber[orig_excel_row] = new_excel_row
+    
+    # 3. Zeilen filtern und renummerieren
+    new_rows_xml = []
+    
+    # Header (Zeile 1) bleibt unverändert
+    if 1 in original_rows:
+        new_rows_xml.append(original_rows[1])
+    
+    # Datenzeilen gemäß row_mapping
+    for new_idx, orig_idx in enumerate(row_mapping):
+        if orig_idx < 0:
+            continue  # Eingefügte Zeile — bei Filter nicht relevant
+        orig_excel_row = orig_idx + 2
+        new_excel_row = new_idx + 2
+        
+        if orig_excel_row in original_rows:
+            row_xml = original_rows[orig_excel_row]
+            
+            if orig_excel_row != new_excel_row:
+                # Zeilen-Nummer im <row r="..."> ändern
+                row_xml = re.sub(
+                    r'(<row\s[^>]*?\br=")' + str(orig_excel_row) + r'"',
+                    r'\g<1>' + str(new_excel_row) + '"',
+                    row_xml,
+                    count=1
+                )
+                # Zell-Referenzen in der Zeile ändern: r="AB123" → r="AB456"
+                row_xml = re.sub(
+                    r'(r="[A-Z]{1,3})' + str(orig_excel_row) + r'"',
+                    r'\g<1>' + str(new_excel_row) + '"',
+                    row_xml
+                )
+            
+            # Hidden-Attribut setzen/entfernen
+            if hidden_rows is not None:
+                row_data_idx = new_idx  # 0-basiert
+                if row_data_idx in set(hidden_rows):
+                    # hidden="1" setzen
+                    if 'hidden="' in row_xml:
+                        row_xml = re.sub(r'hidden="[^"]*"', 'hidden="1"', row_xml, count=1)
+                    else:
+                        row_xml = re.sub(r'(<row\s)', r'\1hidden="1" ', row_xml, count=1)
+                else:
+                    # hidden entfernen falls vorhanden
+                    if 'hidden="1"' in row_xml:
+                        row_xml = re.sub(r'\s*hidden="1"', '', row_xml, count=1)
+            
+            new_rows_xml.append(row_xml)
+    
+    sys.stderr.write(f"[REGEX-FILTER] {len(new_rows_xml)} Zeilen behalten (inkl. Header)\n")
+    
+    # 4. sheetData-Block ersetzen
+    new_sheet_data = '<sheetData>' + ''.join(new_rows_xml) + '</sheetData>'
+    sheet_content = re.sub(
+        r'<sheetData[^>]*>.*?</sheetData\s*>',
+        new_sheet_data,
+        sheet_content,
+        flags=re.DOTALL
+    )
+    
+    # 5. dimension aktualisieren
+    sheet_content = re.sub(
+        r'(<dimension\s+ref="[A-Z]+\d+:[A-Z]+)\d+"',
+        r'\g<1>' + str(new_max_row) + '"',
+        sheet_content
+    )
+    
+    # 6. autoFilter-Range aktualisieren (im Sheet-XML)
+    sheet_content = re.sub(
+        r'(<autoFilter\s[^>]*?ref="[A-Z]+\d+:[A-Z]+)\d+"',
+        r'\g<1>' + str(new_max_row) + '"',
+        sheet_content
+    )
+    
+    return sheet_content
+
+
+def _filter_table_xml_regex(table_content, new_max_row):
+    """
+    Aktualisiert Table-XML (ref und autoFilter) per Regex.
+    Erhält exaktes XML-Format im Gegensatz zu lxml.
+    """
+    import re
+    
+    # Table ref aktualisieren
+    table_content = re.sub(
+        r'(ref="[A-Z]+\d+:[A-Z]+)\d+"',
+        r'\g<1>' + str(new_max_row) + '"',
+        table_content
+    )
+    
+    # autoFilter innerhalb der Table aktualisieren  
+    table_content = re.sub(
+        r'(<autoFilter\s[^>]*?ref="[A-Z]+\d+:[A-Z]+)\d+"',
+        r'\g<1>' + str(new_max_row) + '"',
+        table_content
+    )
+    
+    return table_content
+
+
 def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
                           hidden_columns=None, hidden_rows=None,
                           row_highlights=None):
@@ -5381,6 +5525,151 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     else:
                         sys.stderr.write(f"[ZIP-ANSATZ] Sheet XML: {sheet_xml_path}\n")
                         
+                        new_max_row = len(data) + 1  # +1 für Header
+                        
+                        # Prüfe ob reine Verschiebung/Filter (kein Insert/Delete)
+                        frontend_deleted_rows = set(deleted_rows) if deleted_rows else set()
+                        has_inserted = any(idx < 0 for idx in row_mapping)
+                        is_pure_reorder = len(frontend_deleted_rows) == 0 and not has_inserted
+                        
+                        if is_pure_reorder:
+                            # =========================================================
+                            # REGEX-PFAD: Für Filter/Verschiebung
+                            # Arbeitet direkt auf dem XML-String → bewahrt EXAKT das
+                            # Original-Format (Namespaces, Attribute, Whitespace).
+                            # lxml.etree.tostring() verändert das XML subtil und
+                            # kann Excel dazu bringen, Zell-Formatierung zu verlieren.
+                            # =========================================================
+                            sys.stderr.write(f"[ZIP-ANSATZ] Verwende REGEX-Pfad (bewahrt Formatierung)\n")
+                            
+                            # Sheet-XML als String lesen
+                            with zipfile.ZipFile(output_path, 'r') as zf:
+                                sheet_content = zf.read(sheet_xml_path).decode('utf-8')
+                            
+                            # Zeilen filtern und renummerieren per Regex
+                            sheet_content = _filter_rows_xml_regex(
+                                sheet_content, row_mapping, new_max_row,
+                                hidden_rows=hidden_rows
+                            )
+                            
+                            # Zell-Edits direkt im String anwenden (via _batch_replace_cells_in_xml)
+                            real_edits_zip = {k: v for k, v in edited_cells.items() if not k.startswith('_')} if edited_cells else {}
+                            if real_edits_zip:
+                                # SharedStrings lesen
+                                shared_strings = []
+                                has_shared_strings = False
+                                ss_content = None
+                                try:
+                                    with zipfile.ZipFile(output_path, 'r') as zf:
+                                        if 'xl/sharedStrings.xml' in zf.namelist():
+                                            has_shared_strings = True
+                                            ss_content = zf.read('xl/sharedStrings.xml').decode('utf-8')
+                                            from xml.etree import ElementTree as ET
+                                            ss_root = ET.fromstring(ss_content)
+                                            MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+                                            for si in ss_root.iter(f'{{{MAIN_NS}}}si'):
+                                                texts = []
+                                                for t in si.iter(f'{{{MAIN_NS}}}t'):
+                                                    if t.text:
+                                                        texts.append(t.text)
+                                                shared_strings.append(''.join(texts))
+                                except Exception:
+                                    pass
+                                
+                                # Edits zu Excel-Koordinaten konvertieren
+                                edits_by_ref = {}
+                                for key, value in real_edits_zip.items():
+                                    parts = key.split('-')
+                                    if len(parts) != 2:
+                                        continue
+                                    row_idx = int(parts[0])
+                                    col_idx = int(parts[1])
+                                    col_letter = get_column_letter(col_idx + 1)
+                                    cell_ref = f"{col_letter}{row_idx + 2}"
+                                    edits_by_ref[cell_ref] = value
+                                
+                                sys.stderr.write(f"[ZIP-ANSATZ] Wende {len(edits_by_ref)} Zell-Edits per Regex an\n")
+                                
+                                # _replace_cell_value_in_xml._new_strings initialisieren
+                                if not hasattr(_replace_cell_value_in_xml, '_new_strings'):
+                                    _replace_cell_value_in_xml._new_strings = []
+                                _replace_cell_value_in_xml._new_strings = []
+                                
+                                sheet_content, was_modified = _batch_replace_cells_in_xml(
+                                    sheet_content, edits_by_ref,
+                                    'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
+                                    shared_strings, has_shared_strings
+                                )
+                                
+                                # SharedStrings aktualisieren falls neue Strings hinzugefügt
+                                if has_shared_strings and _replace_cell_value_in_xml._new_strings:
+                                    new_strings = _replace_cell_value_in_xml._new_strings
+                                    new_count = len(shared_strings) + len(new_strings)
+                                    ss_content = re.sub(r'count="\d+"', f'count="{new_count}"', ss_content)
+                                    ss_content = re.sub(r'uniqueCount="\d+"', f'uniqueCount="{new_count}"', ss_content)
+                                    new_si_xml = ''
+                                    for s in new_strings:
+                                        escaped = s.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                                        new_si_xml += f'<si><t>{escaped}</t></si>'
+                                    ss_content = ss_content.replace('</sst>', new_si_xml + '</sst>')
+                                    _replace_cell_value_in_xml._new_strings = []
+                                    sys.stderr.write(f"[ZIP-ANSATZ] {len(new_strings)} neue SharedStrings hinzugefügt\n")
+                            
+                            # Table-XML per Regex aktualisieren
+                            modified_tables = {}
+                            try:
+                                with zipfile.ZipFile(output_path, 'r') as zf:
+                                    for name in zf.namelist():
+                                        if name.startswith('xl/tables/table') and name.endswith('.xml'):
+                                            table_str = zf.read(name).decode('utf-8')
+                                            # Prüfe ob Tabelle bei Zeile 1 startet
+                                            ref_match = re.search(r'ref="([A-Z]+)(\d+):([A-Z]+)(\d+)"', table_str)
+                                            if ref_match and ref_match.group(2) == '1':
+                                                old_ref = ref_match.group(0)
+                                                new_table_str = _filter_table_xml_regex(table_str, new_max_row)
+                                                if new_table_str != table_str:
+                                                    modified_tables[name] = new_table_str.encode('utf-8')
+                                                    sys.stderr.write(f"[ZIP-ANSATZ] Table {name}: ref aktualisiert auf Zeile {new_max_row}\n")
+                            except Exception as e:
+                                sys.stderr.write(f"[ZIP-ANSATZ] Table-Anpassung Fehler: {e}\n")
+                            
+                            # ZIP aktualisieren
+                            temp_zip = output_path + '.tmp'
+                            with zipfile.ZipFile(output_path, 'r') as zin:
+                                with zipfile.ZipFile(temp_zip, 'w', zipfile.ZIP_DEFLATED) as zout:
+                                    for item in zin.infolist():
+                                        if item.filename == sheet_xml_path:
+                                            item.compress_type = zipfile.ZIP_DEFLATED
+                                            zout.writestr(item, sheet_content.encode('utf-8'))
+                                        elif item.filename in modified_tables:
+                                            item.compress_type = zipfile.ZIP_DEFLATED
+                                            zout.writestr(item, modified_tables[item.filename])
+                                        elif item.filename == 'xl/sharedStrings.xml' and real_edits_zip and has_shared_strings and ss_content:
+                                            item.compress_type = zipfile.ZIP_DEFLATED
+                                            zout.writestr(item, ss_content.encode('utf-8'))
+                                        else:
+                                            zout.writestr(item, zin.read(item.filename))
+                            
+                            shutil.move(temp_zip, output_path)
+                            sys.stderr.write(f"[ZIP-ANSATZ] REGEX-Pfad erfolgreich gespeichert\n")
+                            
+                            # Sicherheitsnetz: Slicer-Artefakte entfernen
+                            try:
+                                _strip_slicers_from_zip(output_path)
+                            except Exception as slicer_err:
+                                sys.stderr.write(f"[ZIP-ANSATZ] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
+                            
+                            return {
+                                'success': True,
+                                'outputPath': output_path,
+                                'method': 'direct-xml-regex-filter'
+                            }
+                        
+                        # =========================================================
+                        # LXML-PFAD: Für komplexe Fälle (Zeilen löschen/einfügen mit CF)
+                        # =========================================================
+                        sys.stderr.write(f"[ZIP-ANSATZ] Verwende LXML-Pfad (CF-Anpassung nötig)\n")
+                        
                         # Sheet-XML lesen und modifizieren
                         with zipfile.ZipFile(output_path, 'r') as zf:
                             sheet_xml = zf.read(sheet_xml_path)
@@ -5714,6 +6003,107 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                         if row_elem.get('hidden') == '1':
                                             row_elem.set('hidden', '0')
                         
+                        # ===== CELL EDITS: Direkt im lxml-Baum anwenden =====
+                        # Statt _direct_xml_cell_edit separat aufzurufen (zweites ZIP lesen/schreiben),
+                        # werden die Zell-Edits HIER im selben lxml-Baum angewendet.
+                        # Vorteil: Nur EIN Serialisierungsschritt, alle Attribute (s, vm, etc.)
+                        # bleiben garantiert erhalten weil wir den lxml-Knoten direkt modifizieren.
+                        real_edits_zip = {k: v for k, v in edited_cells.items() if not k.startswith('_')} if edited_cells else {}
+                        if real_edits_zip and sheet_data is not None:
+                            nsm = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+                            
+                            # Index der Zeilen für schnellen Zugriff
+                            row_index = {}
+                            for row_elem in sheet_data.findall('main:row', ns):
+                                row_index[int(row_elem.get('r'))] = row_elem
+                            
+                            edits_applied = 0
+                            from datetime import datetime as _dt
+                            
+                            for key, value in real_edits_zip.items():
+                                parts = key.split('-')
+                                if len(parts) != 2:
+                                    continue
+                                row_idx = int(parts[0])
+                                col_idx = int(parts[1])
+                                excel_row = row_idx + 2
+                                col_letter = get_column_letter(col_idx + 1)
+                                cell_ref = f"{col_letter}{excel_row}"
+                                
+                                target_row = row_index.get(excel_row)
+                                if target_row is None:
+                                    continue
+                                
+                                # Zelle finden
+                                target_cell = None
+                                for cell in target_row.findall('main:c', ns):
+                                    if cell.get('r') == cell_ref:
+                                        target_cell = cell
+                                        break
+                                
+                                if target_cell is None:
+                                    # Zelle existiert nicht → neue erstellen
+                                    target_cell = etree.SubElement(target_row, f'{{{nsm}}}c')
+                                    target_cell.set('r', cell_ref)
+                                
+                                # Alte Kinder entfernen (v, f, is)
+                                for child in list(target_cell):
+                                    target_cell.remove(child)
+                                
+                                # Wert setzen — OHNE s/vm/andere Attribute zu berühren!
+                                if value is None or value == '':
+                                    # Leere Zelle
+                                    if 't' in target_cell.attrib:
+                                        del target_cell.attrib['t']
+                                elif isinstance(value, bool):
+                                    target_cell.set('t', 'b')
+                                    v_elem = etree.SubElement(target_cell, f'{{{nsm}}}v')
+                                    v_elem.text = '1' if value else '0'
+                                elif isinstance(value, (int, float)):
+                                    if 't' in target_cell.attrib:
+                                        del target_cell.attrib['t']
+                                    v_elem = etree.SubElement(target_cell, f'{{{nsm}}}v')
+                                    val = str(value)
+                                    if isinstance(value, float) and value == int(value):
+                                        val = str(int(value))
+                                    v_elem.text = val
+                                elif isinstance(value, str):
+                                    # Prüfe ob es ein Datum ist
+                                    parsed_date = None
+                                    if len(value) >= 10:
+                                        for fmt in ['%d.%m.%Y %H:%M:%S', '%d.%m.%Y', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d']:
+                                            try:
+                                                parsed_date = _dt.strptime(value, fmt)
+                                                break
+                                            except ValueError:
+                                                continue
+                                    
+                                    if parsed_date:
+                                        # Datum als Excel-Seriennummer
+                                        if 't' in target_cell.attrib:
+                                            del target_cell.attrib['t']
+                                        excel_epoch = _dt(1899, 12, 30)
+                                        delta = parsed_date - excel_epoch
+                                        serial = delta.days + delta.seconds / 86400.0
+                                        v_elem = etree.SubElement(target_cell, f'{{{nsm}}}v')
+                                        v_elem.text = str(int(serial)) if delta.seconds == 0 else str(serial)
+                                    else:
+                                        # String → Inline-String (kein SharedStrings-Update nötig!)
+                                        target_cell.set('t', 'inlineStr')
+                                        is_elem = etree.SubElement(target_cell, f'{{{nsm}}}is')
+                                        t_elem = etree.SubElement(is_elem, f'{{{nsm}}}t')
+                                        t_elem.text = value
+                                else:
+                                    # Fallback: als Inline-String
+                                    target_cell.set('t', 'inlineStr')
+                                    is_elem = etree.SubElement(target_cell, f'{{{nsm}}}is')
+                                    t_elem = etree.SubElement(is_elem, f'{{{nsm}}}t')
+                                    t_elem.text = str(value)
+                                
+                                edits_applied += 1
+                            
+                            sys.stderr.write(f"[ZIP-ANSATZ] {edits_applied} Zell-Edits direkt im lxml-Baum angewendet\n")
+                        
                         # Speichere modifizierte Sheet-XML
                         new_sheet_xml = etree.tostring(sheet_tree, xml_declaration=True, encoding='UTF-8', standalone=True)
                         
@@ -5831,26 +6221,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             _strip_slicers_from_zip(output_path)
                         except Exception as slicer_err:
                             sys.stderr.write(f"[ZIP-ANSATZ] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
-                        
-                        # ===== CELL EDITS: Geänderte Zellen via _direct_xml_cell_edit anwenden =====
-                        # Bei Filter+Replace gehen edited_cells sonst verloren, weil der
-                        # ZIP-Ansatz nur Zeilen umordnet aber nie Zellwerte ändert.
-                        # _direct_xml_cell_edit arbeitet direkt auf XML (FALL 3a) — kein openpyxl-Roundtrip.
-                        real_edits_zip = {k: v for k, v in edited_cells.items() if not k.startswith('_')} if edited_cells else {}
-                        if real_edits_zip:
-                            sys.stderr.write(f"[ZIP-ANSATZ] Wende {len(real_edits_zip)} Zell-Edits via _direct_xml_cell_edit an\n")
-                            try:
-                                _direct_xml_cell_edit(
-                                    file_path=output_path,
-                                    output_path=output_path,
-                                    sheet_name=sheet_name,
-                                    real_edits=real_edits_zip
-                                )
-                                sys.stderr.write(f"[ZIP-ANSATZ] Zell-Edits erfolgreich angewendet\n")
-                            except Exception as edit_err:
-                                sys.stderr.write(f"[ZIP-ANSATZ] WARNUNG: Zell-Edits Fehler: {edit_err}\n")
-                                import traceback
-                                traceback.print_exc(file=sys.stderr)
                         
                         return {
                             'success': True,
