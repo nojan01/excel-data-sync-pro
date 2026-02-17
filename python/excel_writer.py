@@ -3512,13 +3512,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         has_row_operations = deleted_rows or inserted_rows or (row_order and len(row_order) > 0)
         
         # Prüfe ob wir den Pipeline-Pfad nutzen können
-        # (Spalten- ODER Zeilen-Operationen)
-        # WICHTIG: Die Pipeline verwendet die strukturierten Parameter (deleted_rows,
-        # inserted_rows, row_order) direkt — NICHT row_mapping oder affected_rows.
-        # Daher dürfen row_mapping_is_identity und affected_rows die Pipeline NICHT blockieren,
-        # sonst werden gemischte Spalten+Zeilen-Operationen nie von der Pipeline verarbeitet.
+        # (Spalten- ODER Zeilen-Operationen, aber NUR wenn rowMapping Identität ist)
         has_column_operations = deleted_columns or inserted_columns or (column_order and len(column_order) > 0)
-        can_use_pipeline = has_column_operations or has_row_operations
+        can_use_pipeline = (has_column_operations or has_row_operations) and row_mapping_is_identity and not affected_rows
         
         if can_use_pipeline:
             # =====================================================================
@@ -3947,7 +3943,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         # =====================================================================
         
         # LEGACY: Bei Spalten-Insert IMMER FALL 1.5 verwenden!
-        only_column_insert = inserted_columns and not deleted_columns
+        # WICHTIG: NUR wenn keine Zeilen-Operationen - sonst FALL 2 (ZIP-ANSATZ + XML-DIREKT)
+        only_column_insert = inserted_columns and not deleted_columns and not has_row_operations
         
         if only_column_insert:
             
@@ -5030,6 +5027,35 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             restore_external_links_from_original(output_path, original_path)
                         
                         sys.stderr.write(f"[ZIP-ANSATZ] Erfolgreich gespeichert\n")
+                        
+                        # ===== SPALTEN-OPERATIONEN nach Zeilen-Ops via XML-DIREKT =====
+                        # Wenn auch Spaltenoperationen vorliegen, diese jetzt
+                        # auf das bereits gespeicherte Ergebnis anwenden.
+                        # So werden beide bewährten Pfade verkettet:
+                        # ZIP-ANSATZ (Zeilen) → XML-DIREKT (Spalten)
+                        if has_column_operations:
+                            sys.stderr.write(f"[ZIP-ANSATZ+XML-DIREKT] Verkette Spaltenoperationen: "
+                                             f"deleted={deleted_columns}, inserted={inserted_columns is not None}, "
+                                             f"reorder={column_order is not None}, hidden={hidden_columns}\n")
+                            try:
+                                from excel_xml_ops import direct_xml_column_operations
+                                col_result = direct_xml_column_operations(
+                                    file_path=output_path,
+                                    output_path=output_path,
+                                    sheet_name=sheet_name,
+                                    deleted_columns=deleted_columns,
+                                    inserted_columns=inserted_columns,
+                                    column_order=column_order,
+                                    hidden_columns=hidden_columns,
+                                    headers=headers,
+                                    data=data
+                                )
+                                sys.stderr.write(f"[ZIP-ANSATZ+XML-DIREKT] Spaltenoperationen erfolgreich\n")
+                            except Exception as col_err:
+                                sys.stderr.write(f"[ZIP-ANSATZ+XML-DIREKT] Spalten-Fehler: {col_err}\n")
+                                import traceback
+                                traceback.print_exc(file=sys.stderr)
+                        
                         return {
                             'success': True,
                             'outputPath': output_path,
