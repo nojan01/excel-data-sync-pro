@@ -1180,6 +1180,37 @@ def restore_external_links_from_original(output_path, original_path, structural_
                             dest_ws_content = dest_ws_content.replace(dest_ps_match.group(0), orig_ps)
                             ws_modified = True
                             sys.stderr.write(f"[restore] {ws_file}: <pageSetup> r:id aus Original wiederhergestellt\n")
+                    
+                    # <extLst> aus Original wiederherstellen (mit gemappten rIds)
+                    # KRITISCH: openpyxl entfernt "Unknown extensions" wie Slicer-Referenzen:
+                    # "Unknown extension is not supported and will be removed"
+                    # Die Rels-Datei hat dann z.B. rId4 -> slicer, aber die Worksheet-XML
+                    # hat kein <extLst> mehr → Excel: "Entfernter Teil: Zeichnungsform"
+                    # Verwende rfind um die LETZTE <extLst> zu finden (= worksheet-level).
+                    # Prüfe dass danach nur noch </worksheet> kommt (nicht nested in CF etc.)
+                    orig_ws_end_pos = orig_ws_content.rfind('</worksheet>')
+                    if orig_ws_end_pos >= 0:
+                        orig_extlst_start = orig_ws_content.rfind('<extLst', 0, orig_ws_end_pos)
+                        if orig_extlst_start >= 0:
+                            orig_extlst_end = orig_ws_content.find('</extLst>', orig_extlst_start)
+                            if orig_extlst_end >= 0:
+                                after_orig = orig_ws_content[orig_extlst_end + len('</extLst>'):].strip()
+                                if after_orig.startswith('</worksheet>'):
+                                    orig_extlst = orig_ws_content[orig_extlst_start:orig_extlst_end + len('</extLst>')]
+                                    orig_extlst = _map_rid(orig_extlst)
+                                    # Entferne bestehende worksheet-level <extLst> im Dest
+                                    dest_ws_end_pos2 = dest_ws_content.rfind('</worksheet>')
+                                    if dest_ws_end_pos2 >= 0:
+                                        dest_extlst_start = dest_ws_content.rfind('<extLst', 0, dest_ws_end_pos2)
+                                        if dest_extlst_start >= 0:
+                                            dest_extlst_end = dest_ws_content.find('</extLst>', dest_extlst_start)
+                                            if dest_extlst_end >= 0:
+                                                after_dest = dest_ws_content[dest_extlst_end + len('</extLst>'):].strip()
+                                                if after_dest.startswith('</worksheet>'):
+                                                    dest_ws_content = dest_ws_content[:dest_extlst_start] + dest_ws_content[dest_extlst_end + len('</extLst>'):]
+                                    dest_ws_content = _insert_ws_element(dest_ws_content, orig_extlst, 'extLst')
+                                    ws_modified = True
+                                    sys.stderr.write(f"[restore] {ws_file}: <extLst> aus Original wiederhergestellt (mapped rIds)\n")
                 
                 else:
                     # === REPLACE-Modus: Alle Elemente aus Original übernehmen ===
@@ -1245,6 +1276,31 @@ def restore_external_links_from_original(output_path, original_path, structural_
                             dest_ws_content = dest_ws_content.replace(dest_ps_match.group(0), orig_ps)
                             ws_modified = True
                             sys.stderr.write(f"[restore] {ws_file}: <pageSetup> vom Original wiederhergestellt\n")
+                    
+                    # <extLst> aus Original wiederherstellen
+                    # openpyxl entfernt "Unknown extensions" (Slicers etc.)
+                    orig_ws_end_pos = orig_ws_content.rfind('</worksheet>')
+                    if orig_ws_end_pos >= 0:
+                        orig_extlst_start = orig_ws_content.rfind('<extLst', 0, orig_ws_end_pos)
+                        if orig_extlst_start >= 0:
+                            orig_extlst_end = orig_ws_content.find('</extLst>', orig_extlst_start)
+                            if orig_extlst_end >= 0:
+                                after_orig = orig_ws_content[orig_extlst_end + len('</extLst>'):].strip()
+                                if after_orig.startswith('</worksheet>'):
+                                    orig_extlst = orig_ws_content[orig_extlst_start:orig_extlst_end + len('</extLst>')]
+                                    # Kein rId-Mapping nötig (REPLACE-Modus nutzt Original-rIds)
+                                    dest_ws_end_pos2 = dest_ws_content.rfind('</worksheet>')
+                                    if dest_ws_end_pos2 >= 0:
+                                        dest_extlst_start = dest_ws_content.rfind('<extLst', 0, dest_ws_end_pos2)
+                                        if dest_extlst_start >= 0:
+                                            dest_extlst_end = dest_ws_content.find('</extLst>', dest_extlst_start)
+                                            if dest_extlst_end >= 0:
+                                                after_dest = dest_ws_content[dest_extlst_end + len('</extLst>'):].strip()
+                                                if after_dest.startswith('</worksheet>'):
+                                                    dest_ws_content = dest_ws_content[:dest_extlst_start] + dest_ws_content[dest_extlst_end + len('</extLst>'):]
+                                    dest_ws_content = _insert_ws_element(dest_ws_content, orig_extlst, 'extLst')
+                                    ws_modified = True
+                                    sys.stderr.write(f"[restore] {ws_file}: <extLst> aus Original wiederhergestellt\n")
                 
                 # KRITISCH: Namespace-Deklarationen vom Original-Worksheet wiederherstellen
                 # openpyxl schreibt nur minimal: xmlns="..." xmlns:r="..."
@@ -1536,6 +1592,17 @@ def restore_external_links_from_original(output_path, original_path, structural_
                         has_vm = bool(re.search(r'\bvm=', sheet_xml))
                         has_mc = 'mc:Ignorable' in sheet_xml
                         
+                        # Check worksheet-level <extLst> (last one before </worksheet>)
+                        has_extlst = False
+                        ws_end_pos = sheet_xml.rfind('</worksheet>')
+                        if ws_end_pos >= 0:
+                            ext_start = sheet_xml.rfind('<extLst', 0, ws_end_pos)
+                            if ext_start >= 0:
+                                ext_end = sheet_xml.find('</extLst>', ext_start)
+                                if ext_end >= 0:
+                                    after_ext = sheet_xml[ext_end + len('</extLst>'):].strip()
+                                    has_extlst = after_ext.startswith('</worksheet>')
+                        
                         # rId-Werte extrahieren
                         dr_rid = re.search(r'<drawing r:id="(rId\d+)"', sheet_xml)
                         tp_rids = re.findall(r'<tablePart[^>]*r:id="(rId\d+)"', sheet_xml)
@@ -1550,7 +1617,8 @@ def restore_external_links_from_original(output_path, original_path, structural_
                                         f"tableParts={has_tp}({','.join(tp_rids) if tp_rids else '-'}), "
                                         f"vm={has_vm}({','.join(vm_vals[:3]) if vm_vals else '-'}), "
                                         f"mc:Ignorable={has_mc}, "
-                                        f"pageSetup_rid={ps_rid.group(1) if ps_rid else '-'}\n")
+                                        f"pageSetup_rid={ps_rid.group(1) if ps_rid else '-'}, "
+                                        f"extLst={has_extlst}\n")
                         sys.stderr.write(f"[DIAGNOSE]   root: {root_preview}...\n")
                         
                         # Rels für dieses Sheet prüfen
