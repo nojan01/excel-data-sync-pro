@@ -3513,8 +3513,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         
         # Prüfe ob wir den Pipeline-Pfad nutzen können
         # (Spalten- ODER Zeilen-Operationen)
+        # WICHTIG: Die Pipeline verwendet die strukturierten Parameter (deleted_rows,
+        # inserted_rows, row_order) direkt — NICHT row_mapping oder affected_rows.
+        # Daher dürfen row_mapping_is_identity und affected_rows die Pipeline NICHT blockieren,
+        # sonst werden gemischte Spalten+Zeilen-Operationen nie von der Pipeline verarbeitet.
         has_column_operations = deleted_columns or inserted_columns or (column_order and len(column_order) > 0)
-        can_use_pipeline = (has_column_operations or has_row_operations) and row_mapping_is_identity and not affected_rows
+        can_use_pipeline = has_column_operations or has_row_operations
         
         if can_use_pipeline:
             # =====================================================================
