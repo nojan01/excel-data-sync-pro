@@ -543,6 +543,130 @@ def _insert_ws_element(ws_content, element_xml, element_name):
     return ws_content.replace('</worksheet>', element_xml + '\n</worksheet>')
 
 
+def _strip_slicer_shapes_from_drawings(drawings_dir):
+    """
+    Entfernt Slicer-Shapes aus drawing*.xml Dateien.
+    
+    Slicer-Shapes werden als <mc:AlternateContent> Blöcke gespeichert, die
+    graphicData mit Slicer-URIs enthalten. Nach Spaltenoperationen sind die
+    referenzierten SlicerCaches invalide → Excel entfernt den Shape →
+    "Entfernter Teil: Zeichnungsform".
+    
+    Entfernt werden:
+    - <mc:AlternateContent> Blöcke mit Slicer-URIs in drawing*.xml
+    - Slicer-Relationships in drawing*.xml.rels
+    """
+    import re
+    import os
+    import sys
+    
+    # Slicer-URIs die in graphicData vorkommen
+    SLICER_URIS = [
+        'http://schemas.microsoft.com/office/drawing/2010/slicer',
+        'http://schemas.microsoft.com/office/drawing/2014/slicer',
+    ]
+    
+    for fname in os.listdir(drawings_dir):
+        if not fname.startswith('drawing') or not fname.endswith('.xml'):
+            continue
+        if fname.endswith('.rels'):
+            continue
+        
+        fpath = os.path.join(drawings_dir, fname)
+        with open(fpath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        original_content = content
+        removed_count = 0
+        
+        # Finde und entferne mc:AlternateContent Blöcke mit Slicer-URIs.
+        # Diese Blöcke haben die Form:
+        # <mc:AlternateContent>
+        #   <mc:Choice Requires="...">
+        #     <xdr:graphicFrame>
+        #       <a:graphic>
+        #         <a:graphicData uri="http://schemas.microsoft.com/office/drawing/2010/slicer">
+        #           <sle:slicer name="..."/>
+        #         </a:graphicData>
+        #       </a:graphic>
+        #     </xdr:graphicFrame>
+        #   </mc:Choice>
+        #   <mc:Fallback/>
+        # </mc:AlternateContent>
+        #
+        # PLUS den umgebenden <xdr:twoCellAnchor> Block, der den graphicFrame enthält.
+        # Der Anchor enthält Position, Größe etc. und ist der Container-Block im Drawing.
+        
+        # Strategie: Finde alle twoCellAnchor-Blöcke die einen Slicer enthalten.
+        # twoCellAnchor kann auch als oneCellAnchor oder absoluteAnchor vorkommen.
+        for anchor_tag in ['twoCellAnchor', 'oneCellAnchor', 'absoluteAnchor']:
+            # Pattern: <xdr:TAG ...>...</xdr:TAG> oder <TAG ...>...</TAG>
+            # Verwende nicht-gierigen Match
+            for prefix in ['xdr:', '']:
+                pattern = f'<{prefix}{anchor_tag}[\\s>].*?</{prefix}{anchor_tag}>'
+                for m in list(re.finditer(pattern, content, re.DOTALL)):
+                    block = m.group(0)
+                    is_slicer = any(uri in block for uri in SLICER_URIS)
+                    if is_slicer:
+                        content = content[:m.start()] + content[m.end():]
+                        removed_count += 1
+                        sys.stderr.write(f"[strip_slicer] {fname}: Slicer-Anchor ({prefix}{anchor_tag}) entfernt\n")
+                        break  # Pattern muss neu-evaluiert werden nach Entfernung
+        
+        # Falls noch mc:AlternateContent mit Slicer außerhalb von Anchors existiert
+        for m in list(re.finditer(r'<mc:AlternateContent\b[^>]*>.*?</mc:AlternateContent>', content, re.DOTALL)):
+            block = m.group(0)
+            is_slicer = any(uri in block for uri in SLICER_URIS)
+            if is_slicer:
+                content = content[:m.start()] + content[m.end():]
+                removed_count += 1
+                sys.stderr.write(f"[strip_slicer] {fname}: Standalone mc:AlternateContent mit Slicer entfernt\n")
+        
+        if content != original_content:
+            with open(fpath, 'w', encoding='utf-8') as f:
+                f.write(content)
+            sys.stderr.write(f"[strip_slicer] {fname}: {removed_count} Slicer-Shapes entfernt, "
+                           f"{len(original_content)} → {len(content)} bytes\n")
+        
+        # Entferne Slicer-Relationships aus drawing*.xml.rels
+        rels_dir = os.path.join(drawings_dir, '_rels')
+        rels_file = os.path.join(rels_dir, f'{fname}.rels')
+        if os.path.exists(rels_file):
+            with open(rels_file, 'r', encoding='utf-8') as f:
+                rels_content = f.read()
+            
+            original_rels = rels_content
+            # Slicer-Relationship-Types
+            slicer_rel_types = [
+                'slicer',
+                'slicerCache',
+            ]
+            
+            for rel_match in list(re.finditer(r'<Relationship\s[^>]*/>', rels_content)):
+                rel_el = rel_match.group(0)
+                type_m = re.search(r'Type="([^"]+)"', rel_el)
+                target_m = re.search(r'Target="([^"]+)"', rel_el)
+                if type_m:
+                    rel_type = type_m.group(1).lower()
+                    is_slicer_rel = any(s in rel_type for s in slicer_rel_types)
+                    if is_slicer_rel:
+                        rels_content = rels_content.replace(rel_el, '')
+                        sys.stderr.write(f"[strip_slicer] {fname}.rels: Slicer-Rel entfernt: "
+                                       f"Target={target_m.group(1) if target_m else '?'}\n")
+                elif target_m:
+                    # Auch nach Target prüfen (slicers/ Pfad)
+                    target = target_m.group(1).lower()
+                    if 'slicer' in target:
+                        rels_content = rels_content.replace(rel_el, '')
+                        sys.stderr.write(f"[strip_slicer] {fname}.rels: Slicer-Rel (nach Target) entfernt: {target}\n")
+            
+            if rels_content != original_rels:
+                # Bereinige leere Zeilen
+                rels_content = re.sub(r'\n\s*\n', '\n', rels_content)
+                with open(rels_file, 'w', encoding='utf-8') as f:
+                    f.write(rels_content)
+
+
 def restore_external_links_from_original(output_path, original_path, structural_change=False):
     """
     Kopiert die externalLinks-Dateien, slicerCaches und definedNames aus dem Original zurück.
@@ -890,6 +1014,17 @@ def restore_external_links_from_original(output_path, original_path, structural_
                 shutil.rmtree(dest_drawings_dir)
             shutil.copytree(orig_drawings_dir, dest_drawings_dir)
             fixed_count += 1
+            
+            # Bei structural_change: Slicer-Shapes aus drawing*.xml entfernen.
+            # Grund: drawing1.xml enthält mc:AlternateContent-Blöcke mit Slicer-Shapes.
+            # Diese referenzieren slicer*.xml → slicerCache*.xml → Tabellenspalten.
+            # Nach Spaltenoperationen sind die SlicerCaches invalide (Spaltenreferenzen
+            # stimmen nicht mehr). Excel validiert die Kette über das Drawing und
+            # entfernt dann den Slicer-Shape → "Entfernter Teil: Zeichnungsform".
+            # Lösung: mc:AlternateContent-Blöcke mit Slicer-URIs entfernen.
+            # Andere Shapes (Bilder, Charts, Textboxen) bleiben erhalten.
+            if structural_change:
+                _strip_slicer_shapes_from_drawings(dest_drawings_dir)
         else:
             sys.stderr.write(f"[restore_ext] xl/drawings im Original NICHT vorhanden\n")
         
@@ -1611,6 +1746,36 @@ def restore_external_links_from_original(output_path, original_path, structural_
                 for n in sorted(img_related):
                     size = zf.getinfo(n).file_size
                     sys.stderr.write(f"[DIAGNOSE]   {n} ({size} bytes)\n")
+                
+                # Slicer-/Drawing-Kette analysieren
+                slicer_related = [n for n in all_names if any(k in n.lower() for k in 
+                    ['slicer', 'ctrlprop'])]
+                if slicer_related:
+                    sys.stderr.write(f"[DIAGNOSE] Slicer-relevante Dateien ({len(slicer_related)}):\n")
+                    for n in sorted(slicer_related):
+                        size = zf.getinfo(n).file_size
+                        sys.stderr.write(f"[DIAGNOSE]   {n} ({size} bytes)\n")
+                
+                # Drawing-XMLs analysieren
+                for n in sorted(all_names):
+                    if n.startswith('xl/drawings/') and n.endswith('.xml') and '/_rels/' not in n:
+                        drawing_xml = zf.read(n).decode('utf-8', errors='replace')
+                        has_slicer_uri = any(uri in drawing_xml for uri in [
+                            'schemas.microsoft.com/office/drawing/2010/slicer',
+                            'schemas.microsoft.com/office/drawing/2014/slicer'])
+                        anchor_count = len(re.findall(r'<(?:xdr:)?(?:twoCellAnchor|oneCellAnchor)', drawing_xml))
+                        mc_count = len(re.findall(r'<mc:AlternateContent', drawing_xml))
+                        sys.stderr.write(f"[DIAGNOSE] {n}: {len(drawing_xml)} bytes, "
+                                       f"anchors={anchor_count}, mc:AC={mc_count}, "
+                                       f"slicer_uri={has_slicer_uri}\n")
+                        # Drawing rels
+                        dr_rels_name = n.replace('xl/drawings/', 'xl/drawings/_rels/') + '.rels'
+                        if dr_rels_name in all_names:
+                            dr_rels = zf.read(dr_rels_name).decode('utf-8', errors='replace')
+                            dr_rels_entries = re.findall(r'Id="([^"]+)"[^>]*Target="([^"]+)"', dr_rels)
+                            sys.stderr.write(f"[DIAGNOSE]   rels: {dr_rels_entries}\n")
+                        else:
+                            sys.stderr.write(f"[DIAGNOSE]   KEINE drawing rels ({dr_rels_name})\n")
                 
                 # Sheet XMLs prüfen
                 for n in sorted(all_names):
