@@ -812,13 +812,12 @@ def restore_external_links_from_original(output_path, original_path, structural_
                 fixed_count += 1
                 sys.stderr.write(f"[restore_ext] workbook.xml.rels: {len(renumbered_rels)} fehlende Relationships ergänzt\n")
         
-        # Stelle workbook.xml <extLst> aus Original wieder her (mit gemappten rIds)
-        # KRITISCH: openpyxl entfernt die workbook-level <extLst> komplett.
-        # Dort steht u.a. <x14:slicerCaches> mit Referenzen zu den slicerCache-Rels.
-        # Ohne diese ist die Slicer-Kette unterbrochen:
-        #   workbook.xml → slicerCaches → slicers → worksheet <extLst>
-        # → Excel: "Entfernte Datensätze: Datenschnitt" + "Entfernter Teil: Zeichnungsform"
-        if os.path.exists(workbook_path) and os.path.exists(orig_workbook_path):
+        # workbook.xml <extLst> aus Original wiederherstellen (nur REPLACE-Modus).
+        # Bei structural_change (Spaltenoperationen) werden Tabellenspalten geändert.
+        # SlicerCaches referenzieren diese Spalten → werden invalidiert → Excel
+        # kaskadiert: ungültiger Cache → Slicer → Zeichnungsform entfernt.
+        # Ohne extLst-Referenzen ignoriert Excel die orphaned SlicerCache-Dateien.
+        if not structural_change and os.path.exists(workbook_path) and os.path.exists(orig_workbook_path):
             with open(workbook_path, 'r', encoding='utf-8') as f:
                 dest_wb_content_2 = f.read()
             with open(orig_workbook_path, 'r', encoding='utf-8') as f:
@@ -1234,36 +1233,13 @@ def restore_external_links_from_original(output_path, original_path, structural_
                             ws_modified = True
                             sys.stderr.write(f"[restore] {ws_file}: <pageSetup> r:id aus Original wiederhergestellt\n")
                     
-                    # <extLst> aus Original wiederherstellen (mit gemappten rIds)
-                    # KRITISCH: openpyxl entfernt "Unknown extensions" wie Slicer-Referenzen:
-                    # "Unknown extension is not supported and will be removed"
-                    # Die Rels-Datei hat dann z.B. rId4 -> slicer, aber die Worksheet-XML
-                    # hat kein <extLst> mehr → Excel: "Entfernter Teil: Zeichnungsform"
-                    # Verwende rfind um die LETZTE <extLst> zu finden (= worksheet-level).
-                    # Prüfe dass danach nur noch </worksheet> kommt (nicht nested in CF etc.)
-                    orig_ws_end_pos = orig_ws_content.rfind('</worksheet>')
-                    if orig_ws_end_pos >= 0:
-                        orig_extlst_start = orig_ws_content.rfind('<extLst', 0, orig_ws_end_pos)
-                        if orig_extlst_start >= 0:
-                            orig_extlst_end = orig_ws_content.find('</extLst>', orig_extlst_start)
-                            if orig_extlst_end >= 0:
-                                after_orig = orig_ws_content[orig_extlst_end + len('</extLst>'):].strip()
-                                if after_orig.startswith('</worksheet>'):
-                                    orig_extlst = orig_ws_content[orig_extlst_start:orig_extlst_end + len('</extLst>')]
-                                    orig_extlst = _map_rid(orig_extlst)
-                                    # Entferne bestehende worksheet-level <extLst> im Dest
-                                    dest_ws_end_pos2 = dest_ws_content.rfind('</worksheet>')
-                                    if dest_ws_end_pos2 >= 0:
-                                        dest_extlst_start = dest_ws_content.rfind('<extLst', 0, dest_ws_end_pos2)
-                                        if dest_extlst_start >= 0:
-                                            dest_extlst_end = dest_ws_content.find('</extLst>', dest_extlst_start)
-                                            if dest_extlst_end >= 0:
-                                                after_dest = dest_ws_content[dest_extlst_end + len('</extLst>'):].strip()
-                                                if after_dest.startswith('</worksheet>'):
-                                                    dest_ws_content = dest_ws_content[:dest_extlst_start] + dest_ws_content[dest_extlst_end + len('</extLst>'):]
-                                    dest_ws_content = _insert_ws_element(dest_ws_content, orig_extlst, 'extLst')
-                                    ws_modified = True
-                                    sys.stderr.write(f"[restore] {ws_file}: <extLst> aus Original wiederhergestellt (mapped rIds)\n")
+                    # KEIN <extLst> im MERGE-Modus wiederherstellen!
+                    # Grund: Bei structural_change (Spaltenoperationen) ändern sich die
+                    # Tabellenspalten. SlicerCaches referenzieren diese Spalten → werden
+                    # invalidiert → Excel kaskadiert: ungültiger Cache → Slicer entfernt
+                    # → Zeichnungsform entfernt. Ohne extLst-Referenzen ignoriert Excel
+                    # die orphaned SlicerCache/Slicer-Dateien stillschweigend.
+                    # (extLst wird nur im REPLACE-Modus wiederhergestellt, s.u.)
                 
                 else:
                     # === REPLACE-Modus: Alle Elemente aus Original übernehmen ===
