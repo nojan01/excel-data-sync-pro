@@ -741,6 +741,7 @@ def restore_external_links_from_original(output_path, original_path, structural_
         # externalLinks-Relationships NICHT überschreiben (openpyxl hat korrekte rIds).
         rels_path = os.path.join(temp_dir, 'xl', '_rels', 'workbook.xml.rels')
         orig_rels_path = os.path.join(orig_temp_dir, 'xl', '_rels', 'workbook.xml.rels')
+        wb_rels_rid_mapping = {}  # Mapping: original rId → neuer rId (für workbook.xml extLst)
         if os.path.exists(rels_path) and os.path.exists(orig_rels_path):
             with open(rels_path, 'r', encoding='utf-8') as f:
                 dest_rels_content = f.read()
@@ -797,6 +798,7 @@ def restore_external_links_from_original(output_path, original_path, structural_
                         old_rid = rid_m.group(1)
                         rel_el = rel_el.replace(f'Id="{old_rid}"', f'Id="{new_rid}"', 1)
                         existing_rids.add(new_rid)
+                        wb_rels_rid_mapping[old_rid] = new_rid
                         sys.stderr.write(f"[restore_ext] workbook.xml.rels: rId-Konflikt {old_rid} → {new_rid}\n")
                     elif rid_m:
                         existing_rids.add(rid_m.group(1))
@@ -809,6 +811,57 @@ def restore_external_links_from_original(output_path, original_path, structural_
                     f.write(dest_rels_content)
                 fixed_count += 1
                 sys.stderr.write(f"[restore_ext] workbook.xml.rels: {len(renumbered_rels)} fehlende Relationships ergänzt\n")
+        
+        # Stelle workbook.xml <extLst> aus Original wieder her (mit gemappten rIds)
+        # KRITISCH: openpyxl entfernt die workbook-level <extLst> komplett.
+        # Dort steht u.a. <x14:slicerCaches> mit Referenzen zu den slicerCache-Rels.
+        # Ohne diese ist die Slicer-Kette unterbrochen:
+        #   workbook.xml → slicerCaches → slicers → worksheet <extLst>
+        # → Excel: "Entfernte Datensätze: Datenschnitt" + "Entfernter Teil: Zeichnungsform"
+        if os.path.exists(workbook_path) and os.path.exists(orig_workbook_path):
+            with open(workbook_path, 'r', encoding='utf-8') as f:
+                dest_wb_content_2 = f.read()
+            with open(orig_workbook_path, 'r', encoding='utf-8') as f:
+                orig_wb_content_2 = f.read()
+            
+            # Finde die workbook-level <extLst> im Original (letzte vor </workbook>)
+            orig_wb_end = orig_wb_content_2.rfind('</workbook>')
+            if orig_wb_end >= 0:
+                orig_wb_extlst_start = orig_wb_content_2.rfind('<extLst', 0, orig_wb_end)
+                if orig_wb_extlst_start >= 0:
+                    orig_wb_extlst_end = orig_wb_content_2.find('</extLst>', orig_wb_extlst_start)
+                    if orig_wb_extlst_end >= 0:
+                        after_wb_ext = orig_wb_content_2[orig_wb_extlst_end + len('</extLst>'):].strip()
+                        if after_wb_ext.startswith('</workbook>'):
+                            orig_wb_extlst = orig_wb_content_2[orig_wb_extlst_start:orig_wb_extlst_end + len('</extLst>')]
+                            
+                            # rIds mappen (workbook.xml.rels Renumbering)
+                            if wb_rels_rid_mapping:
+                                def _wb_rid_replacer(m):
+                                    orig_rid = m.group(1)
+                                    mapped = wb_rels_rid_mapping.get(orig_rid, orig_rid)
+                                    return f'r:id="{mapped}"'
+                                orig_wb_extlst = re.sub(r'r:id="([^"]+)"', _wb_rid_replacer, orig_wb_extlst)
+                            
+                            # Entferne bestehende workbook-level <extLst> im Dest
+                            dest_wb_end = dest_wb_content_2.rfind('</workbook>')
+                            if dest_wb_end >= 0:
+                                dest_wb_extlst_start = dest_wb_content_2.rfind('<extLst', 0, dest_wb_end)
+                                if dest_wb_extlst_start >= 0:
+                                    dest_wb_extlst_end = dest_wb_content_2.find('</extLst>', dest_wb_extlst_start)
+                                    if dest_wb_extlst_end >= 0:
+                                        after_dest_wb = dest_wb_content_2[dest_wb_extlst_end + len('</extLst>'):].strip()
+                                        if after_dest_wb.startswith('</workbook>'):
+                                            dest_wb_content_2 = dest_wb_content_2[:dest_wb_extlst_start] + dest_wb_content_2[dest_wb_extlst_end + len('</extLst>'):]
+                            
+                            # Einfügen vor </workbook>
+                            dest_wb_content_2 = dest_wb_content_2.replace('</workbook>', orig_wb_extlst + '\n</workbook>')
+                            with open(workbook_path, 'w', encoding='utf-8') as f:
+                                f.write(dest_wb_content_2)
+                            fixed_count += 1
+                            sys.stderr.write(f"[restore_ext] workbook.xml: <extLst> aus Original wiederhergestellt (slicerCaches etc.)\n")
+                            if wb_rels_rid_mapping:
+                                sys.stderr.write(f"[restore_ext] workbook.xml: rId-Mapping angewendet: {wb_rels_rid_mapping}\n")
         
         # [Content_Types].xml Merge wird NACH den Datei-Kopien durchgeführt (s.u.)
         # Grund: Override-Einträge prüfen ob die Datei existiert.
