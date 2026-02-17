@@ -17217,35 +17217,12 @@
                                 }
                             }
                             
-                            // Bei vielen Änderungen (>100): Full Rewrite statt einzelne Zellen
-                            // Einzelne Zell-Writes sind bei xlwings sehr langsam!
-                            const useBulkWrite = Object.keys(changedCells).length > 100;
-                            
-                            if (useBulkWrite) {
-                                console.log(`[Export] ${Object.keys(changedCells).length} Änderungen - verwende Full Rewrite für Performance`);
-                                
-                                // Full Rewrite mit allen Daten
-                                let allData = explorerState.filteredData.map(item => item.row);
-                                
-                                sheetData = {
-                                    sheetName: sheetName,
-                                    headers: [...explorerState.headers],
-                                    data: allData,
-                                    changedCells: changedCells,  // WICHTIG: changedCells mitsenden für xlwings Fallback
-                                    visibleColumns: [...(explorerState.visibleColumns || [])],
-                                    hiddenRows: currentHiddenRows,
-                                    hiddenColumns: hiddenCols,
-                                    cellStyles: {},  // Styles bleiben erhalten
-                                    cellFormulas: {},
-                                    cellHyperlinks: {},
-                                    richTextCells: {},
-                                    rowHighlights: {},
-                                    autoFilterRange: explorerState.autoFilterRange,
-                                    fullRewrite: true,
-                                    structuralChange: false,  // Keine strukturelle Änderung, nur Daten-Update
-                                    mergedCells: explorerState.mergedCells || []
-                                };
-                            } else {
+                            // HINWEIS: Kein Bulk-Write (fullRewrite) mehr nötig!
+                            // FALL 3a (_direct_xml_cell_edit) arbeitet direkt auf XML
+                            // und ist performant für beliebig viele Zellen.
+                            // fullRewrite=true erzwingt den openpyxl-Roundtrip (FALL 2),
+                            // der AutoFilter/Tabellen in table1.xml zerstört.
+                            {
                                 // RichText für geänderte Zellen
                                 // WICHTIG: editedCells nutzt 0-basierte Keys ("row-col"),
                                 // aber richTextCells nutzt 1-basierte Keys ("(row+1)-col") wegen Header-Zeile!
@@ -17332,8 +17309,7 @@
                                 console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${Object.keys(cellStylesForChanged).length} CellStyles, ${Object.keys(cellFontsForChanged).length} CellFonts, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, ${clearedRowHighlights.length} entfernte Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
                             console.log(`[Export] mergedCells für Zell-Edits: ${(explorerState.mergedCells || []).length} Einträge`, JSON.stringify(explorerState.mergedCells || []));
                             }
-                        }
-                    } else if (cachedSheet) {
+                        } else if (cachedSheet) {
                         // Gecachtes Sheet mit Änderungen - keine Styles senden (Backend behält Originale)
                         sheetData = {
                             sheetName: sheetName,
