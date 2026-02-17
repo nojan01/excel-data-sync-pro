@@ -1760,6 +1760,10 @@ def restore_external_links_from_original(output_path, original_path, structural_
                         return full_el
                     if target.startswith('http://') or target.startswith('https://') or target.startswith('mailto:'):
                         return full_el
+                    # Bei structural_change: Slicer-Targets komplett entfernen (Sicherheitsnetz)
+                    if structural_change and 'slicer' in target.lower():
+                        sys.stderr.write(f"[restore_ext] WS-Rels-Konsistenz: {_fn} → {target} entfernt (Slicer bei structural_change)\n")
+                        return ''
                     # Targets sind relativ zu xl/worksheets/
                     target_file = os.path.normpath(os.path.join(temp_dir, 'xl', 'worksheets', target))
                     if os.path.exists(target_file):
@@ -1830,6 +1834,14 @@ def restore_external_links_from_original(output_path, original_path, structural_
                     name = item.filename
                     if name.startswith('__MACOSX') or name.endswith('.DS_Store') or \
                        name.split('/')[-1].startswith('._'):
+                        continue
+                    
+                    # Bei structural_change: Slicer-Dateien NICHT aus Original übernehmen.
+                    # openpyxl unterstützt keine Slicers — nach Spaltenoperationen sind
+                    # die SlicerCache-Referenzen auf Tabellenspalten invalide.
+                    # Diese Dateien dürfen weder kopiert noch aus dem Original übernommen werden.
+                    if structural_change and 'slicer' in name.lower():
+                        sys.stderr.write(f"[re-zip] Slicer-Datei übersprungen: {name}\n")
                         continue
                     
                     if name in temp_files:
