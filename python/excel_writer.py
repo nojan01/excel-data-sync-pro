@@ -1553,6 +1553,13 @@ def restore_external_links_from_original(output_path, original_path, structural_
                     
                     # <extLst> aus Original wiederherstellen
                     # openpyxl entfernt "Unknown extensions" (Slicers etc.)
+                    # ABER: openpyxl BEHÄLT CF-Extensions (x14:conditionalFormattings)
+                    # mit NEUEN GUIDs die zu den <cfRule>-GUIDs im Hauptbereich passen.
+                    # Wenn wir die gesamte <extLst> aus dem Original kopieren, haben die
+                    # CF-Extensions die ALTEN GUIDs → GUID-Mismatch → Excel-Reparatur
+                    # → Slicer werden als Kollateralschaden entfernt.
+                    # FIX: Selektives Mergen — openpyxl's CF-Extensions behalten,
+                    # nur fehlende Extensions (Slicers etc.) aus dem Original ergänzen.
                     orig_ws_end_pos = orig_ws_content.rfind('</worksheet>')
                     if orig_ws_end_pos >= 0:
                         orig_extlst_start = orig_ws_content.rfind('<extLst', 0, orig_ws_end_pos)
@@ -1562,7 +1569,12 @@ def restore_external_links_from_original(output_path, original_path, structural_
                                 after_orig = orig_ws_content[orig_extlst_end + len('</extLst>'):].strip()
                                 if after_orig.startswith('</worksheet>'):
                                     orig_extlst = orig_ws_content[orig_extlst_start:orig_extlst_end + len('</extLst>')]
-                                    # Kein rId-Mapping nötig (REPLACE-Modus nutzt Original-rIds)
+                                    
+                                    # Parse Extension-URIs aus Original und Dest
+                                    orig_ext_by_uri = {}
+                                    for ext_m in re.finditer(r'(<ext\s+uri="([^"]+)"[^>]*>.*?</ext>)', orig_extlst, re.DOTALL):
+                                        orig_ext_by_uri[ext_m.group(2)] = ext_m.group(1)
+                                    
                                     dest_ws_end_pos2 = dest_ws_content.rfind('</worksheet>')
                                     if dest_ws_end_pos2 >= 0:
                                         dest_extlst_start = dest_ws_content.rfind('<extLst', 0, dest_ws_end_pos2)
@@ -1571,10 +1583,28 @@ def restore_external_links_from_original(output_path, original_path, structural_
                                             if dest_extlst_end >= 0:
                                                 after_dest = dest_ws_content[dest_extlst_end + len('</extLst>'):].strip()
                                                 if after_dest.startswith('</worksheet>'):
-                                                    dest_ws_content = dest_ws_content[:dest_extlst_start] + dest_ws_content[dest_extlst_end + len('</extLst>'):]
-                                    dest_ws_content = _insert_ws_element(dest_ws_content, orig_extlst, 'extLst')
-                                    ws_modified = True
-                                    sys.stderr.write(f"[restore] {ws_file}: <extLst> aus Original wiederhergestellt\n")
+                                                    dest_extlst = dest_ws_content[dest_extlst_start:dest_extlst_end + len('</extLst>')]
+                                                    # Finde URIs die openpyxl geschrieben hat
+                                                    dest_uris = set(re.findall(r'<ext\s+uri="([^"]+)"', dest_extlst))
+                                                    # Ergänze fehlende Extensions aus dem Original
+                                                    missing_exts = []
+                                                    for uri, ext_block in orig_ext_by_uri.items():
+                                                        if uri not in dest_uris:
+                                                            missing_exts.append(ext_block)
+                                                            sys.stderr.write(f"[restore] {ws_file}: <ext uri=\"{uri}\"> aus Original ergänzt (fehlte in openpyxl)\n")
+                                                        else:
+                                                            sys.stderr.write(f"[restore] {ws_file}: <ext uri=\"{uri}\"> von openpyxl beibehalten\n")
+                                                    if missing_exts:
+                                                        # Füge fehlende Extensions vor </extLst> ein
+                                                        insert_str = '\n'.join(missing_exts)
+                                                        dest_ws_content = dest_ws_content[:dest_extlst_end] + insert_str + dest_ws_content[dest_extlst_end:]
+                                                        ws_modified = True
+                                                        sys.stderr.write(f"[restore] {ws_file}: {len(missing_exts)} fehlende <ext>-Blöcke in <extLst> ergänzt\n")
+                                        else:
+                                            # openpyxl hat KEINE <extLst> geschrieben → komplett aus Original
+                                            dest_ws_content = _insert_ws_element(dest_ws_content, orig_extlst, 'extLst')
+                                            ws_modified = True
+                                            sys.stderr.write(f"[restore] {ws_file}: <extLst> komplett aus Original eingefügt (openpyxl hatte keine)\n")
                 
                 # KRITISCH: Namespace-Deklarationen vom Original-Worksheet wiederherstellen
                 # openpyxl schreibt nur minimal: xmlns="..." xmlns:r="..."
