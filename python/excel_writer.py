@@ -5832,6 +5832,26 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         except Exception as slicer_err:
                             sys.stderr.write(f"[ZIP-ANSATZ] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
                         
+                        # ===== CELL EDITS: Geänderte Zellen via _direct_xml_cell_edit anwenden =====
+                        # Bei Filter+Replace gehen edited_cells sonst verloren, weil der
+                        # ZIP-Ansatz nur Zeilen umordnet aber nie Zellwerte ändert.
+                        # _direct_xml_cell_edit arbeitet direkt auf XML (FALL 3a) — kein openpyxl-Roundtrip.
+                        real_edits_zip = {k: v for k, v in edited_cells.items() if not k.startswith('_')} if edited_cells else {}
+                        if real_edits_zip:
+                            sys.stderr.write(f"[ZIP-ANSATZ] Wende {len(real_edits_zip)} Zell-Edits via _direct_xml_cell_edit an\n")
+                            try:
+                                _direct_xml_cell_edit(
+                                    file_path=output_path,
+                                    output_path=output_path,
+                                    sheet_name=sheet_name,
+                                    real_edits=real_edits_zip
+                                )
+                                sys.stderr.write(f"[ZIP-ANSATZ] Zell-Edits erfolgreich angewendet\n")
+                            except Exception as edit_err:
+                                sys.stderr.write(f"[ZIP-ANSATZ] WARNUNG: Zell-Edits Fehler: {edit_err}\n")
+                                import traceback
+                                traceback.print_exc(file=sys.stderr)
+                        
                         return {
                             'success': True,
                             'outputPath': output_path,
