@@ -3241,16 +3241,13 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
                 cell_ref = f"{col_letter}{excel_row}"
                 edits_by_ref[cell_ref] = value
             
-            sys.stderr.write(f"[DIRECT_XML] Zell-Referenzen: {list(edits_by_ref.keys())}\n")
+            sys.stderr.write(f"[DIRECT_XML] Zell-Referenzen: {len(edits_by_ref)} Zellen\n")
             
-            # 5. Für jede editierte Zelle: Wert im XML ändern
+            # 5. BATCH: Alle Zellen in EINEM Durchlauf ersetzen (statt 1000x Einzel-Regex)
             modified = False
-            for cell_ref, value in edits_by_ref.items():
-                if isinstance(value, str) and '🖼️' in value:
-                    continue
-                
-                sheet_content, was_modified = _replace_cell_value_in_xml(
-                    sheet_content, cell_ref, value, MAIN_NS, shared_strings, has_shared_strings
+            if edits_by_ref:
+                sheet_content, was_modified = _batch_replace_cells_in_xml(
+                    sheet_content, edits_by_ref, MAIN_NS, shared_strings, has_shared_strings
                 )
                 if was_modified:
                     modified = True
@@ -3348,6 +3345,181 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
         if os.path.exists(temp_output):
             os.remove(temp_output)
         raise
+
+
+def _prepare_cell_value(value, cell_ref, shared_strings, has_shared_strings, new_strings_list):
+    """
+    Bereitet einen Zellwert für die XML-Ersetzung vor.
+    Returns (new_type, new_val) oder None wenn übersprungen werden soll.
+    """
+    from datetime import datetime
+    
+    if isinstance(value, str) and '🖼️' in value:
+        return None
+    
+    if value is None or value == '':
+        return ('empty', '')
+    elif isinstance(value, bool):
+        return ('bool', '1' if value else '0')
+    elif isinstance(value, (int, float)):
+        val = str(value)
+        if isinstance(value, float) and value == int(value):
+            val = str(int(value))
+        return ('number', val)
+    elif isinstance(value, str):
+        # Prüfe ob es ein Datum ist
+        parsed_date = None
+        if len(value) >= 10:
+            for fmt in ['%d.%m.%Y %H:%M:%S', '%d.%m.%Y', '%Y-%m-%d %H:%M:%S', '%Y-%m-%d']:
+                try:
+                    parsed_date = datetime.strptime(value, fmt)
+                    break
+                except ValueError:
+                    continue
+        
+        if parsed_date:
+            excel_epoch = datetime(1899, 12, 30)
+            delta = parsed_date - excel_epoch
+            serial = delta.days + delta.seconds / 86400.0
+            val = str(int(serial)) if delta.seconds == 0 else str(serial)
+            return ('number', val)
+        else:
+            return ('string', value)
+    else:
+        return ('string', str(value))
+
+
+def _build_cell_xml(cell_ref, new_type, new_val, style_attr, vm_attr,
+                    shared_strings, has_shared_strings, new_strings_list):
+    """Baut das XML-Element für eine Zelle."""
+    if new_type == 'empty':
+        return f'<c r="{cell_ref}"{style_attr}{vm_attr}/>'
+    elif new_type == 'number':
+        return f'<c r="{cell_ref}"{style_attr}{vm_attr}><v>{new_val}</v></c>'
+    elif new_type == 'bool':
+        return f'<c r="{cell_ref}"{style_attr}{vm_attr} t="b"><v>{new_val}</v></c>'
+    elif new_type == 'string':
+        if has_shared_strings:
+            new_idx = len(shared_strings) + len(new_strings_list)
+            new_strings_list.append(new_val)
+            return f'<c r="{cell_ref}"{style_attr}{vm_attr} t="s"><v>{new_idx}</v></c>'
+        else:
+            escaped = new_val.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            return f'<c r="{cell_ref}"{style_attr}{vm_attr} t="inlineStr"><is><t>{escaped}</t></is></c>'
+    return None
+
+
+def _batch_replace_cells_in_xml(sheet_content, edits_by_ref, main_ns, shared_strings, has_shared_strings):
+    """
+    Ersetzt ALLE Zellwerte in EINEM Durchlauf durch das Sheet-XML.
+    
+    Statt 1000x Einzel-Regex (O(n*m) bei n Zellen und m=XML-Größe)
+    wird das XML nur 1x durchlaufen: Alle <c r="..."> werden gematcht,
+    und wenn die Zelle in edits_by_ref ist, wird sie ersetzt.
+    
+    Nicht gefundene Zellen (neue Zellen) werden am Ende in die passenden
+    Zeilen eingefügt.
+    
+    Returns (new_content, was_modified)
+    """
+    import re
+    
+    new_strings_list = []
+    
+    # Vorbereitung: Werte für alle Zellen berechnen
+    prepared = {}
+    for cell_ref, value in edits_by_ref.items():
+        result = _prepare_cell_value(value, cell_ref, shared_strings, has_shared_strings, new_strings_list)
+        if result is not None:
+            prepared[cell_ref] = result
+    
+    if not prepared:
+        return sheet_content, False
+    
+    # Set für schnelles Lookup
+    refs_to_edit = set(prepared.keys())
+    found_refs = set()
+    
+    # EIN Regex-Durchlauf: Matche ALLE <c r="..."> Elemente
+    cell_pattern = re.compile(
+        r'(<c\s[^>]*?r="([A-Z]{1,3}\d+)"[^>]*?)(/\s*>|>(.*?)</c>)',
+        re.DOTALL
+    )
+    
+    def _replace_match(m):
+        cell_open = m.group(1)
+        cell_ref = m.group(2)
+        
+        if cell_ref not in refs_to_edit:
+            return m.group(0)  # Nicht editiert → unverändert lassen
+        
+        found_refs.add(cell_ref)
+        new_type, new_val = prepared[cell_ref]
+        
+        # Style-Index extrahieren und beibehalten  
+        style_attr = ''
+        s_match = re.search(r'\bs="(\d+)"', cell_open)
+        if s_match:
+            style_attr = f' s="{s_match.group(1)}"'
+        
+        # vm-Attribut beibehalten (Zellbilder)
+        vm_attr = ''
+        vm_match = re.search(r'\bvm="(\d+)"', cell_open)
+        if vm_match:
+            vm_attr = f' vm="{vm_match.group(1)}"'
+        
+        return _build_cell_xml(cell_ref, new_type, new_val, style_attr, vm_attr,
+                               shared_strings, has_shared_strings, new_strings_list)
+    
+    sheet_content = cell_pattern.sub(_replace_match, sheet_content)
+    
+    # Nicht gefundene Zellen: Müssen in passende Zeilen eingefügt werden
+    missing_refs = refs_to_edit - found_refs
+    if missing_refs:
+        # Gruppiere nach Zeilennummer
+        rows_to_insert = {}
+        for cell_ref in missing_refs:
+            new_type, new_val = prepared[cell_ref]
+            if new_type == 'empty':
+                continue  # Leere nicht-existierende Zelle → überspringen
+            row_num = re.search(r'(\d+)$', cell_ref).group(1)
+            if row_num not in rows_to_insert:
+                rows_to_insert[row_num] = []
+            cell_xml = _build_cell_xml(cell_ref, new_type, new_val, '', '',
+                                       shared_strings, has_shared_strings, new_strings_list)
+            if cell_xml:
+                rows_to_insert[row_num].append(cell_xml)
+        
+        for row_num, cells_xml in rows_to_insert.items():
+            if not cells_xml:
+                continue
+            cells_str = ''.join(cells_xml)
+            
+            # Suche die Zeile
+            row_pattern = re.compile(
+                r'(<row\s[^>]*?\br="' + re.escape(row_num) + r'"[^>]*?>)',
+                re.DOTALL
+            )
+            row_match = row_pattern.search(sheet_content)
+            
+            if row_match:
+                # Nach dem <row ...> Tag einfügen
+                insert_pos = row_match.end()
+                sheet_content = sheet_content[:insert_pos] + cells_str + sheet_content[insert_pos:]
+            else:
+                # Zeile existiert nicht → vor </sheetData> erstellen
+                new_row = f'<row r="{row_num}">{cells_str}</row>\n'
+                sheet_content = sheet_content.replace('</sheetData>', new_row + '</sheetData>')
+    
+    # SharedStrings-Tracker aktualisieren (für Kompatibilität mit altem Code)
+    if not hasattr(_replace_cell_value_in_xml, '_new_strings'):
+        _replace_cell_value_in_xml._new_strings = []
+    _replace_cell_value_in_xml._new_strings.extend(new_strings_list)
+    
+    modified = len(found_refs) > 0 or len(missing_refs - {r for r in missing_refs if prepared[r][0] == 'empty'}) > 0
+    sys.stderr.write(f"[BATCH_XML] {len(found_refs)} Zellen ersetzt, {len(missing_refs)} neue Zellen eingefuegt\n")
+    
+    return sheet_content, modified
 
 
 def _replace_cell_value_in_xml(sheet_content, cell_ref, value, main_ns, shared_strings, has_shared_strings):
