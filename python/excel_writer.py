@@ -664,22 +664,62 @@ def _strip_slicers_from_zip(xlsx_path):
                     modified_files[wb_rels_path] = wb_rels.encode('utf-8')
                     stripped_anything = True
 
-            # --- xl/workbook.xml: Slicer-extLst entfernen ---
+            # --- xl/workbook.xml: Slicer-extLst UND Slicer-definedNames entfernen ---
             if 'xl/workbook.xml' in namelist:
                 wb_xml = src_zip.read('xl/workbook.xml').decode('utf-8')
                 wb_xml_orig = wb_xml
-                # Entferne <ext> Blöcke mit Slicer-URIs innerhalb von <extLst>
+                # 1) Entferne <ext> Blöcke mit bekannten Slicer-URIs
                 for uri in SLICER_EXTLST_URIS:
                     escaped_uri = re.escape(uri)
                     wb_xml = re.sub(
                         r'<ext\s[^>]*uri="' + escaped_uri + r'"[^>]*>.*?</ext>\s*',
                         '', wb_xml, flags=re.DOTALL | re.IGNORECASE)
-                # Entferne leere <extLst></extLst>
+                # 2) Catch-All: <ext> Blöcke die "slicer" enthalten (alternative URIs)
+                pos = 0
+                while True:
+                    m = re.search(r'<ext\s[^>]*>.*?</ext>\s*', wb_xml[pos:], re.DOTALL)
+                    if not m:
+                        break
+                    block = m.group(0)
+                    abs_start = pos + m.start()
+                    abs_end = pos + m.end()
+                    if 'slicer' in block.lower():
+                        wb_xml = wb_xml[:abs_start] + wb_xml[abs_end:]
+                        sys.stderr.write(f"[SLICER_STRIP] workbook.xml: <ext> Block mit 'slicer' entfernt\n")
+                    else:
+                        pos = abs_end
+                # 3) Entferne leere <extLst></extLst>
                 wb_xml = re.sub(r'<extLst>\s*</extLst>', '', wb_xml)
+                # 4) Slicer-definedNames entfernen (Name enthält "Slicer" — immer hidden)
+                # Pattern: <definedName name="Slicer_..." ...>...</definedName>
+                # oder: <definedName name="_xlnm.Slicer_..." ...>...</definedName>
+                dn_removed = 0
+                for dn_m in list(re.finditer(
+                    r'<definedName\s[^>]*name="([^"]*)"[^>]*>.*?</definedName>\s*',
+                    wb_xml, re.DOTALL)):
+                    dn_name = dn_m.group(1)
+                    if 'slicer' in dn_name.lower():
+                        wb_xml = wb_xml[:dn_m.start()] + wb_xml[dn_m.end():]
+                        dn_removed += 1
+                        # Offset ändert sich — neu suchen
+                        break  # wird durch while-Schleife unten erneut durchlaufen
+                # Wiederhole bis keine Slicer-definedNames mehr gefunden
+                while True:
+                    dn_m = re.search(
+                        r'<definedName\s[^>]*name="([^"]*[Ss]licer[^"]*)"[^>]*>.*?</definedName>\s*',
+                        wb_xml, re.DOTALL)
+                    if not dn_m:
+                        break
+                    wb_xml = wb_xml[:dn_m.start()] + wb_xml[dn_m.end():]
+                    dn_removed += 1
+                if dn_removed > 0:
+                    sys.stderr.write(f"[SLICER_STRIP] workbook.xml: {dn_removed} Slicer-definedNames entfernt\n")
+                    # Entferne leere <definedNames></definedNames> falls alle entfernt
+                    wb_xml = re.sub(r'<definedNames>\s*</definedNames>', '', wb_xml)
                 if wb_xml != wb_xml_orig:
                     modified_files['xl/workbook.xml'] = wb_xml.encode('utf-8')
                     stripped_anything = True
-                    sys.stderr.write(f"[SLICER_STRIP] workbook.xml: Slicer-extLst entfernt\n")
+                    sys.stderr.write(f"[SLICER_STRIP] workbook.xml: Slicer-Artefakte entfernt\n")
 
             # --- Worksheet-Rels und Sheet-XMLs ---
             for n in namelist:
@@ -708,11 +748,26 @@ def _strip_slicers_from_zip(xlsx_path):
                 if re.match(r'xl/worksheets/sheet\d+\.xml$', n):
                     sheet_xml = src_zip.read(n).decode('utf-8')
                     sheet_xml_orig = sheet_xml
+                    # 1) Bekannte Slicer-URIs
                     for uri in SLICER_EXTLST_URIS:
                         escaped_uri = re.escape(uri)
                         sheet_xml = re.sub(
                             r'<ext\s[^>]*uri="' + escaped_uri + r'"[^>]*>.*?</ext>\s*',
                             '', sheet_xml, flags=re.DOTALL | re.IGNORECASE)
+                    # 2) Catch-All: <ext> Blöcke die "slicer" enthalten
+                    ext_pos = 0
+                    while True:
+                        ext_m = re.search(r'<ext\s[^>]*>.*?</ext>\s*', sheet_xml[ext_pos:], re.DOTALL)
+                        if not ext_m:
+                            break
+                        block = ext_m.group(0)
+                        abs_start = ext_pos + ext_m.start()
+                        abs_end = ext_pos + ext_m.end()
+                        if 'slicer' in block.lower():
+                            sheet_xml = sheet_xml[:abs_start] + sheet_xml[abs_end:]
+                            sys.stderr.write(f"[SLICER_STRIP] {n}: <ext> Block mit 'slicer' entfernt\n")
+                        else:
+                            ext_pos = abs_end
                     # Entferne leere <extLst></extLst>
                     sheet_xml = re.sub(r'<extLst>\s*</extLst>', '', sheet_xml)
                     if sheet_xml != sheet_xml_orig:
