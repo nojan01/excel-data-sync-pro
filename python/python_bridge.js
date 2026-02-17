@@ -854,7 +854,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                         insertedRowInfo: sheet.insertedRowInfo || null,
                         rowOrder: sheet.rowOrder || null,
                         hiddenColumns: [],
-                        hiddenRows: [],
+                        hiddenRows: sheet.hiddenRows || [],  // Hidden Rows im Zeilen-Pass anwenden (ZIP-ANSATZ unterstützt sie)
                         rowMapping: sheet.rowMapping || null,
                         fromFile: false,
                         fullRewrite: false,  // WICHTIG: Keine Daten schreiben, nur Zeilen-Ops
@@ -902,7 +902,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                         insertedRowInfo: null,
                         rowOrder: null,
                         hiddenColumns: sheet.hiddenColumns || [],
-                        hiddenRows: sheet.hiddenRows || [],
+                        hiddenRows: [],  // Schon in Pass 1 angewendet
                         rowMapping: null,  // Kein rowMapping mehr (Zeilen schon gelöscht)
                         fromFile: false,
                         fullRewrite: true,  // WICHTIG: Jetzt Daten schreiben
