@@ -3218,6 +3218,43 @@ def _filter_rows_xml_regex(sheet_content, row_mapping, new_max_row, hidden_rows=
         sheet_content
     )
     
+    # 7. Conditional Formatting sqref-Bereiche kürzen
+    # Ohne diese Anpassung zeigen CF-Regeln auf nicht-existierende Zeilen
+    # und werden an falschen Positionen evaluiert → falsche Farben.
+    def _shorten_sqref(m):
+        prefix = m.group(1)   # z.B. 'sqref="'
+        sqref_val = m.group(2)  # z.B. 'A2:A2404 B2:B2404'
+        parts = sqref_val.split()
+        new_parts = []
+        for part in parts:
+            rm = re.match(r'([A-Z]+)(\d+):([A-Z]+)(\d+)', part)
+            if rm:
+                sc, sr, ec, er = rm.group(1), int(rm.group(2)), rm.group(3), int(rm.group(4))
+                if sr > new_max_row:
+                    continue  # Bereich komplett außerhalb → weglassen
+                if er > new_max_row:
+                    er = new_max_row
+                new_parts.append(f"{sc}{sr}:{ec}{er}")
+            else:
+                # Einzelne Zelle wie "A5"
+                cm = re.match(r'([A-Z]+)(\d+)$', part)
+                if cm and int(cm.group(2)) <= new_max_row:
+                    new_parts.append(part)
+                elif not cm:
+                    new_parts.append(part)  # Unbekanntes Format → behalten
+        if new_parts:
+            return prefix + ' '.join(new_parts) + '"'
+        return prefix + '"'  # Leeres sqref (Excel ignoriert es)
+    
+    sheet_content = re.sub(
+        r'(sqref=")([^"]+)"',
+        _shorten_sqref,
+        sheet_content
+    )
+    
+    # 8. dataValidation sqref-Bereiche ebenfalls kürzen
+    # (gleiche Logik wie CF — schon durch Schritt 7 abgedeckt, da sqref= global gematcht wird)
+    
     return sheet_content
 
 
@@ -5475,7 +5512,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     import tempfile
                     import zipfile
                     import re
-                    from lxml import etree
+                    from xml.etree import ElementTree as ET
                     
                     action = "gelöschte" if rows_changed > 0 else "eingefügte" if rows_changed < 0 else "umsortierte"
                     sys.stderr.write(f"[ZIP-ANSATZ] Verwende direkte XML-Manipulation für {abs(rows_changed)} {action} Zeilen\n")
@@ -5500,7 +5537,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     with zipfile.ZipFile(output_path, 'r') as zf:
                         # Lese workbook.xml um Sheet-Namen zu finden
                         workbook_xml = zf.read('xl/workbook.xml')
-                        wb_tree = etree.fromstring(workbook_xml)
+                        wb_tree = ET.fromstring(workbook_xml)
                         ns = {'main': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
                         
                         for sheet_elem in wb_tree.findall('.//main:sheet', ns):
@@ -5510,7 +5547,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                 
                                 # Relationships lesen um Pfad zu finden
                                 rels_xml = zf.read('xl/_rels/workbook.xml.rels')
-                                rels_tree = etree.fromstring(rels_xml)
+                                rels_tree = ET.fromstring(rels_xml)
                                 
                                 for rel in rels_tree:
                                     if rel.get('Id') == r_id:
@@ -5668,6 +5705,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         # =========================================================
                         # LXML-PFAD: Für komplexe Fälle (Zeilen löschen/einfügen mit CF)
                         # =========================================================
+                        from lxml import etree
                         sys.stderr.write(f"[ZIP-ANSATZ] Verwende LXML-Pfad (CF-Anpassung nötig)\n")
                         
                         # Sheet-XML lesen und modifizieren
