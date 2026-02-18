@@ -10,12 +10,23 @@ const os = require('os');
 // 4GB - ausreichend für große Excel-Dateien, schont den Arbeitsspeicher
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 
-// GPU-Workaround für Windows: Schwarzes Fenster bei bestimmten Grafiktreibern verhindern
-// Verwendet Software-Rendering (ANGLE) statt nativer GPU wenn nötig
+// GPU-Fallback für Windows: Software-Rendering nur bei Problemen aktivieren
+// Merkt sich GPU-Crashes in einer Flag-Datei und deaktiviert GPU beim nächsten Start
+let _gpuFallbackActive = false;
 if (process.platform === 'win32') {
-    app.commandLine.appendSwitch('disable-gpu-compositing');
-    app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
-    app.disableHardwareAcceleration();
+    const gpuFlagPath = path.join(app.getPath('userData'), '.gpu-disabled');
+    const forceDisableGpu = process.argv.includes('--disable-gpu');
+
+    if (forceDisableGpu || fs.existsSync(gpuFlagPath)) {
+        console.log('[GPU] Software-Rendering aktiviert (Fallback-Modus)');
+        app.disableHardwareAcceleration();
+        app.commandLine.appendSwitch('disable-gpu-compositing');
+        _gpuFallbackActive = true;
+        // Flag nach erfolgreichem Start entfernen (einmaliger Fallback)
+        // Wird in app.whenReady() gelöscht
+    } else {
+        console.log('[GPU] Hardware-Beschleunigung aktiv');
+    }
 }
 
 // WORKBOOK-CACHE: Halte geladene Workbooks im Speicher für schnelleren Sheet-Wechsel
@@ -1313,6 +1324,8 @@ function createWindow() {
         title: 'Excel Data Sync Pro',
         icon: path.join(__dirname, 'assets', iconFile),
         frame: true,
+        show: false,  // Erst anzeigen wenn Inhalt geladen (verhindert weißes Flackern)
+        backgroundColor: '#1e1e1e',  // Hintergrundfarbe passend zum Dark Theme
         // Wichtig für korrekte Dialog-Darstellung
         useContentSize: false,
         webPreferences: {
@@ -1321,6 +1334,25 @@ function createWindow() {
             preload: path.join(__dirname, 'preload.js')
         }
     });
+
+    // Fenster erst anzeigen wenn Inhalt vollständig geladen
+    mainWindow.once('ready-to-show', () => {
+        mainWindow.show();
+    });
+
+    // GPU-Crash-Erkennung: Bei Render-Problemen Flag setzen für Software-Fallback beim nächsten Start
+    if (process.platform === 'win32') {
+        mainWindow.webContents.on('render-process-gone', (event, details) => {
+            console.log(`[GPU] Render-Prozess beendet: ${details.reason}`);
+            if (details.reason === 'crashed' || details.reason === 'killed') {
+                const gpuFlagPath = path.join(app.getPath('userData'), '.gpu-disabled');
+                try {
+                    fs.writeFileSync(gpuFlagPath, `GPU-Fallback aktiviert nach Crash: ${details.reason}\n${new Date().toISOString()}`);
+                    console.log('[GPU] Flag gesetzt - nächster Start mit Software-Rendering');
+                } catch (e) { /* ignore */ }
+            }
+        });
+    }
 
     mainWindow.loadFile('src/index.html');
 
@@ -1445,7 +1477,30 @@ function createWindow() {
 app.whenReady().then(async () => {
     // Security-Logger initialisieren (für Datei-basiertes Logging)
     securityLog.init();
-    securityLog.log('INFO', 'APP_STARTED', { version: app.getVersion() });
+    securityLog.log('INFO', 'APP_STARTED', { version: app.getVersion(), gpuFallback: _gpuFallbackActive });
+
+    // GPU-Fallback-Flag nach erfolgreichem Start entfernen
+    // Beim nächsten Start wird wieder GPU versucht (sofern kein erneuter Crash)
+    if (process.platform === 'win32' && _gpuFallbackActive) {
+        const gpuFlagPath = path.join(app.getPath('userData'), '.gpu-disabled');
+        try {
+            if (fs.existsSync(gpuFlagPath)) {
+                fs.unlinkSync(gpuFlagPath);
+                console.log('[GPU] Fallback-Flag entfernt - nächster Start versucht GPU erneut');
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    // GPU-Prozess-Crash abfangen (Chrome GPU-Prozess, nicht Renderer)
+    app.on('child-process-gone', (event, details) => {
+        if (details.type === 'GPU' && (details.reason === 'crashed' || details.reason === 'killed')) {
+            console.log(`[GPU] GPU-Prozess beendet: ${details.reason}`);
+            const gpuFlagPath = path.join(app.getPath('userData'), '.gpu-disabled');
+            try {
+                fs.writeFileSync(gpuFlagPath, `GPU-Fallback aktiviert nach GPU-Prozess-Crash: ${details.reason}\n${new Date().toISOString()}`);
+            } catch (e) { /* ignore */ }
+        }
+    });
 
     // Network-Logger initialisieren (für Netzlaufwerk-Protokollierung)
     networkLog.init();
