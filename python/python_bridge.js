@@ -1137,10 +1137,11 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
     
     // Passwortschutz anwenden
     // xlwings/openpyxl unterstützt keinen Passwortschutz, daher verwenden wir xlsx-populate
-    // options.password === undefined: Checkbox nicht aktiviert → Original-Passwort beibehalten
-    // options.password === '':        Checkbox aktiviert, leer → Passwort entfernen
-    // options.password === 'xxx':     Checkbox aktiviert mit Wert → Neues Passwort setzen
-    const finalPassword = options.password !== undefined ? options.password : options.sourcePassword;
+    // options.password == null (null/undefined): Checkbox nicht aktiviert → Original-Passwort beibehalten
+    // options.password === '':                   Checkbox aktiviert, leer → Passwort entfernen
+    // options.password === 'xxx':                Checkbox aktiviert mit Wert → Neues Passwort setzen
+    // WICHTIG: IPC-Layer konvertiert undefined → null (Default-Parameter), daher != null (loose equality)
+    const finalPassword = (options.password != null) ? options.password : options.sourcePassword;
     if (finalPassword) {
         try {
             const XlsxPopulate = require('xlsx-populate');
