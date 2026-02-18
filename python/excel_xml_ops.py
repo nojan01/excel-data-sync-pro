@@ -947,7 +947,8 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
             if col_map is None and hidden_columns is None:
                 if os.path.normpath(file_path) != os.path.normpath(output_path):
                     shutil.copy2(file_path, output_path)
-                return {'success': True, 'outputPath': output_path, 'method': 'xml-col-ops-noop'}
+                return {'success': True, 'outputPath': output_path, 'method': 'xml-col-ops-noop',
+                        'has_slicers': False}
             
             # 6. Mapping anwenden
             modified_files = {}  # ZIP-Pfad → neuer Inhalt (bytes)
@@ -1109,6 +1110,25 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                 if new_wb_xml != wb_xml_content:
                     modified_files['xl/workbook.xml'] = new_wb_xml.encode('utf-8')
                     sys.stderr.write(f"[XML_COL_OPS] workbook.xml definedNames angepasst\n")
+                
+                # Comments-XMLs (xl/comments*.xml) anpassen:
+                # <comment ref="A1"> Zell-Referenzen müssen remapped werden
+                for cname in src_zip.namelist():
+                    if re.match(r'xl/comments\d*\.xml$', cname):
+                        comments_xml = src_zip.read(cname).decode('utf-8')
+                        def _remap_comment_ref(m):
+                            prefix = m.group(1)
+                            ref = m.group(2)
+                            new_ref = _remap_col_in_ref(ref, col_map)
+                            if new_ref is None:
+                                return ''  # Kommentar für gelöschte Spalte entfernen
+                            return f'{prefix}ref="{new_ref}"'
+                        new_comments = re.sub(
+                            r'(<comment\s[^>]*?)ref="([A-Z]+\d+)"',
+                            _remap_comment_ref, comments_xml)
+                        if new_comments != comments_xml:
+                            modified_files[cname] = new_comments.encode('utf-8')
+                            sys.stderr.write(f"[XML_COL_OPS] {cname} Kommentar-Refs angepasst\n")
             
             # Hidden Columns
             if hidden_columns is not None:
@@ -1135,7 +1155,65 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
             
             modified_files[sheet_zip_path] = sheet_content.encode('utf-8')
             
-            # 7. ZIP-to-ZIP: Original-Einträge 1:1 kopieren, nur modifizierte ersetzen
+            # 7. calcChain.xml entfernen: Enthält Zell-Referenzen die nach
+            # Spaltenverschiebungen stale werden → Excel-Reparatur.
+            # Excel regeneriert calcChain automatisch beim Öffnen.
+            skip_files = set()
+            namelist = src_zip.namelist()
+            if 'xl/calcChain.xml' in namelist:
+                skip_files.add('xl/calcChain.xml')
+                sys.stderr.write(f"[XML_COL_OPS] calcChain.xml wird übersprungen (wird von Excel regeneriert)\n")
+            
+            # Content_Types: calcChain-Override entfernen (sonst verweist es auf fehlende Datei)
+            # workbook.xml.rels: calcChain-Relationship entfernen
+            if skip_files:
+                ct_path = '[Content_Types].xml'
+                if ct_path in namelist:
+                    ct_xml = (modified_files[ct_path].decode('utf-8')
+                              if ct_path in modified_files
+                              else src_zip.read(ct_path).decode('utf-8'))
+                    ct_orig = ct_xml
+                    ct_xml = re.sub(
+                        r'<Override\s[^>]*PartName="/xl/calcChain\.xml"[^>]*/>\s*',
+                        '', ct_xml)
+                    if ct_xml != ct_orig:
+                        modified_files[ct_path] = ct_xml.encode('utf-8')
+                        sys.stderr.write(f"[XML_COL_OPS] [Content_Types].xml: calcChain-Override entfernt\n")
+                
+                wb_rels_path = 'xl/_rels/workbook.xml.rels'
+                if wb_rels_path in namelist:
+                    wb_rels = (modified_files[wb_rels_path].decode('utf-8')
+                               if wb_rels_path in modified_files
+                               else src_zip.read(wb_rels_path).decode('utf-8'))
+                    wb_rels_orig = wb_rels
+                    wb_rels = re.sub(
+                        r'<Relationship\s[^>]*Target="calcChain\.xml"[^>]*/>\s*',
+                        '', wb_rels)
+                    if wb_rels != wb_rels_orig:
+                        modified_files[wb_rels_path] = wb_rels.encode('utf-8')
+                        sys.stderr.write(f"[XML_COL_OPS] workbook.xml.rels: calcChain-Relationship entfernt\n")
+            
+            # 7b. Slicer-Erkennung (mit bereits geladenen Daten — kein extra ZIP-Lesen)
+            has_slicers = any(
+                n.startswith('xl/slicerCaches/') or n.startswith('xl/slicers/')
+                for n in namelist)
+            if not has_slicers:
+                # Prüfe in bereits geladenen/modifizierten Inhalten
+                for check_path in ['[Content_Types].xml', 'xl/workbook.xml']:
+                    content = None
+                    if check_path in modified_files:
+                        content = modified_files[check_path].decode('utf-8')
+                    elif check_path in namelist:
+                        content = src_zip.read(check_path).decode('utf-8')
+                    if content and 'slicer' in content.lower():
+                        has_slicers = True
+                        break
+            if not has_slicers and 'slicer' in sheet_content.lower():
+                has_slicers = True
+            
+            sys.stderr.write(f"[XML_COL_OPS] Slicer erkannt: {has_slicers}\n")
+            
+            # 8. ZIP-to-ZIP: Original-Einträge 1:1 kopieren, nur modifizierte ersetzen
             with zipfile.ZipFile(temp_output, 'w', zipfile.ZIP_DEFLATED) as dst_zip:
                 for item in src_zip.infolist():
                     if item.filename.endswith('/'):
@@ -1143,6 +1221,8 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                     if item.filename.startswith('__MACOSX') or \
                        item.filename.endswith('.DS_Store') or \
                        item.filename.split('/')[-1].startswith('._'):
+                        continue
+                    if item.filename in skip_files:
                         continue
                     
                     if item.filename in modified_files:
@@ -1158,7 +1238,8 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
         shutil.move(temp_output, output_path)
         
         sys.stderr.write(f"[XML_COL_OPS] Erfolgreich: {output_path}\n")
-        return {'success': True, 'outputPath': output_path, 'method': 'xml-col-ops'}
+        return {'success': True, 'outputPath': output_path, 'method': 'xml-col-ops',
+                'has_slicers': has_slicers}
     
     except Exception as e:
         if os.path.exists(temp_output):

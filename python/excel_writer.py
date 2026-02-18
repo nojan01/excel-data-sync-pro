@@ -4514,13 +4514,20 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         data=data
                     )
                     
-                    # Slicer-Infrastruktur entfernen nach Spaltenoperationen.
-                    # Spaltenänderungen invalidieren SlicerCache-Spaltenreferenzen →
-                    # orphaned Slicer-Einträge in Content_Types/Rels → Excel-Reparatur.
-                    try:
-                        _strip_slicers_from_zip(output_path)
-                    except Exception as slicer_err:
-                        sys.stderr.write(f"[XML-DIREKT] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
+                    # Slicer-Infrastruktur entfernen — NUR wenn Slicers vorhanden.
+                    # direct_xml_column_operations erkennt Slicer inline (kein extra ZIP-Pass).
+                    # Für INSERT-only ohne Deletes: Slicers bleiben valide (referenzieren
+                    # Tabellenspalten nach Name, nicht Position) → überspringen.
+                    has_slicers = result.get('has_slicers', True)
+                    is_insert_only = bool(inserted_columns) and not deleted_columns
+                    if has_slicers and not is_insert_only:
+                        try:
+                            _strip_slicers_from_zip(output_path)
+                        except Exception as slicer_err:
+                            sys.stderr.write(f"[XML-DIREKT] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
+                    else:
+                        reason = "keine Slicers" if not has_slicers else "Insert-only (Slicers bleiben valide)"
+                        sys.stderr.write(f"[XML-DIREKT] Slicer-Strip übersprungen: {reason}\n")
                     
                     # Row Highlights nachträglich anwenden (direkt im XML)
                     if row_highlights:
