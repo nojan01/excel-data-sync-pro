@@ -10,6 +10,14 @@ const os = require('os');
 // 4GB - ausreichend für große Excel-Dateien, schont den Arbeitsspeicher
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
 
+// GPU-Workaround für Windows: Schwarzes Fenster bei bestimmten Grafiktreibern verhindern
+// Verwendet Software-Rendering (ANGLE) statt nativer GPU wenn nötig
+if (process.platform === 'win32') {
+    app.commandLine.appendSwitch('disable-gpu-compositing');
+    app.commandLine.appendSwitch('enable-features', 'SharedArrayBuffer');
+    app.disableHardwareAcceleration();
+}
+
 // WORKBOOK-CACHE: Halte geladene Workbooks im Speicher für schnelleren Sheet-Wechsel
 const workbookCache = new Map();
 const CACHE_MAX_SIZE = 3; // Maximal 3 Workbooks cachen
