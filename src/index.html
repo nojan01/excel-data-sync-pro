@@ -17540,7 +17540,34 @@
             
             let result = await window.electronAPI.readExcelFile(filePath, password);
             
-            if (!result.success) {
+            // Passwortgeschützte Datei? (z.B. nach Passwortschutz-Vergabe beim Export)
+            if (!result.success && result.needsPassword) {
+                const enteredPassword = await showPromptDialog(
+                    '🔐 Passwort erforderlich',
+                    'Die gespeicherte Datei ist passwortgeschützt.\nBitte geben Sie das Passwort ein:',
+                    '',
+                    'password'
+                );
+                
+                if (enteredPassword === null) {
+                    elements.explorerStatus.textContent = 'Neuladen abgebrochen';
+                    return;
+                }
+                
+                result = await window.electronAPI.readExcelFile(filePath, enteredPassword);
+                
+                if (!result.success) {
+                    if (result.needsPassword) {
+                        showFloatingStatus('❌ Falsches Passwort', 'error');
+                    } else {
+                        elements.explorerStatus.textContent = `Fehler beim Neuladen: ${result.error}`;
+                    }
+                    return;
+                }
+                
+                explorerState.filePassword = enteredPassword;
+                showFloatingStatus('🔓 Datei entsperrt');
+            } else if (!result.success) {
                 console.error('[Reload] Fehler beim Neuladen:', result.error);
                 elements.explorerStatus.textContent = `Fehler beim Neuladen: ${result.error}`;
                 return;
