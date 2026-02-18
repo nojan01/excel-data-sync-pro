@@ -3218,10 +3218,10 @@ def _filter_rows_xml_regex(sheet_content, row_mapping, new_max_row, hidden_rows=
         sheet_content
     )
     
-    # 7. Conditional Formatting sqref-Bereiche kürzen
-    # Ohne diese Anpassung zeigen CF-Regeln auf nicht-existierende Zeilen
-    # und werden an falschen Positionen evaluiert → falsche Farben.
-    def _shorten_sqref(m):
+    # 7. sqref-Bereiche renummerieren (Conditional Formatting, DataValidation, etc.)
+    # Ohne Renummerierung zeigen CF-Regeln auf falsche Zeilen nach dem Filtern
+    # → falsche Farben, falsche Validierungen.
+    def _renumber_sqref(m):
         prefix = m.group(1)   # z.B. 'sqref="'
         sqref_val = m.group(2)  # z.B. 'A2:A2404 B2:B2404'
         parts = sqref_val.split()
@@ -3230,16 +3230,48 @@ def _filter_rows_xml_regex(sheet_content, row_mapping, new_max_row, hidden_rows=
             rm = re.match(r'([A-Z]+)(\d+):([A-Z]+)(\d+)', part)
             if rm:
                 sc, sr, ec, er = rm.group(1), int(rm.group(2)), rm.group(3), int(rm.group(4))
-                if sr > new_max_row:
+                # Zeile 1 (Header) bleibt immer — Endzeile auf new_max_row kürzen
+                if sr == 1:
+                    new_er = new_max_row if er > 1 else er
+                    new_parts.append(f"{sc}1:{ec}{new_er}")
+                    continue
+                # Startzeile renummerieren
+                new_sr = row_renumber.get(sr)
+                if new_sr is None:
+                    # Startzeile wurde weggefiltert — nächste verfügbare gemappte Zeile suchen
+                    for probe in range(sr, max(row_renumber.keys()) + 1 if row_renumber else sr + 1):
+                        if probe in row_renumber:
+                            new_sr = row_renumber[probe]
+                            break
+                if new_sr is None:
                     continue  # Bereich komplett außerhalb → weglassen
-                if er > new_max_row:
-                    er = new_max_row
-                new_parts.append(f"{sc}{sr}:{ec}{er}")
+                # Endzeile renummerieren
+                new_er = row_renumber.get(er)
+                if new_er is None:
+                    # Endzeile nicht im Mapping → nächste verfügbare von hinten suchen
+                    for probe in range(er, 0, -1):
+                        if probe in row_renumber:
+                            new_er = row_renumber[probe]
+                            break
+                if new_er is None:
+                    new_er = new_max_row
+                if new_sr > new_max_row:
+                    continue
+                new_er = min(new_er, new_max_row)
+                if new_sr > new_er:
+                    new_sr, new_er = new_er, new_sr
+                new_parts.append(f"{sc}{new_sr}:{ec}{new_er}")
             else:
                 # Einzelne Zelle wie "A5"
                 cm = re.match(r'([A-Z]+)(\d+)$', part)
-                if cm and int(cm.group(2)) <= new_max_row:
-                    new_parts.append(part)
+                if cm:
+                    col_str = cm.group(1)
+                    row_num = int(cm.group(2))
+                    if row_num == 1:
+                        new_parts.append(part)  # Header
+                    elif row_num in row_renumber:
+                        new_parts.append(f"{col_str}{row_renumber[row_num]}")
+                    # Sonst: Zeile weggefiltert → weglassen
                 elif not cm:
                     new_parts.append(part)  # Unbekanntes Format → behalten
         if new_parts:
@@ -3248,12 +3280,72 @@ def _filter_rows_xml_regex(sheet_content, row_mapping, new_max_row, hidden_rows=
     
     sheet_content = re.sub(
         r'(sqref=")([^"]+)"',
-        _shorten_sqref,
+        _renumber_sqref,
         sheet_content
     )
     
-    # 8. dataValidation sqref-Bereiche ebenfalls kürzen
-    # (gleiche Logik wie CF — schon durch Schritt 7 abgedeckt, da sqref= global gematcht wird)
+    # 8. <mergeCells> renummerieren
+    # Merge-Referenzen zeigen auf alte Zeilennummern → müssen aktualisiert werden
+    def _renumber_merge_cell(m):
+        full_match = m.group(0)
+        ref = m.group(1)  # z.B. "A5:C10"
+        rm = re.match(r'([A-Z]+)(\d+):([A-Z]+)(\d+)', ref)
+        if not rm:
+            return full_match  # Unbekanntes Format → behalten
+        sc, sr, ec, er = rm.group(1), int(rm.group(2)), rm.group(3), int(rm.group(4))
+        # Header-Merges (Zeile 1) bleiben unverändert
+        if sr == 1 and er == 1:
+            return full_match
+        # Prüfe ob Start- und Endzeile im Mapping sind
+        new_sr = row_renumber.get(sr, sr if sr == 1 else None)
+        new_er = row_renumber.get(er, er if er == 1 else None)
+        if new_sr is None or new_er is None:
+            # Mindestens eine Zeile wurde weggefiltert → Merge entfernen
+            return ''
+        return f'<mergeCell ref="{sc}{new_sr}:{ec}{new_er}"/>'
+    
+    sheet_content = re.sub(
+        r'<mergeCell\s+ref="([^"]+)"\s*/>',
+        _renumber_merge_cell,
+        sheet_content
+    )
+    # Leere <mergeCells> entfernen (falls alle Merges entfernt wurden)
+    sheet_content = re.sub(r'<mergeCells\s+count="\d+">\s*</mergeCells>', '', sheet_content)
+    # mergeCells count aktualisieren
+    remaining_merges = len(re.findall(r'<mergeCell\s', sheet_content))
+    if remaining_merges > 0:
+        sheet_content = re.sub(
+            r'<mergeCells\s+count="\d+"',
+            f'<mergeCells count="{remaining_merges}"',
+            sheet_content
+        )
+    
+    # 9. <hyperlinks> renummerieren
+    # Hyperlink-Referenzen zeigen auf alte Zellpositionen
+    def _renumber_hyperlink_ref(m):
+        full_match = m.group(0)
+        prefix = m.group(1)  # alles vor der Zelladresse
+        col_str = m.group(2)   # z.B. "A"
+        row_num = int(m.group(3))  # z.B. 5
+        suffix = m.group(4)  # alles nach der Zelladresse
+        if row_num == 1:
+            return full_match  # Header
+        new_row = row_renumber.get(row_num)
+        if new_row is None:
+            return ''  # Zeile weggefiltert → Hyperlink entfernen
+        return f'{prefix}{col_str}{new_row}{suffix}'
+    
+    sheet_content = re.sub(
+        r'(<hyperlink\s[^>]*?ref=")([A-Z]+)(\d+)("[^>]*?/>)',
+        _renumber_hyperlink_ref,
+        sheet_content
+    )
+    # Leere <hyperlinks> entfernen
+    sheet_content = re.sub(r'<hyperlinks>\s*</hyperlinks>', '', sheet_content)
+    
+    sys.stderr.write(f"[REGEX-FILTER] mergeCell={remaining_merges}, sqref und hyperlinks renummeriert\n")
+    
+    # 10. dataValidation sqref — schon durch Schritt 7 abgedeckt (sqref= global gematcht)
     
     return sheet_content
 
