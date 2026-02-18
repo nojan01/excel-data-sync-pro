@@ -805,6 +805,21 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
         }
     }
     
+    // Wenn die Quelldatei passwortgeschützt ist, muss die Kopie entschlüsselt werden
+    // damit openpyxl die Datei bearbeiten kann.
+    // Nach dem Schreiben wird die Datei je nach Benutzer-Wahl wieder verschlüsselt.
+    if (options.sourcePassword) {
+        try {
+            const XlsxPopulate = require('xlsx-populate');
+            const pwWorkbook = await XlsxPopulate.fromFileAsync(targetPath, { password: options.sourcePassword });
+            await pwWorkbook.toFileAsync(targetPath); // Ohne Passwort speichern = entschlüsseln
+            safeLog('[Python] Datei erfolgreich entschlüsselt für Bearbeitung');
+        } catch (decryptError) {
+            safeError('[Python] Fehler beim Entschlüsseln der Quelldatei:', decryptError.message);
+            return { success: false, error: `Fehler beim Entschlüsseln: ${decryptError.message}` };
+        }
+    }
+    
     // Deferred Sheet-Operationen anwenden (Add/Delete/Rename/Clone/Move/Visibility)
     // Diese wurden im Offline-Modus nur im Speicher gehalten und müssen jetzt
     // auf die Zieldatei angewendet werden, BEVOR die Sheet-Daten geschrieben werden.
@@ -1120,13 +1135,19 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
         return { success: false, error: errorMessage };
     }
     
-    // Passwortschutz anwenden falls gewünscht
+    // Passwortschutz anwenden
     // xlwings/openpyxl unterstützt keinen Passwortschutz, daher verwenden wir xlsx-populate
-    if (options.password) {
+    // options.password === undefined: Checkbox nicht aktiviert → Original-Passwort beibehalten
+    // options.password === '':        Checkbox aktiviert, leer → Passwort entfernen
+    // options.password === 'xxx':     Checkbox aktiviert mit Wert → Neues Passwort setzen
+    const finalPassword = options.password !== undefined ? options.password : options.sourcePassword;
+    if (finalPassword) {
         try {
             const XlsxPopulate = require('xlsx-populate');
+            // Datei ist jetzt entschlüsselt (wurde oben entschlüsselt oder war nie verschlüsselt)
             const pwWorkbook = await XlsxPopulate.fromFileAsync(targetPath);
-            await pwWorkbook.toFileAsync(targetPath, { password: options.password });
+            await pwWorkbook.toFileAsync(targetPath, { password: finalPassword });
+            safeLog(`[Python] Passwortschutz angewendet (${options.password !== undefined ? 'neues Passwort' : 'Original-Passwort beibehalten'})`);
         } catch (pwError) {
             safeError('[Python] Fehler beim Passwortschutz:', pwError.message);
             // Datei wurde bereits gespeichert, nur ohne Passwort

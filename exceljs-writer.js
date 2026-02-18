@@ -813,10 +813,28 @@ async function postProcessRowStyles(sourcePath, targetPath, sheetName, rowMappin
  */
 async function exportMultipleSheetsWithExcelJS(sourcePath, targetPath, sheets, options = {}) {
     const startTime = Date.now();
+    let tempDecryptedPath = null;
     
     try {
+        // Wenn die Quelldatei passwortgeschützt ist, muss sie entschlüsselt werden
+        // ExcelJS kann keine verschlüsselten Dateien lesen
+        let actualSourcePath = sourcePath;
+        if (options.sourcePassword) {
+            try {
+                const XlsxPopulate = require('xlsx-populate');
+                const pwWorkbook = await XlsxPopulate.fromFileAsync(sourcePath, { password: options.sourcePassword });
+                tempDecryptedPath = require('path').join(require('os').tmpdir(), `mvms_decrypt_export_${Date.now()}.xlsx`);
+                await pwWorkbook.toFileAsync(tempDecryptedPath);
+                actualSourcePath = tempDecryptedPath;
+                console.log('[ExcelJS Writer] Quelldatei erfolgreich entschlüsselt');
+            } catch (decryptError) {
+                console.error('[ExcelJS Writer] Fehler beim Entschlüsseln:', decryptError.message);
+                return { success: false, error: `Fehler beim Entschlüsseln: ${decryptError.message}` };
+            }
+        }
+        
         const workbook = new ExcelJS.Workbook();
-        await workbook.xlsx.readFile(sourcePath);
+        await workbook.xlsx.readFile(actualSourcePath);
         
         // Liste der ausgewählten Sheet-Namen
         const selectedSheetNames = sheets.map(s => s.sheetName);
@@ -904,16 +922,30 @@ async function exportMultipleSheetsWithExcelJS(sourcePath, targetPath, sheets, o
         }
         */
         
-        // Passwortschutz anwenden falls gewünscht
+        // Passwortschutz anwenden
         // ExcelJS unterstützt keinen Passwortschutz, daher verwenden wir xlsx-populate
-        if (options.password) {
+        // options.password === undefined: Checkbox nicht aktiviert → Original-Passwort beibehalten
+        // options.password === '':        Checkbox aktiviert, leer → Passwort entfernen
+        // options.password === 'xxx':     Checkbox aktiviert mit Wert → Neues Passwort setzen
+        const finalPassword = options.password !== undefined ? options.password : options.sourcePassword;
+        if (finalPassword) {
             try {
                 const XlsxPopulate = require('xlsx-populate');
                 const pwWorkbook = await XlsxPopulate.fromFileAsync(targetPath);
-                await pwWorkbook.toFileAsync(targetPath, { password: options.password });
+                await pwWorkbook.toFileAsync(targetPath, { password: finalPassword });
+                console.log(`[ExcelJS Writer] Passwortschutz angewendet (${options.password !== undefined ? 'neues Passwort' : 'Original beibehalten'})`);
             } catch (pwError) {
                 console.error('[ExcelJS Writer] Fehler beim Passwortschutz:', pwError.message);
                 // Datei wurde bereits gespeichert, nur ohne Passwort
+            }
+        }
+        
+        // Temporäre entschlüsselte Datei aufräumen
+        if (tempDecryptedPath) {
+            try {
+                require('fs').unlinkSync(tempDecryptedPath);
+            } catch (cleanupErr) {
+                // Ignorieren - temp Datei wird vom OS aufgeräumt
             }
         }
         
@@ -928,6 +960,12 @@ async function exportMultipleSheetsWithExcelJS(sourcePath, targetPath, sheets, o
         
     } catch (error) {
         console.error('[ExcelJS Writer] Fehler:', error);
+        // Temporäre entschlüsselte Datei aufräumen
+        if (tempDecryptedPath) {
+            try {
+                require('fs').unlinkSync(tempDecryptedPath);
+            } catch (cleanupErr) { /* ignore */ }
+        }
         return { success: false, error: error.message };
     }
 }
