@@ -16900,13 +16900,16 @@
                                 exportRichTextCells = remappedRichText;
                             }
                             
-                            // Bei Filter: Filtern = Löschen der nicht-sichtbaren Zeilen
-                            // Nutzt denselben Pipeline-Pfad wie manuelles Zeilen-Löschen,
-                            // der alle Cell-Styles (Fill, Font, Alignment, Border, NumberFormat) preserviert.
+                            // Bei Filter: rowMapping erstellen für physische Zeilen-Umordnung
+                            // rowMapping[newPos] = originalPos (0-basiert für Datenzeilen)
+                            // Nutzt den schnellen ZIP/REGEX-Pfad der direkt auf XML arbeitet
+                            // und alle Cell-Styles (Fill, Font, Alignment, Border) preserviert.
                             let filterRowMapping = null;
                             if (isFiltered && !hasRowMoves) {
-                                // KEIN filterRowMapping — stattdessen deletedRowIndices (siehe unten)
-                                // Frontend-Styles werden nicht gesendet — Pipeline übernimmt sie aus der Original-Datei
+                                filterRowMapping = explorerState.filteredData.map(item => item.originalIndex);
+                                
+                                // Bei Filter-Mapping: KEINE Frontend-Styles senden
+                                // Die Excel-Styles werden durch physische XML-Umordnung übernommen
                                 exportCellStyles = {};
                                 exportCellFormulas = {};
                                 exportCellHyperlinks = {};
@@ -16984,19 +16987,6 @@
                                 if ('originalIndices' in rowDeletedInfo && Array.isArray(rowDeletedInfo.originalIndices)) {
                                     deletedRowIndices = rowDeletedInfo.originalIndices;
                                 }
-                            }
-                            
-                            // Bei Filter: Gefilterte Zeilen als "gelöscht" behandeln
-                            // Filtern = Löschen der nicht-sichtbaren Zeilen
-                            // So wird der bewährte Pipeline-Pfad genutzt, der Formatierung preserviert
-                            if (isFiltered && !hasRowMoves) {
-                                const filteredSet = new Set(explorerState.filteredData.map(item => item.originalIndex));
-                                for (let i = 0; i < explorerState.data.length; i++) {
-                                    if (!filteredSet.has(i)) {
-                                        deletedRowIndices.push(i);
-                                    }
-                                }
-                                console.log(`[Export] Filter als Löschung: ${deletedRowIndices.length} Zeilen werden gelöscht, ${explorerState.filteredData.length} bleiben`);
                             }
                             
                             // Hole Info über eingefügte Zeilen falls vorhanden
