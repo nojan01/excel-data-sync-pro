@@ -193,7 +193,7 @@ def _build_col_map_for_reorder(column_order):
 # XML-TRANSFORMATIONEN
 # =============================================================================
 
-def _apply_col_map_to_sheet_xml(sheet_xml, col_map):
+def _apply_col_map_to_sheet_xml(sheet_xml, col_map, skip_sort=False):
     """
     Wendet ein Spalten-Mapping auf alle relevanten Elemente im Worksheet-XML an.
     
@@ -206,6 +206,11 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map):
     - <autoFilter ref="A1:J100">
     - <hyperlink ref="A2">
     - <dataValidation sqref="B2:B100">
+    - <xm:sqref> in <extLst> (x14 CF, Sparklines etc.)
+    
+    Args:
+        skip_sort: Wenn True, wird die Zell-Sortierung übersprungen.
+                   Nützlich wenn der Aufrufer selbst sortiert (Performance).
     """
     
     # ---- 0. <dimension ref="A1:J100"> aktualisieren ----
@@ -427,8 +432,46 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map):
     # definedName-Werte wie "Sheet1!$A$1:$J$100" in workbook.xml
     # werden hier NICHT geändert (workbook.xml wird separat behandelt)
     
+    # ---- 9b. <xm:sqref> in <extLst> (x14 CF, Sparklines, Data Bars etc.) ----
+    # Excel 2016+ speichert erweiterte Conditional Formatting in <extLst> mit
+    # <xm:sqref>-Elementen statt sqref-Attributen. Diese müssen ebenfalls
+    # remapped werden, sonst erkennt Excel die Inkonsistenz zwischen Standard-CF
+    # und Extended-CF und repariert die Datei.
+    def _remap_xm_sqref(m):
+        sqref = m.group(1)
+        new_sqref = _remap_sqref(sqref, col_map)
+        if new_sqref is None:
+            return ''  # Alle Spalten gelöscht → Element entfernen
+        return f'<xm:sqref>{new_sqref}</xm:sqref>'
+    
+    sheet_xml = re.sub(r'<xm:sqref>([^<]+)</xm:sqref>', _remap_xm_sqref, sheet_xml)
+    
+    # Auch xm:f Formeln mit Zellreferenzen in extLst anpassen
+    # (z.B. Data Bars: <xm:f>Sheet1!$A$2</xm:f>)
+    def _remap_xm_f(m):
+        formula = m.group(1)
+        # Nur einfache Zellreferenzen/Ranges remappen (Sheet!$A$1:$B$10 oder $A$1:$B$10)
+        # Komplexe Formeln mit Funktionen lassen wir unverändert
+        if re.match(r'^[^(]+!?\$?[A-Z]+\$?\d+(:\$?[A-Z]+\$?\d+)?$', formula):
+            # Extrahiere optional Sheet-Prefix
+            if '!' in formula:
+                sheet_prefix, ref_part = formula.rsplit('!', 1)
+                new_ref = _remap_range_ref(ref_part, col_map) if ':' in ref_part else _remap_col_in_ref(ref_part, col_map)
+                if new_ref is None:
+                    return ''  # Referenz gelöscht
+                return f'<xm:f>{sheet_prefix}!{new_ref}</xm:f>'
+            else:
+                new_ref = _remap_range_ref(formula, col_map) if ':' in formula else _remap_col_in_ref(formula, col_map)
+                if new_ref is None:
+                    return ''
+                return f'<xm:f>{new_ref}</xm:f>'
+        return m.group(0)  # Komplexe Formel unverändert lassen
+    
+    sheet_xml = re.sub(r'<xm:f>([^<]+)</xm:f>', _remap_xm_f, sheet_xml)
+    
     # ---- 10. Zellen innerhalb jeder <row> nach Spalte sortieren ----
-    sheet_xml = _sort_cells_in_rows(sheet_xml)
+    if not skip_sort:
+        sheet_xml = _sort_cells_in_rows(sheet_xml)
     
     return sheet_xml
 
@@ -910,8 +953,12 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
             modified_files = {}  # ZIP-Pfad → neuer Inhalt (bytes)
             
             if col_map:
-                # Sheet-XML
-                sheet_content = _apply_col_map_to_sheet_xml(sheet_content, col_map)
+                # Sheet-XML — skip_sort=True weil wir nach allen Änderungen
+                # gezielt sortieren (Performance: vermeidet doppelte Sortierung)
+                needs_reorder_sort = bool(column_order and any(
+                    new_idx != old_idx for new_idx, old_idx in enumerate(column_order)))
+                sheet_content = _apply_col_map_to_sheet_xml(
+                    sheet_content, col_map, skip_sort=True)
                 sys.stderr.write(f"[XML_COL_OPS] Sheet-XML angepasst\n")
                 
                 # Neue Zellen bei Insert einfügen
@@ -991,8 +1038,50 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                             sheet_content, flags=re.DOTALL)
                     
                     # Nach dem Einfügen: Zellen sortieren
-                    sheet_content = _sort_cells_in_rows(sheet_content)
+                    if needs_reorder_sort:
+                        # Bei Reorder + Insert müssen ALLE Zellen sortiert werden,
+                        # da die Spalten-Positionen sich beliebig ändern können
+                        sheet_content = _sort_cells_in_rows(sheet_content)
+                        sys.stderr.write(f"[XML_COL_OPS] Volle Zell-Sortierung nach Reorder+Insert\n")
+                    elif new_cells_by_row:
+                        # Nur betroffene Zeilen sortieren (Performance)
+                        # Bei Insert-only sind die existierenden Zellen durch Rechts-Shift
+                        # noch in korrekter Reihenfolge — nur Zeilen mit neuen Zellen
+                        # müssen sortiert werden.
+                        target_rows = set(new_cells_by_row.keys())
+                        
+                        def _sort_cells_in_target_row(row_match):
+                            row_tag = row_match.group(1)
+                            row_content = row_match.group(2)
+                            row_num_m = re.search(r'r="(\d+)"', row_tag)
+                            if not row_num_m or int(row_num_m.group(1)) not in target_rows:
+                                return row_match.group(0)  # Unverändert
+                            
+                            cells = []
+                            for cm in re.finditer(
+                                r'<c\s[^>]*r="([A-Z]+)(\d+)"[^>]*/>'
+                                r'|<c\s[^>]*r="([A-Z]+)(\d+)"[^>]*>.*?</c>',
+                                row_content, re.DOTALL):
+                                col_letter = cm.group(1) or cm.group(3)
+                                col_num = _col_letter_to_num(col_letter)
+                                cells.append((col_num, cm.group(0)))
+                            if not cells:
+                                return row_match.group(0)
+                            cells.sort(key=lambda x: x[0])
+                            sorted_content = ''.join(cell_xml for _, cell_xml in cells)
+                            return f'{row_tag}{sorted_content}</row>'
+                        
+                        sheet_content = re.sub(
+                            r'(<row\s[^>]*>)(.*?)</row>',
+                            _sort_cells_in_target_row,
+                            sheet_content, flags=re.DOTALL)
+                    
                     sys.stderr.write(f"[XML_COL_OPS] {len(new_cells_by_row)} Zeilen mit neuen Zellen eingefügt\n")
+                elif needs_reorder_sort:
+                    # Bei Reorder (ohne Insert) müssen alle Zellen sortiert werden,
+                    # da die Spalten-Positionen sich beliebig ändern können
+                    sheet_content = _sort_cells_in_rows(sheet_content)
+                    sys.stderr.write(f"[XML_COL_OPS] Volle Zell-Sortierung nach Spalten-Reorder\n")
                 
                 # Table-XMLs anpassen
                 for rid, table_path in table_files.items():
