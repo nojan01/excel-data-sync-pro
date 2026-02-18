@@ -3218,6 +3218,22 @@ def _filter_rows_xml_regex(sheet_content, row_mapping, new_max_row, hidden_rows=
         sheet_content
     )
     
+    # 6b. filterColumn und sortState aus autoFilter entfernen
+    # Nach physischem Filtern/Umordnen sind die Filter-Kriterien bereits angewandt.
+    # Stale filterColumn-Einträge können dazu führen, dass Excel die Daten
+    # erneut filtert und dadurch Zeilen falsch versteckt.
+    sheet_content = re.sub(
+        r'<filterColumn\s[^>]*/>\s*', '', sheet_content)
+    sheet_content = re.sub(
+        r'<filterColumn\s[^>]*>.*?</filterColumn>\s*',
+        '', sheet_content, flags=re.DOTALL)
+    sheet_content = re.sub(
+        r'<sortState[^>]*>.*?</sortState>\s*',
+        '', sheet_content, flags=re.DOTALL)
+    # Leere autoFilter bereinigen (nur noch ref, keine Kinder)
+    sheet_content = re.sub(
+        r'(<autoFilter\s[^>]*?)>\s*</autoFilter>', r'\1/>', sheet_content)
+    
     # 7. sqref-Bereiche renummerieren (Conditional Formatting, DataValidation, etc.)
     # Ohne Renummerierung zeigen CF-Regeln auf falsche Zeilen nach dem Filtern
     # → falsche Farben, falsche Validierungen.
@@ -3239,27 +3255,30 @@ def _filter_rows_xml_regex(sheet_content, row_mapping, new_max_row, hidden_rows=
                 new_sr = row_renumber.get(sr)
                 if new_sr is None:
                     # Startzeile wurde weggefiltert — nächste verfügbare gemappte Zeile suchen
-                    for probe in range(sr, max(row_renumber.keys()) + 1 if row_renumber else sr + 1):
+                    # WICHTIG: Nur innerhalb des Original-Bereichs [sr, er] suchen!
+                    # Sonst werden CF-Regeln auf Zellen angewandt, die nie im Bereich waren.
+                    for probe in range(sr, er + 1):
                         if probe in row_renumber:
                             new_sr = row_renumber[probe]
                             break
                 if new_sr is None:
-                    continue  # Bereich komplett außerhalb → weglassen
+                    continue  # Bereich komplett weggefiltert → weglassen
                 # Endzeile renummerieren
                 new_er = row_renumber.get(er)
                 if new_er is None:
                     # Endzeile nicht im Mapping → nächste verfügbare von hinten suchen
-                    for probe in range(er, 0, -1):
+                    # WICHTIG: Nur innerhalb des Original-Bereichs [sr, er] suchen!
+                    for probe in range(er, sr - 1, -1):
                         if probe in row_renumber:
                             new_er = row_renumber[probe]
                             break
                 if new_er is None:
-                    new_er = new_max_row
+                    continue  # Keine gültige Endzeile im Bereich → weglassen
                 if new_sr > new_max_row:
                     continue
                 new_er = min(new_er, new_max_row)
                 if new_sr > new_er:
-                    new_sr, new_er = new_er, new_sr
+                    continue  # Ungültiger Bereich nach Renummerierung → weglassen
                 new_parts.append(f"{sc}{new_sr}:{ec}{new_er}")
             else:
                 # Einzelne Zelle wie "A5"
@@ -3283,6 +3302,15 @@ def _filter_rows_xml_regex(sheet_content, row_mapping, new_max_row, hidden_rows=
         _renumber_sqref,
         sheet_content
     )
+    
+    # 7b. conditionalFormatting-Elemente mit leerem sqref entfernen
+    # Diese entstehen wenn alle Zeilen eines CF-Bereichs weggefiltert wurden.
+    sheet_content = re.sub(
+        r'<conditionalFormatting\s+sqref=""[^>]*>.*?</conditionalFormatting>\s*',
+        '', sheet_content, flags=re.DOTALL)
+    sheet_content = re.sub(
+        r'<conditionalFormatting\s+sqref=""[^>]*/>\s*',
+        '', sheet_content)
     
     # 8. <mergeCells> renummerieren
     # Merge-Referenzen zeigen auf alte Zeilennummern → müssen aktualisiert werden
