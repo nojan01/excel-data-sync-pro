@@ -4468,12 +4468,26 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 max_col = ws.max_column
                 original_max_row = ws.max_row
                 
-                # SCHRITT 1: Alle Original-Zeilen komplett speichern (vor jeder Änderung!)
-                sys.stderr.write(f"[PIPELINE] Schritt 1: Speichere alle {original_max_row - 1} Original-Zeilen\n")
+                deleted_set = set(deleted_rows) if deleted_rows else set()
+                is_pure_delete = bool(deleted_set) and not (row_order and len(row_order) > 0)
+                
+                # SCHRITT 1: Original-Zeilen speichern (vor jeder Änderung!)
+                # OPTIMIERUNG: Bei reinem Löschen (Filter) nur die behaltenen Zeilen sichern
+                if is_pure_delete:
+                    keep_set = set(range(original_max_row - 1)) - deleted_set
+                    sys.stderr.write(f"[PIPELINE] Schritt 1: Speichere {len(keep_set)} von {original_max_row - 1} Zeilen (nur behaltene)\n")
+                else:
+                    keep_set = None  # Alle sichern
+                    sys.stderr.write(f"[PIPELINE] Schritt 1: Speichere alle {original_max_row - 1} Original-Zeilen\n")
+                
                 all_rows_backup = {}
                 row_heights_backup = {}
                 for excel_row in range(2, original_max_row + 1):  # Ab Zeile 2 (nach Header)
                     row_idx = excel_row - 2  # 0-basierter Index
+                    
+                    # Bei reinem Löschen: Überspringe Zeilen die gelöscht werden
+                    if keep_set is not None and row_idx not in keep_set:
+                        continue
                     all_rows_backup[row_idx] = {}
                     
                     # Zeilenhöhe sichern
@@ -4500,8 +4514,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 # row_order enthält: [neuIdx] = altIdx (nach Löschen!)
                 # deleted_rows enthält: Original-Indizes der gelöschten Zeilen
                 
-                deleted_set = set(deleted_rows) if deleted_rows else set()
-                
                 if row_order and len(row_order) > 0:
                     # row_order gibt die neue Reihenfolge vor
                     # Die Indizes in row_order beziehen sich auf Zeilen NACH dem Löschen
@@ -4509,7 +4521,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     
                     # Erstelle Mapping: Index nach Löschen → Original-Index
                     remaining_original_indices = []
-                    for orig_idx in range(len(all_rows_backup)):
+                    for orig_idx in range(original_max_row - 1):
                         if orig_idx not in deleted_set:
                             remaining_original_indices.append(orig_idx)
                     
@@ -4523,7 +4535,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     sys.stderr.write(f"[PIPELINE] Schritt 2: Finale Zeilen-Reihenfolge (Original-Indizes): {final_row_order[:10]}...\n")
                 else:
                     # Keine Verschiebung, nur Löschen - behalte Reihenfolge der nicht-gelöschten
-                    final_row_order = [idx for idx in range(len(all_rows_backup)) if idx not in deleted_set]
+                    final_row_order = sorted(all_rows_backup.keys())
                     sys.stderr.write(f"[PIPELINE] Schritt 2: Nur Löschen, behalte {len(final_row_order)} Zeilen\n")
                 
                 # SCHRITT 3: Überschüssige Zeilen löschen (von hinten)
@@ -4532,9 +4544,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 
                 if current_data_rows > target_row_count:
                     rows_to_delete = current_data_rows - target_row_count
-                    sys.stderr.write(f"[PIPELINE] Schritt 3: Lösche {rows_to_delete} überschüssige Zeilen\n")
-                    for _ in range(rows_to_delete):
-                        ws.delete_rows(ws.max_row, 1)
+                    sys.stderr.write(f"[PIPELINE] Schritt 3: Lösche {rows_to_delete} überschüssige Zeilen (bulk)\n")
+                    # BULK-Löschung: Alle Zeilen in EINEM Aufruf löschen (statt einzeln)
+                    # Einzelne delete_rows() Aufrufe sind extrem langsam bei openpyxl
+                    first_delete_row = target_row_count + 2  # +2 wegen Header
+                    ws.delete_rows(first_delete_row, rows_to_delete)
                 
                 # SCHRITT 4: Zeilen in neuer Reihenfolge schreiben
                 sys.stderr.write(f"[PIPELINE] Schritt 4: Schreibe {len(final_row_order)} Zeilen in neuer Reihenfolge\n")
