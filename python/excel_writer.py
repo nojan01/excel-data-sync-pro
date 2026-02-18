@@ -4815,16 +4815,20 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             
             # ===== SCHRITT 12: Tables reparieren =====
             sys.stderr.write(f"[PIPELINE] Schritt 12: Tables reparieren\n")
+            new_max_row = ws.max_row  # Aktuelle max_row NACH Zeilen-Löschung
             table_changes = {}
             for table_name in ws.tables:
                 table = ws.tables[table_name]
                 min_col, min_row, max_col, max_row = range_boundaries(table.ref)
                 
                 new_max_col = ws.max_column
-                new_ref = f"{get_column_letter(min_col)}{min_row}:{get_column_letter(new_max_col)}{max_row}"
+                # WICHTIG: max_row auf aktuelle Zeilenanzahl anpassen (nach Zeilen-Löschung)
+                adjusted_max_row = min(max_row, new_max_row) if has_any_row_change else max_row
+                new_ref = f"{get_column_letter(min_col)}{min_row}:{get_column_letter(new_max_col)}{adjusted_max_row}"
                 table.ref = new_ref
                 if table.autoFilter:
                     table.autoFilter.ref = new_ref
+                sys.stderr.write(f"[PIPELINE] Table '{table_name}': ref={new_ref} (max_row: {max_row} -> {adjusted_max_row})\n")
                 
                 # tableColumns aus Header-Zellen neu aufbauen
                 new_columns = []
@@ -4835,6 +4839,14 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 
                 table.tableColumns = new_columns
                 table_changes[table_name] = {'ref': table.ref, 'columns': [col.name for col in new_columns]}
+            
+            # Sheet-level AutoFilter anpassen (nach Zeilen-Löschung)
+            if has_any_row_change and ws.auto_filter and ws.auto_filter.ref:
+                af_min_col, af_min_row, af_max_col, af_max_row = range_boundaries(ws.auto_filter.ref)
+                adjusted_af_max_row = min(af_max_row, new_max_row)
+                new_af_ref = f"{get_column_letter(af_min_col)}{af_min_row}:{get_column_letter(af_max_col)}{adjusted_af_max_row}"
+                ws.auto_filter.ref = new_af_ref
+                sys.stderr.write(f"[PIPELINE] AutoFilter: {ws.auto_filter.ref} (max_row: {af_max_row} -> {adjusted_af_max_row})\n")
             
             # ===== SCHRITT 13: EINMAL speichern =====
             sys.stderr.write(f"[PIPELINE] Schritt 13: Speichern\n")
