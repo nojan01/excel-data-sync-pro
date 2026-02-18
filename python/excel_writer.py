@@ -5780,6 +5780,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                 hidden_rows=hidden_rows
                             )
                             
+                            # Versteckte Spalten anwenden
+                            if hidden_columns:
+                                MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+                                sheet_content = _set_hidden_cols_in_xml(sheet_content, hidden_columns, MAIN_NS)
+                                sys.stderr.write(f"[ZIP-ANSATZ] {len(hidden_columns)} Spalten versteckt per XML\n")
+                            
                             # Zell-Edits direkt im String anwenden (via _batch_replace_cells_in_xml)
                             real_edits_zip = {k: v for k, v in edited_cells.items() if not k.startswith('_')} if edited_cells else {}
                             if real_edits_zip:
