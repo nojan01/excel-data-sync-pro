@@ -4844,7 +4844,20 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     num_cols = len(column_order)
                     max_row = ws.max_row
                     
-                    # Alle Spalten in temp_columns speichern
+                    # Spaltenbreiten sichern
+                    col_widths_backup = {}
+                    for col_idx in range(num_cols):
+                        col_letter = get_column_letter(col_idx + 1)
+                        if col_letter in ws.column_dimensions:
+                            dim = ws.column_dimensions[col_letter]
+                            col_widths_backup[col_idx] = {
+                                'width': dim.width,
+                                'hidden': dim.hidden,
+                                'bestFit': dim.bestFit,
+                                'customWidth': dim.customWidth
+                            }
+                    
+                    # Alle Spalten in temp_columns speichern (inkl. Formatierung!)
                     temp_columns = {}
                     for old_col_idx in range(num_cols):
                         old_excel_col = old_col_idx + 1
@@ -4856,6 +4869,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                 continue
                             temp_columns[old_col_idx][row] = {
                                 'value': cell.value,
+                                'fill': copy(cell.fill),
+                                'font': copy(cell.font),
+                                'alignment': copy(cell.alignment),
+                                'border': copy(cell.border),
+                                'number_format': cell.number_format,
                                 'hyperlink': cell.hyperlink.target if cell.hyperlink else None,
                             }
                     
@@ -4871,8 +4889,28 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             if isinstance(cell, MergedCell):
                                 continue
                             cell.value = data_item['value']
+                            cell.fill = data_item['fill']
+                            cell.font = data_item['font']
+                            cell.alignment = data_item['alignment']
+                            cell.border = data_item['border']
+                            cell.number_format = data_item['number_format'] or 'General'
                             if data_item['hyperlink']:
                                 cell.hyperlink = data_item['hyperlink']
+                            elif cell.hyperlink:
+                                cell.hyperlink = None
+                    
+                    # Spaltenbreiten in neuer Reihenfolge wiederherstellen
+                    for new_col_idx, old_col_idx in enumerate(column_order):
+                        new_col_letter = get_column_letter(new_col_idx + 1)
+                        if old_col_idx in col_widths_backup:
+                            wb_data = col_widths_backup[old_col_idx]
+                            ws.column_dimensions[new_col_letter].width = wb_data['width']
+                            if wb_data.get('hidden'):
+                                ws.column_dimensions[new_col_letter].hidden = wb_data['hidden']
+                            if wb_data.get('bestFit'):
+                                ws.column_dimensions[new_col_letter].bestFit = wb_data['bestFit']
+                            if wb_data.get('customWidth'):
+                                ws.column_dimensions[new_col_letter].customWidth = wb_data['customWidth']
             
             # ===== SCHRITT 10: Versteckte Spalten =====
             sys.stderr.write(f"[PIPELINE] Schritt 10: Spalten verstecken\n")
