@@ -946,12 +946,11 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                     safeLog(`[Python] Spalten-Ops für "${sheet.sheetName}" erfolgreich (${colResult.method})`);
                 }
                 
-            } else if (hasColOps && !hasRowOps && 
-                       sheet.changedCells && Object.keys(sheet.changedCells).some(k => !k.startsWith('_'))) {
-                // SPALTEN + ZELL-EDITS: Erst Spalten via XML-DIREKT, dann Zell-Edits via FALL 3a
-                // Ohne diese Trennung blockiert has_cell_edits den XML-DIREKT-Pfad,
-                // und der openpyxl-Roundtrip zerstört AutoFilter/Tabelle.
-                safeLog(`[Python] Spalten+Zell-Edits: Erst Spalten, dann Zell-Edits für "${sheet.sheetName}"`);
+            } else if (hasColOps && !hasRowOps) {
+                // SPALTEN-OPERATIONEN (evtl. mit Zell-Edits): Erst Spalten via XML-DIREKT, dann Zell-Edits
+                // WICHTIG: Auch bei reinen Spalten-Ops (ohne Zell-Edits) MUSS dieser Pfad genommen werden!
+                // Der "else"-Branch sendet cellStyles/cellFonts/mergedCells mit → blockiert XML-DIREKT.
+                safeLog(`[Python] Spalten-Ops (+ evtl. Zell-Edits): Erst Spalten, dann Rest für "${sheet.sheetName}"`);
                 
                 // Separiere echte Zell-Edits von Marker-Einträgen (_columnDeleted etc.)
                 const onlyCellEdits = {};
@@ -983,7 +982,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                         deletedRowIndices: [],
                         insertedRowInfo: null,
                         rowOrder: null,
-                        hiddenColumns: [],
+                        hiddenColumns: sheet.hiddenColumns || [],  // XML-DIREKT kann hidden columns direkt setzen
                         hiddenRows: [],
                         rowMapping: null,
                         fromFile: false,
@@ -1011,7 +1010,6 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                 // originalPath = targetPath → Pass 1 hat Spalten-Ops bereits in targetPath
                 const hasCellWork = Object.keys(onlyCellEdits).length > 0 ||
                     (sheet.rowHighlights && Object.keys(sheet.rowHighlights).length > 0) ||
-                    (sheet.hiddenColumns && sheet.hiddenColumns.length > 0) ||
                     (sheet.hiddenRows && sheet.hiddenRows.length > 0) ||
                     (sheet.clearedRowHighlights && sheet.clearedRowHighlights.length > 0) ||
                     sheet.hasFormatChanges;
@@ -1036,7 +1034,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                             deletedRowIndices: [],
                             insertedRowInfo: null,
                             rowOrder: null,
-                            hiddenColumns: sheet.hiddenColumns || [],
+                            hiddenColumns: [],  // Bereits in SCHRITT 1 via XML-DIREKT gesetzt
                             hiddenRows: sheet.hiddenRows || [],
                             rowMapping: null,
                             fromFile: false,
