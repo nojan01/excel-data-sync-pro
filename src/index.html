@@ -8370,6 +8370,8 @@
             rowOperationsQueue: [],  // [{type: 'delete', originalIndex: X}, {type: 'insert', position: X}]
             // Pending Sheet-Operationen (Offline-Modus: erst beim Export anwenden)
             pendingSheetOperations: [],  // [{type: 'add'|'delete'|'rename'|'clone'|'move'|'visibility', ...params}]
+            // Mapping: aktueller Sheet-Name → Original-Name auf Disk (für Disk-Reads nach Umbenennung)
+            sheetDiskNameMap: new Map(),
             // LIVE SESSION MODE - Operationen werden sofort in Excel ausgeführt
             liveSessionActive: false,  // true wenn Live-Session aktiv ist
             liveSessionReady: false,   // true wenn Session bereit für Operationen
@@ -9412,6 +9414,12 @@
                     explorerState.sheetDataCache.set(newName, cachedEntry);
                 }
                 
+                // Disk-Name-Mapping aktualisieren (für beide Modi: live & offline)
+                // Falls das Sheet bereits vorher umbenannt wurde, den Original-Disk-Namen weiterverwenden
+                const diskName = explorerState.sheetDiskNameMap.get(selectedSheetForManagement) || selectedSheetForManagement;
+                explorerState.sheetDiskNameMap.delete(selectedSheetForManagement);
+                explorerState.sheetDiskNameMap.set(newName, diskName);
+                
                 const wasActive = explorerState.selectedSheet === selectedSheetForManagement;
                 if (wasActive) {
                     explorerState.selectedSheet = newName;
@@ -9688,6 +9696,7 @@
             explorerState.columnOperationsQueue = [];  // Reset Queue
             explorerState.rowOperationsQueue = [];  // Reset Queue
             explorerState.pendingSheetOperations = [];  // Reset Pending Sheet Ops
+            explorerState.sheetDiskNameMap = new Map();  // Reset Disk-Name-Mapping
             
             // UI zurücksetzen
             if (elements.explorerSheetSelect) {
@@ -13435,24 +13444,12 @@
                 return;
             }
             
-            // Offline-Modus: Prüfe ob das Sheet umbenannt wurde (pendingSheetOperations)
+            // Prüfe ob das Sheet umbenannt wurde (Live & Offline)
             // Die Datei auf Disk hat noch den alten Namen → wir müssen den Original-Namen verwenden
             let diskSheetName = sheetName;
-            if (explorerState.pendingSheetOperations.length > 0) {
-                let resolved = true;
-                while (resolved) {
-                    resolved = false;
-                    for (const op of explorerState.pendingSheetOperations) {
-                        if (op.type === 'rename' && op.newName === diskSheetName) {
-                            diskSheetName = op.oldName;
-                            resolved = true;
-                            break;
-                        }
-                    }
-                }
-                if (diskSheetName !== sheetName) {
-                    console.log(`[loadExplorerSheet] Sheet "${sheetName}" wurde offline umbenannt → lese als "${diskSheetName}" von Disk`);
-                }
+            if (explorerState.sheetDiskNameMap.has(sheetName)) {
+                diskSheetName = explorerState.sheetDiskNameMap.get(sheetName);
+                console.log(`[loadExplorerSheet] Sheet "${sheetName}" wurde umbenannt → lese als "${diskSheetName}" von Disk`);
             }
             
             // ExcelJS zum Lesen (xlwings wird nur zum Schreiben verwendet)
@@ -17468,6 +17465,7 @@
                             explorerState.rowMapping = null;
                             explorerState.affectedRows?.clear();
                             explorerState.pendingSheetOperations = [];
+                            explorerState.sheetDiskNameMap.clear();
                             
                             // Sortierung wiederherstellen
                             if (currentSort.column !== null) {
@@ -17508,6 +17506,7 @@
                             explorerState.affectedRows?.clear();
                             explorerState.rowMapping = null;
                             explorerState.pendingSheetOperations = [];
+                            explorerState.sheetDiskNameMap.clear();
                             explorerState.columnOperationsQueue = [];
                             explorerState.rowOperationsQueue = [];
                             
@@ -17535,6 +17534,7 @@
                     // unabhängig davon welcher Export-Pfad (Live/Fallback/Strukturell) genommen wurde
                     explorerState.editedCells.clear();
                     explorerState.pendingSheetOperations = [];
+                    explorerState.sheetDiskNameMap.clear();
                     explorerState.columnOperationsQueue = [];
                     explorerState.rowOperationsQueue = [];
                     explorerState.affectedRows?.clear();
