@@ -9397,12 +9397,7 @@
                     const idx = explorerState.sheets.indexOf(selectedSheetForManagement);
                     if (idx >= 0) explorerState.sheets[idx] = newName;
                     explorerState.pendingSheetOperations.push({ type: 'rename', oldName: selectedSheetForManagement, newName: newName });
-                    // Cache-Key umhängen
-                    const cached = explorerState.sheetDataCache.get(selectedSheetForManagement);
-                    if (cached) {
-                        explorerState.sheetDataCache.delete(selectedSheetForManagement);
-                        explorerState.sheetDataCache.set(newName, cached);
-                    }
+                    // Cache-Key wird unten zentral umgehängt (für beide Modi)
                     // hiddenSheets aktualisieren
                     if (explorerState.hiddenSheets.has(selectedSheetForManagement)) {
                         explorerState.hiddenSheets.delete(selectedSheetForManagement);
@@ -9410,9 +9405,21 @@
                     }
                 }
                 
+                // Cache-Key umhängen (für beide Modi: live & offline)
+                const cachedEntry = explorerState.sheetDataCache.get(selectedSheetForManagement);
+                if (cachedEntry) {
+                    explorerState.sheetDataCache.delete(selectedSheetForManagement);
+                    explorerState.sheetDataCache.set(newName, cachedEntry);
+                }
+                
                 const wasActive = explorerState.selectedSheet === selectedSheetForManagement;
                 if (wasActive) {
                     explorerState.selectedSheet = newName;
+                    // Aktive Sheet-Daten sofort im Cache sichern (auch ohne Edits),
+                    // damit beim Zurückwechseln die Daten nicht von Disk gelesen werden müssen
+                    if (explorerState.data.length > 0) {
+                        saveCurrentSheetToCache();
+                    }
                 }
                 selectedSheetForManagement = newName;
                 updateSheetDropdown();
@@ -13428,10 +13435,30 @@
                 return;
             }
             
+            // Offline-Modus: Prüfe ob das Sheet umbenannt wurde (pendingSheetOperations)
+            // Die Datei auf Disk hat noch den alten Namen → wir müssen den Original-Namen verwenden
+            let diskSheetName = sheetName;
+            if (explorerState.pendingSheetOperations.length > 0) {
+                let resolved = true;
+                while (resolved) {
+                    resolved = false;
+                    for (const op of explorerState.pendingSheetOperations) {
+                        if (op.type === 'rename' && op.newName === diskSheetName) {
+                            diskSheetName = op.oldName;
+                            resolved = true;
+                            break;
+                        }
+                    }
+                }
+                if (diskSheetName !== sheetName) {
+                    console.log(`[loadExplorerSheet] Sheet "${sheetName}" wurde offline umbenannt → lese als "${diskSheetName}" von Disk`);
+                }
+            }
+            
             // ExcelJS zum Lesen (xlwings wird nur zum Schreiben verwendet)
-            console.log(`[loadExplorerSheet] readExcelSheet starten für "${sheetName}"...`);
+            console.log(`[loadExplorerSheet] readExcelSheet starten für "${diskSheetName}"...`);
             const _sheetStart = Date.now();
-            const result = await window.electronAPI.readExcelSheet(explorerState.filePath, sheetName, explorerState.filePassword);
+            const result = await window.electronAPI.readExcelSheet(explorerState.filePath, diskSheetName, explorerState.filePassword);
             const _sheetMs = Date.now() - _sheetStart;
             
             if (!result.success) {
