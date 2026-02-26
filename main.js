@@ -1581,7 +1581,7 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
         // Standard-Pfad setzen (hilft bei Dialog-Größenproblemen unter Windows)
         const defaultPath = options.defaultPath || app.getPath('documents');
 
-        const result = await dialog.showOpenDialog({
+        const result = await dialog.showOpenDialog(mainWindow, {
             title: options.title || 'Datei oeffnen',
             defaultPath: defaultPath,
             filters: options.filters || [
@@ -1623,7 +1623,7 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
         // Standard-Pfad setzen falls nicht angegeben
         const defaultPath = options.defaultPath || app.getPath('documents');
 
-        const result = await dialog.showSaveDialog({
+        const result = await dialog.showSaveDialog(mainWindow, {
             title: options.title || 'Datei speichern',
             defaultPath: defaultPath,
             filters: options.filters || [
@@ -1662,7 +1662,7 @@ ipcMain.handle('dialog:openFolder', async (event, options) => {
     try {
         const defaultPath = options.defaultPath || app.getPath('documents');
 
-        const result = await dialog.showOpenDialog({
+        const result = await dialog.showOpenDialog(mainWindow, {
             title: options.title || 'Ordner auswaehlen',
             defaultPath: defaultPath,
             properties: ['openDirectory']

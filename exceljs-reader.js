@@ -268,6 +268,175 @@ function formatDateWithNumFmt(dt, numFmt) {
 }
 
 /**
+ * Formatiert einen numerischen Wert gemäß dem Excel numFmt-String.
+ * Buchhaltungs-/Währungsformate wie _-* #.##0,00 "€"_- oder #,##0.00 speichern
+ * intern volle Float-Präzision (z.B. 95.89556867501796), zeigen aber gerundet an (95,20 €).
+ * Diese Funktion erkennt Nachkommastellen, Tausendertrenner, Währungssymbole und
+ * gibt einen fertig formatierten String zurück.
+ *
+ * @param {number} value - Der numerische Zellwert
+ * @param {string} numFmt - Excel-Format-String (z.B. '#,##0.00', '_-* #.##0,00 "€"_-')
+ * @returns {string|number} Formatierter Wert als String (z.B. "95,20 €") oder Originalwert
+ */
+function roundNumericByFormat(value, numFmt) {
+    if (!numFmt || numFmt === 'General' || typeof value !== 'number' || !isFinite(value)) {
+        return value;
+    }
+
+    // --- 1. Währungssymbol extrahieren (VOR dem Bereinigen!) ---
+    let currencySymbol = '';
+    let currencyPosition = 'suffix'; // 'prefix' oder 'suffix'
+    
+    // Nur den positiven Format-Teil verwenden (vor erstem Semikolon)
+    const originalFmt = numFmt.split(';')[0];
+    
+    // Währungssymbol aus "€", "CHF", "$", etc. in Anführungszeichen
+    const quotedMatch = originalFmt.match(/"([^"]*[€$£¥₹₽CHFkr].*?)"|"(.*?[€$£¥₹₽].*?)"/i);
+    if (quotedMatch) {
+        currencySymbol = (quotedMatch[1] || quotedMatch[2]).trim();
+    }
+    // Währungssymbol aus [$€-de-DE] oder [$€] oder [$CHF-...] Locale-Codes
+    if (!currencySymbol) {
+        const localeMatch = originalFmt.match(/\[\$([^\-\]]+)/);
+        if (localeMatch) {
+            currencySymbol = localeMatch[1].trim();
+        }
+    }
+    // Einzelnes Währungszeichen ohne Quotes (z.B. #,##0.00€ oder €#,##0.00)
+    if (!currencySymbol) {
+        const bareMatch = originalFmt.match(/([€$£¥₹₽])/);
+        if (bareMatch) {
+            currencySymbol = bareMatch[1];
+        }
+    }
+    
+    // Position bestimmen: Symbol VOR oder NACH der Zahl?
+    if (currencySymbol) {
+        // Finde Position des Symbols relativ zu den Ziffernplatzhaltern
+        const symbolPos = originalFmt.indexOf(currencySymbol.charAt(0));
+        const firstDigit = originalFmt.search(/[0#]/);
+        if (symbolPos >= 0 && firstDigit >= 0 && symbolPos < firstDigit) {
+            currencyPosition = 'prefix';
+        }
+    }
+
+    // --- 2. Format bereinigen für Dezimalstellen-Erkennung ---
+    let fmt = originalFmt;
+    fmt = fmt.replace(/"[^"]*"/g, '');
+    fmt = fmt.replace(/\\./g, '');
+    fmt = fmt.replace(/\[[^\]]*\]/g, '');
+    fmt = fmt.replace(/_./g, '');
+    fmt = fmt.replace(/\*./g, '');
+
+    // --- 3. Tausendertrenner erkennen ---
+    // International: #,##0 (Komma = Tausender, Punkt = Dezimal)
+    // Deutsch:       #.##0 (Punkt = Tausender, Komma = Dezimal)
+    let useThousandSep = false;
+    let isGermanFormat = false;
+    
+    // Deutsches Format: Punkt als Tausendertrenner VOR Komma als Dezimaltrenner
+    if (/[0#]\.##[0#]/.test(fmt) || /[0#]\.[0#]{3}/.test(fmt)) {
+        // z.B. #.##0,00 → Punkt ist Tausender
+        if (fmt.includes(',')) {
+            isGermanFormat = true;
+            useThousandSep = true;
+        }
+    }
+    // Internationales Format: Komma als Tausendertrenner
+    if (/[0#],##[0#]/.test(fmt) || /[0#],[0#]{3}/.test(fmt)) {
+        if (!isGermanFormat) {
+            useThousandSep = true;
+        }
+    }
+
+    // --- 4. Prozent-Format ---
+    if (fmt.includes('%')) {
+        const percentMatch = fmt.match(/[0#]\.(0+)\s*%/) || fmt.match(/\.(0+)/);
+        if (percentMatch) {
+            const decimals = percentMatch[1].length;
+            const factor = Math.pow(10, decimals + 2);
+            return Math.round(value * factor) / factor;
+        }
+        return value;
+    }
+
+    // --- 5. Dezimalstellen erkennen und Wert formatieren ---
+    let decimals = -1;
+    
+    // Standard-Format (Punkt als Dezimaltrenner): 0.00, #,##0.00
+    let decimalMatch = fmt.match(/\.(0+)(?:[^0#]|$)/);
+    if (decimalMatch && !isGermanFormat) {
+        decimals = decimalMatch[1].length;
+    }
+
+    // Deutsches Format (Komma als Dezimaltrenner): #.##0,00
+    if (decimals < 0) {
+        decimalMatch = fmt.match(/,(0+)(?:[^0#]|$)/);
+        if (decimalMatch) {
+            const commaPos = fmt.indexOf(',');
+            const dotBefore = fmt.lastIndexOf('.', commaPos);
+            if (dotBefore >= 0) {
+                isGermanFormat = true;
+                useThousandSep = true;
+                decimals = decimalMatch[1].length;
+            }
+        }
+    }
+    
+    // Ganzzahl-Format (#,##0 oder 0)
+    if (decimals < 0 && /[0#]/.test(fmt) && /0/.test(fmt)) {
+        if (!fmt.includes('.') && !/,(0+)/.test(fmt)) {
+            decimals = 0;
+        }
+    }
+
+    if (decimals < 0) {
+        return value;
+    }
+
+    // --- 6. Zahl formatieren ---
+    const isNegative = value < 0;
+    const absValue = Math.abs(value);
+    const rounded = absValue.toFixed(decimals);
+    
+    let result;
+    if (useThousandSep) {
+        // Tausendertrenner einfügen
+        const parts = rounded.split('.');
+        const intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, isGermanFormat ? '.' : ',');
+        if (decimals > 0) {
+            const decSep = isGermanFormat ? ',' : '.';
+            result = intPart + decSep + parts[1];
+        } else {
+            result = intPart;
+        }
+    } else {
+        // Ohne Tausendertrenner, aber ggf. deutschen Dezimaltrenner
+        if (isGermanFormat && decimals > 0) {
+            result = rounded.replace('.', ',');
+        } else {
+            result = rounded;
+        }
+    }
+    
+    // Vorzeichen
+    if (isNegative) {
+        result = '-' + result;
+    }
+    
+    // Währungssymbol anfügen
+    if (currencySymbol) {
+        if (currencyPosition === 'prefix') {
+            result = currencySymbol + ' ' + result;
+        } else {
+            result = result + ' ' + currencySymbol;
+        }
+    }
+    
+    return result;
+}
+
+/**
  * Konvertiert Spalten-Buchstaben zu Index (A=0, B=1, ..., Z=25, AA=26, ...)
  * @param {string} letters - Spalten-Buchstaben (z.B. "A", "AA", "BC")
  * @returns {number} 0-basierter Spalten-Index
@@ -1203,6 +1372,11 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                         cellValue = formatDateWithNumFmt(cellValue, cell.numFmt || '');
                     }
                     
+                    // Numerische Werte gemäß numFmt runden (z.B. Buchhaltungsformat 95,90 € → 2 Nachkommastellen)
+                    if (typeof cellValue === 'number' && cell.numFmt) {
+                        cellValue = roundNumericByFormat(cellValue, cell.numFmt);
+                    }
+                    
                     // Objekte (RichText, Hyperlinks, etc.)
                     if (cell.value && typeof cell.value === 'object' && !(cell.value instanceof Date) && !cell.formula && !cell.value.formula) {
                         if (cell.value.richText) {
@@ -1492,6 +1666,11 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 // Date ist auch ein Objekt, würde sonst mit String() konvertiert werden
                 if (cellValue instanceof Date) {
                     cellValue = formatDateWithNumFmt(cellValue, cell.numFmt || '');
+                }
+                
+                // Numerische Werte gemäß numFmt runden (z.B. Buchhaltungsformat 95,90 € → 2 Nachkommastellen)
+                if (typeof cellValue === 'number' && cell.numFmt) {
+                    cellValue = roundNumericByFormat(cellValue, cell.numFmt);
                 }
                 
                 // SharedString-Referenz auflösen (Streaming löst RichText-SharedStrings nicht auf)
