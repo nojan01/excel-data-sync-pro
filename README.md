@@ -108,12 +108,6 @@ Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Ex
 2. Führen Sie den Installer aus
 3. Starten Sie die App über das Desktop-Icon oder Startmenü
 
-### macOS
-
-1. Laden Sie `Excel-Data-Sync-Pro-x.x.x.dmg` herunter
-2. Öffnen Sie die DMG-Datei
-3. Ziehen Sie die App in den Programme-Ordner
-
 ## Workflow
 
 ### Standard-Workflow (Datenübertragung)
@@ -213,7 +207,7 @@ Der Datenexplorer bietet erweiterte Funktionen zum Betrachten, Bearbeiten und Ex
 - **Sicherheit**: HMAC-SHA256 Signaturen, SHA256 Hash-Chain
 - **Conditional Formatting**: Vollständig erhalten bei Template-Erstellung
 - **Unterstützte Dateiformate**: .xlsx
-- **Plattformen**: Windows (x64), macOS (Intel & Apple Silicon)
+- **Plattformen**: Windows (x64)
 
 ## Sicherheits-Protokoll
 
@@ -291,7 +285,6 @@ Die Netzwerk-Log-Datei wird automatisch erstellt unter:
 
 ```text
 \\server\share\.excel-sync-audit.log  (Windows)
-/Volumes/Share/.excel-sync-audit.log  (macOS)
 ```
 
 ### Netzwerk-Verwendung
