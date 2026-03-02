@@ -2346,6 +2346,103 @@ def restore_external_links_from_original(output_path, original_path, structural_
                         if vm_restored > 0 or vm_created > 0:
                             sys.stderr.write(f"[restore] {ws_file}: {vm_restored} vm-Attribute wiederhergestellt, {vm_created} vm-Zellen neu erstellt (von {len(vm_cells)} im Original)\n")
                 
+                # KRITISCH: Row-Attribute vom Original wiederherstellen (customHeight, spans)
+                # openpyxl fügt customHeight="1" zu ALLEN Zeilen hinzu, auch wenn das
+                # Original es nicht hatte. customHeight="1" sperrt die Zeilenhöhe →
+                # Excel kann sie nicht mehr auto-anpassen → Zell-Bilder werden falsch skaliert.
+                # Lösung: Für jede Zeile prüfen ob das Original customHeight hatte.
+                # Wenn nicht, customHeight aus der Destination entfernen.
+                orig_row_attrs = {}
+                for rm in re.finditer(r'<row\b([^>]*)\br="(\d+)"([^>]*)>', orig_ws_content):
+                    row_num = rm.group(2)
+                    full_attrs = rm.group(1) + 'r="' + row_num + '"' + rm.group(3)
+                    orig_row_attrs[row_num] = {
+                        'customHeight': 'customHeight="1"' in full_attrs or "customHeight='1'" in full_attrs,
+                        'spans': None,
+                    }
+                    spans_m = re.search(r'spans="([^"]+)"', full_attrs)
+                    if spans_m:
+                        orig_row_attrs[row_num]['spans'] = spans_m.group(1)
+                # Auch reverse Attribut-Reihenfolge: r="..." vor anderen Attributen
+                for rm in re.finditer(r'<row\b[^>]*r="(\d+)"[^>]*>', orig_ws_content):
+                    row_num = rm.group(1)
+                    if row_num not in orig_row_attrs:
+                        full_tag = rm.group(0)
+                        orig_row_attrs[row_num] = {
+                            'customHeight': 'customHeight="1"' in full_tag,
+                            'spans': None,
+                        }
+                        spans_m = re.search(r'spans="([^"]+)"', full_tag)
+                        if spans_m:
+                            orig_row_attrs[row_num]['spans'] = spans_m.group(1)
+                
+                rows_fixed = 0
+                def _fix_row_attrs(m):
+                    nonlocal rows_fixed
+                    full_tag = m.group(0)
+                    row_num_m = re.search(r'r="(\d+)"', full_tag)
+                    if not row_num_m:
+                        return full_tag
+                    row_num = row_num_m.group(1)
+                    orig = orig_row_attrs.get(row_num, {})
+                    modified = False
+                    
+                    # customHeight entfernen wenn Original es nicht hatte
+                    if not orig.get('customHeight', False) and 'customHeight="1"' in full_tag:
+                        full_tag = full_tag.replace(' customHeight="1"', '')
+                        full_tag = full_tag.replace('customHeight="1" ', '')
+                        full_tag = full_tag.replace('customHeight="1"', '')
+                        modified = True
+                    
+                    # spans wiederherstellen wenn Original es hatte
+                    orig_spans = orig.get('spans')
+                    if orig_spans and 'spans=' not in full_tag:
+                        full_tag = full_tag.replace('<row ', f'<row spans="{orig_spans}" ', 1)
+                        modified = True
+                    
+                    if modified:
+                        rows_fixed += 1
+                    return full_tag
+                
+                dest_ws_content = re.sub(r'<row\b[^>]*>', _fix_row_attrs, dest_ws_content)
+                if rows_fixed > 0:
+                    ws_modified = True
+                    sys.stderr.write(f"[restore] {ws_file}: {rows_fixed} Row-Attribute wiederhergestellt (customHeight/spans)\n")
+                
+                # KRITISCH: <cols> vom Original wiederherstellen (Spaltenbreiten)
+                # openpyxl kann Spalten-Gruppen aufsplitten und Default-Breiten (13.0)
+                # statt der Original-Gruppenbreiten schreiben, z.B. wenn
+                # _apply_hidden_columns neue ColumnDimension-Einträge erzeugt.
+                # Lösung: Komplette <cols>-Sektion vom Original übernehmen,
+                # aber hidden-Attribute aus der Destination beibehalten.
+                orig_cols_m = re.search(r'<cols>(.*?)</cols>', orig_ws_content, re.DOTALL)
+                dest_cols_m = re.search(r'<cols>(.*?)</cols>', dest_ws_content, re.DOTALL)
+                if orig_cols_m and dest_cols_m:
+                    # Prüfe ob sich die <cols> geändert haben
+                    if orig_cols_m.group(0) != dest_cols_m.group(0):
+                        # Hidden-Spalten aus Destination extrahieren
+                        dest_hidden_cols = set()
+                        for cm in re.finditer(r'<col\b[^>]*>', dest_cols_m.group(0)):
+                            col_tag = cm.group(0)
+                            if 'hidden="1"' in col_tag or "hidden='1'" in col_tag:
+                                min_m = re.search(r'min="(\d+)"', col_tag)
+                                max_m = re.search(r'max="(\d+)"', col_tag)
+                                if min_m and max_m:
+                                    for c in range(int(min_m.group(1)), int(max_m.group(1)) + 1):
+                                        dest_hidden_cols.add(c)
+                        
+                        # Original <cols> übernehmen
+                        restored_cols = orig_cols_m.group(0)
+                        
+                        # Hidden-Attribute aus Destination in die Original-Cols einarbeiten
+                        if dest_hidden_cols:
+                            # TODO: Komplexere Logik falls nötig
+                            sys.stderr.write(f"[restore] {ws_file}: {len(dest_hidden_cols)} hidden cols in dest (werden beibehalten via openpyxl)\n")
+                        else:
+                            dest_ws_content = dest_ws_content.replace(dest_cols_m.group(0), restored_cols)
+                            ws_modified = True
+                            sys.stderr.write(f"[restore] {ws_file}: <cols> vom Original wiederhergestellt\n")
+                
                 if ws_modified:
                     with open(dest_ws_file, 'w', encoding='utf-8') as f:
                         f.write(dest_ws_content)
@@ -7483,7 +7580,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
 
 
 def _apply_hidden_columns(ws, hidden_columns, max_cols=None):
-    """Setzt versteckte Spalten"""
+    """Setzt versteckte Spalten.
+    WICHTIG: Nur Spalten mit expliziten Dimensionen oder die versteckt werden sollen
+    werden angesprochen. Sonst erstellt openpyxl neue ColumnDimension-Einträge mit
+    Default-Breite (13.0), was Original-Gruppenbreiten überschreibt."""
     if hidden_columns is None:
         return
     
@@ -7492,11 +7592,20 @@ def _apply_hidden_columns(ws, hidden_columns, max_cols=None):
     
     for col_idx in range(max_col):
         col_letter = get_column_letter(col_idx + 1)
-        ws.column_dimensions[col_letter].hidden = col_idx in hidden_set
+        if col_idx in hidden_set:
+            # Spalte muss versteckt werden → Dimension erstellen/setzen
+            ws.column_dimensions[col_letter].hidden = True
+        elif col_letter in ws.column_dimensions:
+            # Spalte hat bereits eine Dimension → sichtbar machen
+            ws.column_dimensions[col_letter].hidden = False
+        # Sonst: Spalte ist NICHT versteckt UND hat keine explizite Dimension
+        # → NICHT anfassen (sonst wird Default-Breite 13.0 statt Original-Gruppenbreite gesetzt)
 
 
 def _apply_hidden_rows(ws, hidden_rows, max_rows=None):
-    """Setzt versteckte Zeilen"""
+    """Setzt versteckte Zeilen.
+    WICHTIG: Nur Zeilen mit expliziten Dimensionen oder die versteckt werden sollen
+    werden angesprochen. Sonst erstellt openpyxl neue RowDimension-Einträge."""
     if hidden_rows is None:
         return
     
@@ -7505,7 +7614,10 @@ def _apply_hidden_rows(ws, hidden_rows, max_rows=None):
     
     for row_idx in range(max_row):
         excel_row = row_idx + 2  # +2 für Header
-        ws.row_dimensions[excel_row].hidden = row_idx in hidden_set
+        if row_idx in hidden_set:
+            ws.row_dimensions[excel_row].hidden = True
+        elif excel_row in ws.row_dimensions:
+            ws.row_dimensions[excel_row].hidden = False
 
 
 def _clear_all_row_fills_except(ws, row_highlights):
