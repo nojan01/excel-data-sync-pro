@@ -121,6 +121,166 @@ def _check_zip_drawings(zip_path, label):
         sys.stderr.write(f"[CHECKPOINT {label}] Fehler: {e}\n")
 
 
+def _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map):
+    """
+    Wendet vm-Attribute auf eingefügte Kopien von Bild-Zellen an.
+    
+    Wird nach restore_external_links_from_original aufgerufen, um vm-Attribute
+    auf Zellen zu setzen, die per Copy&Paste im Frontend dupliziert wurden.
+    restore_external_links_from_original stellt nur die ORIGINALEN vm-Zellen wieder her.
+    Diese Funktion ergänzt vm-Attribute für die KOPIERTEN Zellen.
+    
+    Args:
+        output_path: Pfad zur Ausgabe-XLSX
+        sheet_name: Name des betroffenen Sheets
+        vm_cell_map: Dict { "styleKeyRow-col": "vmValue" }
+                     styleKeyRow = Excel-Zeile 0-basiert (= rowNum-1), col = 0-basiert
+    """
+    if not vm_cell_map:
+        return
+    
+    import zipfile
+    import tempfile
+    import shutil
+    from xml.etree import ElementTree as ET
+    
+    MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
+    
+    try:
+        # Sheet-XML-Pfad ermitteln
+        with zipfile.ZipFile(output_path, 'r') as zf:
+            wb_xml = zf.read('xl/workbook.xml').decode('utf-8')
+            wb_root = ET.fromstring(wb_xml)
+            
+            sheet_rid = None
+            for sheet_el in wb_root.iter(f'{{{MAIN_NS}}}sheet'):
+                if sheet_el.get('name') == sheet_name:
+                    sheet_rid = sheet_el.get(f'{{{RELS_NS}}}id')
+                    if not sheet_rid:
+                        # Fallback: r:id Attribut
+                        for attr_name, attr_val in sheet_el.attrib.items():
+                            if attr_name.endswith('}id') or attr_name == 'r:id':
+                                sheet_rid = attr_val
+                                break
+                    break
+            
+            if not sheet_rid:
+                sys.stderr.write(f"[VM-PASTE] Sheet '{sheet_name}' nicht in workbook.xml gefunden\n")
+                return
+            
+            rels_xml = zf.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+            rels_root = ET.fromstring(rels_xml)
+            
+            sheet_file = None
+            for rel_el in rels_root.iter(f'{{{RELS_NS}}}Relationship'):
+                if rel_el.get('Id') == sheet_rid:
+                    target = rel_el.get('Target', '')
+                    sheet_file = target.lstrip('/')
+                    break
+            
+            if not sheet_file:
+                sys.stderr.write(f"[VM-PASTE] Relationship {sheet_rid} nicht gefunden\n")
+                return
+            
+            sheet_zip_path = 'xl/' + sheet_file if not sheet_file.startswith('xl/') else sheet_file
+            
+            if sheet_zip_path not in zf.namelist():
+                sys.stderr.write(f"[VM-PASTE] {sheet_zip_path} nicht im ZIP\n")
+                return
+            
+            ws_content = zf.read(sheet_zip_path).decode('utf-8')
+        
+        # vm-Zellen-Map in Excel-Referenzen umwandeln
+        # styleKeyRow = Excel-Zeile 0-basiert, col = 0-basiert
+        # Excel-Ref = ColLetter + (styleKeyRow + 1)
+        vm_refs = {}
+        for key, vm_val in vm_cell_map.items():
+            parts = key.split('-')
+            if len(parts) != 2:
+                continue
+            try:
+                row_0based = int(parts[0])
+                col_0based = int(parts[1])
+                excel_row = row_0based + 1  # 1-basiert
+                col_letter = get_column_letter(col_0based + 1)  # 1-basiert fuer openpyxl
+                cell_ref = f"{col_letter}{excel_row}"
+                vm_refs[cell_ref] = str(vm_val)
+            except (ValueError, TypeError):
+                continue
+        
+        if not vm_refs:
+            return
+        
+        # Bestehende vm-Zellen ermitteln (bereits durch restore wiederhergestellt)
+        existing_vm = set()
+        for vm_match in re.finditer(r'<c\s[^>]*?r="([A-Z]+\d+)"[^>]*?\bvm="\d+"', ws_content):
+            existing_vm.add(vm_match.group(1))
+        for vm_match in re.finditer(r'<c\s[^>]*?\bvm="\d+"[^>]*?r="([A-Z]+\d+)"', ws_content):
+            existing_vm.add(vm_match.group(1))
+        
+        # Nur neue vm-Zellen (die nicht schon vom Original-Restore gesetzt wurden)
+        new_vm_refs = {ref: val for ref, val in vm_refs.items() if ref not in existing_vm}
+        
+        if not new_vm_refs:
+            sys.stderr.write(f"[VM-PASTE] Alle {len(vm_refs)} vm-Zellen bereits vorhanden\n")
+            return
+        
+        # vm-Attribute einfuegen
+        vm_added = 0
+        vm_created = 0
+        for cell_ref, vm_val in new_vm_refs.items():
+            # Finde die Zelle in der Zieldatei
+            cell_pattern = re.compile(r'(<c\s[^>]*?r="' + re.escape(cell_ref) + r'"[^>]*?)(/?>)')
+            match = cell_pattern.search(ws_content)
+            if match and 'vm=' not in match.group(0):
+                new_attr = match.group(1) + f' vm="{vm_val}"' + match.group(2)
+                ws_content = ws_content[:match.start()] + new_attr + ws_content[match.end():]
+                vm_added += 1
+            elif not match:
+                # Zelle existiert nicht - in passender Zeile erstellen
+                row_num_match = re.search(r'(\d+)$', cell_ref)
+                if row_num_match:
+                    row_num = row_num_match.group(1)
+                    row_pattern = re.compile(r'(<row\s[^>]*?\br="' + re.escape(row_num) + r'"[^>]*?>)')
+                    row_match = row_pattern.search(ws_content)
+                    if row_match:
+                        cell_el = f'<c r="{cell_ref}" vm="{vm_val}"/>'
+                        insert_pos = row_match.end()
+                        ws_content = ws_content[:insert_pos] + cell_el + ws_content[insert_pos:]
+                        vm_created += 1
+                    else:
+                        # Zeile existiert auch nicht - Zeile + Zelle erstellen
+                        sheet_data_end = re.search(r'</sheetData>', ws_content)
+                        if sheet_data_end:
+                            row_el = f'<row r="{row_num}"><c r="{cell_ref}" vm="{vm_val}"/></row>\n'
+                            insert_pos = sheet_data_end.start()
+                            ws_content = ws_content[:insert_pos] + row_el + ws_content[insert_pos:]
+                            vm_created += 1
+        
+        if vm_added > 0 or vm_created > 0:
+            # ZIP aktualisieren
+            temp_fd, temp_path = tempfile.mkstemp(suffix='.xlsx')
+            os.close(temp_fd)
+            
+            with zipfile.ZipFile(output_path, 'r') as src_zip:
+                with zipfile.ZipFile(temp_path, 'w', zipfile.ZIP_DEFLATED) as dst_zip:
+                    for item in src_zip.infolist():
+                        if item.filename == sheet_zip_path:
+                            dst_zip.writestr(item, ws_content.encode('utf-8'))
+                        else:
+                            dst_zip.writestr(item, src_zip.read(item.filename))
+            
+            shutil.move(temp_path, output_path)
+            sys.stderr.write(f"[VM-PASTE] {vm_added} vm-Attribute hinzugefuegt, {vm_created} vm-Zellen erstellt "
+                           f"(von {len(new_vm_refs)} neuen Refs, {len(existing_vm)} bereits vorhanden)\n")
+        
+    except Exception as e:
+        sys.stderr.write(f"[VM-PASTE] Fehler: {e}\n")
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+
+
 def fix_xlsx_relationships(xlsx_path):
     """
     Repariert openpyxl-gespeicherte XLSX-Dateien.
@@ -4439,6 +4599,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         inserted_rows = changes.get('insertedRowInfo')
         row_order = changes.get('rowOrder')  # [neuIdx] = altIdx
         
+        # VM-Map für eingefügte Bild-Zellen (Copy&Paste)
+        vm_cell_map = changes.get('vmCellMap', {})
+        
         # DEBUG: Zeige alle relevanten Flags
         import sys
         sys.stderr.write(f"[WRITE_SHEET] row_highlights={row_highlights}, cleared_row_highlights={cleared_row_highlights}\n")
@@ -7261,6 +7424,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         
         # WICHTIG: Auch workbook.xml, slicerCaches, etc. vom Original wiederherstellen!
         restore_external_links_from_original(output_path, original_path)
+        
+        # VM-Attribute für eingefügte Bild-Zellen (Copy&Paste) setzen
+        # Muss NACH restore_external_links_from_original laufen, da diese die
+        # originalen vm-Zellen wiederherstellt. Hier werden die KOPIERTEN ergänzt.
+        if vm_cell_map:
+            _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map)
         
         return {'success': True, 'outputPath': output_path}
         

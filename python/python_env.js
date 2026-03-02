@@ -77,7 +77,11 @@ function getPythonPath() {
     if (!isPackaged) {
         const venvPath = path.join(basePath, '..', '.venv');
         if (fs.existsSync(venvPath)) {
-            const venvPython = path.join(venvPath, 'Scripts', 'python.exe');
+            // Plattform-abhängiger Pfad: Windows = Scripts/python.exe, macOS/Linux = bin/python
+            const isWin = process.platform === 'win32';
+            const venvPython = isWin
+                ? path.join(venvPath, 'Scripts', 'python.exe')
+                : path.join(venvPath, 'bin', 'python');
             if (fs.existsSync(venvPython)) {
                 safeLog(`[Python] venv-Python gefunden: ${venvPython}`);
                 _cachedPythonPath = venvPython;
@@ -88,27 +92,29 @@ function getPythonPath() {
         }
     }
     
-    // Fallback: System-Python suchen (Windows)
-    const winPythonPaths = [
-        'C:\\Python312\\python.exe',
-        'C:\\Python311\\python.exe',
-        'C:\\Python310\\python.exe',
-        'C:\\Python39\\python.exe',
-        (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python312\\python.exe',
-        (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python311\\python.exe',
-        (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python310\\python.exe'
-    ];
-    
-    for (const pyPath of winPythonPaths) {
-        if (fs.existsSync(pyPath)) {
-            safeLog(`[Python] System-Python gefunden: ${pyPath}`);
-            _cachedPythonPath = pyPath;
-            return _cachedPythonPath;
+    if (process.platform === 'win32') {
+        // Fallback: System-Python suchen (Windows)
+        const winPythonPaths = [
+            'C:\\Python312\\python.exe',
+            'C:\\Python311\\python.exe',
+            'C:\\Python310\\python.exe',
+            'C:\\Python39\\python.exe',
+            (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python312\\python.exe',
+            (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python311\\python.exe',
+            (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python310\\python.exe'
+        ];
+        
+        for (const pyPath of winPythonPaths) {
+            if (fs.existsSync(pyPath)) {
+                safeLog(`[Python] System-Python gefunden: ${pyPath}`);
+                _cachedPythonPath = pyPath;
+                return _cachedPythonPath;
+            }
         }
     }
     
-    // Letzter Fallback
-    const pythonCmd = 'python';
+    // Letzter Fallback: python3 auf macOS/Linux, python auf Windows
+    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
     safeLog(`[Python] Fallback auf PATH-Python: ${pythonCmd}`);
     _cachedPythonPath = pythonCmd;
     return _cachedPythonPath;

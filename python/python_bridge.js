@@ -1044,7 +1044,8 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                             columnOrder: null,
                             affectedRows: [],
                             autoFilterRange: null,
-                            hasFormatChanges: sheet.hasFormatChanges || false
+                            hasFormatChanges: sheet.hasFormatChanges || false,
+                            vmCellMap: sheet.vmCellMap || {}
                         }
                     };
                     
@@ -1099,7 +1100,8 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                         columnOrder: sheet.columnOrder || null,
                         affectedRows: sheet.affectedRows || [],
                         autoFilterRange: sheet.autoFilterRange || null,
-                        hasFormatChanges: sheet.hasFormatChanges || false
+                        hasFormatChanges: sheet.hasFormatChanges || false,
+                        vmCellMap: sheet.vmCellMap || {}
                     }
                 };
                 

@@ -645,11 +645,13 @@ function extractFillsFromXLSX(fileBufferOrPath, sheetName) {
         const relsXml = relsEntry.getData().toString('utf8');
         let sheetPath = null;
         
-        const relPattern = /<Relationship[^>]*Id="([^"]*)"[^>]*Target="([^"]*)"[^>]*\/?>/g;
-        let relMatch;
-        while ((relMatch = relPattern.exec(relsXml)) !== null) {
-            if (relMatch[1] === sheetRId) {
-                sheetPath = relMatch[2];
+        // Attribut-Reihenfolge-unabhängig: openpyxl schreibt Target vor Id
+        const relElements = relsXml.match(/<Relationship\s[^>]*\/?>/g) || [];
+        for (const relEl of relElements) {
+            const idMatch = relEl.match(/Id="([^"]*)"/);
+            const targetMatch = relEl.match(/Target="([^"]*)"/);
+            if (idMatch && targetMatch && idMatch[1] === sheetRId) {
+                sheetPath = targetMatch[1];
                 break;
             }
         }
@@ -754,11 +756,13 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
         const relsXml = relsEntry.getData().toString('utf8');
         let sheetPath = null;
         
-        const relPattern = /<Relationship[^>]*Id="([^"]*)"[^>]*Target="([^"]*)"[^>]*\/?>/g;
-        let relMatch;
-        while ((relMatch = relPattern.exec(relsXml)) !== null) {
-            if (relMatch[1] === sheetRId) {
-                sheetPath = relMatch[2];
+        // Attribut-Reihenfolge-unabhängig: openpyxl schreibt Target vor Id
+        const relElements = relsXml.match(/<Relationship\s[^>]*\/?>/g) || [];
+        for (const relEl of relElements) {
+            const idMatch = relEl.match(/Id="([^"]*)"/);
+            const targetMatch = relEl.match(/Target="([^"]*)"/);
+            if (idMatch && targetMatch && idMatch[1] === sheetRId) {
+                sheetPath = targetMatch[1];
                 break;
             }
         }
@@ -920,10 +924,13 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
                     const vmMatch2 = block.match(/<c\s[^>]*?r="([A-Z]+\d+)"[^>]*?\bvm="(\d+)"/);
                     
                     let cellRef = null;
+                    let vmValue = null;
                     if (vmMatch) {
                         cellRef = vmMatch[2];
+                        vmValue = vmMatch[1];
                     } else if (vmMatch2) {
                         cellRef = vmMatch2[1];
+                        vmValue = vmMatch2[2];
                     }
                     
                     if (!cellRef) continue;
@@ -931,7 +938,7 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
                     const col = colLettersToIndex(cellRef.match(/^([A-Z]+)/)[1]);
                     const row = parseInt(cellRef.match(/(\d+)$/)[1]) - 1;
                     if (!result.imageCells.some(ic => ic.col === col && ic.row === row)) {
-                        result.imageCells.push({ ref: cellRef, col, row });
+                        result.imageCells.push({ ref: cellRef, col, row, vmValue });
                     }
                 }
                 console.log(`[SheetMetadata] richData gefunden, ${result.imageCells.length} Bild-Zellen (inkl. vm-Attribut)`);
@@ -1978,6 +1985,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             mergedCells,
             autoFilterRange,
             rowHighlights,  // NEU: Zeilenfarben als Array von [rowIndex, colorName]
+            imageCells: metadata.imageCells || [],  // NEU: Bild-Zellen mit vm-Werten für Copy&Paste
             stats: {
                 rows: data.length,
                 columns: headers.length,

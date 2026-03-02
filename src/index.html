@@ -8375,7 +8375,9 @@
             // LIVE SESSION MODE - Operationen werden sofort in Excel ausgeführt
             liveSessionActive: false,  // true wenn Live-Session aktiv ist
             liveSessionReady: false,   // true wenn Session bereit für Operationen
-            excelVisible: false        // true wenn Excel-Fenster sichtbar ist
+            excelVisible: false,       // true wenn Excel-Fenster sichtbar ist
+            // VM-Map für Bild-Zellen (Copy&Paste von Zell-Bildern)
+            cellVmMap: {}  // "styleKeyRow-col" -> vmValue (z.B. "19-6" -> "1")
         };
         
         // ==================== Data Join State & Functions ====================
@@ -11816,7 +11818,8 @@
                     style,
                     formula: explorerState.cellFormulas[styleKey] || null,
                     hyperlink: explorerState.cellHyperlinks[styleKey] || null,
-                    richText
+                    richText,
+                    vm: (explorerState.cellVmMap && explorerState.cellVmMap[styleKey]) || null
                 };
             }).sort((a, b) => a.row - b.row || a.col - b.col);
             
@@ -11975,6 +11978,12 @@
                         explorerState.richTextCells[styleKey] = [...cell.richText];
                     } else {
                         delete explorerState.richTextCells[styleKey];
+                    }
+                    
+                    // VM-Attribut kopieren (Bild-Referenz für Zell-Bilder)
+                    if (cell.vm) {
+                        if (!explorerState.cellVmMap) explorerState.cellVmMap = {};
+                        explorerState.cellVmMap[styleKey] = cell.vm;
                     }
                     
                     pastedCount++;
@@ -13520,6 +13529,20 @@
             explorerState.rowMapping = explorerState.data.map((_, i) => i);
             // Merged Cells laden
             explorerState.mergedCells = result.mergedCells || [];
+            // Image Cells VM-Map laden (für Bild-Kopie bei Copy&Paste)
+            explorerState.cellVmMap = {};
+            if (result.imageCells && result.imageCells.length > 0) {
+                for (const ic of result.imageCells) {
+                    if (ic.vmValue) {
+                        // imageCells.row ist 0-basiert (Excel rowNum - 1) = styleKey row
+                        const vmKey = `${ic.row}-${ic.col}`;
+                        explorerState.cellVmMap[vmKey] = ic.vmValue;
+                    }
+                }
+                if (Object.keys(explorerState.cellVmMap).length > 0) {
+                    console.log(`[Explorer] ${Object.keys(explorerState.cellVmMap).length} vm-Bild-Zellen geladen`);
+                }
+            }
             elements.explorerSearch.value = '';
             
             // Prüfe ob es gespeicherte Bearbeitungen gibt (Auto-Save Recovery)
@@ -16552,6 +16575,15 @@
                     explorerState.mergedCells = result.mergedCells || [];
                     explorerState.autoFilterRange = result.autoFilterRange || null;
                     explorerState.headerStyles = result.headerStyles || {};
+                    // Image Cells VM-Map laden (für Bild-Kopie bei Copy&Paste)
+                    explorerState.cellVmMap = {};
+                    if (result.imageCells && result.imageCells.length > 0) {
+                        for (const ic of result.imageCells) {
+                            if (ic.vmValue) {
+                                explorerState.cellVmMap[`${ic.row}-${ic.col}`] = ic.vmValue;
+                            }
+                        }
+                    }
                     
                     // Zeilenfarben aus Excel laden
                     explorerState.rowHighlights.clear();
@@ -17222,7 +17254,9 @@
                                 columnOperationsQueue: explorerState.columnOperationsQueue,
                                 rowOperationsQueue: explorerState.rowOperationsQueue,
                                 // Merged Cells (vollständiger Zustand aus GUI)
-                                mergedCells: explorerState.mergedCells || []
+                                mergedCells: explorerState.mergedCells || [],
+                                // VM-Map für Bild-Zellen (Copy&Paste von Zellbildern)
+                                vmCellMap: explorerState.cellVmMap || {}
                             };
                             // Prüfe ob rowMapping gesendet wird
                             const hasRowMapping = !!(filterRowMapping || (explorerState.rowMapping && explorerState.rowMapping.length > 0));
@@ -17329,7 +17363,8 @@
                                     autoFilterRange: explorerState.autoFilterRange,
                                     fullRewrite: false,
                                     mergedCells: explorerState.mergedCells || [],
-                                    hasFormatChanges: explorerState.editedCells.has('_hasFormatChanges')
+                                    hasFormatChanges: explorerState.editedCells.has('_hasFormatChanges'),
+                                    vmCellMap: explorerState.cellVmMap || {}
                                 };
                                 console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${Object.keys(cellStylesForChanged).length} CellStyles, ${Object.keys(cellFontsForChanged).length} CellFonts, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, ${clearedRowHighlights.length} entfernte Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
                             console.log(`[Export] mergedCells für Zell-Edits: ${(explorerState.mergedCells || []).length} Einträge`, JSON.stringify(explorerState.mergedCells || []));
