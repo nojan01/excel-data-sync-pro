@@ -15028,6 +15028,18 @@
                         }
                     }
                     
+                    // Bild-Platzhalter immer zentrieren (Fallback falls Style fehlt)
+                    if (cellValue === '🖼️ Bild' && (!cellStyle || !cellStyle.textAlign)) {
+                        const fallbackStyles = ['text-align: center', 'vertical-align: middle'];
+                        if (inlineStyle) {
+                            // Bestehende Styles ergänzen
+                            const existing = inlineStyle.replace(/^ style="/, '').replace(/"$/, '');
+                            inlineStyle = ` style="${existing}; ${fallbackStyles.join('; ')}"`;
+                        } else {
+                            inlineStyle = ` style="${fallbackStyles.join('; ')}"`;
+                        }
+                    }
+                    
                     // Prüfe auf Data Validation (Dropdown-Liste)
                     const validation = explorerState.dataValidations[colIndex];
                     let validationValues = null;
