@@ -1157,6 +1157,447 @@ function extractCellStyle(cell) {
 
 
 /**
+/**
+ * Interne Hilfsfunktion: Liest ein Sheet via ExcelJS Streaming Reader.
+ * Wird von readSheetWithExcelJS aufgerufen. Wenn der Streaming Reader fehlschlägt
+ * (z.B. bei ImportExcel/EPPlus-Dateien mit ZIP Data Descriptors), wirft die Funktion
+ * einen Fehler, damit der Aufrufer auf Non-Streaming zurückfallen kann.
+ */
+async function _readSheetStreaming(
+    ExcelJS, fileBuffer, sheetName, actualColumnCount,
+    sharedStrings, imageCellSet, cellFormulas, cellHyperlinks, cellStyles, richTextCells
+) {
+    const headers = [];
+    const data = [];
+    let sheetFound = false;
+    
+    console.log(`[ExcelJS] Verwende Streaming Reader (kein RichText)`);
+    
+    const { Readable } = require('stream');
+    const readStream = Readable.from(fileBuffer);
+    const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(readStream, {
+        sharedStrings: 'cache',
+        hyperlinks: 'cache',
+        styles: 'cache',
+        worksheets: 'emit'
+    });
+    
+    const t2 = Date.now();
+    
+    for await (const worksheetReader of workbookReader) {
+        if (worksheetReader.name !== sheetName) continue;
+        sheetFound = true;
+        console.log(`[ExcelJS] Sheet "${sheetName}" gefunden, starte Streaming...`);
+        
+        let dataRowCounter = 0;
+        let lastProgressLog = Date.now();
+        let headerRowNumber = null; // Dynamisch: erste nicht-leere Zeile wird Header
+    
+    for await (const row of worksheetReader) {
+        const rowNumber = row.number;
+        
+        // Leere Zeilen auffüllen (Streaming überspringt Zeilen ohne Zellen im XML)
+        if (headerRowNumber !== null && rowNumber > headerRowNumber + 1) {
+            const expectedDataRow = rowNumber - headerRowNumber - 1;
+            while (dataRowCounter < expectedDataRow) {
+                data.push(new Array(actualColumnCount).fill(''));
+                dataRowCounter++;
+            }
+        }
+        
+        // Erste nicht-leere Zeile = Header (ImportExcel-Dateien können leere Zeile 1 haben)
+        if (headerRowNumber === null) {
+            headerRowNumber = rowNumber;
+            if (rowNumber !== 1) {
+                console.log(`[ExcelJS] Header nicht in Zeile 1, sondern in Zeile ${rowNumber} gefunden (z.B. ImportExcel)`);
+            }
+            // Initialisiere Header-Array mit leeren Strings für alle Spalten
+            for (let i = 0; i < actualColumnCount; i++) {
+                headers.push('');
+            }
+            row.eachCell((cell, colNumber) => {
+                const colIndex = colNumber - 1;
+                // Header-Array erweitern falls nötig
+                while (colIndex >= headers.length) {
+                    headers.push('');
+                    actualColumnCount = Math.max(actualColumnCount, headers.length);
+                }
+                // Überschreibe den leeren Wert mit dem tatsächlichen Wert
+                // SharedString-Referenz auflösen (Streaming löst RichText-SharedStrings nicht auf)
+                if (cell.value && typeof cell.value === 'object' && cell.value.sharedString !== undefined && sharedStrings.length > 0) {
+                    const ssIdx = cell.value.sharedString;
+                    const ss = sharedStrings[ssIdx];
+                    if (ss) {
+                        if (ss.richText) {
+                            cell.value = { richText: ss.richText.map(r => ({ text: r.text, font: r.font })) };
+                        } else {
+                            cell.value = ss.text || '';
+                        }
+                    }
+                }
+                if (!cell.value) {
+                    headers[colIndex] = '';
+                } else if (typeof cell.value === 'object') {
+                    // Rich Text, Hyperlinks, Bilder etc.
+                    if (cell.value.richText) {
+                        headers[colIndex] = cell.value.richText.map(part => part.text).join('');
+                    } else if (cell.value.text !== undefined) {
+                        headers[colIndex] = String(cell.value.text);
+                    } else if (cell.value.buffer || cell.value.image || cell.value.imageId) {
+                        headers[colIndex] = '🖼️ Bild';
+                    } else {
+                        headers[colIndex] = '📎 Objekt';
+                    }
+                } else {
+                    headers[colIndex] = String(cell.value);
+                }
+                
+                // WICHTIG: Auch Header-Styles extrahieren (für Frontend-Kompatibilität)
+                const styleKey = `0-${colIndex}`; // Header = Zeile 0
+                const style = {};
+                
+                if (cell.font) {
+                    if (cell.font.bold) style.bold = true;
+                    if (cell.font.italic) style.italic = true;
+                    if (cell.font.underline) style.underline = true;
+                    if (cell.font.strike) style.strikethrough = true;
+                    if (cell.font.size) {
+                        style.fontSize = cell.font.size;
+                    }
+                    if (cell.font.name && cell.font.name !== 'Calibri') {
+                        style.fontName = cell.font.name;
+                    }
+                const fontColor = resolveColor(cell.font.color);
+                if (fontColor) {
+                    style.fontColor = fontColor;
+                }
+            }
+            
+            // Alignment extrahieren
+            if (cell.alignment) {
+                if (cell.alignment.horizontal && cell.alignment.horizontal !== 'general') {
+                    style.textAlign = cell.alignment.horizontal;
+                }
+                if (cell.alignment.vertical && cell.alignment.vertical !== 'bottom') {
+                    style.verticalAlign = cell.alignment.vertical;
+                }
+                if (cell.alignment.wrapText) {
+                    style.wrapText = true;
+                }
+            }
+            
+            // Fill extrahieren
+            if (cell.fill) {
+                if (cell.fill.type === 'pattern' && cell.fill.pattern === 'solid') {
+                    const fillColor = resolveColor(cell.fill.fgColor);
+                    if (fillColor) {
+                        style.fill = fillColor;
+                    }
+                }
+            }
+            
+            // Borders extrahieren
+            if (cell.border) {
+                const borders = {};
+                for (const side of ['top', 'bottom', 'left', 'right']) {
+                    if (cell.border[side] && cell.border[side].style) {
+                        borders[side] = {
+                            style: cell.border[side].style,
+                            color: resolveColor(cell.border[side].color)
+                        };
+                    }
+                }
+                if (Object.keys(borders).length > 0) {
+                    style.borders = borders;
+                }
+            }
+            
+            if (Object.keys(style).length > 0) {
+                cellStyles[styleKey] = style;
+            }
+            });
+            continue; // Weiter zur nächsten Zeile
+        }
+        
+        // Daten-Zeilen
+        // Initialisiere rowData mit leeren Strings für alle Spalten
+        const rowData = new Array(actualColumnCount).fill('');
+        
+        // WICHTIG: Style-Key basiert auf dataRowCounter, nicht auf rowNumber!
+        // Das stellt sicher, dass leere Zeilen nicht zu Index-Mismatches führen
+        const currentDataRowIndex = dataRowCounter;
+        
+        row.eachCell((cell, colNumber) => {
+            const colIndex = colNumber - 1;
+            // WICHTIG: Frontend erwartet 1-basierte Indizes (wie xlsx-populate)
+            const styleKey = `${currentDataRowIndex + 1}-${colIndex}`;
+            
+            let cellValue = cell.value;
+            
+            // Bild-Zellen sofort erkennen (aus XML-Metadaten)
+            // ExcelJS kann DISPIMG/IMAGE Formeln nicht parsen, liefert #VALUE! oder Objekte
+            // Daher VOR jeder anderen Verarbeitung abfangen
+            if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
+                cellValue = '🖼️ Bild';
+                rowData[colIndex] = cellValue;
+                return; // Nächste Zelle
+            }                
+            // Formel extrahieren - WICHTIG: VOR der Objekt-Behandlung!
+            // Bei Formeln kann cell.value ein Objekt sein mit { formula, result }
+            // oder cell.formula ist direkt verfügbar
+            if (cell.formula) {
+                cellFormulas[styleKey] = cell.formula;
+                // Das Ergebnis ist in cell.result (nicht cell.value!)
+                cellValue = cell.result !== undefined ? cell.result : '';
+                // Bild-Formeln erkennen: IMAGE, DISPIMG (mit beliebigen Prefixen wie _xlfn._xlws.)
+                if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(cell.formula)) {
+                    cellValue = '🖼️ Bild';
+                }
+            } else if (cell.value && typeof cell.value === 'object' && cell.value.formula) {
+                // Formel als Objekt gespeichert: { formula: '...', result: ... }
+                cellFormulas[styleKey] = cell.value.formula;
+                cellValue = cell.value.result !== undefined ? cell.value.result : '';
+                // Bild-Formeln erkennen
+                if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(cell.value.formula)) {
+                    cellValue = '🖼️ Bild';
+                }
+            }
+            
+            // Error-Werte behandeln (z.B. { error: '#VALUE!' } aus Formel-Ergebnissen)
+            if (cellValue && typeof cellValue === 'object' && cellValue.error) {
+                // Prüfe ob die zugehörige Formel eine Bild-Formel ist
+                const formula = cellFormulas[styleKey] || '';
+                if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(formula)) {
+                    cellValue = '🖼️ Bild';
+                } else if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
+                    // Bild-Formel aus XML-Metadaten erkannt
+                    cellValue = '🖼️ Bild';
+                } else {
+                    console.log(`[ExcelJS] Error-Wert in Zelle ${styleKey}: ${cellValue.error}, Formel: ${formula || 'keine'}`);
+                    cellValue = String(cellValue.error);
+                }
+            }
+            // String-Error-Werte: #VALUE! ohne Formel = möglicherweise Bild oder nicht-auswertbar
+            else if (typeof cellValue === 'string' && cellValue === '#VALUE!') {
+                const formula = cellFormulas[styleKey] || '';
+                if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(formula)) {
+                    cellValue = '🖼️ Bild';
+                } else if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
+                    // Bild-Formel aus XML-Metadaten erkannt
+                    cellValue = '🖼️ Bild';
+                } else {
+                    console.log(`[ExcelJS] #VALUE! String in Zelle ${styleKey}, Formel: ${formula || 'keine'}, cell.value Typ: ${typeof cell.value}, Keys: ${cell.value && typeof cell.value === 'object' ? Object.keys(cell.value).join(',') : 'N/A'}`);
+                }
+            }
+            
+            // Hyperlink extrahieren
+            if (cell.hyperlink) {
+                cellHyperlinks[styleKey] = cell.hyperlink.hyperlink || cell.hyperlink;
+            }
+            
+            // WICHTIG: Datums-Behandlung VOR der allgemeinen Objekt-Behandlung!
+            // Date ist auch ein Objekt, würde sonst mit String() konvertiert werden
+            if (cellValue instanceof Date) {
+                cellValue = formatDateWithNumFmt(cellValue, cell.numFmt || '');
+            }
+            
+            // Numerische Werte gemäß numFmt runden (z.B. Buchhaltungsformat 95,90 € → 2 Nachkommastellen)
+            if (typeof cellValue === 'number' && cell.numFmt) {
+                cellValue = roundNumericByFormat(cellValue, cell.numFmt);
+            }
+            
+            // SharedString-Referenz auflösen (Streaming löst RichText-SharedStrings nicht auf)
+            if (cell.value && typeof cell.value === 'object' && cell.value.sharedString !== undefined && sharedStrings.length > 0) {
+                const ssIdx = cell.value.sharedString;
+                const ss = sharedStrings[ssIdx];
+                if (ss) {
+                    if (ss.richText) {
+                        cell.value = { richText: ss.richText.map(r => ({ text: r.text, font: r.font })) };
+                    } else {
+                        cell.value = ss.text || '';
+                    }
+                    cellValue = typeof cell.value === 'string' ? cell.value : (cell.value.richText ? cell.value.richText.map(p => p.text).join('') : '');
+                }
+            }
+            
+            // Objekt-Werte behandeln (Rich Text, Hyperlinks, etc.)
+            // WICHTIG: Nur wenn es KEINE Formel war (die wurde oben schon behandelt)
+            // Wir prüfen cell.value (nicht cellValue), um zu sehen ob es ein spezielles Objekt ist
+            // Date-Objekte NICHT als Objekte behandeln (wurden oben bereits formatiert)
+            if (cell.value && typeof cell.value === 'object' && !(cell.value instanceof Date) && !cell.formula && !cell.value.formula) {
+                // Rich Text extrahieren
+                if (cell.value.richText) {
+                    const richText = cell.value.richText.map(part => ({
+                        text: part.text,
+                        styles: {
+                            bold: part.font?.bold || false,
+                            italic: part.font?.italic || false,
+                            underline: part.font?.underline || false,
+                            strikethrough: part.font?.strike || false,
+                        color: resolveColor(part.font?.color),
+                            fontSize: part.font?.size || null,
+                            fontName: part.font?.name || null
+                        }
+                    }));
+                    richTextCells[styleKey] = richText;
+                    // Konvertiere zu Plain Text - nimm den text direkt aus dem Original!
+                    cellValue = cell.value.richText.map(part => part.text).join('');
+                }
+                // Hyperlink-Objekte (haben text und hyperlink Properties)
+                else if (cell.value.text !== undefined && cell.value.hyperlink !== undefined) {
+                    cellValue = cell.value.text;
+                    cellHyperlinks[styleKey] = cell.value.hyperlink;
+                }
+                // Andere Objekte - versuche text-Property zu nutzen
+                else if (cell.value.text !== undefined) {
+                    cellValue = cell.value.text;
+                }
+                // Fallback: Null oder leerer String
+                else if (cell.value === null) {
+                    cellValue = '';
+                }
+                // Bild-Objekte erkennen (Buffer, Base64 oder image-Properties)
+                else if (cell.value.buffer || cell.value.image || cell.value.imageId || 
+                         (cell.value.extension && (cell.value.extension === 'png' || cell.value.extension === 'jpeg' || cell.value.extension === 'gif' || cell.value.extension === 'bmp'))) {
+                    cellValue = '🖼️ Bild';
+                }
+                // Error-Objekte erkennen
+                else if (cell.value.error) {
+                    // Prüfe ob es eine Bild-Zelle ist (aus XML-Metadaten)
+                    if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
+                        cellValue = '🖼️ Bild';
+                    } else {
+                        cellValue = cell.value.error; // z.B. #REF!, #VALUE!, #DIV/0!
+                    }
+                }
+                // Letzter Fallback: Unbekanntes Objekt -> versuche sinnvolle Darstellung
+                else {
+                    // Prüfe ob JSON-Serialisierung "[object Object]" vermeidet
+                    const keys = Object.keys(cell.value);
+                    if (keys.length === 0) {
+                        cellValue = '';
+                    } else {
+                        // Logge das unbekannte Objekt für Debugging
+                        console.log(`[ExcelJS] Unbekanntes Objekt in Zelle ${styleKey}:`, JSON.stringify(cell.value).substring(0, 200));
+                        cellValue = '📎 Objekt';
+                    }
+                }
+            }
+            
+            // Styles extrahieren
+            const style = {};
+            
+            if (cell.font) {
+                if (cell.font.bold) style.bold = true;
+                if (cell.font.italic) style.italic = true;
+                if (cell.font.underline) style.underline = true;
+                if (cell.font.strike) style.strikethrough = true;
+                if (cell.font.size) {
+                    style.fontSize = cell.font.size;
+                }
+                if (cell.font.name && cell.font.name !== 'Calibri') {
+                    style.fontName = cell.font.name;
+                }
+                const fontColor = resolveColor(cell.font.color);
+                if (fontColor) {
+                    style.fontColor = fontColor;
+                }
+            }
+            
+            // Alignment extrahieren
+            if (cell.alignment) {
+                if (cell.alignment.horizontal && cell.alignment.horizontal !== 'general') {
+                    style.textAlign = cell.alignment.horizontal;
+                }
+                if (cell.alignment.vertical && cell.alignment.vertical !== 'bottom') {
+                    style.verticalAlign = cell.alignment.vertical;
+                }
+                if (cell.alignment.wrapText) {
+                    style.wrapText = true;
+                }
+            }
+            
+            // Fill extrahieren
+            if (cell.fill) {
+                if (cell.fill.type === 'pattern' && cell.fill.pattern === 'solid') {
+                    const fillColor = resolveColor(cell.fill.fgColor);
+                    if (fillColor) {
+                        style.fill = fillColor;
+                    }
+                }
+            }
+            
+            // Borders extrahieren
+            if (cell.border) {
+                const borders = {};
+                for (const side of ['top', 'bottom', 'left', 'right']) {
+                    if (cell.border[side] && cell.border[side].style) {
+                        borders[side] = {
+                            style: cell.border[side].style,
+                            color: resolveColor(cell.border[side].color)
+                        };
+                    }
+                }
+                if (Object.keys(borders).length > 0) {
+                    style.borders = borders;
+                }
+            }
+            
+            if (Object.keys(style).length > 0) {
+                cellStyles[styleKey] = style;
+            }
+            
+            // WICHTIG: Date-Objekte MÜSSEN hier als String formatiert werden
+            // da sie sonst bei der IPC-Serialisierung zu "Thu Sep 19 2013..." werden
+            if (cellValue instanceof Date) {
+                // Fallback-Formatierung falls oben nicht gegriffen hat
+                const day = cellValue.getDate();
+                const month = cellValue.getMonth() + 1;
+                const year = cellValue.getFullYear();
+                cellValue = `${day}.${month}.${year}`;
+            }
+            // Auch String-Werte prüfen die wie Date.toString() aussehen
+            else if (typeof cellValue === 'string' && /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s/.test(cellValue)) {
+                // Versuche den Date-String zu parsen
+                const parsedDate = new Date(cellValue);
+                if (!isNaN(parsedDate.getTime())) {
+                    const day = parsedDate.getDate();
+                    const month = parsedDate.getMonth() + 1;
+                    const year = parsedDate.getFullYear();
+                    cellValue = `${day}.${month}.${year}`;
+                }
+            }
+            
+            // Setze den Wert an der korrekten Position
+            // Letzte Absicherung: Objekte die durchgerutscht sind, nie als "[object Object]" speichern
+            if (cellValue !== null && cellValue !== undefined && typeof cellValue === 'object') {
+                console.log(`[ExcelJS] Objekt durchgerutscht in Zelle ${styleKey}:`, JSON.stringify(cellValue).substring(0, 200));
+                cellValue = '📎 Objekt';
+            }
+            rowData[colIndex] = cellValue === null || cellValue === undefined ? '' : cellValue;
+        });
+        
+        // Hidden Rows werden aus Metadaten (XML) geladen, nicht aus row.hidden
+        
+        data.push(rowData);
+        dataRowCounter++; // Zähler für nächste Daten-Zeile erhöhen
+        
+        // Fortschritt alle 2 Sekunden loggen
+        const now = Date.now();
+        if (now - lastProgressLog > 2000) {
+            console.log(`[ExcelJS] Streaming: ${dataRowCounter} Zeilen verarbeitet (${now - t2}ms)`);
+            lastProgressLog = now;
+        }
+    } // Ende for-await row
+    
+        console.log(`[ExcelJS] Streaming abgeschlossen: ${dataRowCounter} Datenzeilen in ${Date.now() - t2}ms`);
+        break; // Sheet gefunden, keine weiteren Sheets verarbeiten
+    } // Ende for-await worksheetReader
+    
+    return { headers, data, actualColumnCount, sheetFound };
+}
+
+/**
  * Liest ein Excel-Sheet mit ExcelJS Streaming Reader (nicht-blockierend)
  * 
  * @param {string} filePath - Pfad zur Excel-Datei
@@ -1279,12 +1720,42 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         // ============================================================
         // READER-AUSWAHL: Non-Streaming wenn RichText vorhanden (für korrekte Styles)
         // Streaming wenn kein RichText (für Performance bei großen Dateien)
+        // FALLBACK: Wenn Streaming fehlschlägt (z.B. bei ImportExcel/EPPlus-Dateien
+        //   mit ZIP Data Descriptors), automatisch auf Non-Streaming wechseln
         // ============================================================
         const t2 = Date.now();
+        let useNonStreaming = hasRichTextSharedStrings;
+        let streamingFailed = false;
         
-        if (hasRichTextSharedStrings) {
+        if (!useNonStreaming) {
+            // Versuche Streaming Reader zuerst
+            try {
+                const streamingResult = await _readSheetStreaming(
+                    ExcelJS, fileBuffer, sheetName, actualColumnCount,
+                    sharedStrings, imageCellSet, cellFormulas, cellHyperlinks, cellStyles, richTextCells
+                );
+                // Streaming erfolgreich — Daten übernehmen
+                headers.push(...streamingResult.headers);
+                data.push(...streamingResult.data);
+                actualColumnCount = streamingResult.actualColumnCount;
+                if (!streamingResult.sheetFound) {
+                    return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
+                }
+                timings.streaming = Date.now() - t2;
+                console.log(`[ExcelJS] Streaming abgeschlossen: ${data.length} Datenzeilen in ${timings.streaming}ms`);
+            } catch (streamErr) {
+                // Streaming fehlgeschlagen (z.B. ImportExcel/EPPlus: "invalid signature: 0x8074b50")
+                // → Fallback auf Non-Streaming Reader
+                console.warn(`[ExcelJS] Streaming fehlgeschlagen: ${streamErr.message} → Fallback auf Non-Streaming`);
+                useNonStreaming = true;
+                streamingFailed = true;
+            }
+        }
+        
+        if (useNonStreaming) {
             // NON-STREAMING: Löst alle SharedStrings, RichText und Styles korrekt auf
-            console.log(`[ExcelJS] Verwende Non-Streaming Reader (RichText erkannt)`);
+            const reason = streamingFailed ? 'Streaming-Fallback' : 'RichText erkannt';
+            console.log(`[ExcelJS] Verwende Non-Streaming Reader (${reason})`);
             const workbook = new ExcelJS.Workbook();
             await workbook.xlsx.load(fileBuffer);
             
@@ -1294,9 +1765,14 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             }
             
             let dataRowCounter = 0;
+            let headerRowNumber = null; // Dynamisch: erste nicht-leere Zeile wird Header
             
             worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-                if (rowNumber === 1) {
+                if (headerRowNumber === null) {
+                    headerRowNumber = rowNumber;
+                    if (rowNumber !== 1) {
+                        console.log(`[ExcelJS] Header nicht in Zeile 1, sondern in Zeile ${rowNumber} gefunden (z.B. ImportExcel)`);
+                    }
                     // Header
                     for (let i = 0; i < actualColumnCount; i++) {
                         headers.push('');
@@ -1334,7 +1810,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 }
                 
                 // Leere Zeilen auffüllen
-                const expectedDataRow = rowNumber - 2;
+                const expectedDataRow = rowNumber - headerRowNumber - 1;
                 while (dataRowCounter < expectedDataRow) {
                     data.push(new Array(actualColumnCount).fill(''));
                     dataRowCounter++;
@@ -1440,432 +1916,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             
             console.log(`[ExcelJS] Non-Streaming abgeschlossen: ${dataRowCounter} Datenzeilen in ${Date.now() - t2}ms`);
             timings.streaming = Date.now() - t2;
-        } else {
-        // STREAMING READER: Liest Zeilen einzeln, blockiert Event-Loop NICHT
-        // Buffer wird wiederverwendet (kein erneuter Dateizugriff!)
-        console.log(`[ExcelJS] Verwende Streaming Reader (kein RichText)`);
-        
-        const { Readable } = require('stream');
-        const readStream = Readable.from(fileBuffer);
-        const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(readStream, {
-            sharedStrings: 'cache',
-            hyperlinks: 'cache',
-            styles: 'cache',
-            worksheets: 'emit'
-        });
-        
-        let sheetFound = false;
-        
-        for await (const worksheetReader of workbookReader) {
-            if (worksheetReader.name !== sheetName) continue;
-            sheetFound = true;
-            console.log(`[ExcelJS] Sheet "${sheetName}" gefunden, starte Streaming...`);
-            
-            let dataRowCounter = 0;
-            let lastProgressLog = Date.now();
-        
-        for await (const row of worksheetReader) {
-            const rowNumber = row.number;
-            
-            // Leere Zeilen auffüllen (Streaming überspringt Zeilen ohne Zellen im XML)
-            if (rowNumber > 1) {
-                const expectedDataRow = rowNumber - 2;
-                while (dataRowCounter < expectedDataRow) {
-                    data.push(new Array(actualColumnCount).fill(''));
-                    dataRowCounter++;
-                }
-            }
-            
-            // Erste Zeile = Header
-            if (rowNumber === 1) {
-                // Initialisiere Header-Array mit leeren Strings für alle Spalten
-                for (let i = 0; i < actualColumnCount; i++) {
-                    headers.push('');
-                }
-                row.eachCell((cell, colNumber) => {
-                    const colIndex = colNumber - 1;
-                    // Header-Array erweitern falls nötig
-                    while (colIndex >= headers.length) {
-                        headers.push('');
-                        actualColumnCount = Math.max(actualColumnCount, headers.length);
-                    }
-                    // Überschreibe den leeren Wert mit dem tatsächlichen Wert
-                    // SharedString-Referenz auflösen (Streaming löst RichText-SharedStrings nicht auf)
-                    if (cell.value && typeof cell.value === 'object' && cell.value.sharedString !== undefined && sharedStrings.length > 0) {
-                        const ssIdx = cell.value.sharedString;
-                        const ss = sharedStrings[ssIdx];
-                        if (ss) {
-                            if (ss.richText) {
-                                cell.value = { richText: ss.richText.map(r => ({ text: r.text, font: r.font })) };
-                            } else {
-                                cell.value = ss.text || '';
-                            }
-                        }
-                    }
-                    if (!cell.value) {
-                        headers[colIndex] = '';
-                    } else if (typeof cell.value === 'object') {
-                        // Rich Text, Hyperlinks, Bilder etc.
-                        if (cell.value.richText) {
-                            headers[colIndex] = cell.value.richText.map(part => part.text).join('');
-                        } else if (cell.value.text !== undefined) {
-                            headers[colIndex] = String(cell.value.text);
-                        } else if (cell.value.buffer || cell.value.image || cell.value.imageId) {
-                            headers[colIndex] = '🖼️ Bild';
-                        } else {
-                            headers[colIndex] = '📎 Objekt';
-                        }
-                    } else {
-                        headers[colIndex] = String(cell.value);
-                    }
-                    
-                    // WICHTIG: Auch Header-Styles extrahieren (für Frontend-Kompatibilität)
-                    const styleKey = `0-${colIndex}`; // Header = Zeile 0
-                    const style = {};
-                    
-                    if (cell.font) {
-                        if (cell.font.bold) style.bold = true;
-                        if (cell.font.italic) style.italic = true;
-                        if (cell.font.underline) style.underline = true;
-                        if (cell.font.strike) style.strikethrough = true;
-                        if (cell.font.size) {
-                            style.fontSize = cell.font.size;
-                        }
-                        if (cell.font.name && cell.font.name !== 'Calibri') {
-                            style.fontName = cell.font.name;
-                        }
-                    const fontColor = resolveColor(cell.font.color);
-                    if (fontColor) {
-                        style.fontColor = fontColor;
-                    }
-                }
-                
-                // Alignment extrahieren
-                if (cell.alignment) {
-                    if (cell.alignment.horizontal && cell.alignment.horizontal !== 'general') {
-                        style.textAlign = cell.alignment.horizontal;
-                    }
-                    if (cell.alignment.vertical && cell.alignment.vertical !== 'bottom') {
-                        style.verticalAlign = cell.alignment.vertical;
-                    }
-                    if (cell.alignment.wrapText) {
-                        style.wrapText = true;
-                    }
-                }
-                
-                // Fill extrahieren
-                if (cell.fill) {
-                    if (cell.fill.type === 'pattern' && cell.fill.pattern === 'solid') {
-                        const fillColor = resolveColor(cell.fill.fgColor);
-                        if (fillColor) {
-                            style.fill = fillColor;
-                        }
-                    }
-                }
-                
-                // Borders extrahieren
-                if (cell.border) {
-                    const borders = {};
-                    for (const side of ['top', 'bottom', 'left', 'right']) {
-                        if (cell.border[side] && cell.border[side].style) {
-                            borders[side] = {
-                                style: cell.border[side].style,
-                                color: resolveColor(cell.border[side].color)
-                            };
-                        }
-                    }
-                    if (Object.keys(borders).length > 0) {
-                        style.borders = borders;
-                    }
-                }
-                
-                if (Object.keys(style).length > 0) {
-                    cellStyles[styleKey] = style;
-                }
-                });
-                continue; // Weiter zur nächsten Zeile
-            }
-            
-            // Daten-Zeilen
-            // Initialisiere rowData mit leeren Strings für alle Spalten
-            const rowData = new Array(actualColumnCount).fill('');
-            
-            // WICHTIG: Style-Key basiert auf dataRowCounter, nicht auf rowNumber!
-            // Das stellt sicher, dass leere Zeilen nicht zu Index-Mismatches führen
-            const currentDataRowIndex = dataRowCounter;
-            
-            row.eachCell((cell, colNumber) => {
-                const colIndex = colNumber - 1;
-                // WICHTIG: Frontend erwartet 1-basierte Indizes (wie xlsx-populate)
-                const styleKey = `${currentDataRowIndex + 1}-${colIndex}`;
-                
-                let cellValue = cell.value;
-                
-                // Bild-Zellen sofort erkennen (aus XML-Metadaten)
-                // ExcelJS kann DISPIMG/IMAGE Formeln nicht parsen, liefert #VALUE! oder Objekte
-                // Daher VOR jeder anderen Verarbeitung abfangen
-                if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
-                    cellValue = '🖼️ Bild';
-                    rowData[colIndex] = cellValue;
-                    return; // Nächste Zelle
-                }                
-                // Formel extrahieren - WICHTIG: VOR der Objekt-Behandlung!
-                // Bei Formeln kann cell.value ein Objekt sein mit { formula, result }
-                // oder cell.formula ist direkt verfügbar
-                if (cell.formula) {
-                    cellFormulas[styleKey] = cell.formula;
-                    // Das Ergebnis ist in cell.result (nicht cell.value!)
-                    cellValue = cell.result !== undefined ? cell.result : '';
-                    // Bild-Formeln erkennen: IMAGE, DISPIMG (mit beliebigen Prefixen wie _xlfn._xlws.)
-                    if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(cell.formula)) {
-                        cellValue = '🖼️ Bild';
-                    }
-                } else if (cell.value && typeof cell.value === 'object' && cell.value.formula) {
-                    // Formel als Objekt gespeichert: { formula: '...', result: ... }
-                    cellFormulas[styleKey] = cell.value.formula;
-                    cellValue = cell.value.result !== undefined ? cell.value.result : '';
-                    // Bild-Formeln erkennen
-                    if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(cell.value.formula)) {
-                        cellValue = '🖼️ Bild';
-                    }
-                }
-                
-                // Error-Werte behandeln (z.B. { error: '#VALUE!' } aus Formel-Ergebnissen)
-                if (cellValue && typeof cellValue === 'object' && cellValue.error) {
-                    // Prüfe ob die zugehörige Formel eine Bild-Formel ist
-                    const formula = cellFormulas[styleKey] || '';
-                    if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(formula)) {
-                        cellValue = '🖼️ Bild';
-                    } else if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
-                        // Bild-Formel aus XML-Metadaten erkannt
-                        cellValue = '🖼️ Bild';
-                    } else {
-                        console.log(`[ExcelJS] Error-Wert in Zelle ${styleKey}: ${cellValue.error}, Formel: ${formula || 'keine'}`);
-                        cellValue = String(cellValue.error);
-                    }
-                }
-                // String-Error-Werte: #VALUE! ohne Formel = möglicherweise Bild oder nicht-auswertbar
-                else if (typeof cellValue === 'string' && cellValue === '#VALUE!') {
-                    const formula = cellFormulas[styleKey] || '';
-                    if (/IMAGE\s*\(|DISPIMG\s*\(/i.test(formula)) {
-                        cellValue = '🖼️ Bild';
-                    } else if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
-                        // Bild-Formel aus XML-Metadaten erkannt
-                        cellValue = '🖼️ Bild';
-                    } else {
-                        console.log(`[ExcelJS] #VALUE! String in Zelle ${styleKey}, Formel: ${formula || 'keine'}, cell.value Typ: ${typeof cell.value}, Keys: ${cell.value && typeof cell.value === 'object' ? Object.keys(cell.value).join(',') : 'N/A'}`);
-                    }
-                }
-                
-                // Hyperlink extrahieren
-                if (cell.hyperlink) {
-                    cellHyperlinks[styleKey] = cell.hyperlink.hyperlink || cell.hyperlink;
-                }
-                
-                // WICHTIG: Datums-Behandlung VOR der allgemeinen Objekt-Behandlung!
-                // Date ist auch ein Objekt, würde sonst mit String() konvertiert werden
-                if (cellValue instanceof Date) {
-                    cellValue = formatDateWithNumFmt(cellValue, cell.numFmt || '');
-                }
-                
-                // Numerische Werte gemäß numFmt runden (z.B. Buchhaltungsformat 95,90 € → 2 Nachkommastellen)
-                if (typeof cellValue === 'number' && cell.numFmt) {
-                    cellValue = roundNumericByFormat(cellValue, cell.numFmt);
-                }
-                
-                // SharedString-Referenz auflösen (Streaming löst RichText-SharedStrings nicht auf)
-                if (cell.value && typeof cell.value === 'object' && cell.value.sharedString !== undefined && sharedStrings.length > 0) {
-                    const ssIdx = cell.value.sharedString;
-                    const ss = sharedStrings[ssIdx];
-                    if (ss) {
-                        if (ss.richText) {
-                            cell.value = { richText: ss.richText.map(r => ({ text: r.text, font: r.font })) };
-                        } else {
-                            cell.value = ss.text || '';
-                        }
-                        cellValue = typeof cell.value === 'string' ? cell.value : (cell.value.richText ? cell.value.richText.map(p => p.text).join('') : '');
-                    }
-                }
-                
-                // Objekt-Werte behandeln (Rich Text, Hyperlinks, etc.)
-                // WICHTIG: Nur wenn es KEINE Formel war (die wurde oben schon behandelt)
-                // Wir prüfen cell.value (nicht cellValue), um zu sehen ob es ein spezielles Objekt ist
-                // Date-Objekte NICHT als Objekte behandeln (wurden oben bereits formatiert)
-                if (cell.value && typeof cell.value === 'object' && !(cell.value instanceof Date) && !cell.formula && !cell.value.formula) {
-                    // Rich Text extrahieren
-                    if (cell.value.richText) {
-                        const richText = cell.value.richText.map(part => ({
-                            text: part.text,
-                            styles: {
-                                bold: part.font?.bold || false,
-                                italic: part.font?.italic || false,
-                                underline: part.font?.underline || false,
-                                strikethrough: part.font?.strike || false,
-                            color: resolveColor(part.font?.color),
-                                fontSize: part.font?.size || null,
-                                fontName: part.font?.name || null
-                            }
-                        }));
-                        richTextCells[styleKey] = richText;
-                        // Konvertiere zu Plain Text - nimm den text direkt aus dem Original!
-                        cellValue = cell.value.richText.map(part => part.text).join('');
-                    }
-                    // Hyperlink-Objekte (haben text und hyperlink Properties)
-                    else if (cell.value.text !== undefined && cell.value.hyperlink !== undefined) {
-                        cellValue = cell.value.text;
-                        cellHyperlinks[styleKey] = cell.value.hyperlink;
-                    }
-                    // Andere Objekte - versuche text-Property zu nutzen
-                    else if (cell.value.text !== undefined) {
-                        cellValue = cell.value.text;
-                    }
-                    // Fallback: Null oder leerer String
-                    else if (cell.value === null) {
-                        cellValue = '';
-                    }
-                    // Bild-Objekte erkennen (Buffer, Base64 oder image-Properties)
-                    else if (cell.value.buffer || cell.value.image || cell.value.imageId || 
-                             (cell.value.extension && (cell.value.extension === 'png' || cell.value.extension === 'jpeg' || cell.value.extension === 'gif' || cell.value.extension === 'bmp'))) {
-                        cellValue = '🖼️ Bild';
-                    }
-                    // Error-Objekte erkennen
-                    else if (cell.value.error) {
-                        // Prüfe ob es eine Bild-Zelle ist (aus XML-Metadaten)
-                        if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
-                            cellValue = '🖼️ Bild';
-                        } else {
-                            cellValue = cell.value.error; // z.B. #REF!, #VALUE!, #DIV/0!
-                        }
-                    }
-                    // Letzter Fallback: Unbekanntes Objekt -> versuche sinnvolle Darstellung
-                    else {
-                        // Prüfe ob JSON-Serialisierung "[object Object]" vermeidet
-                        const keys = Object.keys(cell.value);
-                        if (keys.length === 0) {
-                            cellValue = '';
-                        } else {
-                            // Logge das unbekannte Objekt für Debugging
-                            console.log(`[ExcelJS] Unbekanntes Objekt in Zelle ${styleKey}:`, JSON.stringify(cell.value).substring(0, 200));
-                            cellValue = '📎 Objekt';
-                        }
-                    }
-                }
-                
-                // Styles extrahieren
-                const style = {};
-                
-                if (cell.font) {
-                    if (cell.font.bold) style.bold = true;
-                    if (cell.font.italic) style.italic = true;
-                    if (cell.font.underline) style.underline = true;
-                    if (cell.font.strike) style.strikethrough = true;
-                    if (cell.font.size) {
-                        style.fontSize = cell.font.size;
-                    }
-                    if (cell.font.name && cell.font.name !== 'Calibri') {
-                        style.fontName = cell.font.name;
-                    }
-                    const fontColor = resolveColor(cell.font.color);
-                    if (fontColor) {
-                        style.fontColor = fontColor;
-                    }
-                }
-                
-                // Alignment extrahieren
-                if (cell.alignment) {
-                    if (cell.alignment.horizontal && cell.alignment.horizontal !== 'general') {
-                        style.textAlign = cell.alignment.horizontal;
-                    }
-                    if (cell.alignment.vertical && cell.alignment.vertical !== 'bottom') {
-                        style.verticalAlign = cell.alignment.vertical;
-                    }
-                    if (cell.alignment.wrapText) {
-                        style.wrapText = true;
-                    }
-                }
-                
-                // Fill extrahieren
-                if (cell.fill) {
-                    if (cell.fill.type === 'pattern' && cell.fill.pattern === 'solid') {
-                        const fillColor = resolveColor(cell.fill.fgColor);
-                        if (fillColor) {
-                            style.fill = fillColor;
-                        }
-                    }
-                }
-                
-                // Borders extrahieren
-                if (cell.border) {
-                    const borders = {};
-                    for (const side of ['top', 'bottom', 'left', 'right']) {
-                        if (cell.border[side] && cell.border[side].style) {
-                            borders[side] = {
-                                style: cell.border[side].style,
-                                color: resolveColor(cell.border[side].color)
-                            };
-                        }
-                    }
-                    if (Object.keys(borders).length > 0) {
-                        style.borders = borders;
-                    }
-                }
-                
-                if (Object.keys(style).length > 0) {
-                    cellStyles[styleKey] = style;
-                }
-                
-                // WICHTIG: Date-Objekte MÜSSEN hier als String formatiert werden
-                // da sie sonst bei der IPC-Serialisierung zu "Thu Sep 19 2013..." werden
-                if (cellValue instanceof Date) {
-                    // Fallback-Formatierung falls oben nicht gegriffen hat
-                    const day = cellValue.getDate();
-                    const month = cellValue.getMonth() + 1;
-                    const year = cellValue.getFullYear();
-                    cellValue = `${day}.${month}.${year}`;
-                }
-                // Auch String-Werte prüfen die wie Date.toString() aussehen
-                else if (typeof cellValue === 'string' && /^(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s/.test(cellValue)) {
-                    // Versuche den Date-String zu parsen
-                    const parsedDate = new Date(cellValue);
-                    if (!isNaN(parsedDate.getTime())) {
-                        const day = parsedDate.getDate();
-                        const month = parsedDate.getMonth() + 1;
-                        const year = parsedDate.getFullYear();
-                        cellValue = `${day}.${month}.${year}`;
-                    }
-                }
-                
-                // Setze den Wert an der korrekten Position
-                // Letzte Absicherung: Objekte die durchgerutscht sind, nie als "[object Object]" speichern
-                if (cellValue !== null && cellValue !== undefined && typeof cellValue === 'object') {
-                    console.log(`[ExcelJS] Objekt durchgerutscht in Zelle ${styleKey}:`, JSON.stringify(cellValue).substring(0, 200));
-                    cellValue = '📎 Objekt';
-                }
-                rowData[colIndex] = cellValue === null || cellValue === undefined ? '' : cellValue;
-            });
-            
-            // Hidden Rows werden aus Metadaten (XML) geladen, nicht aus row.hidden
-            
-            data.push(rowData);
-            dataRowCounter++; // Zähler für nächste Daten-Zeile erhöhen
-            
-            // Fortschritt alle 2 Sekunden loggen
-            const now = Date.now();
-            if (now - lastProgressLog > 2000) {
-                console.log(`[ExcelJS] Streaming: ${dataRowCounter} Zeilen verarbeitet (${now - t2}ms)`);
-                lastProgressLog = now;
-            }
-        } // Ende for-await row
-        
-            console.log(`[ExcelJS] Streaming abgeschlossen: ${dataRowCounter} Datenzeilen in ${Date.now() - t2}ms`);
-            timings.streaming = Date.now() - t2;
-            break; // Sheet gefunden, keine weiteren Sheets verarbeiten
-        } // Ende for-await worksheetReader
-        
-        if (!sheetFound) {
-            return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
-        }
-        } // Ende else (Streaming-Pfad)
+        } // Ende Non-Streaming-Block
         
         // WICHTIG: Header-Zeile als erste Zeile in data einfügen
         // Das Frontend erwartet data.slice(1) - also Header an Position 0
