@@ -1346,6 +1346,11 @@ async function _readSheetStreaming(
             // Daher VOR jeder anderen Verarbeitung abfangen
             if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
                 cellValue = '🖼️ Bild';
+                // Style trotzdem extrahieren (textAlign, verticalAlign etc.)
+                const style = extractCellStyle(cell);
+                if (Object.keys(style).length > 0) {
+                    cellStyles[styleKey] = style;
+                }
                 rowData[colIndex] = cellValue;
                 return; // Nächste Zelle
             }                
