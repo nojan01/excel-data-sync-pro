@@ -7695,7 +7695,11 @@ def _apply_imported_cell_styles(ws, cell_styles):
                 if style_data.get('textAlign'):
                     align_kwargs['horizontal'] = style_data['textAlign']
                 if style_data.get('verticalAlign'):
-                    align_kwargs['vertical'] = style_data['verticalAlign']
+                    # Frontend sendet CSS-Wert 'middle', openpyxl erwartet 'center'
+                    v_align = style_data['verticalAlign']
+                    if v_align == 'middle':
+                        v_align = 'center'
+                    align_kwargs['vertical'] = v_align
                 if 'wrapText' in style_data:
                     align_kwargs['wrap_text'] = bool(style_data['wrapText'])
                 if align_kwargs:
