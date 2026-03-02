@@ -374,6 +374,42 @@ function escapeXml(str) {
 
 let mainWindow = null;
 
+// Dateipfad der per "Öffnen mit..." übergeben wurde (für nach dem App-Start)
+let pendingFileOpen = null;
+
+// ============================================
+// SINGLE INSTANCE LOCK - "Öffnen mit..." Support
+// ============================================
+const gotTheLock = app.requestSingleInstanceLock();
+
+if (!gotTheLock) {
+    // Zweite Instanz: Pfad wird an die erste Instanz weitergeleitet via second-instance Event
+    app.quit();
+} else {
+    // Erste Instanz: Lausche auf zweite Instanz-Starts
+    app.on('second-instance', (event, argv) => {
+        // Windows: Dateipfad ist das letzte Argument
+        const filePath = argv.find(arg => /\.(xlsx|xls|xlsm)$/i.test(arg));
+        if (filePath && mainWindow) {
+            console.log('[FileOpen] Datei von zweiter Instanz empfangen:', filePath);
+            // Fenster in den Vordergrund bringen
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.focus();
+            // Datei im Datenexplorer öffnen
+            mainWindow.webContents.send('app:openFile', filePath);
+        } else if (mainWindow) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.focus();
+        }
+    });
+}
+
+// Prüfe ob beim App-Start eine Datei per Argument übergeben wurde
+function getFileFromArgs(argv) {
+    // Überspringe Electron-eigene Argumente und suche nach Excel-Dateien
+    return argv.find(arg => /\.(xlsx|xls|xlsm)$/i.test(arg)) || null;
+}
+
 // ============================================
 // SICHERHEITSFUNKTIONEN
 // ============================================
@@ -667,21 +703,6 @@ const networkLog = {
      */
     isNetworkPath(filePath) {
         if (!filePath || typeof filePath !== 'string') return false;
-
-        // macOS: /Volumes/ (außer Macintosh HD)
-        if (process.platform === 'darwin') {
-            if (filePath.startsWith('/Volumes/')) {
-                // Lokale Festplatte ausschließen
-                const volumeName = filePath.split('/')[2];
-                // Typische lokale Volume-Namen
-                const localVolumes = ['Macintosh HD', 'Macintosh HD - Data', 'System'];
-                return !localVolumes.includes(volumeName);
-            }
-            // SMB/AFP-Mounts in anderen Pfaden
-            if (filePath.includes('/net/') || filePath.includes('/Network/')) {
-                return true;
-            }
-        }
 
         // Windows: UNC-Pfade (\\server\share) oder gemappte Laufwerke prüfen
         if (process.platform === 'win32') {
@@ -1307,9 +1328,8 @@ function isValidFilePath(filePath) {
 // FENSTER ERSTELLEN
 // ============================================
 function createWindow() {
-    // Plattformspezifisches Icon
-    const iconFile = process.platform === 'darwin' ? 'icon.icns' :
-                     process.platform === 'win32' ? 'icon.ico' : 'icon.png';
+    // Windows Icon
+    const iconFile = 'icon.ico';
 
     mainWindow = new BrowserWindow({
         width: 1600,
@@ -1389,22 +1409,6 @@ function createWindow() {
             ]
         }
     ];
-
-    // Auf macOS muss das App-Menü zuerst kommen
-    if (process.platform === 'darwin') {
-        appMenuTemplate.unshift({
-            label: app.name,
-            submenu: [
-                { role: 'about' },
-                { type: 'separator' },
-                { role: 'hide' },
-                { role: 'hideOthers' },
-                { role: 'unhide' },
-                { type: 'separator' },
-                { role: 'quit' }
-            ]
-        });
-    }
 
     const appMenu = Menu.buildFromTemplate(appMenuTemplate);
     Menu.setApplicationMenu(appMenu);
@@ -1531,12 +1535,28 @@ app.whenReady().then(async () => {
     }
 
     createWindow();
+
+    // Prüfe ob eine Datei per Kommandozeile/"Öffnen mit..." übergeben wurde
+    const startupFile = getFileFromArgs(process.argv);
+    if (startupFile) {
+        console.log('[FileOpen] Datei beim Start übergeben:', startupFile);
+        // Warte bis das Fenster bereit ist, dann Datei öffnen
+        pendingFileOpen = startupFile;
+        mainWindow.webContents.once('did-finish-load', () => {
+            // Kleine Verzögerung damit der Renderer vollständig initialisiert ist
+            setTimeout(() => {
+                if (pendingFileOpen && mainWindow && !mainWindow.isDestroyed()) {
+                    console.log('[FileOpen] Sende Datei an Renderer:', pendingFileOpen);
+                    mainWindow.webContents.send('app:openFile', pendingFileOpen);
+                    pendingFileOpen = null;
+                }
+            }, 1000);
+        });
+    }
 });
 
 app.on('window-all-closed', () => {
-    if (process.platform !== 'darwin') {
-        app.quit();
-    }
+    app.quit();
 });
 
 // Cleanup: Live Session beenden beim Schließen der App
@@ -1581,7 +1601,7 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
         // Standard-Pfad setzen (hilft bei Dialog-Größenproblemen unter Windows)
         const defaultPath = options.defaultPath || app.getPath('documents');
 
-        const result = await dialog.showOpenDialog(mainWindow, {
+        const result = await dialog.showOpenDialog({
             title: options.title || 'Datei oeffnen',
             defaultPath: defaultPath,
             filters: options.filters || [
@@ -1623,7 +1643,7 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
         // Standard-Pfad setzen falls nicht angegeben
         const defaultPath = options.defaultPath || app.getPath('documents');
 
-        const result = await dialog.showSaveDialog(mainWindow, {
+        const result = await dialog.showSaveDialog({
             title: options.title || 'Datei speichern',
             defaultPath: defaultPath,
             filters: options.filters || [
@@ -1662,7 +1682,7 @@ ipcMain.handle('dialog:openFolder', async (event, options) => {
     try {
         const defaultPath = options.defaultPath || app.getPath('documents');
 
-        const result = await dialog.showOpenDialog(mainWindow, {
+        const result = await dialog.showOpenDialog({
             title: options.title || 'Ordner auswaehlen',
             defaultPath: defaultPath,
             properties: ['openDirectory']
@@ -4094,12 +4114,9 @@ ipcMain.handle('liveSession:saveFile', async (event, outputPath, password) => {
             pythonPasswordArg = 'KEEP'; // Altes Passwort beibehalten
         } else if (password === null || password === '') {
             pythonPasswordArg = null; // Passwort entfernen
-        } else if (process.platform === 'win32') {
+        } else {
             // Windows: COM-API setzt das Passwort direkt (Excel sperrt die Datei für xlsx-populate)
             pythonPasswordArg = password;
-        } else {
-            // macOS: Python entschlüsselt zuerst, xlsx-populate verschlüsselt danach
-            pythonPasswordArg = null;
         }
         
         const result = await session.saveFile(outputPath, pythonPasswordArg);
@@ -4113,28 +4130,9 @@ ipcMain.handle('liveSession:saveFile', async (event, outputPath, password) => {
         // - password === null: Passwort entfernen (Datei wurde entschlüsselt, nichts weiter tun)
         // - password === 'xxx': neues Passwort setzen
         if (password && password !== '' && outputPath) {
-            if (process.platform === 'win32') {
-                // Windows: COM-API hat das Passwort bereits direkt gesetzt
-                result.hasPassword = true;
-                console.log('[LiveSession] Neues Passwort via COM-API gesetzt');
-            } else {
-                // macOS: xlsx-populate verschlüsselt die Datei
-                try {
-                    const XlsxPopulate = require('xlsx-populate');
-                    
-                    // Kurze Pause um sicherzustellen dass die Datei vollständig geschrieben wurde
-                    await new Promise(resolve => setTimeout(resolve, 100));
-                    
-                    // Datei ist jetzt unverschlüsselt, wir können sie öffnen und mit neuem Passwort speichern
-                    const pwWorkbook = await XlsxPopulate.fromFileAsync(outputPath);
-                    await pwWorkbook.toFileAsync(outputPath, { password: password });
-                    result.hasPassword = true;
-                    console.log('[LiveSession] Neues Passwort erfolgreich gesetzt');
-                } catch (pwError) {
-                    console.error('[LiveSession] Fehler beim Passwort-Setzen:', pwError.message);
-                    result.passwordError = pwError.message;
-                }
-            }
+            // Windows: COM-API hat das Passwort bereits direkt gesetzt
+            result.hasPassword = true;
+            console.log('[LiveSession] Neues Passwort via COM-API gesetzt');
         } else if (password === null || password === '') {
             result.hasPassword = false;
         } else {
@@ -4441,14 +4439,7 @@ ipcMain.handle('liveSession:getRecoveryFiles', async (event) => {
 ipcMain.handle('liveSession:deleteRecoveryFile', async (event, filePath) => {
     try {
         // Sicherheitsprüfung: Pfad muss im Recovery-Verzeichnis liegen
-        let recoveryDir;
-        if (process.platform === 'darwin') {
-            recoveryDir = path.join(os.homedir(), 'Library', 'Application Support', 'ExcelDataSyncPro', 'recovery');
-        } else if (process.platform === 'win32') {
-            recoveryDir = path.join(process.env.APPDATA || '', 'ExcelDataSyncPro', 'recovery');
-        } else {
-            recoveryDir = path.join(os.homedir(), '.exceldatasyncpro', 'recovery');
-        }
+        const recoveryDir = path.join(process.env.APPDATA || '', 'ExcelDataSyncPro', 'recovery');
         const resolvedPath = path.resolve(filePath);
         if (!resolvedPath.startsWith(path.resolve(recoveryDir))) {
             securityLog.log('SECURITY', 'RECOVERY_DELETE_BLOCKED', {
@@ -4469,14 +4460,7 @@ ipcMain.handle('liveSession:deleteRecoveryFile', async (event, filePath) => {
 ipcMain.handle('liveSession:openRecoveryFolder', async (event) => {
     try {
         const { shell } = require('electron');
-        let recoveryDir;
-        if (process.platform === 'darwin') {
-            recoveryDir = path.join(require('os').homedir(), 'Library', 'Application Support', 'ExcelDataSyncPro', 'recovery');
-        } else if (process.platform === 'win32') {
-            recoveryDir = path.join(process.env.APPDATA || '', 'ExcelDataSyncPro', 'recovery');
-        } else {
-            recoveryDir = path.join(require('os').homedir(), '.exceldatasyncpro', 'recovery');
-        }
+        const recoveryDir = path.join(process.env.APPDATA || '', 'ExcelDataSyncPro', 'recovery');
         
         // Verzeichnis erstellen falls nicht vorhanden
         if (!require('fs').existsSync(recoveryDir)) {

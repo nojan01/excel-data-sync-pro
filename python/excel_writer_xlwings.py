@@ -83,61 +83,25 @@ def kill_excel_instances():
     
     time.sleep(0.2)
     
-    if system == 'Darwin':  # macOS
-        # Methode 2: Mit pkill -9 SOFORT beenden (keine Dialoge!)
-        try:
-            result = subprocess.run(['pgrep', '-x', 'Microsoft Excel'], 
-                                    capture_output=True, timeout=1)
-            if result.returncode == 0:
-                subprocess.run(['pkill', '-9', 'Microsoft Excel'], 
-                               capture_output=True, timeout=2)
-                time.sleep(0.3)
-        except:
-            pass
-        
-        # Methode 3: Falls immer noch da, mit killall
-        try:
-            result = subprocess.run(['pgrep', '-x', 'Microsoft Excel'], 
-                                    capture_output=True, timeout=1)
-            if result.returncode == 0:
-                subprocess.run(['killall', '-9', 'Microsoft Excel'], 
-                               capture_output=True, timeout=2)
-                time.sleep(0.3)
-        except:
-            pass
-    
-    elif system == 'Windows':  # Windows
-        # Methode 2: Mit taskkill Excel beenden
-        try:
-            subprocess.run(['taskkill', '/F', '/IM', 'EXCEL.EXE'], 
-                          capture_output=True, timeout=5)
-            time.sleep(0.3)
-        except:
-            pass
+    # Methode 2: Mit taskkill Excel beenden
+    try:
+        subprocess.run(['taskkill', '/F', '/IM', 'EXCEL.EXE'], 
+                      capture_output=True, timeout=5)
+        time.sleep(0.3)
+    except:
+        pass
 
 
 def hide_excel():
-    """Versteckt Excel - plattformübergreifend"""
-    system = platform.system()
-    
-    if system == 'Darwin':  # macOS
-        try:
-            subprocess.run(['osascript', '-e', 
-                'tell application "System Events" to set visible of process "Microsoft Excel" to false'], 
-                capture_output=True, timeout=2)
-        except:
-            pass
-    
-    elif system == 'Windows':  # Windows
-        # Auf Windows: Excel-Fenster minimieren via xlwings
-        try:
-            for app in xw.apps:
-                try:
-                    # visible=False versteckt das Fenster komplett
-                    app.visible = False
-                except:
-                    pass
-        except:
+    """Versteckt Excel auf Windows"""
+    # Excel-Fenster verstecken via xlwings
+    try:
+        for app in xw.apps:
+            try:
+                app.visible = False
+            except:
+                pass
+    except:
             pass
 
 
@@ -354,10 +318,7 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                                     # damit Zeilen-Level-Formatierung (Fills, Höhe) erhalten bleibt!
                                     source_rng = ws.range(f'{new_source_excel}:{new_source_excel}')
                                     dest_rng = ws.range(f'A{target_excel}')
-                                    if platform.system() == 'Windows':
-                                        source_rng.api.Copy(Destination=dest_rng.api)
-                                    else:
-                                        source_rng.api.copy_range(destination=dest_rng.api)
+                                    source_rng.api.Copy(Destination=dest_rng.api)
                                     # 3. Lösche die alte Zeile
                                     ws.range(f'{new_source_excel}:{new_source_excel}').delete()
                                 else:
@@ -368,10 +329,7 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                                     # 2. Kopiere GANZE Quell-Zeile zur neuen Position
                                     source_rng = ws.range(f'{source_excel}:{source_excel}')
                                     dest_rng = ws.range(f'A{after_target_excel}')
-                                    if platform.system() == 'Windows':
-                                        source_rng.api.Copy(Destination=dest_rng.api)
-                                    else:
-                                        source_rng.api.copy_range(destination=dest_rng.api)
+                                    source_rng.api.Copy(Destination=dest_rng.api)
                                     # 3. Lösche die alte Zeile
                                     ws.range(f'{source_excel}:{source_excel}').delete()
                                 
@@ -437,20 +395,14 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                                     new_source_excel = source_excel + 1
                                     source_rng = ws.range(f'{new_source_excel}:{new_source_excel}')
                                     dest_rng = ws.range(f'A{target_excel}')
-                                    if platform.system() == 'Windows':
-                                        source_rng.api.Copy(Destination=dest_rng.api)
-                                    else:
-                                        source_rng.api.copy_range(destination=dest_rng.api)
+                                    source_rng.api.Copy(Destination=dest_rng.api)
                                     ws.range(f'{new_source_excel}:{new_source_excel}').delete()
                                 else:
                                     after_target_excel = target_excel + 1
                                     ws.range(f'{after_target_excel}:{after_target_excel}').insert(shift='down')
                                     source_rng = ws.range(f'{source_excel}:{source_excel}')
                                     dest_rng = ws.range(f'A{after_target_excel}')
-                                    if platform.system() == 'Windows':
-                                        source_rng.api.Copy(Destination=dest_rng.api)
-                                    else:
-                                        source_rng.api.copy_range(destination=dest_rng.api)
+                                    source_rng.api.Copy(Destination=dest_rng.api)
                                     ws.range(f'{source_excel}:{source_excel}').delete()
                                 
                                 val = current_order.pop(current_pos)
@@ -597,11 +549,7 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                             # 2. Kopiere Quell-Spalte zur Ziel-Spalte (nur verwendeten Bereich)
                             source_rng = ws.range(f'{new_source_letter}1:{new_source_letter}{last_row}')
                             dest_rng = ws.range(f'{target_letter}1')
-                            if platform.system() == 'Windows':
-                                source_rng.api.Copy(Destination=dest_rng.api)
-                            else:
-                                # macOS: appscript - kopiere in Zelle, nicht ganze Spalte
-                                source_rng.api.copy_range(destination=dest_rng.api)
+                            source_rng.api.Copy(Destination=dest_rng.api)
                             # 3. Lösche die alte Spalte
                             ws.range(f'{new_source_letter}:{new_source_letter}').delete()
                         else:
@@ -612,11 +560,7 @@ def write_sheet_xlwings(file_path, output_path, sheet_name, changes):
                             # 2. Kopiere Quell-Spalte zur neuen Position (nur verwendeten Bereich)
                             source_rng = ws.range(f'{source_letter}1:{source_letter}{last_row}')
                             dest_rng = ws.range(f'{after_target_letter}1')
-                            if platform.system() == 'Windows':
-                                source_rng.api.Copy(Destination=dest_rng.api)
-                            else:
-                                # macOS: appscript - kopiere in Zelle, nicht ganze Spalte
-                                source_rng.api.copy_range(destination=dest_rng.api)
+                            source_rng.api.Copy(Destination=dest_rng.api)
                             # 3. Lösche die alte Spalte
                             ws.range(f'{source_letter}:{source_letter}').delete()
                         

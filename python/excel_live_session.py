@@ -132,12 +132,7 @@ class ExcelLiveSession:
     
     def _get_recovery_dir(self) -> str:
         """Gibt das Recovery-Verzeichnis zurück"""
-        if platform.system() == 'Darwin':
-            base = os.path.expanduser('~/Library/Application Support/ExcelDataSyncPro')
-        elif platform.system() == 'Windows':
-            base = os.path.join(os.environ.get('APPDATA', ''), 'ExcelDataSyncPro')
-        else:
-            base = os.path.expanduser('~/.exceldatasyncpro')
+        base = os.path.join(os.environ.get('APPDATA', ''), 'ExcelDataSyncPro')
         
         recovery_dir = os.path.join(base, 'recovery')
         os.makedirs(recovery_dir, exist_ok=True)
@@ -318,15 +313,7 @@ class ExcelLiveSession:
     
     def _hide_excel(self):
         """Versteckt Excel"""
-        import subprocess
-        if platform.system() == 'Darwin':
-            try:
-                subprocess.run(['osascript', '-e', 
-                    'tell application "System Events" to set visible of process "Microsoft Excel" to false'], 
-                    capture_output=True, timeout=2)
-            except:
-                pass
-        elif platform.system() == 'Windows' and self.app:
+        if self.app:
             try:
                 self.app.visible = False
             except:
@@ -339,18 +326,9 @@ class ExcelLiveSession:
                 self._log("Keine Excel-App aktiv")
                 return {'success': False, 'error': 'Keine Excel-App aktiv'}
             
-            # xlwings visible-Eigenschaft verwenden (funktioniert auf Mac und Windows)
+            # xlwings visible-Eigenschaft verwenden
             self.app.visible = visible
             self._log(f"Excel Sichtbarkeit gesetzt: {visible}")
-            
-            # Auf macOS: Falls visible=True, Excel in den Vordergrund bringen
-            if visible and platform.system() == 'Darwin':
-                try:
-                    import subprocess
-                    subprocess.run(['osascript', '-e', 'tell application "Microsoft Excel" to activate'], 
-                                   capture_output=True, timeout=2)
-                except:
-                    pass
             
             return {'success': True, 'visible': visible}
         except Exception as e:
@@ -366,31 +344,17 @@ class ExcelLiveSession:
             # Screen-Updating sicherstellen
             self.app.screen_updating = True
             
-            # Auf macOS: Aggressiveres Refresh nötig
-            if platform.system() == 'Darwin':
-                try:
-                    # Workbook und Worksheet aktivieren, damit Excel die Änderung anzeigt
-                    if self.workbook:
-                        self.workbook.activate()
-                    if self.worksheet:
-                        self.worksheet.activate()
-                    
-                    # Formeln neu berechnen (erzwingt auch Display-Update)
-                    self.app.calculate()
-                except Exception as mac_err:
-                    self._log(f"_force_screen_refresh macOS-Fehler: {mac_err}")
-            else:
-                # Windows: Aggressiveres Refresh - Toggle allein reicht nicht immer
-                try:
-                    if self.workbook:
-                        self.workbook.activate()
-                    if self.worksheet:
-                        self.worksheet.activate()
-                    self.app.screen_updating = False
-                    self.app.screen_updating = True
-                    self.app.calculate()
-                except Exception as win_err:
-                    self._log(f"_force_screen_refresh Windows-Fehler: {win_err}")
+            # Windows: Aggressiveres Refresh
+            try:
+                if self.workbook:
+                    self.workbook.activate()
+                if self.worksheet:
+                    self.worksheet.activate()
+                self.app.screen_updating = False
+                self.app.screen_updating = True
+                self.app.calculate()
+            except Exception as win_err:
+                self._log(f"_force_screen_refresh Windows-Fehler: {win_err}")
                 
         except Exception as e:
             self._log(f"Fehler bei screen refresh: {e}")
@@ -564,60 +528,29 @@ class ExcelLiveSession:
             else:
                 effective_password = None
             
-            is_windows = platform.system() == 'Windows'
-            
             if output_path and output_path != self.file_path:
                 self._log(f"Speichere unter: {output_path}")
                 
-                if platform.system() == 'Darwin':
-                    # macOS: SaveAs über Speichern + Kopieren
-                    self.workbook.save()
-                    
-                    shutil.copy2(self.file_path, output_path)
-                    
-                    # Wenn Quelldatei verschlüsselt war UND wir das Passwort NICHT behalten wollen,
-                    # müssen wir die Kopie entschlüsseln
-                    if self.file_password and not keep_password:
-                        try:
-                            import msoffcrypto
-                            import tempfile
-                            
-                            with open(output_path, 'rb') as f:
-                                file = msoffcrypto.OfficeFile(f)
-                                file.load_key(password=self.file_password)
-                                
-                                temp_fd, temp_path = tempfile.mkstemp(suffix='.xlsx')
-                                with os.fdopen(temp_fd, 'wb') as temp_f:
-                                    file.decrypt(temp_f)
-                            
-                            shutil.move(temp_path, output_path)
-                        except Exception as decrypt_err:
-                            self._log(f"Fehler beim Entschlüsseln: {decrypt_err}")
+                # Windows: COM-API für SaveAs mit Passwort
+                if effective_password:
+                    self.workbook.api.SaveAs(output_path, FileFormat=51, Password=effective_password)
+                elif not keep_password and self.file_password:
+                    # Passwort entfernen: Erst Password leeren, dann SaveAs
+                    self.workbook.api.Password = ''
+                    self.workbook.api.SaveAs(output_path, FileFormat=51)
                 else:
-                    # Windows: COM-API für SaveAs mit Passwort
-                    if effective_password:
-                        self.workbook.api.SaveAs(output_path, FileFormat=51, Password=effective_password)
-                    elif not keep_password and self.file_password:
-                        # Passwort entfernen: Erst Password leeren, dann SaveAs
-                        self.workbook.api.Password = ''
-                        self.workbook.api.SaveAs(output_path, FileFormat=51)
-                    else:
-                        self.workbook.api.SaveAs(output_path, FileFormat=51)
-                    self.file_path = output_path
+                    self.workbook.api.SaveAs(output_path, FileFormat=51)
+                self.file_path = output_path
             else:
-                if is_windows:
-                    # Windows: COM-API für Passwort-Änderungen
-                    if effective_password:
-                        self.workbook.api.Password = effective_password
-                        self.workbook.api.Save()
-                    elif not keep_password and password is not None:
-                        # password == '' → Passwort entfernen
-                        self.workbook.api.Password = ''
-                        self.workbook.api.Save()
-                    else:
-                        self.workbook.save()
+                # Windows: COM-API für Passwort-Änderungen
+                if effective_password:
+                    self.workbook.api.Password = effective_password
+                    self.workbook.api.Save()
+                elif not keep_password and password is not None:
+                    # password == '' → Passwort entfernen
+                    self.workbook.api.Password = ''
+                    self.workbook.api.Save()
                 else:
-                    # macOS: xlwings save funktioniert direkt
                     self.workbook.save()
             
             # Passwort aktualisieren
@@ -650,22 +583,15 @@ class ExcelLiveSession:
             
             if password:
                 self._log("Setze Passwort...")
-                if platform.system() == 'Windows':
-                    # Windows: COM-API direkt verwenden
-                    self.workbook.api.Password = password
-                    self.workbook.api.Save()
-                else:
-                    self.workbook.save(password=password)
+                # Windows: COM-API direkt verwenden
+                self.workbook.api.Password = password
+                self.workbook.api.Save()
                 self.file_password = password
             else:
                 self._log("Entferne Passwort...")
-                if platform.system() == 'Windows':
-                    # Windows: Passwort über COM-API leeren
-                    self.workbook.api.Password = ''
-                    self.workbook.api.Save()
-                else:
-                    # macOS: Speichern ohne Passwort entfernt das Passwort
-                    self.workbook.save()
+                # Windows: Passwort über COM-API leeren
+                self.workbook.api.Password = ''
+                self.workbook.api.Save()
                 self.file_password = None
             
             return {'success': True, 'hasPassword': bool(self.file_password)}

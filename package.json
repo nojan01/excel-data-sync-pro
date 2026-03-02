@@ -7,10 +7,8 @@
   "scripts": {
     "start": "electron --max-old-space-size=4096 --expose-gc .",
     "dev": "electron --max-old-space-size=4096 --expose-gc . --dev",
-    "build:mac": "electron-builder --mac",
     "build:win": "electron-builder --win nsis --x64",
-    "build:win-arm64": "electron-builder --win nsis --arm64",
-    "build:all": "electron-builder --win --mac"
+    "build:win-arm64": "electron-builder --win nsis --arm64"
   },
   "build": {
     "appId": "de.excelsync.pro",
@@ -32,47 +30,26 @@
       "python/**",
       "python-embed/**"
     ],
-    "mac": {
-      "files": [
-        "python-embed/mac-arm64/**/*"
-      ],
-      "target": [
-        {
-          "target": "dmg",
-          "arch": [
-            "x64",
-            "arm64"
-          ]
-        }
-      ],
-      "icon": "assets/icon.icns",
-      "category": "public.app-category.productivity",
-      "identity": null,
-      "forceCodeSigning": false,
-      "entitlements": "build/entitlements.mac.plist",
-      "entitlementsInherit": "build/entitlements.mac.plist",
-      "extendInfo": {
-        "NSAppleEventsUsageDescription": "Excel Data Sync Pro benötigt Zugriff auf Microsoft Excel für die Live-Synchronisation."
+    "fileAssociations": [
+      {
+        "ext": "xlsx",
+        "name": "Excel Workbook",
+        "description": "Microsoft Excel Workbook",
+        "role": "Viewer"
+      },
+      {
+        "ext": "xls",
+        "name": "Excel 97-2003 Workbook",
+        "description": "Microsoft Excel 97-2003 Workbook",
+        "role": "Viewer"
+      },
+      {
+        "ext": "xlsm",
+        "name": "Excel Macro-Enabled Workbook",
+        "description": "Microsoft Excel Macro-Enabled Workbook",
+        "role": "Viewer"
       }
-    },
-    "dmg": {
-      "contents": [
-        {
-          "x": 130,
-          "y": 220
-        },
-        {
-          "x": 410,
-          "y": 220,
-          "type": "link",
-          "path": "/Applications"
-        }
-      ],
-      "window": {
-        "width": 540,
-        "height": 380
-      }
-    },
+    ],
     "win": {
       "files": [
         "python-embed/win-x64/**/*"

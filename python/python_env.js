@@ -63,37 +63,11 @@ function getPythonPath() {
     if (isPackaged) {
         const resourcesPath = process.resourcesPath;
         
-        if (process.platform === 'darwin') {
-            const venvPath = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'mac-arm64', 'python-venv');
-            const sitePackages = path.join(venvPath, 'lib', 'python3.14', 'site-packages');
-            
-            const macPythonPaths = [
-                '/opt/homebrew/bin/python3',
-                '/usr/local/bin/python3',
-                '/usr/bin/python3',
-                '/Library/Frameworks/Python.framework/Versions/Current/bin/python3'
-            ];
-            
-            for (const pyPath of macPythonPaths) {
-                if (fs.existsSync(pyPath)) {
-                    safeLog(`[Python] macOS: System-Python gefunden: ${pyPath}`);
-                    if (fs.existsSync(sitePackages)) {
-                        _pythonEnvPath = sitePackages;
-                        safeLog(`[Python] macOS: PYTHONPATH wird gesetzt auf: ${sitePackages}`);
-                    }
-                    _cachedPythonPath = pyPath;
-                    return _cachedPythonPath;
-                }
-            }
-            
-            safeLog('[Python] WARNUNG: Kein Python auf macOS gefunden');
-        } else if (process.platform === 'win32') {
-            const embeddedPython = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'win-x64', 'python.exe');
-            if (fs.existsSync(embeddedPython)) {
-                safeLog(`[Python] Eingebettetes Python gefunden: ${embeddedPython}`);
-                _cachedPythonPath = embeddedPython;
-                return _cachedPythonPath;
-            }
+        const embeddedPython = path.join(resourcesPath, 'app.asar.unpacked', 'python-embed', 'win-x64', 'python.exe');
+        if (fs.existsSync(embeddedPython)) {
+            safeLog(`[Python] Eingebettetes Python gefunden: ${embeddedPython}`);
+            _cachedPythonPath = embeddedPython;
+            return _cachedPythonPath;
         }
         
         safeLog('[Python] WARNUNG: Eingebettetes Python nicht gefunden, versuche System-Python');
@@ -103,9 +77,7 @@ function getPythonPath() {
     if (!isPackaged) {
         const venvPath = path.join(basePath, '..', '.venv');
         if (fs.existsSync(venvPath)) {
-            const venvPython = process.platform === 'win32'
-                ? path.join(venvPath, 'Scripts', 'python.exe')
-                : path.join(venvPath, 'bin', 'python3');
+            const venvPython = path.join(venvPath, 'Scripts', 'python.exe');
             if (fs.existsSync(venvPython)) {
                 safeLog(`[Python] venv-Python gefunden: ${venvPython}`);
                 _cachedPythonPath = venvPython;
@@ -116,46 +88,27 @@ function getPythonPath() {
         }
     }
     
-    // Fallback: System-Python suchen
-    if (process.platform === 'darwin') {
-        const macPythonPaths = [
-            '/opt/homebrew/bin/python3',
-            '/usr/local/bin/python3',
-            '/usr/bin/python3',
-            '/Library/Frameworks/Python.framework/Versions/Current/bin/python3'
-        ];
-        
-        for (const pyPath of macPythonPaths) {
-            if (fs.existsSync(pyPath)) {
-                safeLog(`[Python] System-Python gefunden: ${pyPath}`);
-                _cachedPythonPath = pyPath;
-                return _cachedPythonPath;
-            }
-        }
-    }
+    // Fallback: System-Python suchen (Windows)
+    const winPythonPaths = [
+        'C:\\Python312\\python.exe',
+        'C:\\Python311\\python.exe',
+        'C:\\Python310\\python.exe',
+        'C:\\Python39\\python.exe',
+        (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python312\\python.exe',
+        (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python311\\python.exe',
+        (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python310\\python.exe'
+    ];
     
-    if (process.platform === 'win32') {
-        const winPythonPaths = [
-            'C:\\Python312\\python.exe',
-            'C:\\Python311\\python.exe',
-            'C:\\Python310\\python.exe',
-            'C:\\Python39\\python.exe',
-            (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python312\\python.exe',
-            (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python311\\python.exe',
-            (process.env.LOCALAPPDATA || '') + '\\Programs\\Python\\Python310\\python.exe'
-        ];
-        
-        for (const pyPath of winPythonPaths) {
-            if (fs.existsSync(pyPath)) {
-                safeLog(`[Python] System-Python gefunden: ${pyPath}`);
-                _cachedPythonPath = pyPath;
-                return _cachedPythonPath;
-            }
+    for (const pyPath of winPythonPaths) {
+        if (fs.existsSync(pyPath)) {
+            safeLog(`[Python] System-Python gefunden: ${pyPath}`);
+            _cachedPythonPath = pyPath;
+            return _cachedPythonPath;
         }
     }
     
     // Letzter Fallback
-    const pythonCmd = process.platform === 'win32' ? 'python' : 'python3';
+    const pythonCmd = 'python';
     safeLog(`[Python] Fallback auf PATH-Python: ${pythonCmd}`);
     _cachedPythonPath = pythonCmd;
     return _cachedPythonPath;
@@ -167,12 +120,7 @@ function getPythonPath() {
 function getPythonEnv() {
     const env = { ...process.env };
     if (_pythonEnvPath) {
-        const aeosaPath = path.join(_pythonEnvPath, 'aeosa');
-        let pythonPath = _pythonEnvPath;
-        if (fs.existsSync(aeosaPath)) {
-            pythonPath = _pythonEnvPath + path.delimiter + aeosaPath;
-        }
-        env.PYTHONPATH = pythonPath + (env.PYTHONPATH ? path.delimiter + env.PYTHONPATH : '');
+        env.PYTHONPATH = _pythonEnvPath + (env.PYTHONPATH ? path.delimiter + env.PYTHONPATH : '');
     }
     return env;
 }

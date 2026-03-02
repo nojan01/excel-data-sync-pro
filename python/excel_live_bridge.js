@@ -385,31 +385,10 @@ class ExcelLiveSession {
     }
     
     /**
-     * Beendet Excel separat über OS-Mechanismen
+     * Beendet Excel separat über OS-Mechanismen (nur Windows)
      */
     _forceCloseExcel() {
-        if (process.platform === 'darwin') {
-            const { exec } = require('child_process');
-            const fileName = this._openedFilePath 
-                ? path.basename(this._openedFilePath) 
-                : null;
-            
-            if (fileName) {
-                const script = `tell application "Microsoft Excel"
-                    try
-                        close workbook "${fileName}" saving no
-                    end try
-                    if (count of workbooks) is 0 then quit
-                end tell`;
-                exec(`osascript -e '${script}'`, { timeout: 5000 }, (err) => {
-                    if (err) console.log('[LiveSession] macOS Excel-Cleanup Fehler:', err.message);
-                    else console.log('[LiveSession] macOS: Excel Workbook geschlossen');
-                });
-            } else {
-                exec(`osascript -e 'tell application "Microsoft Excel" to quit saving no'`,
-                    { timeout: 5000 });
-            }
-        }
+        // Auf Windows wird Excel über den Python-Prozess beendet
     }
 
     /**

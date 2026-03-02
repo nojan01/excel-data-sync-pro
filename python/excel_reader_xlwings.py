@@ -67,41 +67,7 @@ def kill_excel_instances():
     except:
         pass
     
-    if system == 'Darwin':  # macOS
-        # Methode 2: AppleScript quit (ohne waiting)
-        try:
-            subprocess.run(['osascript', '-e', 
-                'tell application "Microsoft Excel" to quit saving no'], 
-                capture_output=True, timeout=2)
-        except Exception:
-            pass
-        
-        # Kurz warten
-        time.sleep(0.2)
-        
-        # Methode 3: Prüfen ob Excel noch läuft und mit pkill beenden
-        try:
-            result = subprocess.run(['pgrep', '-x', 'Microsoft Excel'], 
-                                    capture_output=True, timeout=2)
-            if result.returncode == 0:
-                # Excel läuft noch - sofort killen!
-                subprocess.run(['pkill', '-9', 'Microsoft Excel'], 
-                               capture_output=True, timeout=2)
-                time.sleep(0.2)
-        except:
-            pass
-        
-        # Methode 4: Falls immer noch da, nochmal versuchen
-        try:
-            result = subprocess.run(['pgrep', '-x', 'Microsoft Excel'], 
-                                    capture_output=True, timeout=1)
-            if result.returncode == 0:
-                subprocess.run(['killall', '-9', 'Microsoft Excel'], 
-                               capture_output=True, timeout=2)
-        except:
-            pass
-    
-    elif system == 'Windows':  # Windows
+    if system == 'Windows':  # Windows
         time.sleep(0.2)
         
         # Methode 2: Mit taskkill Excel beenden
@@ -114,27 +80,16 @@ def kill_excel_instances():
 
 
 def hide_excel():
-    """Versteckt Excel - plattformübergreifend"""
-    system = platform.system()
-    
-    if system == 'Darwin':  # macOS
-        try:
-            subprocess.run(['osascript', '-e', 
-                'tell application "System Events" to set visible of process "Microsoft Excel" to false'], 
-                capture_output=True, timeout=2)
-        except:
-            pass
-    
-    elif system == 'Windows':  # Windows
-        # Auf Windows: Excel-Fenster verstecken via xlwings
-        try:
-            for app in xw.apps:
-                try:
-                    app.visible = False
-                except:
-                    pass
-        except:
-            pass
+    """Versteckt Excel auf Windows"""
+    # Excel-Fenster verstecken via xlwings
+    try:
+        for app in xw.apps:
+            try:
+                app.visible = False
+            except:
+                pass
+    except:
+        pass
 
 
 def argb_to_hex(argb):

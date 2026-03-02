@@ -18722,6 +18722,15 @@
             startAutoSave();
             setTimeout(() => checkAutoSaveRecovery(), 500); // Kurze Verzögerung für UI-Initialisierung
             
+            // "Öffnen mit..." Handler - Datei vom Betriebssystem empfangen
+            window.electronAPI.onOpenFile(async (filePath) => {
+                console.log('[FileOpen] Datei per "Öffnen mit..." empfangen:', filePath);
+                // Datenexplorer öffnen
+                await openDataExplorer();
+                // Datei laden
+                await loadExplorerFileByPath(filePath);
+            });
+            
             // Prüfung beim Schließen der App
             window.electronAPI.onBeforeClose(() => {
                 // Bei normalem Schließen: Recovery-Daten löschen (nur bei Crash sollen sie bleiben)
