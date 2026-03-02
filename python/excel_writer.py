@@ -234,8 +234,34 @@ def _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map):
             cell_pattern = re.compile(r'(<c\s[^>]*?r="' + re.escape(cell_ref) + r'"[^>]*?)(/?>)')
             match = cell_pattern.search(ws_content)
             if match and 'vm=' not in match.group(0):
-                new_attr = match.group(1) + f' vm="{vm_val}"' + match.group(2)
-                ws_content = ws_content[:match.start()] + new_attr + ws_content[match.end():]
+                # vm-Attribut hinzufuegen
+                c_tag = match.group(1) + f' vm="{vm_val}"' + match.group(2)
+                
+                # Zelltyp auf t="e" (Error) aendern — Excel erwartet #VALUE! fuer Bild-Zellen
+                # Sonst wird das Bild links statt zentriert dargestellt
+                c_tag = re.sub(r'\bt="[^"]*"', 't="e"', c_tag)
+                if ' t="' not in c_tag:
+                    c_tag = c_tag.replace('<c ', '<c t="e" ', 1)
+                
+                # value auf #VALUE! setzen (gleich wie Original-Bild-Zelle)
+                rest_start = match.end()
+                rest_of_cell = ws_content[rest_start:]
+                close_c = rest_of_cell.find('</c>')
+                if close_c >= 0 and not match.group(2).endswith('/>'):
+                    # Nicht-selbstschliessendes Element: <c ...><v>...</v></c>
+                    cell_content = rest_of_cell[:close_c]
+                    after_cell = rest_of_cell[close_c:]
+                    # <v>...</v> durch <v>#VALUE!</v> ersetzen
+                    cell_content = re.sub(r'<v>[^<]*</v>', '<v>#VALUE!</v>', cell_content)
+                    if '<v>' not in cell_content:
+                        cell_content = '<v>#VALUE!</v>'
+                    ws_content = ws_content[:match.start()] + c_tag + cell_content + after_cell
+                elif match.group(2) == '/>':
+                    # Selbstschliessendes Element: <c .../> → <c ...><v>#VALUE!</v></c>
+                    c_tag = c_tag[:-2] + '><v>#VALUE!</v></c>'
+                    ws_content = ws_content[:match.start()] + c_tag + ws_content[match.end():]
+                else:
+                    ws_content = ws_content[:match.start()] + c_tag + ws_content[match.end():]
                 vm_added += 1
             elif not match:
                 # Zelle existiert nicht - in passender Zeile erstellen
@@ -245,7 +271,7 @@ def _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map):
                     row_pattern = re.compile(r'(<row\s[^>]*?\br="' + re.escape(row_num) + r'"[^>]*?>)')
                     row_match = row_pattern.search(ws_content)
                     if row_match:
-                        cell_el = f'<c r="{cell_ref}" vm="{vm_val}"/>'
+                        cell_el = f'<c r="{cell_ref}" t="e" vm="{vm_val}"><v>#VALUE!</v></c>'
                         insert_pos = row_match.end()
                         ws_content = ws_content[:insert_pos] + cell_el + ws_content[insert_pos:]
                         vm_created += 1
@@ -253,7 +279,7 @@ def _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map):
                         # Zeile existiert auch nicht - Zeile + Zelle erstellen
                         sheet_data_end = re.search(r'</sheetData>', ws_content)
                         if sheet_data_end:
-                            row_el = f'<row r="{row_num}"><c r="{cell_ref}" vm="{vm_val}"/></row>\n'
+                            row_el = f'<row r="{row_num}"><c r="{cell_ref}" t="e" vm="{vm_val}"><v>#VALUE!</v></c></row>\n'
                             insert_pos = sheet_data_end.start()
                             ws_content = ws_content[:insert_pos] + row_el + ws_content[insert_pos:]
                             vm_created += 1

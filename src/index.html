@@ -11935,9 +11935,10 @@
                         newRichText: cell.richText ? [...cell.richText] : null
                     });
                     
-                    // Wert setzen
-                    explorerState.data[newRow][newCol] = cell.value;
-                    explorerState.editedCells.set(cellKey, cell.value);
+                    // Wert setzen (bei vm-Zellen immer Platzhalter verwenden)
+                    const pasteValue = cell.vm ? '🖼️ Bild' : cell.value;
+                    explorerState.data[newRow][newCol] = pasteValue;
+                    explorerState.editedCells.set(cellKey, pasteValue);
                     
                     // Style kopieren (mit styleKey = 1-basiert)
                     if (cell.style) {

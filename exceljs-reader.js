@@ -1836,6 +1836,19 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                     const styleKey = `${currentDataRowIndex + 1}-${colIndex}`;
                     let cellValue = cell.value;
                     
+                    // Bild-Zellen sofort erkennen (aus XML-Metadaten)
+                    // Muss VOR allen anderen Checks stehen (wie im Streaming Reader)
+                    if (imageCellSet.has(`${colIndex}_${rowNumber - 1}`)) {
+                        cellValue = '🖼️ Bild';
+                        // Style trotzdem extrahieren
+                        const style = extractCellStyle(cell);
+                        if (Object.keys(style).length > 0) {
+                            cellStyles[styleKey] = style;
+                        }
+                        rowData[colIndex] = cellValue;
+                        return; // Nächste Zelle
+                    }
+                    
                     // Formeln
                     if (cell.formula) {
                         cellFormulas[styleKey] = cell.formula;
