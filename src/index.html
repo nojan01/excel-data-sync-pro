@@ -1054,6 +1054,66 @@
             border-color: var(--primary);
         }
         
+        /* Custom Combobox for New Row Dropdowns */
+        .new-row-combobox {
+            position: relative;
+        }
+        .new-row-combobox input {
+            width: 100%;
+            padding-right: 30px;
+        }
+        .new-row-combobox .combobox-toggle {
+            position: absolute;
+            right: 6px;
+            bottom: 7px;
+            background: none;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            font-size: 14px;
+            padding: 2px 4px;
+            line-height: 1;
+        }
+        .new-row-combobox .combobox-toggle:hover {
+            color: var(--text);
+        }
+        .combobox-dropdown {
+            display: none;
+            position: absolute;
+            left: 0;
+            right: 0;
+            top: 100%;
+            z-index: 1000;
+            background: var(--bg-lighter);
+            border: 1px solid var(--primary);
+            border-radius: 0 0 4px 4px;
+            max-height: 220px;
+            overflow-y: auto;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+        }
+        .combobox-dropdown.open {
+            display: block;
+        }
+        .combobox-option {
+            padding: 6px 10px;
+            cursor: pointer;
+            font-size: 13px;
+            color: var(--text);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .combobox-option:hover,
+        .combobox-option.highlighted {
+            background: var(--primary);
+            color: #fff;
+        }
+        .combobox-option.no-match {
+            color: var(--text-muted);
+            font-style: italic;
+            cursor: default;
+        }
+        
         .dropdown-column-item {
             display: flex;
             align-items: center;
@@ -1739,6 +1799,10 @@
                     <button class="btn btn-secondary" id="btnAddEmptyRow" title="Leere Zeile einfügen (unabhängig von Flag-Spalte)">
                         ⬜ Leerzeile
                     </button>
+                    <label style="display: flex; align-items: center; gap: 6px; margin-left: 12px; cursor: pointer; font-size: 13px; color: var(--text-muted); user-select: none;" title="Wenn aktiviert, bleiben die Feldwerte nach dem Übertragen erhalten – praktisch wenn sich nur ein Feld ändert">
+                        <input type="checkbox" id="keepFieldsCheckbox" style="accent-color: var(--primary); width: 16px; height: 16px; cursor: pointer;">
+                        Felder beibehalten
+                    </label>
                 </div>
                 <div id="newRowStatus"></div>
             </div>
@@ -3602,6 +3666,8 @@
                 close: '✕ Schließen',
                 toQueue: '➕ Zur Warteschlange',
                 transferDirectly: '➡️ Direkt übertragen',
+                keepFields: 'Felder beibehalten',
+                keepFieldsTooltip: 'Wenn aktiviert, bleiben die Feldwerte nach dem Übertragen erhalten – praktisch wenn sich nur ein Feld ändert',
                 
                 // Messages
                 noTargetFile: 'Keine Zieldatei geladen',
@@ -3929,6 +3995,8 @@
                 close: '✕ Close',
                 toQueue: '➕ To Queue',
                 transferDirectly: '➡️ Transfer Directly',
+                keepFields: 'Keep fields',
+                keepFieldsTooltip: 'When enabled, field values are kept after transfer – useful when only one field changes',
                 
                 // Messages
                 noTargetFile: 'No target file loaded',
@@ -4273,6 +4341,11 @@
             if (btnCloseNewRow) btnCloseNewRow.innerHTML = t('close');
             if (btnAddNewRowToQueue) btnAddNewRowToQueue.innerHTML = t('toQueue');
             if (btnTransferNewRowDirect) btnTransferNewRowDirect.innerHTML = t('transferDirectly');
+            const keepFieldsLabel = document.querySelector('#keepFieldsCheckbox')?.parentElement;
+            if (keepFieldsLabel) {
+                keepFieldsLabel.title = t('keepFieldsTooltip');
+                keepFieldsLabel.childNodes.forEach(n => { if (n.nodeType === 3 && n.textContent.trim()) n.textContent = ' ' + t('keepFields'); });
+            }
             
             // Data Explorer Modal
             const explorerTitle = document.querySelector('#dataExplorerModal .modal-title');
@@ -6617,6 +6690,7 @@
             
             // Formular mit konfigurierten Spalten aufbauen
             let html = '';
+            const comboboxData = []; // Track combobox fields for event setup
             state.mapping.sourceColumns.forEach((colIndex, i) => {
                 const headerName = state.file1.headers[colIndex] || `Spalte ${colIndex + 1}`;
                 const isDropdown = state.mapping.dropdownColumns && state.mapping.dropdownColumns.includes(colIndex);
@@ -6630,7 +6704,6 @@
                             const strVal = String(val).trim();
                             if (strVal) {
                                 const lowerKey = strVal.toLowerCase();
-                                // Behalte den ersten gefundenen Wert (oder den kürzeren bei gleicher Länge)
                                 if (!valueMap.has(lowerKey) || strVal.length < valueMap.get(lowerKey).length) {
                                     valueMap.set(lowerKey, strVal);
                                 }
@@ -6640,18 +6713,20 @@
                     const uniqueValues = [...valueMap.values()].sort((a, b) => a.localeCompare(b));
                     
                     if (uniqueValues.length > 0) {
-                        // Datalist für Combobox (Dropdown + freie Eingabe)
+                        // Custom scrollable combobox (Dropdown + freie Eingabe)
                         const options = uniqueValues.map(v => 
-                            `<option value="${escapeHtml(String(v))}">`
+                            `<div class="combobox-option" data-value="${escapeHtml(String(v))}">${escapeHtml(String(v))}</div>`
                         ).join('');
                         html += `
-                            <div class="new-row-field">
+                            <div class="new-row-field new-row-combobox" id="combobox_${i}">
                                 <label title="${headerName}">${headerName} 📋</label>
-                                <input type="text" list="datalist_${i}" id="newRowField_${i}" data-col-index="${colIndex}" placeholder="Auswählen oder eingeben...">
-                                <datalist id="datalist_${i}">
+                                <input type="text" id="newRowField_${i}" data-col-index="${colIndex}" placeholder="Auswählen oder eingeben..." autocomplete="off">
+                                <button type="button" class="combobox-toggle" tabindex="-1">▼</button>
+                                <div class="combobox-dropdown" id="comboboxDrop_${i}">
                                     ${options}
-                                </datalist>
+                                </div>
                             </div>`;
+                        comboboxData.push({ index: i, values: uniqueValues });
                     } else {
                         // Fallback auf Input wenn keine Werte gefunden
                         html += `
@@ -6673,9 +6748,113 @@
             elements.newRowForm.innerHTML = html;
             elements.newRowPanel.classList.remove('hidden');
             
+            // Setup combobox event handlers
+            comboboxData.forEach(cb => setupCombobox(cb.index, cb.values));
+            
             // Fokus auf erstes Feld
             const firstField = document.getElementById('newRowField_0');
             if (firstField) firstField.focus();
+        }
+        
+        // Custom scrollable combobox: filter, keyboard nav, click select
+        function setupCombobox(idx, allValues) {
+            const input = document.getElementById(`newRowField_${idx}`);
+            const dropdown = document.getElementById(`comboboxDrop_${idx}`);
+            const wrapper = document.getElementById(`combobox_${idx}`);
+            const toggle = wrapper.querySelector('.combobox-toggle');
+            if (!input || !dropdown) return;
+            
+            let highlightIdx = -1;
+            
+            function showDropdown(filter) {
+                const term = (filter || '').toLowerCase();
+                const options = dropdown.querySelectorAll('.combobox-option');
+                let visibleCount = 0;
+                options.forEach(opt => {
+                    const val = opt.getAttribute('data-value').toLowerCase();
+                    const match = !term || val.includes(term);
+                    opt.style.display = match ? '' : 'none';
+                    opt.classList.remove('highlighted');
+                    if (match) visibleCount++;
+                });
+                highlightIdx = -1;
+                dropdown.classList.add('open');
+            }
+            
+            function hideDropdown() {
+                dropdown.classList.remove('open');
+                highlightIdx = -1;
+            }
+            
+            function getVisibleOptions() {
+                return [...dropdown.querySelectorAll('.combobox-option')].filter(o => o.style.display !== 'none');
+            }
+            
+            function updateHighlight(visible) {
+                visible.forEach((o, i) => o.classList.toggle('highlighted', i === highlightIdx));
+                if (highlightIdx >= 0 && visible[highlightIdx]) {
+                    visible[highlightIdx].scrollIntoView({ block: 'nearest' });
+                }
+            }
+            
+            input.addEventListener('focus', () => showDropdown(input.value));
+            input.addEventListener('input', () => showDropdown(input.value));
+            
+            input.addEventListener('keydown', (e) => {
+                if (!dropdown.classList.contains('open')) {
+                    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                        showDropdown(input.value);
+                        e.preventDefault();
+                        return;
+                    }
+                    return;
+                }
+                const visible = getVisibleOptions();
+                if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    highlightIdx = Math.min(highlightIdx + 1, visible.length - 1);
+                    updateHighlight(visible);
+                } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    highlightIdx = Math.max(highlightIdx - 1, 0);
+                    updateHighlight(visible);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (highlightIdx >= 0 && visible[highlightIdx]) {
+                        input.value = visible[highlightIdx].getAttribute('data-value');
+                    }
+                    hideDropdown();
+                } else if (e.key === 'Escape') {
+                    hideDropdown();
+                } else if (e.key === 'Tab') {
+                    hideDropdown();
+                }
+            });
+            
+            dropdown.addEventListener('mousedown', (e) => {
+                e.preventDefault(); // Prevent blur on input
+                const opt = e.target.closest('.combobox-option');
+                if (opt) {
+                    input.value = opt.getAttribute('data-value');
+                    hideDropdown();
+                    input.focus();
+                }
+            });
+            
+            toggle.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                if (dropdown.classList.contains('open')) {
+                    hideDropdown();
+                } else {
+                    showDropdown(''); // Show all options
+                    input.focus();
+                }
+            });
+            
+            input.addEventListener('blur', () => {
+                // Small delay to allow mousedown on dropdown to fire first
+                setTimeout(() => hideDropdown(), 150);
+            });
         }
         
         function closeNewRowPanel() {
@@ -6742,12 +6921,15 @@
             showStatus(elements.transferStatus, successMsg, 'success');
             showStatus(elements.newRowStatus, successMsg, 'success');
             
-            // Felder leeren für nächste Eingabe
-            state.mapping.sourceColumns.forEach((colIndex, i) => {
-                const field = document.getElementById(`newRowField_${i}`);
-                if (field) field.value = '';
-            });
-            elements.newRowComment.value = '';
+            // Felder leeren für nächste Eingabe (falls nicht beibehalten)
+            const keepFields = document.getElementById('keepFieldsCheckbox');
+            if (!keepFields || !keepFields.checked) {
+                state.mapping.sourceColumns.forEach((colIndex, i) => {
+                    const field = document.getElementById(`newRowField_${i}`);
+                    if (field) field.value = '';
+                });
+                elements.newRowComment.value = '';
+            }
             
             const firstField = document.getElementById('newRowField_0');
             if (firstField) firstField.focus();
@@ -6823,12 +7005,15 @@
                     // Direkt übertragen
                     await transferQueueToExcel();
                     
-                    // Felder leeren für nächste Eingabe
-                    state.mapping.sourceColumns.forEach((colIndex, i) => {
-                        const field = document.getElementById(`newRowField_${i}`);
-                        if (field) field.value = '';
-                    });
-                    elements.newRowComment.value = '';
+                    // Felder leeren für nächste Eingabe (falls nicht beibehalten)
+                    const keepFields = document.getElementById('keepFieldsCheckbox');
+                    if (!keepFields || !keepFields.checked) {
+                        state.mapping.sourceColumns.forEach((colIndex, i) => {
+                            const field = document.getElementById(`newRowField_${i}`);
+                            if (field) field.value = '';
+                        });
+                        elements.newRowComment.value = '';
+                    }
                     
                     const firstField = document.getElementById('newRowField_0');
                     if (firstField) firstField.focus();
