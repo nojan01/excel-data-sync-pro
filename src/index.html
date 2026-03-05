@@ -1053,67 +1053,110 @@
             outline: none;
             border-color: var(--primary);
         }
-        
-        /* Custom Combobox for New Row Dropdowns */
+
+        /* Custom Combobox Dropdown */
         .new-row-combobox {
             position: relative;
         }
-        .new-row-combobox input {
-            width: 100%;
-            padding-right: 30px;
+        .new-row-combobox-input-wrap {
+            display: flex;
+            align-items: center;
+            border: 1px solid var(--border);
+            border-radius: 4px;
+            background: var(--bg-lighter);
+            overflow: hidden;
+            transition: border-color 0.15s;
         }
-        .new-row-combobox .combobox-toggle {
-            position: absolute;
-            right: 6px;
-            bottom: 7px;
-            background: none;
+        .new-row-combobox-input-wrap:focus-within,
+        .new-row-combobox.open .new-row-combobox-input-wrap {
+            border-color: var(--primary);
+        }
+        .new-row-combobox-input-wrap input {
+            flex: 1;
+            min-width: 0;
             border: none;
+            background: transparent;
+            padding: 8px 10px;
+            color: var(--text);
+            font-size: 13px;
+            outline: none;
+        }
+        .new-row-combobox-toggle {
+            width: 30px;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: none;
+            border-left: 1px solid var(--border);
+            background: var(--bg-dark);
             color: var(--text-muted);
             cursor: pointer;
-            font-size: 14px;
-            padding: 2px 4px;
-            line-height: 1;
+            padding: 8px 0;
+            font-size: 11px;
+            flex-shrink: 0;
         }
-        .new-row-combobox .combobox-toggle:hover {
+        .new-row-combobox-toggle:hover {
+            background: var(--bg-lighter);
             color: var(--text);
         }
-        .combobox-dropdown {
+        .new-row-combobox-dropdown {
             display: none;
             position: absolute;
+            top: 100%;
             left: 0;
             right: 0;
-            top: 100%;
-            z-index: 1000;
-            background: var(--bg-lighter);
+            z-index: 9999;
+            margin-top: 2px;
+            background: var(--bg-medium);
             border: 1px solid var(--primary);
-            border-radius: 0 0 4px 4px;
+            border-radius: 4px;
             max-height: 220px;
             overflow-y: auto;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.5);
         }
-        .combobox-dropdown.open {
+        .new-row-combobox.open .new-row-combobox-dropdown {
             display: block;
         }
-        .combobox-option {
-            padding: 6px 10px;
-            cursor: pointer;
+        .new-row-combobox-dropdown::-webkit-scrollbar {
+            width: 8px;
+        }
+        .new-row-combobox-dropdown::-webkit-scrollbar-track {
+            background: var(--bg-dark);
+            border-radius: 0 4px 4px 0;
+        }
+        .new-row-combobox-dropdown::-webkit-scrollbar-thumb {
+            background: var(--bg-lighter);
+            border-radius: 4px;
+        }
+        .new-row-combobox-dropdown::-webkit-scrollbar-thumb:hover {
+            background: var(--primary);
+        }
+        .new-row-combobox-option {
+            padding: 7px 12px;
             font-size: 13px;
             color: var(--text);
+            cursor: pointer;
             white-space: nowrap;
             overflow: hidden;
             text-overflow: ellipsis;
         }
-        .combobox-option:hover,
-        .combobox-option.highlighted {
+        .new-row-combobox-option:hover,
+        .new-row-combobox-option.highlighted {
             background: var(--primary);
             color: #fff;
         }
-        .combobox-option.no-match {
+        .new-row-combobox-option.no-match {
             color: var(--text-muted);
             font-style: italic;
             cursor: default;
         }
+        .new-row-combobox-option.no-match:hover {
+            background: transparent;
+            color: var(--text-muted);
+        }
         
+
         .dropdown-column-item {
             display: flex;
             align-items: center;
@@ -6690,7 +6733,7 @@
             
             // Formular mit konfigurierten Spalten aufbauen
             let html = '';
-            const comboboxData = []; // Track combobox fields for event setup
+            const comboboxData = [];
             state.mapping.sourceColumns.forEach((colIndex, i) => {
                 const headerName = state.file1.headers[colIndex] || `Spalte ${colIndex + 1}`;
                 const isDropdown = state.mapping.dropdownColumns && state.mapping.dropdownColumns.includes(colIndex);
@@ -6713,17 +6756,21 @@
                     const uniqueValues = [...valueMap.values()].sort((a, b) => a.localeCompare(b));
                     
                     if (uniqueValues.length > 0) {
-                        // Custom scrollable combobox (Dropdown + freie Eingabe)
-                        const options = uniqueValues.map(v => 
-                            `<div class="combobox-option" data-value="${escapeHtml(String(v))}">${escapeHtml(String(v))}</div>`
+                        // Custom Dropdown-Combobox mit Scrollbar
+                        const optionItemsHtml = uniqueValues.map(v => 
+                            `<div class="new-row-combobox-option" data-value="${v.replace(/"/g, '&quot;')}">${v.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>`
                         ).join('');
                         html += `
-                            <div class="new-row-field new-row-combobox" id="combobox_${i}">
+                            <div class="new-row-field">
                                 <label title="${headerName}">${headerName} 📋</label>
-                                <input type="text" id="newRowField_${i}" data-col-index="${colIndex}" placeholder="Auswählen oder eingeben..." autocomplete="off">
-                                <button type="button" class="combobox-toggle" tabindex="-1">▼</button>
-                                <div class="combobox-dropdown" id="comboboxDrop_${i}">
-                                    ${options}
+                                <div class="new-row-combobox" id="newRowCombo_${i}">
+                                    <div class="new-row-combobox-input-wrap">
+                                        <input type="text" id="newRowField_${i}" data-col-index="${colIndex}" placeholder="Eingeben oder auswählen..." autocomplete="off">
+                                        <button type="button" class="new-row-combobox-toggle" tabindex="-1">▼</button>
+                                    </div>
+                                    <div class="new-row-combobox-dropdown">
+                                        ${optionItemsHtml}
+                                    </div>
                                 </div>
                             </div>`;
                         comboboxData.push({ index: i, values: uniqueValues });
@@ -6748,114 +6795,123 @@
             elements.newRowForm.innerHTML = html;
             elements.newRowPanel.classList.remove('hidden');
             
-            // Setup combobox event handlers
-            comboboxData.forEach(cb => setupCombobox(cb.index, cb.values));
+            // Custom Dropdown Combobox Setup
+            comboboxData.forEach(cb => {
+                const combo = document.getElementById(`newRowCombo_${cb.index}`);
+                const inp = document.getElementById(`newRowField_${cb.index}`);
+                if (!combo || !inp) return;
+                const dropdown = combo.querySelector('.new-row-combobox-dropdown');
+                const toggle = combo.querySelector('.new-row-combobox-toggle');
+                const allOptions = dropdown.querySelectorAll('.new-row-combobox-option');
+                let highlightIdx = -1;
+
+                function openDropdown() {
+                    combo.classList.add('open');
+                    filterOptions(inp.value);
+                }
+                function closeDropdown() {
+                    combo.classList.remove('open');
+                    highlightIdx = -1;
+                    allOptions.forEach(o => o.classList.remove('highlighted'));
+                }
+                function filterOptions(query) {
+                    const q = query.toLowerCase().trim();
+                    let visibleCount = 0;
+                    allOptions.forEach(opt => {
+                        const val = opt.dataset.value.toLowerCase();
+                        const match = !q || val.includes(q);
+                        opt.style.display = match ? '' : 'none';
+                        opt.classList.remove('highlighted');
+                        if (match) visibleCount++;
+                    });
+                    // Wenn keine Treffer, Hinweis anzeigen
+                    let noMatch = dropdown.querySelector('.no-match');
+                    if (visibleCount === 0 && q) {
+                        if (!noMatch) {
+                            noMatch = document.createElement('div');
+                            noMatch.className = 'new-row-combobox-option no-match';
+                            noMatch.textContent = 'Kein Treffer';
+                            dropdown.appendChild(noMatch);
+                        }
+                        noMatch.style.display = '';
+                    } else if (noMatch) {
+                        noMatch.style.display = 'none';
+                    }
+                    highlightIdx = -1;
+                }
+                function getVisibleOptions() {
+                    return [...allOptions].filter(o => o.style.display !== 'none');
+                }
+                function setHighlight(idx) {
+                    const visible = getVisibleOptions();
+                    visible.forEach(o => o.classList.remove('highlighted'));
+                    if (idx >= 0 && idx < visible.length) {
+                        highlightIdx = idx;
+                        visible[idx].classList.add('highlighted');
+                        visible[idx].scrollIntoView({ block: 'nearest' });
+                    } else {
+                        highlightIdx = -1;
+                    }
+                }
+
+                toggle.addEventListener('mousedown', (e) => {
+                    e.preventDefault(); // Kein Fokus-Verlust
+                    if (combo.classList.contains('open')) {
+                        closeDropdown();
+                    } else {
+                        openDropdown();
+                        inp.focus();
+                    }
+                });
+
+                inp.addEventListener('focus', () => openDropdown());
+                inp.addEventListener('input', () => {
+                    if (!combo.classList.contains('open')) openDropdown();
+                    filterOptions(inp.value);
+                });
+                inp.addEventListener('keydown', (e) => {
+                    const visible = getVisibleOptions();
+                    if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        if (!combo.classList.contains('open')) openDropdown();
+                        setHighlight(Math.min((highlightIdx < 0 ? -1 : highlightIdx) + 1, visible.length - 1));
+                    } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setHighlight(Math.max((highlightIdx < 0 ? 0 : highlightIdx) - 1, 0));
+                    } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (highlightIdx >= 0 && highlightIdx < visible.length) {
+                            inp.value = visible[highlightIdx].dataset.value;
+                            closeDropdown();
+                        }
+                    } else if (e.key === 'Escape') {
+                        closeDropdown();
+                    } else if (e.key === 'Tab') {
+                        closeDropdown();
+                    }
+                });
+
+                dropdown.addEventListener('mousedown', (e) => {
+                    e.preventDefault(); // Kein Fokus-Verlust
+                    const opt = e.target.closest('.new-row-combobox-option:not(.no-match)');
+                    if (opt) {
+                        inp.value = opt.dataset.value;
+                        closeDropdown();
+                    }
+                });
+
+                // Außerhalb klicken → schließen
+                document.addEventListener('mousedown', (e) => {
+                    if (!combo.contains(e.target)) closeDropdown();
+                });
+            });
             
             // Fokus auf erstes Feld
             const firstField = document.getElementById('newRowField_0');
             if (firstField) firstField.focus();
         }
         
-        // Custom scrollable combobox: filter, keyboard nav, click select
-        function setupCombobox(idx, allValues) {
-            const input = document.getElementById(`newRowField_${idx}`);
-            const dropdown = document.getElementById(`comboboxDrop_${idx}`);
-            const wrapper = document.getElementById(`combobox_${idx}`);
-            const toggle = wrapper.querySelector('.combobox-toggle');
-            if (!input || !dropdown) return;
-            
-            let highlightIdx = -1;
-            
-            function showDropdown(filter) {
-                const term = (filter || '').toLowerCase();
-                const options = dropdown.querySelectorAll('.combobox-option');
-                let visibleCount = 0;
-                options.forEach(opt => {
-                    const val = opt.getAttribute('data-value').toLowerCase();
-                    const match = !term || val.includes(term);
-                    opt.style.display = match ? '' : 'none';
-                    opt.classList.remove('highlighted');
-                    if (match) visibleCount++;
-                });
-                highlightIdx = -1;
-                dropdown.classList.add('open');
-            }
-            
-            function hideDropdown() {
-                dropdown.classList.remove('open');
-                highlightIdx = -1;
-            }
-            
-            function getVisibleOptions() {
-                return [...dropdown.querySelectorAll('.combobox-option')].filter(o => o.style.display !== 'none');
-            }
-            
-            function updateHighlight(visible) {
-                visible.forEach((o, i) => o.classList.toggle('highlighted', i === highlightIdx));
-                if (highlightIdx >= 0 && visible[highlightIdx]) {
-                    visible[highlightIdx].scrollIntoView({ block: 'nearest' });
-                }
-            }
-            
-            input.addEventListener('focus', () => showDropdown(input.value));
-            input.addEventListener('input', () => showDropdown(input.value));
-            
-            input.addEventListener('keydown', (e) => {
-                if (!dropdown.classList.contains('open')) {
-                    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-                        showDropdown(input.value);
-                        e.preventDefault();
-                        return;
-                    }
-                    return;
-                }
-                const visible = getVisibleOptions();
-                if (e.key === 'ArrowDown') {
-                    e.preventDefault();
-                    highlightIdx = Math.min(highlightIdx + 1, visible.length - 1);
-                    updateHighlight(visible);
-                } else if (e.key === 'ArrowUp') {
-                    e.preventDefault();
-                    highlightIdx = Math.max(highlightIdx - 1, 0);
-                    updateHighlight(visible);
-                } else if (e.key === 'Enter') {
-                    e.preventDefault();
-                    if (highlightIdx >= 0 && visible[highlightIdx]) {
-                        input.value = visible[highlightIdx].getAttribute('data-value');
-                    }
-                    hideDropdown();
-                } else if (e.key === 'Escape') {
-                    hideDropdown();
-                } else if (e.key === 'Tab') {
-                    hideDropdown();
-                }
-            });
-            
-            dropdown.addEventListener('mousedown', (e) => {
-                e.preventDefault(); // Prevent blur on input
-                const opt = e.target.closest('.combobox-option');
-                if (opt) {
-                    input.value = opt.getAttribute('data-value');
-                    hideDropdown();
-                    input.focus();
-                }
-            });
-            
-            toggle.addEventListener('mousedown', (e) => {
-                e.preventDefault();
-                if (dropdown.classList.contains('open')) {
-                    hideDropdown();
-                } else {
-                    showDropdown(''); // Show all options
-                    input.focus();
-                }
-            });
-            
-            input.addEventListener('blur', () => {
-                // Small delay to allow mousedown on dropdown to fire first
-                setTimeout(() => hideDropdown(), 150);
-            });
-        }
+        // Select-Overlay Setup erfolgt in showNewRowPanel()
         
         function closeNewRowPanel() {
             elements.newRowPanel.classList.add('hidden');
@@ -6927,6 +6983,8 @@
                 state.mapping.sourceColumns.forEach((colIndex, i) => {
                     const field = document.getElementById(`newRowField_${i}`);
                     if (field) field.value = '';
+                    const sel = document.getElementById(`newRowSelect_${i}`);
+                    if (sel) sel.selectedIndex = 0;
                 });
                 elements.newRowComment.value = '';
             }
@@ -7011,6 +7069,8 @@
                         state.mapping.sourceColumns.forEach((colIndex, i) => {
                             const field = document.getElementById(`newRowField_${i}`);
                             if (field) field.value = '';
+                            const sel = document.getElementById(`newRowSelect_${i}`);
+                            if (sel) sel.selectedIndex = 0;
                         });
                         elements.newRowComment.value = '';
                     }
