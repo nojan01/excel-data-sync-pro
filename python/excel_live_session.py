@@ -1369,14 +1369,15 @@ class ExcelLiveSession:
             
             self._log(f"set_row_values: row={row_index}, excel_row={excel_row}, cols={num_cols}, range={range_addr}")
             
-            # Undo-Snapshot: Drosselung bei schnellen aufeinanderfolgenden Edits
-            # Nur Snapshot erstellen wenn letzter > 2 Sekunden her
+            # Undo-Snapshot: Aggressive Drosselung bei schnellen aufeinanderfolgenden Edits
+            # SaveCopyAs / workbook.save() sind sehr teuer und können Excel blockieren
+            # Nur Snapshot erstellen wenn letzter > 10 Sekunden her
             now = time.time()
-            if now - self._last_undo_snapshot_time >= 2.0:
+            if now - self._last_undo_snapshot_time >= 10.0:
                 self._push_undo_snapshot(f'Zeilenwerte geändert (Zeile {row_index + 1})')
                 self._last_undo_snapshot_time = now
             else:
-                self._log(f"set_row_values: Undo-Snapshot übersprungen (letzer vor {now - self._last_undo_snapshot_time:.1f}s)")
+                self._log(f"set_row_values: Undo-Snapshot übersprungen (letzter vor {now - self._last_undo_snapshot_time:.1f}s)")
             
             if platform.system() == 'Darwin':
                 # macOS: Direkt über AppleScript für zuverlässigen Display-Refresh
@@ -1386,8 +1387,17 @@ class ExcelLiveSession:
                 self.app.screen_updating = True
                 self._log(f"set_row_values: Schreibe in Range {range_addr}...")
                 self.worksheet.range(range_addr).value = values
-                self._log(f"set_row_values: Range-Write abgeschlossen, Screen-Refresh...")
-                self._force_screen_refresh()
+                self._log(f"set_row_values: Range-Write abgeschlossen")
+                # Screen-Refresh nur wenn nicht kurz zuvor schon refreshed
+                # Zu häufige Refreshes (activate + calculate) überlasten Excel
+                now_refresh = time.time()
+                if not hasattr(self, '_last_screen_refresh_time'):
+                    self._last_screen_refresh_time = 0
+                if now_refresh - self._last_screen_refresh_time >= 1.0:
+                    self._force_screen_refresh()
+                    self._last_screen_refresh_time = now_refresh
+                else:
+                    self._log(f"set_row_values: Screen-Refresh übersprungen (letzter vor {now_refresh - self._last_screen_refresh_time:.1f}s)")
             
             self._log(f"set_row_values: Erfolgreich (row={row_index}, cols={num_cols})")
             

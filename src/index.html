@@ -143,7 +143,7 @@
         }
         
         .btn-unsaved {
-            animation: pulse-save 1.5s infinite;
+            animation: pulse-save 1.5s 3;
             box-shadow: 0 0 10px rgba(66, 165, 245, 0.5);
         }
         
@@ -914,13 +914,14 @@
         
         .results-table td.find-current {
             background: rgba(255, 152, 0, 0.5) !important;
-            box-shadow: inset 0 0 0 2px var(--warning);
-            animation: findPulse 1s ease infinite;
+            outline: 3px solid var(--warning);
+            outline-offset: -3px;
+            animation: findPulse 1s ease 3;
         }
         
         @keyframes findPulse {
-            0%, 100% { box-shadow: inset 0 0 0 2px var(--warning); }
-            50% { box-shadow: inset 0 0 0 3px var(--warning), 0 0 8px rgba(255, 152, 0, 0.4); }
+            0%, 100% { outline-width: 2px; }
+            50% { outline-width: 3px; }
         }
         
         .results-table td[contenteditable]:focus {
@@ -1826,7 +1827,7 @@
     
     <!-- Footer -->
     <footer style="background: var(--bg-medium); border-top: 1px solid var(--border); padding: 8px 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
-        © Norbert Jander 2026 · v1.4.0
+        © Norbert Jander 2026 · v1.5.0
     </footer>
     
     <!-- Mapping Modal -->
@@ -3708,7 +3709,7 @@
                 createAndLoad: '📅 Erstellen & Laden',
                 
                 // Footer
-                copyright: '© Norbert Jander 2026 · v1.4.0',
+                copyright: '© Norbert Jander 2026 · v1.5.0',
                 
                 // Extra Columns
                 extraColumns: 'Extra-Spalten',
@@ -4036,7 +4037,7 @@
                 createAndLoad: '📅 Create & Load',
                 
                 // Footer
-                copyright: '© Norbert Jander 2026 · v1.4.0',
+                copyright: '© Norbert Jander 2026 · v1.5.0',
                 
                 // Extra Columns
                 extraColumns: 'Extra Columns',
@@ -4578,6 +4579,38 @@
                 return false;
             }
             
+            // Prüfe auf deleteRows Aktion – gelöschte Zeilen wiederherstellen
+            if (action.type === 'deleteRows') {
+                // Zeilen in aufsteigender Reihenfolge wieder einfügen
+                const sorted = [...action.deletedRows].sort((a, b) => a.index - b.index);
+                for (const entry of sorted) {
+                    explorerState.data.splice(entry.index, 0, entry.data);
+                    if (explorerState.originalData) {
+                        explorerState.originalData.splice(entry.index, 0, entry.originalData);
+                    }
+                }
+                // Highlights wiederherstellen
+                if (action.previousHighlights) {
+                    explorerState.rowHighlights = new Map(action.previousHighlights);
+                }
+                // EditedCells wiederherstellen
+                if (action.previousEditedCells) {
+                    explorerState.editedCells = new Map(action.previousEditedCells);
+                }
+                // FilteredData neu erstellen
+                explorerState.filteredData = explorerState.data.map((row, idx) => ({
+                    row: row,
+                    originalIndex: idx
+                }));
+                updateExplorerEditStatus();
+                renderExplorerTable();
+                const msg = currentLanguage === 'en'
+                    ? `${sorted.length} row(s) restored`
+                    : `${sorted.length} Zeile(n) wiederhergestellt`;
+                showNotification(msg, 'info');
+                return true;
+            }
+            
             const liveActive = explorerState.liveSessionActive && explorerState.liveSessionReady;
             
             // Prüfe auf Multi-Aktion (mehrere Zellen gleichzeitig)
@@ -4693,6 +4726,39 @@
                 // HINWEIS: Redo für moveRows aktuell nicht unterstützt (Performance-Optimierung)
                 showNotification('Redo für Zeilen-Verschiebung nicht möglich.', 'warning');
                 return false;
+            }
+            
+            // Prüfe auf deleteRows Aktion – Zeilen erneut löschen
+            if (action.type === 'deleteRows') {
+                // Zeilen in absteigender Reihenfolge entfernen
+                const sorted = [...action.deletedRows].sort((a, b) => b.index - a.index);
+                for (const entry of sorted) {
+                    explorerState.data.splice(entry.index, 1);
+                    if (explorerState.originalData) {
+                        explorerState.originalData.splice(entry.index, 1);
+                    }
+                }
+                // Highlights/EditedCells für gelöschte Zeilen entfernen
+                for (const entry of sorted) {
+                    explorerState.rowHighlights.delete(entry.index);
+                    for (const cellKey of [...explorerState.editedCells.keys()]) {
+                        if (cellKey.startsWith(entry.index + '-')) {
+                            explorerState.editedCells.delete(cellKey);
+                        }
+                    }
+                }
+                // FilteredData neu erstellen
+                explorerState.filteredData = explorerState.data.map((row, idx) => ({
+                    row: row,
+                    originalIndex: idx
+                }));
+                updateExplorerEditStatus();
+                renderExplorerTable();
+                const msg = currentLanguage === 'en'
+                    ? `${sorted.length} row(s) deleted again`
+                    : `${sorted.length} Zeile(n) erneut gelöscht`;
+                showNotification(msg, 'info');
+                return true;
             }
             
             const liveActive = explorerState.liveSessionActive && explorerState.liveSessionReady;
@@ -5172,17 +5238,22 @@
         const SEARCH_HISTORY_KEY = 'excelsync_search_history';
         const SEARCH_HISTORY_MAX = 15;
         let searchHistorySelectedIndex = -1;
+        let _searchHistoryCache = null; // In-memory Cache
         
         function getSearchHistory() {
+            if (_searchHistoryCache !== null) return _searchHistoryCache;
             try {
                 const saved = localStorage.getItem(SEARCH_HISTORY_KEY);
-                return saved ? JSON.parse(saved) : [];
+                _searchHistoryCache = saved ? JSON.parse(saved) : [];
+                return _searchHistoryCache;
             } catch (e) {
+                _searchHistoryCache = [];
                 return [];
             }
         }
         
         function saveSearchHistory(history) {
+            _searchHistoryCache = history; // Cache aktualisieren
             try {
                 localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(history));
             } catch (e) {
@@ -5222,6 +5293,7 @@
         }
         
         function clearSearchHistory() {
+            _searchHistoryCache = []; // Cache leeren
             localStorage.removeItem(SEARCH_HISTORY_KEY);
             renderSearchHistoryDropdown();
             hideSearchHistoryDropdown();
@@ -6294,6 +6366,56 @@
             renderSearchResultsPage(query, hasWildcards);
         }
         
+        // ==================== Event Delegation für Search Results ====================
+        let _searchResultsDelegationSetup = false;
+        
+        function setupSearchResultsDelegation() {
+            if (_searchResultsDelegationSetup) return;
+            _searchResultsDelegationSetup = true;
+            
+            const tbody = elements.resultsTableBody;
+            
+            tbody.addEventListener('blur', function(e) {
+                const td = e.target.closest('td[contenteditable]');
+                if (!td) return;
+                
+                const rowIndex = parseInt(td.dataset.row);
+                const colIndex = parseInt(td.dataset.col);
+                const original = td.dataset.original;
+                const lastValue = td.dataset.lastValue;
+                const current = td.textContent;
+                
+                if (lastValue !== current) {
+                    pushSearchUndo({
+                        rowIndex, colIndex,
+                        oldValue: lastValue, newValue: current,
+                        originalValue: original
+                    });
+                    state.searchResults[rowIndex].data[colIndex] = current;
+                    td.dataset.lastValue = current;
+                }
+                
+                td.classList.toggle('edited', original !== current);
+            }, true);
+            
+            tbody.addEventListener('input', function(e) {
+                const td = e.target.closest('td[contenteditable]');
+                if (!td) return;
+                const original = td.dataset.original;
+                const current = td.textContent;
+                td.classList.toggle('edited', original !== current);
+            });
+            
+            tbody.addEventListener('focus', function(e) {
+                const td = e.target.closest('td[contenteditable]');
+                if (!td) return;
+                const rowIndex = parseInt(td.dataset.row);
+                if (!state.selectedRows.includes(rowIndex)) {
+                    toggleRowSelection(rowIndex, true);
+                }
+            }, true);
+        }
+
         function renderSearchResultsPage(query = '', hasWildcards = false) {
             const totalResults = state.searchResults.length;
             const pageSize = state.searchPagination.pageSize;
@@ -6345,47 +6467,13 @@
             });
             elements.resultsTableBody.innerHTML = bodyHtml;
             
+            // lastValue initialisieren
             document.querySelectorAll('#resultsTableBody td[contenteditable]').forEach(td => {
-                // Speichere den letzten bekannten Wert für Undo
                 td.dataset.lastValue = td.textContent;
-                
-                td.addEventListener('blur', function() {
-                    const rowIndex = parseInt(this.dataset.row);
-                    const colIndex = parseInt(this.dataset.col);
-                    const original = this.dataset.original;
-                    const lastValue = this.dataset.lastValue;
-                    const current = this.textContent;
-                    
-                    // Nur Undo speichern wenn sich der Wert geändert hat
-                    if (lastValue !== current) {
-                        pushSearchUndo({
-                            rowIndex,
-                            colIndex,
-                            oldValue: lastValue,
-                            newValue: current,
-                            originalValue: original
-                        });
-                        // Daten im State aktualisieren
-                        state.searchResults[rowIndex].data[colIndex] = current;
-                        this.dataset.lastValue = current;
-                    }
-                    
-                    this.classList.toggle('edited', original !== current);
-                });
-                
-                td.addEventListener('input', function() {
-                    const original = this.dataset.original;
-                    const current = this.textContent;
-                    this.classList.toggle('edited', original !== current);
-                });
-                
-                td.addEventListener('focus', function() {
-                    const rowIndex = parseInt(this.dataset.row);
-                    if (!state.selectedRows.includes(rowIndex)) {
-                        toggleRowSelection(rowIndex, true);
-                    }
-                });
             });
+            
+            // Event Delegation für Search Results (einmalig)
+            setupSearchResultsDelegation();
             
             document.getElementById('selectAllCheckbox').addEventListener('change', (e) => {
                 selectAllRows(e.target.checked);
@@ -9814,63 +9902,80 @@
         }
         
         // Recovery-Daten speichern
+        let _recoveryIdleHandle = null;
         function saveExplorerRecoveryData() {
             if (!explorerState.filePath || explorerState.data.length === 0) {
                 return;
             }
             
-            try {
-                // Aktuelles Sheet im Cache speichern
-                saveCurrentSheetToCache();
-                
-                // Nur speichern wenn es Änderungen gibt
-                const totalChanges = countAllChanges();
-                const hasPendingOps = explorerState.pendingSheetOperations.length > 0;
-                if (totalChanges === 0 && !hasPendingOps) {
-                    // Keine Änderungen - Recovery-Daten löschen
-                    localStorage.removeItem(EXPLORER_RECOVERY_KEY);
-                    return;
+            // Vorherigen ausstehenden Idle-Callback abbrechen
+            if (_recoveryIdleHandle !== null) {
+                (window.cancelIdleCallback || clearTimeout).call(window, _recoveryIdleHandle);
+                _recoveryIdleHandle = null;
+            }
+            
+            const doSave = () => {
+                _recoveryIdleHandle = null;
+                try {
+                    // Aktuelles Sheet im Cache speichern
+                    saveCurrentSheetToCache();
+                    
+                    // Nur speichern wenn es Änderungen gibt
+                    const totalChanges = countAllChanges();
+                    const hasPendingOps = explorerState.pendingSheetOperations.length > 0;
+                    if (totalChanges === 0 && !hasPendingOps) {
+                        // Keine Änderungen - Recovery-Daten löschen
+                        localStorage.removeItem(EXPLORER_RECOVERY_KEY);
+                        return;
+                    }
+                    
+                    // Map/Set zu Arrays konvertieren für JSON
+                    const editedCellsArray = Array.from(explorerState.editedCells.entries());
+                    const rowHighlightsArray = Array.from(explorerState.rowHighlights.entries());
+                    
+                    // Sheet-Cache konvertieren
+                    const sheetCacheArray = [];
+                    for (const [sheetName, cached] of explorerState.sheetDataCache) {
+                        sheetCacheArray.push({
+                            sheetName,
+                            headers: cached.headers,
+                            data: cached.data,
+                            originalData: cached.originalData,
+                            visibleColumns: cached.visibleColumns,
+                            editedCells: Array.from(cached.editedCells.entries()),
+                            rowHighlights: Array.from(cached.rowHighlights.entries())
+                        });
+                    }
+                    
+                    const recoveryData = {
+                        timestamp: Date.now(),
+                        filePath: explorerState.filePath,
+                        fileName: explorerState.fileName,
+                        sheets: explorerState.sheets,
+                        selectedSheet: explorerState.selectedSheet,
+                        headers: explorerState.headers,
+                        data: explorerState.data,
+                        originalData: explorerState.originalData,
+                        visibleColumns: explorerState.visibleColumns,
+                        columnOrder: explorerState.columnOrder,
+                        editedCells: editedCellsArray,
+                        rowHighlights: rowHighlightsArray,
+                        sheetDataCache: sheetCacheArray,
+                        pendingSheetOperations: explorerState.pendingSheetOperations,
+                        hiddenSheets: Array.from(explorerState.hiddenSheets)
+                    };
+                    
+                    localStorage.setItem(EXPLORER_RECOVERY_KEY, JSON.stringify(recoveryData));
+                } catch (e) {
+                    console.warn('Explorer Recovery-Speicherung fehlgeschlagen:', e);
                 }
-                
-                // Map/Set zu Arrays konvertieren für JSON
-                const editedCellsArray = Array.from(explorerState.editedCells.entries());
-                const rowHighlightsArray = Array.from(explorerState.rowHighlights.entries());
-                
-                // Sheet-Cache konvertieren
-                const sheetCacheArray = [];
-                for (const [sheetName, cached] of explorerState.sheetDataCache) {
-                    sheetCacheArray.push({
-                        sheetName,
-                        headers: cached.headers,
-                        data: cached.data,
-                        originalData: cached.originalData,
-                        visibleColumns: cached.visibleColumns,
-                        editedCells: Array.from(cached.editedCells.entries()),
-                        rowHighlights: Array.from(cached.rowHighlights.entries())
-                    });
-                }
-                
-                const recoveryData = {
-                    timestamp: Date.now(),
-                    filePath: explorerState.filePath,
-                    fileName: explorerState.fileName,
-                    sheets: explorerState.sheets,
-                    selectedSheet: explorerState.selectedSheet,
-                    headers: explorerState.headers,
-                    data: explorerState.data,
-                    originalData: explorerState.originalData,
-                    visibleColumns: explorerState.visibleColumns,
-                    columnOrder: explorerState.columnOrder,
-                    editedCells: editedCellsArray,
-                    rowHighlights: rowHighlightsArray,
-                    sheetDataCache: sheetCacheArray,
-                    pendingSheetOperations: explorerState.pendingSheetOperations,
-                    hiddenSheets: Array.from(explorerState.hiddenSheets)
-                };
-                
-                localStorage.setItem(EXPLORER_RECOVERY_KEY, JSON.stringify(recoveryData));
-            } catch (e) {
-                console.warn('Explorer Recovery-Speicherung fehlgeschlagen:', e);
+            };
+            
+            // Serialisierung in Idle-Zeit verschieben, damit UI-Interaktionen nicht blockiert werden
+            if (window.requestIdleCallback) {
+                _recoveryIdleHandle = requestIdleCallback(doSave, { timeout: 10000 });
+            } else {
+                _recoveryIdleHandle = setTimeout(doSave, 100);
             }
         }
         
@@ -14468,10 +14573,11 @@
                 }
                 updateFiltersFromDOM();
             };
-            daysInput.oninput = updateFiltersFromDOM;
-            dateFromInput.oninput = updateFiltersFromDOM;
-            dateToInput.oninput = updateFiltersFromDOM;
-            valueInput.oninput = updateFiltersFromDOM;
+            const debouncedUpdateFilters = debounce(updateFiltersFromDOM, 300);
+            daysInput.oninput = debouncedUpdateFilters;
+            dateFromInput.oninput = debouncedUpdateFilters;
+            dateToInput.oninput = debouncedUpdateFilters;
+            valueInput.oninput = debouncedUpdateFilters;
             
             // Enter-Handler für Datums-Textfelder
             dateFromInput.onkeydown = (e) => {
@@ -14639,6 +14745,321 @@
             return null; // Nicht Teil eines Merges
         }
         
+        // ==================== Event Delegation für Explorer Table ====================
+        // Einmalig registrierte Event-Listener auf dem tbody statt auf jeder einzelnen Zelle.
+        // Reduziert die Anzahl der Listener von O(Zellen) auf O(1) pro Event-Typ.
+        let _explorerDelegationSetup = false;
+        let _explorerMouseUpHandler = null;
+        
+        // Hilfsfunktion: Komplette Zeile an Excel übertragen (für Cell-Edit + Dropdown)
+        // Debounced per Row: Schnelle Edits an derselben Zeile werden zusammengefasst
+        const _syncRowTimers = new Map();
+        function syncRowToExcel(rowIndex) {
+            if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) return;
+            // Vorherigen Timer für diese Zeile abbrechen
+            if (_syncRowTimers.has(rowIndex)) {
+                clearTimeout(_syncRowTimers.get(rowIndex));
+            }
+            _syncRowTimers.set(rowIndex, setTimeout(() => {
+                _syncRowTimers.delete(rowIndex);
+                const rowData = explorerState.data[rowIndex];
+                if (!rowData) return;
+                const values = rowData.map(v => (v === null || v === undefined) ? '' : v);
+                console.log('[CellEdit] syncRowToExcel: Zeile', rowIndex, '→', values.length, 'Spalten');
+                window.electronAPI.liveSessionSetRowValues(rowIndex, values)
+                    .then(res => console.log('[CellEdit] Row-Sync Ergebnis:', JSON.stringify(res)))
+                    .catch(err => console.error('[CellEdit] Row-Sync fehlgeschlagen:', err));
+            }, 500));
+        }
+        // Sofort-Sync für blur/Enter (überspringt den Debounce-Timer)
+        function syncRowToExcelImmediate(rowIndex) {
+            if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) return;
+            // Laufenden Debounce-Timer abbrechen, da wir jetzt sofort senden
+            if (_syncRowTimers.has(rowIndex)) {
+                clearTimeout(_syncRowTimers.get(rowIndex));
+                _syncRowTimers.delete(rowIndex);
+            }
+            const rowData = explorerState.data[rowIndex];
+            if (!rowData) return;
+            const values = rowData.map(v => (v === null || v === undefined) ? '' : v);
+            console.log('[CellEdit] syncRowToExcelImmediate: Zeile', rowIndex, '→', values.length, 'Spalten');
+            window.electronAPI.liveSessionSetRowValues(rowIndex, values)
+                .then(res => console.log('[CellEdit] Row-Sync Ergebnis:', JSON.stringify(res)))
+                .catch(err => console.error('[CellEdit] Row-Sync fehlgeschlagen:', err));
+        }
+        
+        function setupExplorerTableDelegation() {
+            if (_explorerDelegationSetup) return;
+            _explorerDelegationSetup = true;
+            
+            const tbody = elements.explorerTableBody;
+            
+            // --- Checkbox change (Zeilen-Auswahl) ---
+            tbody.addEventListener('change', function(e) {
+                const checkbox = e.target.closest('.row-select-checkbox');
+                if (checkbox) {
+                    const rowIndex = parseInt(checkbox.dataset.rowIndex);
+                    if (checkbox.checked) {
+                        explorerState.selectedRows.add(rowIndex);
+                        checkbox.closest('tr').classList.add('row-selected');
+                        checkbox.parentElement.classList.add('selected');
+                    } else {
+                        explorerState.selectedRows.delete(rowIndex);
+                        checkbox.closest('tr').classList.remove('row-selected');
+                        checkbox.parentElement.classList.remove('selected');
+                    }
+                    updateRowMoveToolbar();
+                    const selectAllCheckbox = document.getElementById('selectAllRows');
+                    if (selectAllCheckbox) {
+                        const pageRows = document.querySelectorAll('#explorerTableBody .row-select-checkbox');
+                        const allChecked = Array.from(pageRows).every(cb => cb.checked);
+                        selectAllCheckbox.checked = allChecked && pageRows.length > 0;
+                    }
+                    return;
+                }
+                
+                // Dropdown-Zellen (Data Validation)
+                const select = e.target.closest('.cell-dropdown');
+                if (select) {
+                    const rowIndex = parseInt(select.dataset.row);
+                    const colIndex = parseInt(select.dataset.col);
+                    const td = select.closest('td');
+                    const original = td.dataset.original;
+                    const lastValue = select.dataset.lastValue;
+                    const current = select.value;
+                    const cellKey = `${rowIndex}-${colIndex}`;
+                    
+                    if (original !== current) {
+                        explorerState.editedCells.set(cellKey, current);
+                        explorerState.data[rowIndex][colIndex] = current;
+                        td.classList.add('edited');
+                    } else {
+                        explorerState.editedCells.delete(cellKey);
+                        td.classList.remove('edited');
+                    }
+                    
+                    if (lastValue !== current) {
+                        pushExplorerUndo({
+                            rowIndex, colIndex,
+                            oldValue: lastValue, newValue: current,
+                            originalValue: original
+                        });
+                        select.dataset.lastValue = current;
+                        syncRowToExcelImmediate(rowIndex);
+                    }
+                    updateExplorerEditStatus();
+                }
+            });
+            
+            // --- Input (Cell-Edit) ---
+            tbody.addEventListener('input', function(e) {
+                const td = e.target.closest('td[contenteditable]');
+                if (!td) return;
+                
+                const rowIndex = parseInt(td.dataset.row);
+                const colIndex = parseInt(td.dataset.col);
+                const original = td.dataset.original;
+                const current = td.textContent;
+                const cellKey = `${rowIndex}-${colIndex}`;
+                
+                if (original !== current) {
+                    explorerState.editedCells.set(cellKey, current);
+                    explorerState.data[rowIndex][colIndex] = current;
+                    td.classList.add('edited');
+                } else {
+                    explorerState.editedCells.delete(cellKey);
+                    td.classList.remove('edited');
+                }
+                
+                updateExplorerEditStatus();
+                
+                // Live-Session Sync (debounced via syncRowToExcel)
+                syncRowToExcel(rowIndex);
+            });
+            
+            // --- Blur (Undo speichern + Live-Sync) ---
+            tbody.addEventListener('blur', function(e) {
+                const td = e.target.closest('td[contenteditable]');
+                if (!td) return;
+                
+                td.parentElement.classList.remove('editing-row');
+                
+                const rowIndex = parseInt(td.dataset.row);
+                const colIndex = parseInt(td.dataset.col);
+                const original = td.dataset.original;
+                const lastValue = td.dataset.lastValue;
+                const current = td.textContent;
+                
+                if (lastValue !== current) {
+                    pushExplorerUndo({
+                        rowIndex, colIndex,
+                        oldValue: lastValue, newValue: current,
+                        originalValue: original
+                    });
+                    td.dataset.lastValue = current;
+                    syncRowToExcelImmediate(rowIndex);
+                }
+            }, true); // useCapture für blur!
+            
+            // --- Focus ---
+            tbody.addEventListener('focus', function(e) {
+                const td = e.target.closest('td[contenteditable]');
+                if (!td) return;
+                td.parentElement.classList.add('editing-row');
+            }, true); // useCapture für focus!
+            
+            // --- Paste ---
+            tbody.addEventListener('paste', function(e) {
+                const td = e.target.closest('td[contenteditable]');
+                if (!td) return;
+                e.preventDefault();
+                const text = (e.clipboardData || window.clipboardData).getData('text/plain');
+                document.execCommand('insertText', false, text);
+            });
+            
+            // --- Keydown (Enter, Escape, Delete) ---
+            tbody.addEventListener('keydown', function(e) {
+                const td = e.target.closest('td[contenteditable]');
+                if (!td) return;
+                
+                if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    
+                    const rowIndex = parseInt(td.dataset.row);
+                    const colIndex = parseInt(td.dataset.col);
+                    const current = td.textContent;
+                    const lastValue = td.dataset.lastValue;
+                    
+                    if (lastValue !== current) {
+                        pushExplorerUndo({
+                            rowIndex, colIndex,
+                            oldValue: lastValue, newValue: current,
+                            originalValue: td.dataset.original
+                        });
+                        td.dataset.lastValue = current;
+                        syncRowToExcelImmediate(rowIndex);
+                    }
+                    
+                    const nextRow = td.parentElement.nextElementSibling;
+                    if (nextRow) {
+                        const nextCell = nextRow.querySelector(`td[data-col="${colIndex}"]`);
+                        if (nextCell) nextCell.focus();
+                    }
+                } else if (e.key === 'Escape') {
+                    const rowIndex = parseInt(td.dataset.row);
+                    const colIndex = parseInt(td.dataset.col);
+                    const original = td.dataset.original;
+                    td.textContent = original;
+                    const cellKey = `${rowIndex}-${colIndex}`;
+                    explorerState.editedCells.delete(cellKey);
+                    explorerState.data[rowIndex][colIndex] = original;
+                    td.classList.remove('edited');
+                    td.dataset.lastValue = original;
+                    
+                    syncRowToExcelImmediate(rowIndex);
+                    td.blur();
+                    updateExplorerEditStatus();
+                } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                    if (explorerState.selectedCells.size > 1 && !document.activeElement.isContentEditable) {
+                        e.preventDefault();
+                        deleteSelectedCellsContent();
+                    }
+                }
+            });
+            
+            // --- Mousedown (Zellen-Auswahl) ---
+            tbody.addEventListener('mousedown', function(e) {
+                const td = e.target.closest('td[contenteditable]');
+                if (!td || e.button !== 0) return;
+                
+                const rowIndex = parseInt(td.dataset.row);
+                const colIndex = parseInt(td.dataset.col);
+                
+                if (e.shiftKey && explorerState.selectionAnchor) {
+                    e.preventDefault();
+                    selectCellRange(rowIndex, colIndex);
+                } else if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    toggleCellSelection(rowIndex, colIndex, true);
+                } else {
+                    if (!explorerState.selectedCells.has(`${rowIndex}-${colIndex}`)) {
+                        explorerState.selectedCells.clear();
+                    }
+                    explorerState.selectionAnchor = { row: rowIndex, col: colIndex };
+                    explorerState.isSelecting = true;
+                }
+            });
+            
+            // --- Mouseenter (Drag-Bereichsauswahl, throttled via rAF) ---
+            let _dragRafPending = false;
+            tbody.addEventListener('mouseenter', function(e) {
+                if (!explorerState.isSelecting || e.buttons !== 1) return;
+                const td = e.target.closest('td[contenteditable]');
+                if (!td) return;
+                if (_dragRafPending) return;
+                _dragRafPending = true;
+                requestAnimationFrame(() => {
+                    _dragRafPending = false;
+                    const rowIndex = parseInt(td.dataset.row);
+                    const colIndex = parseInt(td.dataset.col);
+                    selectCellRange(rowIndex, colIndex);
+                });
+            }, true);
+            
+            // --- Contextmenu (Rechtsklick) ---
+            tbody.addEventListener('contextmenu', function(e) {
+                // Zellen-Kontextmenü
+                const td = e.target.closest('td[contenteditable]');
+                if (td) {
+                    const rowIndex = parseInt(td.dataset.row);
+                    const colIndex = parseInt(td.dataset.col);
+                    showCellContextMenu(e, rowIndex, colIndex);
+                    return;
+                }
+                // Zeilen-Kontextmenü (Checkbox-Spalte)
+                const checkboxCell = e.target.closest('.row-checkbox-cell');
+                if (checkboxCell) {
+                    const tr = checkboxCell.closest('tr');
+                    const rowIndex = parseInt(tr.dataset.originalIndex);
+                    if (!isNaN(rowIndex)) {
+                        showRowContextMenu(e, rowIndex);
+                    }
+                }
+            });
+            
+            // --- Click (Hyperlinks mit Ctrl/Cmd) ---
+            tbody.addEventListener('click', function(e) {
+                const span = e.target.closest('td.has-hyperlink .cell-content');
+                if (span && (e.ctrlKey || e.metaKey)) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const td = span.closest('td');
+                    const hyperlink = td.dataset.hyperlink;
+                    if (hyperlink) window.electronAPI.openExternal(hyperlink);
+                }
+            });
+            
+            // --- Dblclick (Hyperlinks) ---
+            tbody.addEventListener('dblclick', function(e) {
+                const span = e.target.closest('td.has-hyperlink .cell-content');
+                if (span) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const td = span.closest('td');
+                    const hyperlink = td.dataset.hyperlink;
+                    if (hyperlink) window.electronAPI.openExternal(hyperlink);
+                }
+            });
+            
+            // --- Mouseup (einmalig auf document) ---
+            if (!_explorerMouseUpHandler) {
+                _explorerMouseUpHandler = function() {
+                    explorerState.isSelecting = false;
+                };
+                document.addEventListener('mouseup', _explorerMouseUpHandler);
+            }
+        }
+
         function renderExplorerTable() {
             const btnToggleExcel = document.getElementById('btnToggleExcel');
             const btnDataJoin = document.getElementById('btnDataJoin');
@@ -14903,10 +15324,14 @@
                 const originalIndex = item.originalIndex;
                 const row = item.row;
                 const isSelected = explorerState.selectedRows.has(originalIndex);
-                const selectedClass = isSelected ? ' class="row-selected"' : '';
+                const highlightColor = explorerState.rowHighlights.get(originalIndex);
+                const trClasses = [];
+                if (isSelected) trClasses.push('row-selected');
+                if (highlightColor) trClasses.push(`row-highlight-${highlightColor}`);
+                const trClassAttr = trClasses.length > 0 ? ` class="${trClasses.join(' ')}"` : '';
                 // Datenzeilen-Nummer = originalIndex + 1 (1-basiert, passend zur Verschiebe-Funktion)
                 const dataRowNumber = originalIndex + 1;
-                bodyHtml += `<tr data-original-index="${originalIndex}"${selectedClass}>`;
+                bodyHtml += `<tr data-original-index="${originalIndex}"${trClassAttr}>`;
                 // Zeilennummer-Zelle (fest, sticky)
                 bodyHtml += `<td class="row-number-cell" style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 4px; background: var(--bg-lighter); color: var(--text-muted); font-size: 11px; font-family: monospace; position: sticky; left: 0; z-index: 1; user-select: none;" title="Datenzeile ${dataRowNumber}">${dataRowNumber}</td>`;
                 // Checkbox-Zelle für Zeilenauswahl
@@ -15088,324 +15513,24 @@
             });
             elements.explorerTableBody.innerHTML = bodyHtml || '<tr><td colspan="100" style="text-align: center; padding: 20px;">Keine Daten gefunden</td></tr>';
             
-            // Zeilen-Highlights anwenden
-            applyRowHighlights();
+            // Zeilen-Highlights werden jetzt direkt im HTML-Build gesetzt (keine nachträgliche DOM-Traversierung mehr)
             
-            // Hilfsfunktion: Komplette Zeile an Excel übertragen (für Cell-Edit + Dropdown)
-            function syncRowToExcel(rowIndex) {
-                if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) return;
-                const rowData = explorerState.data[rowIndex];
-                if (!rowData) return;
-                // Alle Werte der Zeile als Array (null/undefined → '')
-                const values = rowData.map(v => (v === null || v === undefined) ? '' : v);
-                console.log('[CellEdit] syncRowToExcel: Zeile', rowIndex, '→', values.length, 'Spalten');
-                window.electronAPI.liveSessionSetRowValues(rowIndex, values)
-                    .then(res => console.log('[CellEdit] Row-Sync Ergebnis:', JSON.stringify(res)))
-                    .catch(err => console.error('[CellEdit] Row-Sync fehlgeschlagen:', err));
-            }
+            // Event Delegation einmalig registrieren (nicht bei jedem Render!)
+            setupExplorerTableDelegation();
             
-            // Event-Listener für Zeilen-Checkboxen
-            document.querySelectorAll('.row-select-checkbox').forEach(checkbox => {
-                checkbox.addEventListener('change', function() {
-                    const rowIndex = parseInt(this.dataset.rowIndex);
-                    if (this.checked) {
-                        explorerState.selectedRows.add(rowIndex);
-                        this.closest('tr').classList.add('row-selected');
-                        this.parentElement.classList.add('selected');
-                    } else {
-                        explorerState.selectedRows.delete(rowIndex);
-                        this.closest('tr').classList.remove('row-selected');
-                        this.parentElement.classList.remove('selected');
-                    }
-                    updateRowMoveToolbar();
-                    // Update Select-All Checkbox
-                    const selectAllCheckbox = document.getElementById('selectAllRows');
-                    if (selectAllCheckbox) {
-                        const allChecked = pageData.every(item => explorerState.selectedRows.has(item.originalIndex));
-                        selectAllCheckbox.checked = allChecked && pageData.length > 0;
-                    }
-                });
-            });
+            // Event-Listener für Zeilen-Checkboxen (delegiert auf tbody)
+            // Event-Listener für Hyperlinks (delegiert auf tbody)
+            // Event-Listener für editierbare Zellen (delegiert auf tbody)
+            // Event-Listener für Dropdown-Zellen (delegiert auf tbody)
+            // → Alle über setupExplorerTableDelegation() registriert (einmalig)
             
-            // Rechtsklick-Kontextmenü für Zeilen (nur Checkbox-Spalte)
-            document.querySelectorAll('#explorerTableBody tr .row-checkbox-cell').forEach(cell => {
-                cell.addEventListener('contextmenu', (e) => {
-                    const tr = cell.closest('tr');
-                    const rowIndex = parseInt(tr.dataset.originalIndex);
-                    if (!isNaN(rowIndex)) {
-                        showRowContextMenu(e, rowIndex);
-                    }
-                });
-            });
-            
-            // Event-Listener für Hyperlinks (Ctrl+Click oder Doppelklick öffnet den Link)
-            document.querySelectorAll('#explorerTableBody td.has-hyperlink .cell-content').forEach(span => {
-                span.addEventListener('click', function(e) {
-                    // Ctrl+Click oder Cmd+Click öffnet den Link
-                    if (e.ctrlKey || e.metaKey) {
-                        e.preventDefault();
-                        e.stopPropagation();
-                        const td = this.closest('td');
-                        const hyperlink = td.dataset.hyperlink;
-                        if (hyperlink) {
-                            window.electronAPI.openExternal(hyperlink);
-                        }
-                    }
-                });
-                
-                span.addEventListener('dblclick', function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const td = this.closest('td');
-                    const hyperlink = td.dataset.hyperlink;
-                    if (hyperlink) {
-                        window.electronAPI.openExternal(hyperlink);
-                    }
-                });
-            });
-            
-            // Event-Listener für editierbare Zellen
+            // lastValue für alle editierbaren Zellen initialisieren
             document.querySelectorAll('#explorerTableBody td[contenteditable]').forEach(td => {
-                // Speichere den letzten bekannten Wert für Undo
                 td.dataset.lastValue = td.textContent;
-                
-                td.addEventListener('input', function() {
-                    const rowIndex = parseInt(this.dataset.row);
-                    const colIndex = parseInt(this.dataset.col);
-                    const original = this.dataset.original;
-                    const current = this.textContent;
-                    const cellKey = `${rowIndex}-${colIndex}`;
-                    
-                    if (original !== current) {
-                        // Änderung speichern
-                        explorerState.editedCells.set(cellKey, current);
-                        explorerState.data[rowIndex][colIndex] = current;
-                        this.classList.add('edited');
-                    } else {
-                        // Zurück zum Original
-                        explorerState.editedCells.delete(cellKey);
-                        this.classList.remove('edited');
-                    }
-                    
-                    // Status aktualisieren
-                    updateExplorerEditStatus();
-                    
-                    // Live-Session Sync (debounced): Komplette Zeile an Excel übertragen
-                    if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                        if (this._liveSyncTimer) clearTimeout(this._liveSyncTimer);
-                        const syncRow = rowIndex;
-                        this._liveSyncTimer = setTimeout(() => {
-                            syncRowToExcel(syncRow);
-                        }, 300); // 300ms Debounce
-                    }
-                });
-                
-                // Blur: Undo-Aktion speichern + Live-Session Sync (Sicherheitsnetz)
-                td.addEventListener('blur', async function() {
-                    this.parentElement.classList.remove('editing-row');
-                    
-                    // Laufenden Debounce-Timer abbrechen - wir syncen jetzt sofort
-                    if (this._liveSyncTimer) {
-                        clearTimeout(this._liveSyncTimer);
-                        this._liveSyncTimer = null;
-                    }
-                    
-                    const rowIndex = parseInt(this.dataset.row);
-                    const colIndex = parseInt(this.dataset.col);
-                    const original = this.dataset.original;
-                    const lastValue = this.dataset.lastValue;
-                    const current = this.textContent;
-                    
-                    // Nur Undo speichern wenn sich der Wert geändert hat
-                    if (lastValue !== current) {
-                        pushExplorerUndo({
-                            rowIndex,
-                            colIndex,
-                            oldValue: lastValue,
-                            newValue: current,
-                            originalValue: original
-                        });
-                        this.dataset.lastValue = current;
-                        
-                        // Live-Session: Komplette Zeile an Excel übertragen
-                        syncRowToExcel(rowIndex);
-                    }
-                });
-                
-                // Fokus-Verhalten
-                td.addEventListener('focus', function() {
-                    this.parentElement.classList.add('editing-row');
-                });
-                
-                // Paste-Handler für Einfügen aus Zwischenablage
-                td.addEventListener('paste', function(e) {
-                    e.preventDefault();
-                    const text = (e.clipboardData || window.clipboardData).getData('text/plain');
-                    
-                    // Text als reinen Text einfügen (ohne Formatierung)
-                    document.execCommand('insertText', false, text);
-                });
-                
-                // Enter-Taste: Live-Sync + zur nächsten Zeile springen
-                td.addEventListener('keydown', function(e) {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        
-                        // Debounce-Timer abbrechen
-                        if (this._liveSyncTimer) {
-                            clearTimeout(this._liveSyncTimer);
-                            this._liveSyncTimer = null;
-                        }
-                        
-                        const rowIndex = parseInt(this.dataset.row);
-                        const colIndex = parseInt(this.dataset.col);
-                        const current = this.textContent;
-                        const lastValue = this.dataset.lastValue;
-                        
-                        // Undo speichern + lastValue aktualisieren
-                        if (lastValue !== current) {
-                            pushExplorerUndo({
-                                rowIndex,
-                                colIndex,
-                                oldValue: lastValue,
-                                newValue: current,
-                                originalValue: this.dataset.original
-                            });
-                            this.dataset.lastValue = current;
-                            
-                            // Komplette Zeile an Excel übertragen
-                            syncRowToExcel(rowIndex);
-                        }
-                        
-                        const nextRow = this.parentElement.nextElementSibling;
-                        if (nextRow) {
-                            const nextCell = nextRow.querySelector(`td[data-col="${colIndex}"]`);
-                            if (nextCell) nextCell.focus();
-                        }
-                    } else if (e.key === 'Escape') {
-                        // Escape: Änderung verwerfen
-                        const rowIndex = parseInt(this.dataset.row);
-                        const colIndex = parseInt(this.dataset.col);
-                        const original = this.dataset.original;
-                        this.textContent = original;
-                        const cellKey = `${rowIndex}-${colIndex}`;
-                        explorerState.editedCells.delete(cellKey);
-                        explorerState.data[rowIndex][colIndex] = original;
-                        this.classList.remove('edited');
-                        this.dataset.lastValue = original;
-                        
-                        // Debounce-Timer abbrechen
-                        if (this._liveSyncTimer) {
-                            clearTimeout(this._liveSyncTimer);
-                            this._liveSyncTimer = null;
-                        }
-                        
-                        // Komplette Zeile (mit Original-Wert) an Excel zurücksetzen
-                        syncRowToExcel(rowIndex);
-                        
-                        this.blur();
-                        updateExplorerEditStatus();
-                    } else if (e.key === 'Delete' || e.key === 'Backspace') {
-                        // Delete/Backspace bei Zellen-Auswahl: Alle löschen
-                        if (explorerState.selectedCells.size > 1 && !document.activeElement.isContentEditable) {
-                            e.preventDefault();
-                            deleteSelectedCellsContent();
-                        }
-                    }
-                });
-                
-                // Mausklick für Zellen-Auswahl
-                td.addEventListener('mousedown', function(e) {
-                    // Nur linke Maustaste und nicht bei Content-Bearbeitung
-                    if (e.button !== 0) return;
-                    
-                    const rowIndex = parseInt(this.dataset.row);
-                    const colIndex = parseInt(this.dataset.col);
-                    
-                    if (e.shiftKey && explorerState.selectionAnchor) {
-                        // Shift+Klick: Bereich auswählen
-                        e.preventDefault();
-                        selectCellRange(rowIndex, colIndex);
-                    } else if (e.ctrlKey || e.metaKey) {
-                        // Ctrl/Cmd+Klick: Zur Auswahl hinzufügen/entfernen
-                        e.preventDefault();
-                        toggleCellSelection(rowIndex, colIndex, true);
-                    } else {
-                        // Normaler Klick: Auswahl-Anker setzen (für spätere Shift-Auswahl)
-                        // Nicht die Auswahl leeren wenn die Zelle bereits ausgewählt ist
-                        if (!explorerState.selectedCells.has(`${rowIndex}-${colIndex}`)) {
-                            explorerState.selectedCells.clear();
-                        }
-                        explorerState.selectionAnchor = { row: rowIndex, col: colIndex };
-                        explorerState.isSelecting = true;
-                    }
-                });
-                
-                // Maus-Drag für Bereichsauswahl
-                td.addEventListener('mouseenter', function(e) {
-                    if (explorerState.isSelecting && e.buttons === 1) {
-                        const rowIndex = parseInt(this.dataset.row);
-                        const colIndex = parseInt(this.dataset.col);
-                        selectCellRange(rowIndex, colIndex);
-                    }
-                });
-                
-                // Rechtsklick für Zellen-Kontextmenü
-                td.addEventListener('contextmenu', function(e) {
-                    const rowIndex = parseInt(this.dataset.row);
-                    const colIndex = parseInt(this.dataset.col);
-                    showCellContextMenu(e, rowIndex, colIndex);
-                });
             });
-            
-            // Event-Listener für Dropdown-Zellen (Data Validation)
+            // lastValue für Dropdown-Zellen initialisieren
             document.querySelectorAll('#explorerTableBody .cell-dropdown').forEach(select => {
-                // Speichere den initialen Wert für Undo
                 select.dataset.lastValue = select.value;
-                
-                select.addEventListener('change', async function() {
-                    const rowIndex = parseInt(this.dataset.row);
-                    const colIndex = parseInt(this.dataset.col);
-                    const td = this.closest('td');
-                    const original = td.dataset.original;
-                    const lastValue = this.dataset.lastValue;
-                    const current = this.value;
-                    const cellKey = `${rowIndex}-${colIndex}`;
-                    
-                    if (original !== current) {
-                        // Änderung speichern
-                        explorerState.editedCells.set(cellKey, current);
-                        explorerState.data[rowIndex][colIndex] = current;
-                        td.classList.add('edited');
-                    } else {
-                        // Zurück zum Original
-                        explorerState.editedCells.delete(cellKey);
-                        td.classList.remove('edited');
-                    }
-                    
-                    // Undo-Aktion speichern
-                    if (lastValue !== current) {
-                        pushExplorerUndo({
-                            rowIndex,
-                            colIndex,
-                            oldValue: lastValue,
-                            newValue: current,
-                            originalValue: original
-                        });
-                        this.dataset.lastValue = current;
-                        
-                        // Live-Session: Komplette Zeile an Excel übertragen
-                        syncRowToExcel(rowIndex);
-                    }
-                    
-                    // Status aktualisieren
-                    updateExplorerEditStatus();
-                });
-            });
-            
-            // Maus-Release: Auswahl beenden
-            document.addEventListener('mouseup', function() {
-                explorerState.isSelecting = false;
             });
             
             // Ergebnis-Info mit Pagination
@@ -15772,23 +15897,37 @@
                 console.log(`[LiveSession] ${indicesWithExcelPos.length} Zeilen in Excel gelöscht`);
             }
             
-            // Speichere den aktuellen Zustand für Undo
-            const previousData = JSON.parse(JSON.stringify(explorerState.data));
-            const previousOriginalData = JSON.parse(JSON.stringify(explorerState.originalData));
+            // Speichere den aktuellen Zustand für Undo (nur die gelöschten Zeilen, nicht den gesamten Datensatz)
+            const selectedIndices = Array.from(explorerState.selectedRows).sort((a, b) => b - a);
+            const deletedRows = selectedIndices.map(idx => ({
+                index: idx,
+                data: explorerState.data[idx] ? [...explorerState.data[idx]] : [],
+                originalData: explorerState.originalData[idx] ? [...explorerState.originalData[idx]] : [],
+                highlight: explorerState.rowHighlights.get(idx),
+                editedCells: []
+            }));
+            // Editierte Zellen der gelöschten Zeilen sichern
+            const deletedSet = new Set(selectedIndices);
+            for (const [key, value] of explorerState.editedCells) {
+                const dashIdx = key.indexOf('-');
+                if (dashIdx > 0) {
+                    const rowIdx = parseInt(key.substring(0, dashIdx));
+                    if (deletedSet.has(rowIdx)) {
+                        const row = deletedRows.find(r => r.index === rowIdx);
+                        if (row) row.editedCells.push({ key, value });
+                    }
+                }
+            }
             const previousHighlights = new Map(explorerState.rowHighlights);
             const previousEditedCells = new Map(explorerState.editedCells);
             
-            // Sortiere die ausgewählten Indizes absteigend (wichtig für korrektes Löschen)
-            const selectedIndices = Array.from(explorerState.selectedRows).sort((a, b) => b - a);
-            
-            // Lösche die Zeilen von hinten nach vorne
+            // Lösche die Zeilen von hinten nach vorne (selectedIndices already sorted desc)
             selectedIndices.forEach(idx => {
                 explorerState.data.splice(idx, 1);
                 explorerState.originalData.splice(idx, 1);
             });
             
             // Highlights anpassen
-            const deletedSet = new Set(selectedIndices);
             const newHighlights = new Map();
             explorerState.rowHighlights.forEach((color, idx) => {
                 if (deletedSet.has(idx)) return; // Gelöschte Zeile überspringen
@@ -16033,11 +16172,10 @@
                 explorerState.mergedCells = newMergedCells;
             }
             
-            // Speichere Undo-Aktion
+            // Speichere Undo-Aktion (nur die gelöschten Zeilen, nicht den gesamten Datensatz)
             pushExplorerUndo({
                 type: 'deleteRows',
-                previousData: previousData,
-                previousOriginalData: previousOriginalData,
+                deletedRows: deletedRows,
                 previousHighlights: previousHighlights,
                 previousEditedCells: previousEditedCells,
                 deletedIndices: selectedIndices
@@ -18823,18 +18961,16 @@
                 showSearchHistoryDropdown();
             });
             
-            elements.searchInput.addEventListener('input', () => {
+            elements.searchInput.addEventListener('input', debounce(() => {
                 renderSearchHistoryDropdown(elements.searchInput.value);
                 const dropdown = document.getElementById('searchHistoryDropdown');
-                const history = getSearchHistory();
-                const filterText = elements.searchInput.value;
-                const filtered = filterText 
-                    ? history.filter(item => item.term.toLowerCase().includes(filterText.toLowerCase()))
-                    : history;
+                const filtered = getSearchHistory().filter(item => 
+                    !elements.searchInput.value || item.term.toLowerCase().includes(elements.searchInput.value.toLowerCase())
+                );
                 if (filtered.length > 0) {
                     dropdown.classList.add('show');
                 }
-            });
+            }, 150));
             
             // Dropdown schließen bei Klick außerhalb
             document.addEventListener('click', (e) => {

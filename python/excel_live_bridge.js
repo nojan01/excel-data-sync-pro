@@ -168,6 +168,20 @@ class ExcelLiveSession {
             const entry = { command, resolve, reject, timeout };
 
             if (this.isBusy) {
+                // setRowValues: Nur letzte Version pro Zeile behalten (Deduplizierung)
+                if (command.action === 'setRowValues' && command.rowIndex !== undefined) {
+                    const existingIdx = this.commandQueue.findIndex(
+                        e => e.command.action === 'setRowValues' && e.command.rowIndex === command.rowIndex
+                    );
+                    if (existingIdx >= 0) {
+                        // Alten Eintrag ablösen (resolve mit skip-Marker) und ersetzen
+                        const old = this.commandQueue[existingIdx];
+                        old.resolve({ success: true, skipped: true, reason: 'superseded' });
+                        this.commandQueue[existingIdx] = entry;
+                        console.log(`[LiveSession] Command deduplicated: setRowValues row=${command.rowIndex} (queue size: ${this.commandQueue.length})`);
+                        return;
+                    }
+                }
                 // Befehl in Queue einreihen — wird nach aktuellem Befehl ausgeführt
                 this.commandQueue.push(entry);
                 console.log(`[LiveSession] Command queued: ${command.action} (queue size: ${this.commandQueue.length})`);
