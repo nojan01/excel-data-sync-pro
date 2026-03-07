@@ -5085,7 +5085,27 @@
             return data;
         }
         
+        let _lastAutoSaveFingerprint = '';
         function autoSave() {
+            // Schnelle Prüfung: Hat sich seit letztem Save etwas geändert?
+            const editCount = explorerState.editedCells.size;
+            const queueCount = state.transferQueue.length;
+            const fp = `${editCount}|${queueCount}`;
+            
+            if (editCount === 0 && queueCount === 0) {
+                // Prüfe ob noch DOM-Edits vorhanden sind (searchEdits)
+                const editedCells = document.querySelectorAll('#resultsTableBody td.edited');
+                if (editedCells.length === 0) {
+                    if (_lastAutoSaveFingerprint !== '') {
+                        localStorage.removeItem(AUTO_SAVE_KEY);
+                        _lastAutoSaveFingerprint = '';
+                    }
+                    return;
+                }
+            }
+            
+            if (fp === _lastAutoSaveFingerprint) return;
+            
             const data = getAutoSaveData();
             
             // Nur speichern wenn es etwas zu speichern gibt
@@ -5096,6 +5116,7 @@
             if (hasExplorerEdits || hasQueueItems || hasSearchEdits) {
                 try {
                     localStorage.setItem(AUTO_SAVE_KEY, JSON.stringify(data));
+                    _lastAutoSaveFingerprint = fp;
                     console.log('Auto-Save: Daten gesichert', {
                         explorerEdits: data.explorer.editedCells.length,
                         queueItems: data.transferQueue.length,
@@ -5110,6 +5131,7 @@
         function clearAutoSave() {
             localStorage.removeItem(AUTO_SAVE_KEY);
             localStorage.removeItem(CLEAN_SHUTDOWN_KEY);
+            _lastAutoSaveFingerprint = '';
         }
         
         // Öffnet den Recovery-Ordner im Dateimanager
@@ -10144,13 +10166,38 @@
                 clearInterval(explorerAutoSaveInterval);
                 explorerAutoSaveInterval = null;
             }
+            _lastRecoveryFingerprint = '';
         }
         
         // Recovery-Daten speichern
         let _recoveryIdleHandle = null;
+        let _lastRecoveryFingerprint = '';
         function saveExplorerRecoveryData() {
             if (!explorerState.filePath || explorerState.data.length === 0) {
                 return;
+            }
+            
+            // Schnelle Prüfung VOR Idle-Callback: Gibt es überhaupt Änderungen?
+            const totalChanges = countAllChanges();
+            const hasPendingOps = explorerState.pendingSheetOperations.length > 0;
+            if (totalChanges === 0 && !hasPendingOps) {
+                // Keine Änderungen - Recovery-Daten löschen (leichtgewichtig)
+                if (_lastRecoveryFingerprint !== '') {
+                    localStorage.removeItem(EXPLORER_RECOVERY_KEY);
+                    _lastRecoveryFingerprint = '';
+                }
+                return;
+            }
+            
+            // Fingerprint: Erkennt ob sich seit letztem Save etwas geändert hat
+            // Vermeidet teure Deep-Copy + JSON.stringify wenn nichts Neues passiert ist
+            let cacheFingerprint = '';
+            for (const [name, c] of explorerState.sheetDataCache) {
+                cacheFingerprint += `${name}:${c.editedCells.size}:${c.rowHighlights.size},`;
+            }
+            const fingerprint = `${totalChanges}|${explorerState.data.length}|${explorerState.rowHighlights.size}|${explorerState.pendingSheetOperations.length}|${explorerState.selectedSheet}|${cacheFingerprint}`;
+            if (fingerprint === _lastRecoveryFingerprint) {
+                return; // Keine Änderung seit letztem Save
             }
             
             // Vorherigen ausstehenden Idle-Callback abbrechen
@@ -10162,17 +10209,8 @@
             const doSave = () => {
                 _recoveryIdleHandle = null;
                 try {
-                    // Aktuelles Sheet im Cache speichern
+                    // Aktuelles Sheet im Cache speichern (Deep-Copy nur wenn nötig)
                     saveCurrentSheetToCache();
-                    
-                    // Nur speichern wenn es Änderungen gibt
-                    const totalChanges = countAllChanges();
-                    const hasPendingOps = explorerState.pendingSheetOperations.length > 0;
-                    if (totalChanges === 0 && !hasPendingOps) {
-                        // Keine Änderungen - Recovery-Daten löschen
-                        localStorage.removeItem(EXPLORER_RECOVERY_KEY);
-                        return;
-                    }
                     
                     // Map/Set zu Arrays konvertieren für JSON
                     const editedCellsArray = Array.from(explorerState.editedCells.entries());
@@ -10211,6 +10249,7 @@
                     };
                     
                     localStorage.setItem(EXPLORER_RECOVERY_KEY, JSON.stringify(recoveryData));
+                    _lastRecoveryFingerprint = fingerprint;
                 } catch (e) {
                     console.warn('Explorer Recovery-Speicherung fehlgeschlagen:', e);
                 }
@@ -13721,22 +13760,32 @@
                 targetSheet: sheetName
             });
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                try {
-                    const switchResult = await window.electronAPI.liveSessionSwitchSheet(sheetName);
-                    if (switchResult.success) {
-                        console.log('[LiveSession] Sheet gewechselt zu:', sheetName);
-                        // Sheet wurde automatisch eingeblendet → aus hiddenSheets entfernen
-                        if (switchResult.wasHidden && explorerState.hiddenSheets) {
-                            explorerState.hiddenSheets.delete(sheetName);
-                            updateSheetDropdown();
+                let switchOk = false;
+                for (let attempt = 1; attempt <= 2; attempt++) {
+                    try {
+                        if (attempt > 1) {
+                            console.log(`[LiveSession] Sheet-Wechsel Retry #${attempt}...`);
+                            await new Promise(r => setTimeout(r, 1000));
                         }
-                    } else {
-                        console.error('[LiveSession] Sheet-Wechsel fehlgeschlagen:', switchResult.error);
-                        showFloatingStatus(`⚠️ Excel Sheet-Wechsel fehlgeschlagen: ${switchResult.error}`, 'error');
+                        const switchResult = await window.electronAPI.liveSessionSwitchSheet(sheetName);
+                        if (switchResult.success) {
+                            console.log('[LiveSession] Sheet gewechselt zu:', sheetName);
+                            switchOk = true;
+                            // Sheet wurde automatisch eingeblendet → aus hiddenSheets entfernen
+                            if (switchResult.wasHidden && explorerState.hiddenSheets) {
+                                explorerState.hiddenSheets.delete(sheetName);
+                                updateSheetDropdown();
+                            }
+                            break;
+                        } else {
+                            console.error(`[LiveSession] Sheet-Wechsel fehlgeschlagen (Versuch ${attempt}):`, switchResult.error);
+                        }
+                    } catch (err) {
+                        console.error(`[LiveSession] Sheet-Wechsel Fehler (Versuch ${attempt}):`, err);
                     }
-                } catch (err) {
-                    console.error('[LiveSession] Sheet-Wechsel Fehler:', err);
-                    showFloatingStatus(`⚠️ Excel Sheet-Wechsel Fehler: ${err.message}`, 'error');
+                }
+                if (!switchOk) {
+                    showFloatingStatus(`⚠️ Excel Sheet-Wechsel fehlgeschlagen — Daten werden trotzdem von Disk geladen`, 'error');
                 }
             } else if (explorerState.engineMode === 'live') {
                 // Live-Modus aktiv aber Session nicht bereit → Session neu starten

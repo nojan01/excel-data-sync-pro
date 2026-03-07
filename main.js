@@ -1,10 +1,25 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
-const XlsxPopulate = require('xlsx-populate'); // Für Passwort-Verschlüsselung
-const { readSheetWithExcelJS } = require('./exceljs-reader'); // ExcelJS Reader für Datenexplorer
-const pythonBridge = require('./python/python_bridge'); // Python/openpyxl Fallback-Export
 const fs = require('fs');
 const os = require('os');
+
+// Schwere Module lazy laden — werden erst bei erster Nutzung importiert
+// xlsx-populate (15 MB) + exceljs (22 MB) + python_bridge verzögern den Start sonst erheblich
+let _XlsxPopulate = null;
+function getXlsxPopulate() {
+    if (!_XlsxPopulate) _XlsxPopulate = require('xlsx-populate');
+    return _XlsxPopulate;
+}
+let _readSheetWithExcelJS = null;
+function getReadSheetWithExcelJS() {
+    if (!_readSheetWithExcelJS) _readSheetWithExcelJS = require('./exceljs-reader').readSheetWithExcelJS;
+    return _readSheetWithExcelJS;
+}
+let _pythonBridge = null;
+function getPythonBridge() {
+    if (!_pythonBridge) _pythonBridge = require('./python/python_bridge');
+    return _pythonBridge;
+}
 
 // Erhöhe V8 Heap-Größe für große Dateien (muss vor app.ready gesetzt werden)
 // 4GB - ausreichend für große Excel-Dateien, schont den Arbeitsspeicher
@@ -78,6 +93,35 @@ function setCachedWorkbook(filePath, password = null, workbook) {
 function clearWorkbookCache() {
     workbookCache.clear();
     console.log('[Cache] Cache geleert');
+}
+
+// FILE-BUFFER-CACHE: Vermeidet doppeltes Lesen großer Dateien über Netzwerk/Internet
+// readFile liest die Datei und cachet den Buffer, readSheet nutzt den Cache
+const _fileBufferCache = new Map();
+const FILE_BUFFER_CACHE_MAX_AGE = 30_000; // 30 Sekunden
+const FILE_BUFFER_CACHE_MAX_SIZE = 2;     // Max 2 Dateien im Cache
+
+function getCachedFileBuffer(filePath) {
+    const entry = _fileBufferCache.get(filePath);
+    if (entry && (Date.now() - entry.timestamp < FILE_BUFFER_CACHE_MAX_AGE)) {
+        console.log(`[BufferCache] Treffer für ${path.basename(filePath)} (${(entry.buffer.length / 1024 / 1024).toFixed(1)} MB)`);
+        return entry.buffer;
+    }
+    if (entry) _fileBufferCache.delete(filePath);
+    return null;
+}
+
+function setCachedFileBuffer(filePath, buffer) {
+    if (_fileBufferCache.size >= FILE_BUFFER_CACHE_MAX_SIZE) {
+        let oldestKey = null;
+        let oldestTime = Date.now();
+        for (const [k, v] of _fileBufferCache.entries()) {
+            if (v.timestamp < oldestTime) { oldestTime = v.timestamp; oldestKey = k; }
+        }
+        if (oldestKey) _fileBufferCache.delete(oldestKey);
+    }
+    _fileBufferCache.set(filePath, { buffer, timestamp: Date.now() });
+    console.log(`[BufferCache] Gecacht: ${path.basename(filePath)} (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`);
 }
 
 /**
@@ -735,13 +779,22 @@ const networkLog = {
     async updateNetworkDrives(logResults = false) {
         if (process.platform !== 'win32') return;
 
+        // Hilfsfunktion: exec als Promise (blockiert NICHT den Event-Loop)
+        const execAsync = (cmd, options) => {
+            return new Promise((resolve) => {
+                require('child_process').exec(cmd, options, (error, stdout) => {
+                    if (error) resolve('');
+                    else resolve(stdout || '');
+                });
+            });
+        };
+
         try {
-            const { execSync } = require('child_process');
-            this.networkDrives = new Set();
+            const newDrives = new Set();
 
             // Methode 1: PowerShell Get-CimInstance für DriveType=4 (klassische Netzlaufwerke)
             try {
-                const psOutput = execSync(
+                const psOutput = await execAsync(
                     'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=4\" | Select-Object -ExpandProperty DeviceID"',
                     { encoding: 'utf8', timeout: 10000, windowsHide: true }
                 );
@@ -750,7 +803,7 @@ const networkLog = {
                 for (const line of psLines) {
                     const match = line.trim().match(/^([A-Z]):?$/i);
                     if (match) {
-                        this.networkDrives.add(match[1].toUpperCase());
+                        newDrives.add(match[1].toUpperCase());
                     }
                 }
             } catch (e) {
@@ -759,7 +812,7 @@ const networkLog = {
 
             // Methode 2: net use für gemappte Netzlaufwerke (inkl. VMware Shared Folders)
             try {
-                const netUseOutput = execSync('net use', {
+                const netUseOutput = await execAsync('net use', {
                     encoding: 'utf8',
                     timeout: 5000,
                     windowsHide: true
@@ -770,7 +823,7 @@ const networkLog = {
                 for (const line of netUseLines) {
                     const match = line.match(/\s+([A-Z]):\s+/i);
                     if (match) {
-                        this.networkDrives.add(match[1].toUpperCase());
+                        newDrives.add(match[1].toUpperCase());
                     }
                 }
             } catch (e) {
@@ -779,7 +832,7 @@ const networkLog = {
 
             // Methode 3: Prüfe alle Laufwerke auf Remote-Eigenschaft (VMware, VirtualBox etc.)
             try {
-                const allDrivesOutput = execSync(
+                const allDrivesOutput = await execAsync(
                     'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk | Format-Table DeviceID,DriveType,ProviderName -HideTableHeaders"',
                     { encoding: 'utf8', timeout: 10000, windowsHide: true }
                 );
@@ -794,13 +847,16 @@ const networkLog = {
                         lower.includes('\\\\')) {
                         const match = line.match(/([A-Z]):/i);
                         if (match) {
-                            this.networkDrives.add(match[1].toUpperCase());
+                            newDrives.add(match[1].toUpperCase());
                         }
                     }
                 }
             } catch (e) {
                 // Fallback fehlgeschlagen, ignorieren
             }
+
+            // Ergebnis atomar übernehmen
+            this.networkDrives = newDrives;
 
             // Log gefundene Netzlaufwerke nur beim ersten Scan
             if (logResults) {
@@ -1506,14 +1562,15 @@ app.whenReady().then(async () => {
         }
     });
 
+    // Fenster SOFORT erstellen — schwere Initialisierung danach im Hintergrund
+    createWindow();
+
     // Network-Logger initialisieren (für Netzlaufwerk-Protokollierung)
     networkLog.init();
 
-    // Excel-Verfügbarkeit prüfen und loggen
-    try {
-        const excelStatus = await pythonBridge.checkExcelAvailable();
-        const engine = pythonBridge.getExcelEngine();
-        
+    // Excel-Verfügbarkeit im Hintergrund prüfen (blockiert NICHT den UI-Start)
+    getPythonBridge().checkExcelAvailable().then(excelStatus => {
+        const engine = getPythonBridge().getExcelEngine();
         if (excelStatus.excelAvailable) {
             console.log(`[App] ✓ Microsoft Excel erkannt - xlwings wird verwendet (Engine: ${engine})`);
             securityLog.log('INFO', 'EXCEL_DETECTED', { 
@@ -1529,12 +1586,10 @@ app.whenReady().then(async () => {
                 message: excelStatus.message 
             });
         }
-    } catch (error) {
+    }).catch(error => {
         console.log('[App] ⚠ Excel-Prüfung fehlgeschlagen:', error.message);
         securityLog.log('WARN', 'EXCEL_CHECK_FAILED', { error: error.message });
-    }
-
-    createWindow();
+    });
 
     // Prüfe ob eine Datei per Kommandozeile/"Öffnen mit..." übergeben wurde
     const startupFile = getFileFromArgs(process.argv);
@@ -2070,7 +2125,8 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
         if (password) {
             // Passwortgeschützte Dateien: xlsx-populate zum Entschlüsseln nötig
             const fileBuffer = await fs.promises.readFile(filePath);
-            const workbook = await XlsxPopulate.fromDataAsync(fileBuffer, { password });
+            setCachedFileBuffer(filePath, fileBuffer);
+            const workbook = await getXlsxPopulate().fromDataAsync(fileBuffer, { password });
             sheets = workbook.sheets().map(ws => ws.name());
             hiddenSheets = workbook.sheets()
                 .filter(ws => ws.hidden())
@@ -2092,6 +2148,7 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             // Die workbook.xml ist <10KB, unabhängig von der Dateigrösse
             const AdmZip = require('adm-zip');
             const fileBuffer = await fs.promises.readFile(filePath);
+            setCachedFileBuffer(filePath, fileBuffer);
             const zip = new AdmZip(fileBuffer);
             const workbookEntry = zip.getEntry('xl/workbook.xml');
             
@@ -2122,7 +2179,7 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             
             if (sheets.length === 0) {
                 // Fallback: xlsx-populate wenn Regex nichts findet
-                const workbook = await XlsxPopulate.fromDataAsync(fileBuffer);
+                const workbook = await getXlsxPopulate().fromDataAsync(fileBuffer);
                 sheets = workbook.sheets().map(ws => ws.name());
                 hiddenSheets = workbook.sheets()
                     .filter(ws => ws.hidden())
@@ -2175,8 +2232,9 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
     }
 
     try {
-        // Nutze ExcelJS Reader
-        const result = await readSheetWithExcelJS(filePath, sheetName, password);
+        // Nutze ExcelJS Reader (gecachten Buffer übergeben um Netzwerk-Re-Read zu vermeiden)
+        const cachedBuffer = getCachedFileBuffer(filePath);
+        const result = await getReadSheetWithExcelJS()(filePath, sheetName, password, cachedBuffer);
         
         if (!result.success) {
             return result;
@@ -2459,11 +2517,11 @@ ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, origin
         
         // Engine-Preference vom Frontend übernehmen (für diesen Export)
         if (enginePreference) {
-            pythonBridge.setExcelEngine(enginePreference);
+            getPythonBridge().setExcelEngine(enginePreference);
         }
         
         // Export mit Python/openpyxl durchführen
-        const result = await pythonBridge.exportMultipleSheets(sourcePath, targetPath, sheets, { password, sourcePassword, originalSourcePath, pendingSheetOperations });
+        const result = await getPythonBridge().exportMultipleSheets(sourcePath, targetPath, sheets, { password, sourcePassword, originalSourcePath, pendingSheetOperations });
         
         const duration = Date.now() - startTime;
         
@@ -2522,7 +2580,7 @@ ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, origin
 // ======================================================================
 ipcMain.handle('excel:checkAvailable', async () => {
     try {
-        return await pythonBridge.checkExcelAvailable();
+        return await getPythonBridge().checkExcelAvailable();
     } catch (error) {
         return { success: false, excelAvailable: false, error: error.message };
     }
@@ -2665,7 +2723,7 @@ ipcMain.handle('excel:deleteSheet', async (event, { filePath, sheetName }) => {
             return result;
         }
         
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
 
         // Mindestens ein Blatt muss bleiben
         if (workbook.sheets().length <= 1) {
@@ -2702,7 +2760,7 @@ ipcMain.handle('excel:renameSheet', async (event, { filePath, oldName, newName }
             return await session.renameSheet(oldName, newName);
         }
         
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
 
         // Prüfe ob neuer Name bereits existiert
         const existingSheet = workbook.sheet(newName);
@@ -2739,7 +2797,7 @@ ipcMain.handle('excel:cloneSheet', async (event, { filePath, sheetName, newName 
             return await session.cloneSheet(sheetName, newName);
         }
         
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
 
         // Prüfe ob neuer Name bereits existiert
         const existingSheet = workbook.sheet(newName);
@@ -2776,7 +2834,7 @@ ipcMain.handle('excel:moveSheet', async (event, { filePath, sheetName, newIndex 
             return await session.moveSheet(sheetName, newIndex);
         }
         
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
 
         workbook.moveSheet(sheetName, newIndex);
         await saveWorkbookOptimized(workbook, filePath, {}, filePath);
@@ -2888,7 +2946,7 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
     }
 
     try {
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
         const worksheet = workbook.sheet(sheetName);
 
         if (!worksheet) {
@@ -3229,7 +3287,7 @@ ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetNa
         }
 
         // Jetzt die kopierte Datei öffnen und nur die Datenwerte löschen
-        const workbook = await XlsxPopulate.fromFileAsync(targetPath);
+        const workbook = await getXlsxPopulate().fromFileAsync(targetPath);
 
         // Wenn sheetName angegeben und existiert, nutze dieses Sheet
         // Ansonsten nimm das erste Sheet
@@ -3736,7 +3794,7 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
 
                     // Excel-Engine aus Config setzen (falls vorhanden)
                     if (mergedConfig.excelEngine) {
-                        pythonBridge.setExcelEngine(mergedConfig.excelEngine);
+                        getPythonBridge().setExcelEngine(mergedConfig.excelEngine);
                         console.log(`[Config] Excel-Engine aus config.json: ${mergedConfig.excelEngine}`);
                     }
 

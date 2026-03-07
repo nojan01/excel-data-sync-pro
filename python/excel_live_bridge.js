@@ -33,6 +33,8 @@ class ExcelLiveSession {
         this.responseBuffer = '';
         this.isBusy = false;  // true wenn gerade ein Befehl verarbeitet wird
         this._currentTimeoutId = null;
+        this._cmdCounter = 0;       // Laufende Command-ID (verhindert Response-Desync nach Timeout)
+        this._currentCmdId = null;  // ID des aktuell laufenden Befehls
     }
 
     /**
@@ -95,6 +97,12 @@ class ExcelLiveSession {
                         if (line.trim()) {
                             try {
                                 const response = JSON.parse(line);
+                                // Command-ID prüfen: Verspätete Antworten nach Timeout verwerfen
+                                const respCmdId = response._cmdId;
+                                if (respCmdId != null && respCmdId !== this._currentCmdId) {
+                                    console.warn(`[LiveSession] Stale response discarded: cmd#${respCmdId} (expected cmd#${this._currentCmdId})`);
+                                    continue;
+                                }
                                 if (this.currentResolve) {
                                     this.currentResolve(response);
                                     this.currentResolve = null;
@@ -200,16 +208,21 @@ class ExcelLiveSession {
 
         this.isBusy = true;
         const cmdStartTime = Date.now();
-        console.log(`[LiveSession] Executing: ${command.action}${command.rowIndex !== undefined ? ` (row=${command.rowIndex})` : ''}`);
+        // Command-ID zuweisen (für Response-Matching nach Timeout)
+        const cmdId = ++this._cmdCounter;
+        command._cmdId = cmdId;
+        this._currentCmdId = cmdId;
+        console.log(`[LiveSession] Executing: ${command.action}${command.rowIndex !== undefined ? ` (row=${command.rowIndex})` : ''} [cmd#${cmdId}]`);
 
         this._currentTimeoutId = setTimeout(() => {
             if (this.isBusy) {
                 const elapsed = Date.now() - cmdStartTime;
-                console.error(`[LiveSession] TIMEOUT after ${elapsed}ms: ${command.action}`);
+                console.error(`[LiveSession] TIMEOUT after ${elapsed}ms: ${command.action} [cmd#${cmdId}]`);
                 this.isBusy = false;
                 this.currentResolve = null;
                 this.currentReject = null;
                 this._currentTimeoutId = null;
+                // _currentCmdId bleibt stehen → verspätete Antwort wird verworfen
                 reject(new Error('Timeout waiting for response'));
                 this._processNextCommand();
             }
@@ -641,7 +654,7 @@ class ExcelLiveSession {
         return this._sendCommand({
             action: 'switchSheet',
             sheetName: sheetName
-        });
+        }, 60000);  // 60s Timeout - große Sheets brauchen Zeit zum Aktivieren (COM/Excel Rendering)
     }
 
     /**

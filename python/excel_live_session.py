@@ -2847,10 +2847,15 @@ end tell'''
                     continue
                 
                 action = cmd.get('action', '?')
+                cmd_id = cmd.get('_cmdId')
                 start_time = time.time()
-                self._log(f"CMD empfangen: {action}")
+                self._log(f"CMD empfangen: {action}" + (f" [cmd#{cmd_id}]" if cmd_id is not None else ""))
                 
                 result = self.handle_command(cmd)
+                
+                # Command-ID zurückgeben (für Response-Matching im Bridge)
+                if cmd_id is not None:
+                    result['_cmdId'] = cmd_id
                 
                 elapsed = time.time() - start_time
                 self._log(f"CMD fertig: {action} in {elapsed:.3f}s (success={result.get('success', '?')})")

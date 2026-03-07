@@ -553,12 +553,12 @@ function detectRowHighlights(cellStyles, rowCount, colCount) {
  * @param {string} sheetName - Name des Sheets
  * @returns {Object} Map von "rowNumber-colNumber" zu Fill-Farbe (z.B. "#FF0000")
  */
-function extractFillsFromXLSX(fileBufferOrPath, sheetName) {
+function extractFillsFromXLSX(fileBufferOrPath, sheetName, existingZip = null) {
     const cellFills = {};
     
     try {
-        // Akzeptiert Buffer oder Dateipfad
-        const zip = Buffer.isBuffer(fileBufferOrPath) ? new AdmZip(fileBufferOrPath) : new AdmZip(fileBufferOrPath);
+        // Existierendes ZIP-Objekt wiederverwenden oder neues erstellen
+        const zip = existingZip || (Buffer.isBuffer(fileBufferOrPath) ? new AdmZip(fileBufferOrPath) : new AdmZip(fileBufferOrPath));
         
         // 1. styles.xml lesen und Fills extrahieren
         const stylesEntry = zip.getEntry('xl/styles.xml');
@@ -715,7 +715,7 @@ function extractFillsFromXLSX(fileBufferOrPath, sheetName) {
  * Schnell (~10ms), kein Zell-Parsing, blockiert den Event-Loop nicht nennenswert.
  * Liefert: Spaltenanzahl, versteckte Spalten, verbundene Zellen, AutoFilter.
  */
-function extractSheetMetadata(fileBufferOrPath, sheetName) {
+function extractSheetMetadata(fileBufferOrPath, sheetName, existingZip = null) {
     const result = {
         columnCount: 1,
         hiddenColumns: [],
@@ -726,8 +726,8 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
     };
     
     try {
-        // Akzeptiert Buffer oder Dateipfad
-        const zip = Buffer.isBuffer(fileBufferOrPath) ? new AdmZip(fileBufferOrPath) : new AdmZip(fileBufferOrPath);
+        // Existierendes ZIP-Objekt wiederverwenden oder neues erstellen
+        const zip = existingZip || (Buffer.isBuffer(fileBufferOrPath) ? new AdmZip(fileBufferOrPath) : new AdmZip(fileBufferOrPath));
         
         // workbook.xml lesen um Sheet-rId zu finden
         const workbookEntry = zip.getEntry('xl/workbook.xml');
@@ -1008,9 +1008,9 @@ function extractSheetMetadata(fileBufferOrPath, sheetName) {
  * @param {Buffer} fileBuffer - Der Datei-Buffer
  * @returns {Array} Array von SharedString-Objekten: { text, richText?, font? }
  */
-function parseSharedStrings(fileBuffer) {
+function parseSharedStrings(fileBuffer, existingZip = null) {
     try {
-        const zip = new AdmZip(fileBuffer);
+        const zip = existingZip || new AdmZip(fileBuffer);
         const ssEntry = zip.getEntry('xl/sharedStrings.xml');
         if (!ssEntry) return [];
         
@@ -1617,7 +1617,7 @@ async function _readSheetStreaming(
  * @param {string|null} password - Optional: Passwort für geschützte Dateien
  * @returns {Promise<Object>} Sheet-Daten im gleichen Format wie xlsx-populate
  */
-async function readSheetWithExcelJS(filePath, sheetName, password = null) {
+async function readSheetWithExcelJS(filePath, sheetName, password = null, cachedBuffer = null) {
     const startTime = Date.now();
     let tempFilePath = null; // Für entschlüsselte Dateien
     const timings = {}; // Detaillierte Zeitmessungen
@@ -1637,7 +1637,13 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 }
                 
                 // Datei mit xlsx-populate öffnen (entschlüsseln)
-                const pwWorkbook = await XlsxPopulate.fromFileAsync(filePath, { password });
+                // Gecachten Buffer nutzen falls vorhanden (vermeidet erneuten Netzwerk-Read)
+                let pwWorkbook;
+                if (cachedBuffer) {
+                    pwWorkbook = await XlsxPopulate.fromDataAsync(cachedBuffer, { password });
+                } else {
+                    pwWorkbook = await XlsxPopulate.fromFileAsync(filePath, { password });
+                }
                 
                 // Als temporäre Datei ohne Passwort speichern
                 tempFilePath = path.join(os.tmpdir(), `mvms_decrypt_${crypto.randomUUID()}.xlsx`);
@@ -1666,15 +1672,18 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         // 2. Sheet-Metadaten (AdmZip)
         // 3. Streaming Reader (Readable.from)
         // Danach ist der File-Handle sofort frei für xlwings/Excel
+        // PERFORMANCE: Gecachten Buffer wiederverwenden (spart Netzwerk-I/O bei erneuten Reads)
         const t0 = Date.now();
-        const fileBuffer = await fs.promises.readFile(actualFilePath);
+        const fileBuffer = (cachedBuffer && actualFilePath === filePath) ? cachedBuffer : await fs.promises.readFile(actualFilePath);
         timings.fileRead = Date.now() - t0;
-        console.log(`[ExcelJS] Datei gelesen: ${(fileBuffer.length / 1024 / 1024).toFixed(1)} MB in ${timings.fileRead}ms`);
+        console.log(`[ExcelJS] Datei gelesen: ${(fileBuffer.length / 1024 / 1024).toFixed(1)} MB in ${timings.fileRead}ms${(cachedBuffer && actualFilePath === filePath) ? ' (aus Cache)' : ''}`);
         
-        // Prüfe ob die Datei passwortgeschützt ist
+        // ZIP einmalig erstellen und für Passwort-Check, Metadaten + SharedStrings wiederverwenden
+        // Spart 2-3 redundante AdmZip-Instanziierungen (~200-500ms bei 5MB-Dateien)
+        let zip = null;
         if (!password) {
             try {
-                new AdmZip(fileBuffer);
+                zip = new AdmZip(fileBuffer);
             } catch (zipError) {
                 if (zipError.message.includes('password') || zipError.message.includes('Password') ||
                     zipError.message.includes('encrypted') || zipError.message.includes('Encrypted') ||
@@ -1687,10 +1696,14 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
                 }
             }
         }
+        // Für Passwort-Dateien: ZIP aus entschlüsseltem Buffer erstellen
+        if (!zip) {
+            zip = new AdmZip(fileBuffer);
+        }
         
-        // Sheet-Metadaten aus Buffer extrahieren (kein erneuter Dateizugriff!)
+        // Sheet-Metadaten aus Buffer extrahieren (ZIP-Instanz wiederverwenden!)
         const t1 = Date.now();
-        const metadata = extractSheetMetadata(fileBuffer, sheetName);
+        const metadata = extractSheetMetadata(fileBuffer, sheetName, zip);
         timings.metadata = Date.now() - t1;
         let actualColumnCount = metadata.columnCount || 1;
         console.log(`[ExcelJS] Metadaten: ${actualColumnCount} Spalten, ${metadata.mergedCells.length} Merged Cells, ${metadata.hiddenColumns.length} Hidden Cols, ${metadata.hiddenRows.length} Hidden Rows in ${timings.metadata}ms`);
@@ -1723,7 +1736,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
         // SHARED STRINGS: Prüfe ob RichText vorhanden ist
         // Streaming löst RichText-SharedStrings nicht auf und liefert keine Styles
         // ============================================================
-        const sharedStrings = parseSharedStrings(fileBuffer);
+        const sharedStrings = parseSharedStrings(fileBuffer, zip);
         const hasRichTextSharedStrings = sharedStrings.some(ss => ss.richText);
         if (sharedStrings.length > 0) {
             console.log(`[ExcelJS] ${sharedStrings.length} Shared Strings, davon ${sharedStrings.filter(s => s.richText).length} mit RichText`);
@@ -1960,7 +1973,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null) {
             console.log(`[ExcelJS] Kein ExcelJS-Fill gefunden, verwende ZIP-Fallback (${dataRowCount} Zeilen)`);
             const t3 = Date.now();
             // Buffer statt Dateipfad verwenden (kein erneuter Dateizugriff!)
-            const directFills = extractFillsFromXLSX(fileBuffer, sheetName);
+            const directFills = extractFillsFromXLSX(fileBuffer, sheetName, zip);
             timings.fillFallback = Date.now() - t3;
             console.log(`[ExcelJS] Fill-Fallback: ${Object.keys(directFills).length} Fills in ${timings.fillFallback}ms`);
             
