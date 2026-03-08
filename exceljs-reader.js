@@ -839,10 +839,17 @@ function extractSheetMetadata(fileBufferOrPath, sheetName, existingZip = null) {
         // Excel 365 speichert Zellbilder auf 2 Arten:
         // 1) DISPIMG/IMAGE Formeln in <f>-Tags (ältere Methode)
         // 2) vm-Attribut (Value Metadata) auf <c>-Tags + richData (moderne Methode)
+        // PERFORMANCE: Schnell-Check ob überhaupt Bild-Marker vorhanden sind
+        // → Vermeidet teures sheetXml.split('</c>') bei großen Sheets ohne Bilder
         // ================================================================
+        const hasImageFormulas = /DISPIMG|IMAGE/i.test(sheetXml);
+        const hasVmAttributes = /\bvm="/.test(sheetXml);
+        
+        if (hasImageFormulas || hasVmAttributes) {
         const cellBlocks = sheetXml.split('</c>');
         
         // Methode 1: DISPIMG/IMAGE Formeln
+        if (hasImageFormulas) {
         for (const block of cellBlocks) {
             if (!/DISPIMG|IMAGE/i.test(block)) continue;
             if (!/<f[\s>]/.test(block)) continue;
@@ -883,10 +890,12 @@ function extractSheetMetadata(fileBufferOrPath, sheetName, existingZip = null) {
                 }
             }
         }
+        } // Ende hasImageFormulas
         
         // Methode 2: vm-Attribut (Value Metadata) — Excel 365 Zellbilder
         // Zellen mit vm="N" verweisen auf xl/richData/rdrichvalue.xml
         // Prüfe zuerst ob richData existiert (= es gibt Zellbilder)
+        if (hasVmAttributes) {
         const hasRichData = zip.getEntries().some(e => /richData/i.test(e.entryName));
         if (hasRichData) {
             // Prüfe welche richData-Einträge Bilder enthalten
@@ -944,6 +953,8 @@ function extractSheetMetadata(fileBufferOrPath, sheetName, existingZip = null) {
                 console.log(`[SheetMetadata] richData gefunden, ${result.imageCells.length} Bild-Zellen (inkl. vm-Attribut)`);
             }
         }
+        } // Ende hasVmAttributes
+        } // Ende hasImageFormulas || hasVmAttributes
         
         if (result.imageCells.length > 0) {
             console.log(`[SheetMetadata] ${result.imageCells.length} Bild-Zellen erkannt: ${result.imageCells.map(c => c.ref).join(', ')}`);

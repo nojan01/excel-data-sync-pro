@@ -5015,7 +5015,7 @@
                 right: 20px;
                 background: ${color.bg};
                 border: 1px solid ${color.border};
-                color: #ff9800;
+                color: white;
                 padding: 12px 20px;
                 border-radius: 6px;
                 font-size: 14px;
@@ -8463,8 +8463,17 @@
                 explorerState.liveSessionActive = true;
                 explorerState.liveSessionReady = true;
                 explorerState.excelVisible = false;
-                _liveLog('✓ Session AKTIV (Excel versteckt)');
-                showFloatingStatus(t('liveSessionActive'), 'success');
+                
+                // Read-Only-Warnung wenn Datei schreibgeschützt geöffnet wurde
+                if (openResult.readOnly) {
+                    explorerState.fileReadOnly = true;
+                    _liveLog('⚠️ Session AKTIV aber SCHREIBGESCHÜTZT');
+                    showNotification('Live-Modus aktiv, aber Datei ist schreibgeschützt (wird sie in der Haupt-GUI oder einem anderen Programm verwendet?)', 'warning');
+                } else {
+                    explorerState.fileReadOnly = false;
+                    _liveLog('✓ Session AKTIV (Excel versteckt)');
+                    showFloatingStatus(t('liveSessionActive'));
+                }
                 
                 // Live-Mode-Indikator und Excel-Button aktualisieren
                 updateLiveModeIndicator();
@@ -8489,16 +8498,16 @@
             
             try {
                 await window.electronAPI.liveSessionClose();
+                console.log('[LiveSession] Session beendet');
+            } catch (error) {
+                console.error('[LiveSession] Fehler beim Beenden:', error);
+            } finally {
+                // Flags IMMER zurücksetzen, auch bei Fehler
                 explorerState.liveSessionActive = false;
                 explorerState.liveSessionReady = false;
                 explorerState.excelVisible = false;
-                console.log('[LiveSession] Session beendet');
-                
-                // Live-Mode-Indikator aktualisieren
                 updateLiveModeIndicator();
                 updateExcelToggleButton();
-            } catch (error) {
-                console.error('[LiveSession] Fehler beim Beenden:', error);
             }
         }
         
@@ -9958,9 +9967,20 @@
             const isCurrentlyHidden = explorerState.hiddenSheets && explorerState.hiddenSheets.has(selectedSheetForManagement);
             const newVisible = isCurrentlyHidden; // toggle: hidden → visible, visible → hidden
             
+            console.log('[toggleSheetVisibility] DEBUG:', {
+                selected: selectedSheetForManagement,
+                isCurrentlyHidden,
+                newVisible,
+                sheets: explorerState.sheets,
+                hiddenSheets: [...(explorerState.hiddenSheets || [])],
+                sheetsCount: explorerState.sheets.length,
+                hiddenCount: explorerState.hiddenSheets ? explorerState.hiddenSheets.size : 0
+            });
+            
             // Prüfe ob es das letzte sichtbare Sheet wäre
             if (!newVisible) {
                 const visibleCount = explorerState.sheets.filter(s => !explorerState.hiddenSheets.has(s)).length;
+                console.log('[toggleSheetVisibility] visibleCount:', visibleCount);
                 if (visibleCount <= 1) {
                     showNotification('Mindestens ein Arbeitsblatt muss sichtbar bleiben', 'warning');
                     return;
@@ -10013,6 +10033,13 @@
         
         // Explorer-State komplett zurücksetzen
         function resetExplorerState() {
+            // Session-State zurücksetzen (verhindert stale engineMode nach Close)
+            explorerState.liveSessionActive = false;
+            explorerState.liveSessionReady = false;
+            explorerState.excelVisible = false;
+            explorerState.engineMode = 'openpyxl';
+            explorerState.fileReadOnly = false;
+            
             explorerState.filePath = null;
             explorerState.fileName = null;
             explorerState.sheets = [];
@@ -13426,6 +13453,16 @@
             // State komplett zurücksetzen bevor neue Datei geladen wird
             resetExplorerState();
             
+            // Warnung wenn die gleiche Datei bereits in der Haupt-GUI geladen ist
+            const normalizedPath = filePath.replace(/\\/g, '/').toLowerCase();
+            const file1Path = (state.file1?.filePath || '').replace(/\\/g, '/').toLowerCase();
+            const file2Path = (state.file2?.filePath || '').replace(/\\/g, '/').toLowerCase();
+            if (normalizedPath === file1Path || normalizedPath === file2Path) {
+                const which = normalizedPath === file1Path ? 'Quelldatei (Datei 1)' : 'Zieldatei (Datei 2)';
+                showNotification(`Diese Datei ist auch als ${which} geladen — im Live-Modus kann es zu Schreibkonflikten kommen`, 'warning');
+                _log(`WARNUNG: Datei ist auch als ${which} in der Haupt-GUI geladen`);
+            }
+            
             elements.explorerStatus.textContent = '⏳ Sheet-Namen laden...';
             _log('readExcelFile aufrufen (Sheet-Namen aus ZIP)...');
             
@@ -13591,6 +13628,16 @@
             });
             if (!filePath) return;
             
+            // Warnung wenn die gleiche Datei bereits in der Haupt-GUI geladen ist
+            const normalizedPath2 = filePath.replace(/\\/g, '/').toLowerCase();
+            const file1Path2 = (state.file1?.filePath || '').replace(/\\/g, '/').toLowerCase();
+            const file2Path2 = (state.file2?.filePath || '').replace(/\\/g, '/').toLowerCase();
+            if (normalizedPath2 === file1Path2 || normalizedPath2 === file2Path2) {
+                const which2 = normalizedPath2 === file1Path2 ? 'Quelldatei (Datei 1)' : 'Zieldatei (Datei 2)';
+                showNotification(`Diese Datei ist auch als ${which2} geladen — im Live-Modus kann es zu Schreibkonflikten kommen`, 'warning');
+                _log2(`WARNUNG: Datei ist auch als ${which2} in der Haupt-GUI geladen`);
+            }
+            
             // Versuche Datei zu öffnen (mit Passwort-Retry bei geschützten Dateien)
             let result = await window.electronAPI.readExcelFile(filePath);
             
@@ -13637,8 +13684,10 @@
             explorerState.rowHighlights.clear();
             
             explorerState.filePath = filePath;
+            explorerState.originalFilePath = filePath;
             explorerState.fileName = result.fileName;
             explorerState.sheets = result.sheets;
+            explorerState.hiddenSheets = new Set(result.hiddenSheets || []);
             explorerState.hasPivotTables = result.hasPivotTables || false;
             console.log('[LOAD] hasPivotTables =', explorerState.hasPivotTables, '(from result:', result.hasPivotTables, ')');
             
@@ -13658,7 +13707,13 @@
             // Element frisch abfragen (kann durch setLanguage ersetzt worden sein)
             const explorerFileNameEl = document.getElementById('explorerFileName');
             if (explorerFileNameEl) explorerFileNameEl.textContent = result.fileName;
-            elements.explorerSheetSelect.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+            elements.explorerSheetSelect.innerHTML = explorerState.sheets
+                .map(s => {
+                    const isHidden = explorerState.hiddenSheets && explorerState.hiddenSheets.has(s);
+                    const label = isHidden ? `👁️‍🗨️ ${s} (ausgeblendet)` : s;
+                    return `<option value="${s}">${label}</option>`;
+                })
+                .join('');
             
             // Passwort-Indikator aktualisieren
             updatePasswordIndicator();

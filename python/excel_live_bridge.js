@@ -405,6 +405,9 @@ class ExcelLiveSession {
         this.isReady = false;
         this.isBusy = false;
         this.commandQueue = [];
+        this.responseBuffer = '';
+        this.currentResolve = null;
+        this.currentReject = null;
         if (this._currentTimeoutId) {
             clearTimeout(this._currentTimeoutId);
             this._currentTimeoutId = null;

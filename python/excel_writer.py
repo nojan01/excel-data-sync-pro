@@ -4273,10 +4273,13 @@ def _replace_cell_value_in_xml(sheet_content, cell_ref, value, main_ns, shared_s
 
 
 def _set_hidden_cols_in_xml(sheet_content, hidden_columns, main_ns):
-    """Setzt hidden-Attribute auf <col> Elemente im Worksheet-XML."""
+    """Setzt hidden-Attribute auf <col> Elemente im Worksheet-XML.
+    hidden_columns: Liste der 0-basierten Spaltenindizes die versteckt sein sollen.
+    Leere Liste [] = alle Spalten sichtbar (hidden entfernen).
+    None = keine Änderung."""
     import re
     
-    if not hidden_columns:
+    if hidden_columns is None:
         return sheet_content
     
     hidden_set = set(hidden_columns)
@@ -4292,29 +4295,57 @@ def _set_hidden_cols_in_xml(sheet_content, hidden_columns, main_ns):
         col_min = int(min_m.group(1))
         col_max = int(max_m.group(1))
         
-        # Prüfe ob ALLE Spalten in diesem Range versteckt sein sollen
-        # (0-basiert in hidden_columns, 1-basiert in XML)
-        all_hidden = all((c - 1) in hidden_set for c in range(col_min, col_max + 1))
+        # Prüfe hidden-Status für jede Spalte im Range
+        # (0-basiert in hidden_set, 1-basiert in XML)
+        cols_hidden = [(c - 1) in hidden_set for c in range(col_min, col_max + 1)]
         
-        if all_hidden:
+        if all(cols_hidden):
+            # Alle Spalten im Range sollen versteckt sein
             if 'hidden="1"' not in col_el and "hidden='1'" not in col_el:
                 col_el = col_el.replace('/>', ' hidden="1"/>')
                 if not col_el.endswith('/>'):
                     col_el = re.sub(r'>', ' hidden="1">', col_el, count=1)
-        else:
-            col_el = re.sub(r'\s*hidden="1"', '', col_el)
+            return col_el
         
-        return col_el
+        if not any(cols_hidden):
+            # Keine Spalte im Range soll versteckt sein → hidden entfernen
+            return re.sub(r'\s*hidden="1"', '', col_el)
+        
+        # Gemischt: Range aufteilen in Sub-Ranges mit gleichem hidden-Status
+        # Basis-Attribute extrahieren (alles ausser min, max, hidden)
+        base_attrs = ''
+        for attr_m in re.finditer(r'(\w+)="([^"]*)"', col_el):
+            name = attr_m.group(1)
+            if name not in ('min', 'max', 'hidden'):
+                base_attrs += f' {name}="{attr_m.group(2)}"'
+        
+        parts = []
+        i = 0
+        while i < len(cols_hidden):
+            is_hidden = cols_hidden[i]
+            j = i + 1
+            while j < len(cols_hidden) and cols_hidden[j] == is_hidden:
+                j += 1
+            sub_min = col_min + i
+            sub_max = col_min + j - 1
+            hidden_attr = ' hidden="1"' if is_hidden else ''
+            parts.append(f'<col min="{sub_min}" max="{sub_max}"{base_attrs}{hidden_attr}/>')
+            i = j
+        
+        return '\n'.join(parts)
     
     sheet_content = re.sub(r'<col\s[^>]*/>', _fix_col, sheet_content)
     return sheet_content
 
 
 def _set_hidden_rows_in_xml(sheet_content, hidden_rows, main_ns):
-    """Setzt hidden-Attribute auf <row> Elemente im Worksheet-XML."""
+    """Setzt hidden-Attribute auf <row> Elemente im Worksheet-XML.
+    hidden_rows: Liste der 0-basierten Zeilenindizes die versteckt sein sollen.
+    Leere Liste [] = alle Zeilen sichtbar (hidden entfernen).
+    None = keine Änderung."""
     import re
     
-    if not hidden_rows:
+    if hidden_rows is None:
         return sheet_content
     
     hidden_set = set(hidden_rows)

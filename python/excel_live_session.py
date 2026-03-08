@@ -489,9 +489,20 @@ class ExcelLiveSession:
             # Undo-Stack leeren bei neuer Datei
             self.undo_stack.clear()
             
+            # Read-Only-Check: Wenn die Datei bereits von einem anderen Prozess
+            # geöffnet ist, öffnet Excel sie schreibgeschützt
+            is_read_only = False
+            try:
+                is_read_only = self.workbook.api.ReadOnly
+            except Exception:
+                try:
+                    is_read_only = not self.workbook.api.Saved and self.workbook.api.Path == ''
+                except Exception:
+                    pass
+            
             _total = _time.time() - _t0
-            self._log(f"Datei geöffnet in {_total:.1f}s, Sheet: {sheet_name}, Sheets: {sheet_names}")
-            return {'success': True, 'sheets': sheet_names, 'backupPath': self.backup_path}
+            self._log(f"Datei geöffnet in {_total:.1f}s, Sheet: {sheet_name}, Sheets: {sheet_names}, ReadOnly: {is_read_only}")
+            return {'success': True, 'sheets': sheet_names, 'backupPath': self.backup_path, 'readOnly': is_read_only}
             
         except Exception as e:
             self._log(f"Fehler beim Öffnen nach {_time.time() - _t0:.1f}s: {e}")
@@ -2527,14 +2538,29 @@ end tell'''
             if sheet_name not in sheet_names:
                 return {'success': False, 'error': f'Sheet "{sheet_name}" nicht gefunden'}
             
+            # Read-Only-Prüfung: Im schreibgeschützten Modus können keine Änderungen gemacht werden
+            try:
+                if self.workbook.api.ReadOnly:
+                    return {'success': False, 'error': 'Die Datei ist schreibgeschützt (wird von einem anderen Prozess verwendet). Bitte schließen Sie die Datei in der Haupt-GUI oder in anderen Programmen.'}
+            except Exception:
+                pass
+            
             # Mindestens ein Sheet muss sichtbar bleiben
             if not visible:
-                visible_count = sum(1 for s in self.workbook.sheets if s.visible)
+                visibility_info = [(s.name, s.visible) for s in self.workbook.sheets]
+                visible_count = sum(1 for _, v in visibility_info if v)
+                self._log(f"[DEBUG] set_sheet_visibility: sheet='{sheet_name}', visible={visible}, visibility_info={visibility_info}, visible_count={visible_count}")
                 if visible_count <= 1:
                     return {'success': False, 'error': 'Mindestens ein Arbeitsblatt muss sichtbar bleiben'}
             
             target_sheet = self.workbook.sheets[sheet_name]
-            target_sheet.visible = visible
+            try:
+                target_sheet.visible = visible
+            except Exception as write_err:
+                err_msg = str(write_err)
+                if 'read-only' in err_msg.lower() or 'schreibgeschützt' in err_msg.lower() or '0x800A03EC' in err_msg:
+                    return {'success': False, 'error': 'Die Datei ist schreibgeschützt. Wird sie von einem anderen Programm oder in der Haupt-GUI verwendet?'}
+                raise
             
             action_text = "eingeblendet" if visible else "ausgeblendet"
             self._log(f"Sheet '{sheet_name}' {action_text}")

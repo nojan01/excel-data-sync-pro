@@ -2169,8 +2169,8 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             // Die workbook.xml ist <10KB, unabhängig von der Dateigrösse
             const AdmZip = require('adm-zip');
             const fileBuffer = await fs.promises.readFile(filePath);
-            setCachedFileBuffer(filePath, fileBuffer);
             const zip = new AdmZip(fileBuffer);
+            setCachedFileBuffer(filePath, fileBuffer);
             const workbookEntry = zip.getEntry('xl/workbook.xml');
             
             if (!workbookEntry) {
