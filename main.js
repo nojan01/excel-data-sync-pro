@@ -15,6 +15,11 @@ function getReadSheetWithExcelJS() {
     if (!_readSheetWithExcelJS) _readSheetWithExcelJS = require('./exceljs-reader').readSheetWithExcelJS;
     return _readSheetWithExcelJS;
 }
+let _extractSheetMetadata = null;
+function getExtractSheetMetadata() {
+    if (!_extractSheetMetadata) _extractSheetMetadata = require('./exceljs-reader').extractSheetMetadata;
+    return _extractSheetMetadata;
+}
 let _pythonBridge = null;
 function getPythonBridge() {
     if (!_pythonBridge) _pythonBridge = require('./python/python_bridge');
@@ -98,17 +103,33 @@ function clearWorkbookCache() {
 // FILE-BUFFER-CACHE: Vermeidet doppeltes Lesen großer Dateien über Netzwerk/Internet
 // readFile liest die Datei und cachet den Buffer, readSheet nutzt den Cache
 const _fileBufferCache = new Map();
-const FILE_BUFFER_CACHE_MAX_AGE = 30_000; // 30 Sekunden
-const FILE_BUFFER_CACHE_MAX_SIZE = 2;     // Max 2 Dateien im Cache
+const FILE_BUFFER_CACHE_MAX_AGE = 300_000; // 5 Minuten (verlängert für große Dateien über langsame Netzwerke)
+const FILE_BUFFER_CACHE_MAX_SIZE = 2;      // Max 2 Dateien im Cache
 
 function getCachedFileBuffer(filePath) {
     const entry = _fileBufferCache.get(filePath);
     if (entry && (Date.now() - entry.timestamp < FILE_BUFFER_CACHE_MAX_AGE)) {
-        console.log(`[BufferCache] Treffer für ${path.basename(filePath)} (${(entry.buffer.length / 1024 / 1024).toFixed(1)} MB)`);
+        console.log(`[BufferCache] Treffer für ${path.basename(filePath)} (${(entry.buffer.length / 1024 / 1024).toFixed(1)} MB, Alter: ${((Date.now() - entry.timestamp) / 1000).toFixed(0)}s)`);
         return entry.buffer;
     }
-    if (entry) _fileBufferCache.delete(filePath);
+    if (entry) {
+        console.log(`[BufferCache] Abgelaufen für ${path.basename(filePath)} (Alter: ${((Date.now() - entry.timestamp) / 1000).toFixed(0)}s)`);
+        _fileBufferCache.delete(filePath);
+    }
     return null;
+}
+
+/**
+ * Aktualisiert den Timestamp eines gecachten Buffers, damit er nicht abläuft
+ * solange die Datei im Explorer geöffnet ist.
+ */
+function touchCachedFileBuffer(filePath) {
+    const entry = _fileBufferCache.get(filePath);
+    if (entry) {
+        entry.timestamp = Date.now();
+        return true;
+    }
+    return false;
 }
 
 function setCachedFileBuffer(filePath, buffer) {
@@ -2232,8 +2253,24 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
     }
 
     try {
+        // Buffer-Cache auffrischen damit er nicht abläuft bei langsamen Netzwerken
+        touchCachedFileBuffer(filePath);
         // Nutze ExcelJS Reader (gecachten Buffer übergeben um Netzwerk-Re-Read zu vermeiden)
-        const cachedBuffer = getCachedFileBuffer(filePath);
+        let cachedBuffer = getCachedFileBuffer(filePath);
+        
+        // Kein Cache? Datei jetzt lesen und cachen, damit nachfolgende Sheet-Wechsel
+        // nicht erneut über das Netzwerk laden müssen (kritisch bei langsamen Netzwerken)
+        if (!cachedBuffer && !password) {
+            try {
+                const buf = await fs.promises.readFile(filePath);
+                setCachedFileBuffer(filePath, buf);
+                cachedBuffer = buf;
+                console.log(`[readSheet] Buffer für ${path.basename(filePath)} neu gelesen und gecacht (${(buf.length / 1024 / 1024).toFixed(1)} MB)`);
+            } catch (readErr) {
+                console.warn(`[readSheet] Buffer-Cache nicht möglich: ${readErr.message}`);
+            }
+        }
+        
         const result = await getReadSheetWithExcelJS()(filePath, sheetName, password, cachedBuffer);
         
         if (!result.success) {
@@ -2266,6 +2303,30 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
                 needsPassword: true
             };
         }
+        return { success: false, error: error.message };
+    }
+});
+
+// Leichtgewichtige Sheet-Metadaten aus ZIP extrahieren (ohne Zelldaten zu parsen)
+// ~10-30ms aus gecachtem Buffer — liefert hiddenColumns, hiddenRows, mergedCells, autoFilterRange, imageCells
+ipcMain.handle('excel:readSheetMetadata', async (event, filePath, sheetName) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    try {
+        let cachedBuffer = getCachedFileBuffer(filePath);
+        if (!cachedBuffer) {
+            try {
+                const buf = await fs.promises.readFile(filePath);
+                setCachedFileBuffer(filePath, buf);
+                cachedBuffer = buf;
+            } catch (readErr) {
+                return { success: false, error: `Datei nicht lesbar: ${readErr.message}` };
+            }
+        }
+        const metadata = getExtractSheetMetadata()(cachedBuffer, sheetName);
+        return { success: true, ...metadata };
+    } catch (error) {
         return { success: false, error: error.message };
     }
 });
@@ -4403,11 +4464,11 @@ ipcMain.handle('liveSession:copyCells', async (event, sourceCells, targetRow, ta
     }
 });
 
-ipcMain.handle('liveSession:switchSheet', async (event, sheetName) => {
-    console.log('[LiveSession] IPC: switchSheet', sheetName);
+ipcMain.handle('liveSession:switchSheet', async (event, sheetName, includeData = false) => {
+    console.log('[LiveSession] IPC: switchSheet', sheetName, includeData ? '(mit Daten)' : '');
     try {
         const session = getLiveSession();
-        return await session.switchSheet(sheetName);
+        return await session.switchSheet(sheetName, includeData);
     } catch (error) {
         return { success: false, error: error.message };
     }

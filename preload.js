@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     // Excel-Operationen
     readExcelFile: (filePath, password) => ipcRenderer.invoke('excel:readFile', filePath, password),
     readExcelSheet: (filePath, sheetName, password) => ipcRenderer.invoke('excel:readSheet', filePath, sheetName, password),
+    readSheetMetadata: (filePath, sheetName) => ipcRenderer.invoke('excel:readSheetMetadata', filePath, sheetName),
     insertExcelRows: (params) => ipcRenderer.invoke('excel:insertRows', params),
     copyExcelFile: (params) => ipcRenderer.invoke('excel:copyFile', params),
     createTemplateFromSource: (params) => ipcRenderer.invoke('excel:createTemplateFromSource', params),
@@ -108,7 +109,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     liveSessionSetColumnValues: (colIndex, values, startRow) => ipcRenderer.invoke('liveSession:setColumnValues', colIndex, values, startRow || 0),
     liveSessionSetCellsBatch: (cells) => ipcRenderer.invoke('liveSession:setCellsBatch', cells),
     liveSessionCopyCells: (sourceCells, targetRow, targetCol) => ipcRenderer.invoke('liveSession:copyCells', sourceCells, targetRow, targetCol),
-    liveSessionSwitchSheet: (sheetName) => ipcRenderer.invoke('liveSession:switchSheet', sheetName),
+    liveSessionSwitchSheet: (sheetName, includeData) => ipcRenderer.invoke('liveSession:switchSheet', sheetName, includeData || false),
     liveSessionSetSheetVisibility: (sheetName, visible) => ipcRenderer.invoke('liveSession:setSheetVisibility', sheetName, visible),
     liveSessionSetRowValues: (rowIndex, values) => ipcRenderer.invoke('liveSession:setRowValues', rowIndex, values),
     liveSessionFindReplace: (searchText, replaceText, matchCase, wholeWord) =>

@@ -2464,11 +2464,13 @@ end tell'''
             self._log(f"macOS: clear_autofilter Fehler: {e}")
             return {'success': False, 'error': str(e)}
     
-    def switch_sheet(self, sheet_name: str) -> Dict[str, Any]:
+    def switch_sheet(self, sheet_name: str, include_data: bool = False) -> Dict[str, Any]:
         """Wechselt das aktive Arbeitsblatt in der Live Session
         
         Args:
             sheet_name: Name des Zielblatts
+            include_data: Wenn True, werden die Sheet-Daten direkt mitgeliefert
+                          (spart einen separaten getData-Roundtrip)
         """
         try:
             if not self.workbook:
@@ -2492,7 +2494,19 @@ end tell'''
             self.worksheet.activate()
             
             self._log(f"Sheet gewechselt zu: {sheet_name}")
-            return {'success': True, 'sheetName': sheet_name, 'wasHidden': was_hidden}
+            result = {'success': True, 'sheetName': sheet_name, 'wasHidden': was_hidden}
+            
+            # Daten direkt mitliefern (kombinierter switch+getData in einem Roundtrip)
+            if include_data:
+                try:
+                    data_result = self.get_data()
+                    result['headers'] = data_result.get('headers', [])
+                    result['data'] = data_result.get('data', [])
+                except Exception as data_err:
+                    self._log(f"Daten nach Sheet-Wechsel konnten nicht gelesen werden: {data_err}")
+                    result['dataError'] = str(data_err)
+            
+            return result
             
         except Exception as e:
             self._log(f"Fehler beim Sheet-Wechsel: {e}")
@@ -2753,7 +2767,7 @@ end tell'''
             'save': lambda: self.save_file(cmd.get('outputPath'), cmd.get('password')),
             'close': lambda: self.close_session(save=cmd.get('save', False)),
             'getData': lambda: self.get_data(),
-            'switchSheet': lambda: self.switch_sheet(cmd.get('sheetName')),
+            'switchSheet': lambda: self.switch_sheet(cmd.get('sheetName'), cmd.get('includeData', False)),
             'setSheetVisibility': lambda: self.set_sheet_visibility(cmd.get('sheetName'), cmd.get('visible', True)),
             'addSheet': lambda: self.add_sheet(cmd.get('sheetName')),
             'deleteSheet': lambda: self.delete_sheet(cmd.get('sheetName')),

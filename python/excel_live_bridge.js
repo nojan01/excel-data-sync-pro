@@ -649,12 +649,16 @@ class ExcelLiveSession {
     /**
      * Wechselt das aktive Arbeitsblatt in der Live Session
      * @param {string} sheetName - Name des Zielblatts
+     * @param {boolean} [includeData=false] - Wenn true, werden Sheet-Daten direkt mitgeliefert
      */
-    async switchSheet(sheetName) {
+    async switchSheet(sheetName, includeData = false) {
+        // Mit Daten: längerer Timeout (10K Zeilen × 100 Spalten brauchen Zeit für COM-Read + JSON-Transfer)
+        const timeout = includeData ? 120000 : 90000;
         return this._sendCommand({
             action: 'switchSheet',
-            sheetName: sheetName
-        }, 60000);  // 60s Timeout - große Sheets brauchen Zeit zum Aktivieren (COM/Excel Rendering)
+            sheetName: sheetName,
+            includeData: includeData
+        }, timeout);
     }
 
     /**

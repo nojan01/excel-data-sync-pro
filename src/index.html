@@ -13752,55 +13752,57 @@
                 saveCurrentSheetToCache();
             }
             
-            // Live-Session: Arbeitsblatt in Excel synchron wechseln
+            // Live-Session: Arbeitsblatt in Excel wechseln
+            // PARALLEL zum Datenlesen starten (switchSheet + readExcelSheet gleichzeitig)
+            // switchSheet betrifft nur die Excel-COM-Verbindung, readExcelSheet liest von Disk/Buffer
             console.log('[loadExplorerSheet] Live-Check:', {
                 liveSessionActive: explorerState.liveSessionActive,
                 liveSessionReady: explorerState.liveSessionReady,
                 engineMode: explorerState.engineMode,
                 targetSheet: sheetName
             });
+            
+            // switchSheet-Promise vorbereiten
+            // Im Live-Modus (liveSessionActive+Ready) wird switchSheet MIT Daten
+            // direkt im Datenlade-Block gemacht → hier nur für Cache-Fall und Session-Neustart
+            let switchSheetPromise = null;
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                let switchOk = false;
-                for (let attempt = 1; attempt <= 2; attempt++) {
+                // Für den Cache-Fall: switchSheet ohne Daten (nur Excel-Position synchronisieren)
+                switchSheetPromise = (async () => {
                     try {
-                        if (attempt > 1) {
-                            console.log(`[LiveSession] Sheet-Wechsel Retry #${attempt}...`);
-                            await new Promise(r => setTimeout(r, 1000));
-                        }
-                        const switchResult = await window.electronAPI.liveSessionSwitchSheet(sheetName);
+                        const switchResult = await window.electronAPI.liveSessionSwitchSheet(sheetName, false);
                         if (switchResult.success) {
-                            console.log('[LiveSession] Sheet gewechselt zu:', sheetName);
-                            switchOk = true;
-                            // Sheet wurde automatisch eingeblendet → aus hiddenSheets entfernen
+                            console.log('[LiveSession] Sheet gewechselt zu:', sheetName, '(Cache-Sync)');
                             if (switchResult.wasHidden && explorerState.hiddenSheets) {
                                 explorerState.hiddenSheets.delete(sheetName);
                                 updateSheetDropdown();
                             }
-                            break;
-                        } else {
-                            console.error(`[LiveSession] Sheet-Wechsel fehlgeschlagen (Versuch ${attempt}):`, switchResult.error);
+                            return { ok: true };
                         }
+                        console.error('[LiveSession] Cache-Sync Sheet-Wechsel fehlgeschlagen:', switchResult.error);
                     } catch (err) {
-                        console.error(`[LiveSession] Sheet-Wechsel Fehler (Versuch ${attempt}):`, err);
+                        console.error('[LiveSession] Cache-Sync Sheet-Wechsel Fehler:', err);
                     }
-                }
-                if (!switchOk) {
-                    showFloatingStatus(`⚠️ Excel Sheet-Wechsel fehlgeschlagen — Daten werden trotzdem von Disk geladen`, 'error');
-                }
+                    return { ok: false };
+                })();
             } else if (explorerState.engineMode === 'live') {
                 // Live-Modus aktiv aber Session nicht bereit → Session neu starten
                 console.warn('[loadExplorerSheet] engineMode=live aber Session nicht aktiv → starte Session neu');
-                try {
-                    const liveOk = await startLiveSession();
-                    if (liveOk) {
-                        const switchResult = await window.electronAPI.liveSessionSwitchSheet(sheetName);
-                        if (switchResult.success) {
-                            console.log('[LiveSession] Sheet gewechselt zu:', sheetName, '(nach Session-Neustart)');
+                switchSheetPromise = (async () => {
+                    try {
+                        const liveOk = await startLiveSession();
+                        if (liveOk) {
+                            const switchResult = await window.electronAPI.liveSessionSwitchSheet(sheetName);
+                            if (switchResult.success) {
+                                console.log('[LiveSession] Sheet gewechselt zu:', sheetName, '(nach Session-Neustart)');
+                                return { ok: true };
+                            }
                         }
+                    } catch (err) {
+                        console.error('[LiveSession] Session-Neustart fehlgeschlagen:', err);
                     }
-                } catch (err) {
-                    console.error('[LiveSession] Session-Neustart fehlgeschlagen:', err);
-                }
+                    return { ok: false };
+                })();
             }
             
             // Loading-Status anzeigen
@@ -13850,6 +13852,12 @@
                 updateHiddenRowsIndicator();
                 updateHiddenColumnsIndicator();
                 updateAutoFilterIndicator();
+                // switchSheet im Hintergrund abwarten (Cache-Fall: UI ist schon fertig)
+                if (switchSheetPromise) {
+                    switchSheetPromise.then(res => {
+                        if (!res.ok) showFloatingStatus(`⚠️ Excel Sheet-Wechsel fehlgeschlagen`, 'error');
+                    });
+                }
                 return;
             }
             
@@ -13861,24 +13869,124 @@
                 console.log(`[loadExplorerSheet] Sheet "${sheetName}" wurde umbenannt → lese als "${diskSheetName}" von Disk`);
             }
             
-            // ExcelJS zum Lesen (xlwings wird nur zum Schreiben verwendet)
-            console.log(`[loadExplorerSheet] readExcelSheet starten für "${diskSheetName}"...`);
+            // ================================================================
+            // DATEN-STRATEGIE:
+            // Live-Session aktiv → Excel ist die einzige Quelle (xlwings):
+            //   switchSheet + getData in EINEM Roundtrip (kein ExcelJS für Zelldaten)
+            //   ZIP-Metadaten (hiddenRows, mergedCells, etc.) parallel aus gecachtem Buffer
+            // Kein Live-Session → Fallback auf ExcelJS (wie bisher)
+            // ================================================================
+            
+            let result;
             const _sheetStart = Date.now();
-            const result = await window.electronAPI.readExcelSheet(explorerState.filePath, diskSheetName, explorerState.filePassword);
-            const _sheetMs = Date.now() - _sheetStart;
+            
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                // === LIVE-MODUS: Excel ist die einzige Datenquelle ===
+                console.log(`[loadExplorerSheet] LIVE-MODUS: switchSheet+getData für "${sheetName}"...`);
+                
+                // switchSheet MIT Daten + ZIP-Metadaten parallel holen
+                const [switchResult, metadataResult] = await Promise.all([
+                    // switchSheet + getData in einem Roundtrip (3 Versuche)
+                    (async () => {
+                        for (let attempt = 1; attempt <= 3; attempt++) {
+                            try {
+                                if (attempt > 1) {
+                                    const delay = attempt === 2 ? 2000 : 4000;
+                                    console.log(`[LiveSession] switchSheet+getData Retry #${attempt} (nach ${delay}ms)...`);
+                                    await new Promise(r => setTimeout(r, delay));
+                                }
+                                const res = await window.electronAPI.liveSessionSwitchSheet(sheetName, true);
+                                if (res.success && res.headers) {
+                                    // Sheet wurde automatisch eingeblendet → aus hiddenSheets entfernen
+                                    if (res.wasHidden && explorerState.hiddenSheets) {
+                                        explorerState.hiddenSheets.delete(sheetName);
+                                        updateSheetDropdown();
+                                    }
+                                    return res;
+                                } else if (res.success && res.dataError) {
+                                    // Switch ok, aber Daten konnten nicht gelesen werden
+                                    console.warn(`[LiveSession] Switch ok, aber getData fehlgeschlagen: ${res.dataError}`);
+                                } else {
+                                    console.error(`[LiveSession] switchSheet+getData fehlgeschlagen (Versuch ${attempt}):`, res.error);
+                                }
+                            } catch (err) {
+                                console.error(`[LiveSession] switchSheet+getData Fehler (Versuch ${attempt}):`, err);
+                            }
+                        }
+                        return null; // Alle Versuche fehlgeschlagen
+                    })(),
+                    // ZIP-Metadaten parallel aus gecachtem Buffer (schnell, ~10-30ms)
+                    window.electronAPI.readSheetMetadata(explorerState.filePath, diskSheetName).catch(err => {
+                        console.warn('[loadExplorerSheet] Metadaten-Extraktion fehlgeschlagen:', err);
+                        return { success: false };
+                    })
+                ]);
+                
+                const _sheetMs = Date.now() - _sheetStart;
+                
+                if (switchResult && switchResult.success && switchResult.headers) {
+                    // Erfolg: Daten von Excel, Metadaten aus ZIP
+                    console.log(`[loadExplorerSheet] LIVE-MODUS fertig in ${_sheetMs}ms — ${switchResult.data?.length} Zeilen, ${switchResult.headers?.length} Spalten`);
+                    
+                    // xlwings liefert headers und data getrennt (nicht data[0]=headers wie ExcelJS)
+                    result = {
+                        success: true,
+                        headers: switchResult.headers,
+                        data: switchResult.data, // Bereits ohne Header-Zeile
+                        _fromLiveSession: true,  // Marker für unterschiedliche data-Behandlung
+                        // ZIP-Metadaten anhängen (bestmöglich)
+                        hiddenColumns: metadataResult?.success ? (metadataResult.hiddenColumns || []) : [],
+                        hiddenRows: metadataResult?.success ? (metadataResult.hiddenRows || []) : [],
+                        mergedCells: metadataResult?.success ? (metadataResult.mergedCells || []) : [],
+                        autoFilterRange: metadataResult?.success ? (metadataResult.autoFilterRange || null) : null,
+                        imageCells: metadataResult?.success ? (metadataResult.imageCells || []) : [],
+                        // Zellenbasierte Metadaten nicht verfügbar im Live-Modus (kein ExcelJS-Zellenparse)
+                        cellStyles: {},
+                        cellFormulas: {},
+                        cellHyperlinks: {},
+                        richTextCells: {},
+                        rowHighlights: [],
+                        dataValidations: {}
+                    };
+                } else {
+                    // Live-Session fehlgeschlagen → Fallback auf ExcelJS
+                    console.warn(`[loadExplorerSheet] LIVE-MODUS fehlgeschlagen nach ${_sheetMs}ms → Fallback auf ExcelJS`);
+                    showFloatingStatus('⚠️ Excel-Daten nicht verfügbar — lade von Disk...', 'warning');
+                    result = await window.electronAPI.readExcelSheet(explorerState.filePath, diskSheetName, explorerState.filePassword);
+                    const _fallbackMs = Date.now() - _sheetStart;
+                    console.log(`[loadExplorerSheet] ExcelJS-Fallback fertig in ${_fallbackMs}ms`);
+                }
+            } else {
+                // === FALLBACK-MODUS: Kein Excel → ExcelJS für alles ===
+                console.log(`[loadExplorerSheet] FALLBACK-MODUS: readExcelSheet für "${diskSheetName}"...`);
+                
+                const [excelResult, switchStatus] = await Promise.all([
+                    window.electronAPI.readExcelSheet(explorerState.filePath, diskSheetName, explorerState.filePassword),
+                    switchSheetPromise || Promise.resolve({ ok: true })
+                ]);
+                result = excelResult;
+                
+                const _sheetMs2 = Date.now() - _sheetStart;
+                
+                if (!switchStatus.ok && switchSheetPromise) {
+                    showFloatingStatus('⚠️ Excel Sheet-Wechsel fehlgeschlagen — Daten wurden von Disk geladen', 'error');
+                }
+                
+                console.log(`[loadExplorerSheet] ExcelJS fertig in ${_sheetMs2}ms — ${result.data?.length} Zeilen, ${result.headers?.length} Spalten, cellStyles: ${Object.keys(result.cellStyles || {}).length}`);
+            }
             
             if (!result.success) {
+                const _sheetMs = Date.now() - _sheetStart;
                 console.log(`[loadExplorerSheet] FEHLER nach ${_sheetMs}ms: ${result.error}`);
                 elements.explorerStatus.textContent = `Fehler: ${result.error}`;
                 return;
             }
             
-            console.log(`[loadExplorerSheet] readExcelSheet fertig in ${_sheetMs}ms — ${result.data?.length} Zeilen, ${result.headers?.length} Spalten, cellStyles: ${Object.keys(result.cellStyles || {}).length}, timings:`, result.stats?.timings || 'keine');
-            
             explorerState.selectedSheet = sheetName;
             elements.explorerSheetSelect.value = sheetName;
             explorerState.headers = result.headers;
-            explorerState.data = result.data.slice(1);
+            // xlwings liefert data bereits ohne Header-Zeile, ExcelJS hat Header in data[0]
+            explorerState.data = result._fromLiveSession ? result.data : result.data.slice(1);
             // Kopie der Originaldaten speichern (deep copy)
             explorerState.originalData = explorerState.data.map(row => [...row]);
             // Spalten-Sichtbarkeit: Berücksichtige hiddenColumns aus Excel

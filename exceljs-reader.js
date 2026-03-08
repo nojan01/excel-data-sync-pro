@@ -2045,5 +2045,6 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null, cached
 
 module.exports = {
     readSheetWithExcelJS,
-    extractFillsFromXLSX
+    extractFillsFromXLSX,
+    extractSheetMetadata
 };
