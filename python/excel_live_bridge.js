@@ -190,6 +190,19 @@ class ExcelLiveSession {
                         return;
                     }
                 }
+                // setCellValue: Nur letzte Version pro Zelle behalten (Deduplizierung)
+                if (command.action === 'setCellValue' && command.rowIndex !== undefined && command.colIndex !== undefined) {
+                    const existingIdx = this.commandQueue.findIndex(
+                        e => e.command.action === 'setCellValue' && e.command.rowIndex === command.rowIndex && e.command.colIndex === command.colIndex
+                    );
+                    if (existingIdx >= 0) {
+                        const old = this.commandQueue[existingIdx];
+                        old.resolve({ success: true, skipped: true, reason: 'superseded' });
+                        this.commandQueue[existingIdx] = entry;
+                        console.log(`[LiveSession] Command deduplicated: setCellValue row=${command.rowIndex} col=${command.colIndex} (queue size: ${this.commandQueue.length})`);
+                        return;
+                    }
+                }
                 // Befehl in Queue einreihen — wird nach aktuellem Befehl ausgeführt
                 this.commandQueue.push(entry);
                 console.log(`[LiveSession] Command queued: ${command.action} (queue size: ${this.commandQueue.length})`);

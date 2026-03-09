@@ -8773,6 +8773,7 @@
             // Mapping: aktueller Sheet-Name → Original-Name auf Disk (für Disk-Reads nach Umbenennung)
             sheetDiskNameMap: new Map(),
             // LIVE SESSION MODE - Operationen werden sofort in Excel ausgeführt
+            liveSheetChanges: 0,       // Zähler für Sheet-Ops im Live-Modus (move/rename/add/delete/visibility)
             liveSessionActive: false,  // true wenn Live-Session aktiv ist
             liveSessionReady: false,   // true wenn Session bereit für Operationen
             excelVisible: false,       // true wenn Excel-Fenster sichtbar ist
@@ -9731,6 +9732,7 @@
                     });
                     if (result.success) {
                         explorerState.sheets = result.sheets;
+                        explorerState.liveSheetChanges++;
                     } else {
                         showNotification(result.error, 'error');
                         return;
@@ -9796,6 +9798,7 @@
                         return;
                     }
                     explorerState.sheets = result.sheets;
+                    explorerState.liveSheetChanges++;
                 } else {
                     // Offline: nur im Speicher
                     const idx = explorerState.sheets.indexOf(selectedSheetForManagement);
@@ -9865,6 +9868,7 @@
                         return;
                     }
                     explorerState.sheets = result.sheets;
+                    explorerState.liveSheetChanges++;
                 } else {
                     // Offline: nur im Speicher
                     // Sheet hinter dem Original einfügen
@@ -9931,6 +9935,7 @@
                         return;
                     }
                     explorerState.sheets = result.sheets;
+                    explorerState.liveSheetChanges++;
                 } else {
                     // Offline: nur im Speicher
                     explorerState.sheets.splice(currentIndex, 1);
@@ -9971,6 +9976,7 @@
                         return;
                     }
                     explorerState.sheets = result.sheets;
+                    explorerState.liveSheetChanges++;
                 } else {
                     // Offline: nur im Speicher
                     explorerState.sheets = explorerState.sheets.filter(s => s !== selectedSheetForManagement);
@@ -10031,6 +10037,7 @@
                         showNotification(result.error, 'error');
                         return;
                     }
+                    explorerState.liveSheetChanges++;
                 } else {
                     // Offline: nur im Speicher (wird beim Export angewendet)
                     explorerState.pendingSheetOperations.push({ type: 'visibility', sheetName: selectedSheetForManagement, visible: newVisible });
@@ -10116,6 +10123,7 @@
             explorerState.columnOperationsQueue = [];  // Reset Queue
             explorerState.rowOperationsQueue = [];  // Reset Queue
             explorerState.pendingSheetOperations = [];  // Reset Pending Sheet Ops
+            explorerState.liveSheetChanges = 0;  // Reset Live-Sheet-Änderungen
             explorerState.sheetDiskNameMap = new Map();  // Reset Disk-Name-Mapping
             
             // UI zurücksetzen
@@ -12197,6 +12205,15 @@
                 });
             }
             
+            // Live-Session: Nur betroffene Zellen an Excel syncen (nicht ganze Zeilen)
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady && undoActions.length > 0) {
+                const cells = undoActions.map(a => ({ row: a.rowIndex, col: a.colIndex, value: '' }));
+                console.log('[CellEdit] deleteSelectedCellsContent: Sync', cells.length, 'Zellen via Batch');
+                window.electronAPI.liveSessionSetCellsBatch(cells)
+                    .then(res => console.log('[CellEdit] Delete-Batch Ergebnis:', JSON.stringify(res)))
+                    .catch(err => console.error('[CellEdit] Delete-Batch fehlgeschlagen:', err));
+            }
+            
             // Status aktualisieren
             updateExplorerEditStatus();
             
@@ -14254,8 +14271,9 @@
                 }
             }
             
-            // Pending Sheet-Operationen zählen
+            // Pending Sheet-Operationen zählen (Offline + Live)
             total += explorerState.pendingSheetOperations.length;
+            total += explorerState.liveSheetChanges;
             
             return total;
         }
@@ -15254,6 +15272,33 @@
         // Hilfsfunktion: Komplette Zeile an Excel übertragen (für Cell-Edit + Dropdown)
         // Debounced per Row: Schnelle Edits an derselben Zeile werden zusammengefasst
         const _syncRowTimers = new Map();
+        const _syncCellTimers = new Map();
+        
+        // Hilfsfunktion: Reinen Text-Wert einer Zelle lesen (ohne Icons wie ƒ, 🔗, ⊞)
+        // Zellen können <span class="formula-icon">, <span class="hyperlink-icon">,
+        // <span class="merged-icon"> und <span class="cell-content"> enthalten.
+        function getCellTextValue(td) {
+            // Wenn cell-content span vorhanden → dessen textContent verwenden
+            const contentSpan = td.querySelector('.cell-content');
+            if (contentSpan) return contentSpan.textContent;
+            // Sonst: alle Icon-Spans ignorieren und nur Text-Nodes + andere Spans lesen
+            let text = '';
+            for (const node of td.childNodes) {
+                if (node.nodeType === Node.TEXT_NODE) {
+                    text += node.textContent;
+                } else if (node.nodeType === Node.ELEMENT_NODE) {
+                    // Icon-Spans überspringen (position: absolute, pointer-events: none)
+                    if (node.classList && (node.classList.contains('formula-icon') || 
+                        node.classList.contains('hyperlink-icon') || 
+                        node.classList.contains('merged-icon'))) {
+                        continue;
+                    }
+                    text += node.textContent;
+                }
+            }
+            return text;
+        }
+        
         function syncRowToExcel(rowIndex) {
             if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) return;
             // Vorherigen Timer für diese Zeile abbrechen
@@ -15286,6 +15331,43 @@
             window.electronAPI.liveSessionSetRowValues(rowIndex, values)
                 .then(res => console.log('[CellEdit] Row-Sync Ergebnis:', JSON.stringify(res)))
                 .catch(err => console.error('[CellEdit] Row-Sync fehlgeschlagen:', err));
+        }
+        
+        // Einzelzellen-Sync (formatierungsschonend — nur die geänderte Zelle wird geschrieben)
+        function syncCellToExcel(rowIndex, colIndex) {
+            if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) return;
+            const cellKey = `${rowIndex}-${colIndex}`;
+            if (_syncCellTimers.has(cellKey)) {
+                clearTimeout(_syncCellTimers.get(cellKey));
+            }
+            _syncCellTimers.set(cellKey, setTimeout(() => {
+                _syncCellTimers.delete(cellKey);
+                const value = explorerState.data[rowIndex] ? explorerState.data[rowIndex][colIndex] : undefined;
+                const sendValue = (value === null || value === undefined) ? '' : value;
+                console.log('[CellEdit] syncCellToExcel:', rowIndex, colIndex, '→', JSON.stringify(sendValue));
+                window.electronAPI.liveSessionSetCellValue(rowIndex, colIndex, sendValue)
+                    .then(res => console.log('[CellEdit] Cell-Sync Ergebnis:', JSON.stringify(res)))
+                    .catch(err => console.error('[CellEdit] Cell-Sync fehlgeschlagen:', err));
+            }, 500));
+        }
+        function syncCellToExcelImmediate(rowIndex, colIndex) {
+            if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) return;
+            const cellKey = `${rowIndex}-${colIndex}`;
+            if (_syncCellTimers.has(cellKey)) {
+                clearTimeout(_syncCellTimers.get(cellKey));
+                _syncCellTimers.delete(cellKey);
+            }
+            // Auch Row-Timer für diese Zeile abbrechen (falls noch ausstehend)
+            if (_syncRowTimers.has(rowIndex)) {
+                clearTimeout(_syncRowTimers.get(rowIndex));
+                _syncRowTimers.delete(rowIndex);
+            }
+            const value = explorerState.data[rowIndex] ? explorerState.data[rowIndex][colIndex] : undefined;
+            const sendValue = (value === null || value === undefined) ? '' : value;
+            console.log('[CellEdit] syncCellToExcelImmediate:', rowIndex, colIndex, '→', JSON.stringify(sendValue));
+            window.electronAPI.liveSessionSetCellValue(rowIndex, colIndex, sendValue)
+                .then(res => console.log('[CellEdit] Cell-Sync Ergebnis:', JSON.stringify(res)))
+                .catch(err => console.error('[CellEdit] Cell-Sync fehlgeschlagen:', err));
         }
         
         function setupExplorerTableDelegation() {
@@ -15345,7 +15427,7 @@
                             originalValue: original
                         });
                         select.dataset.lastValue = current;
-                        syncRowToExcelImmediate(rowIndex);
+                        syncCellToExcelImmediate(rowIndex, colIndex);
                     }
                     updateExplorerEditStatus();
                 }
@@ -15359,22 +15441,23 @@
                 const rowIndex = parseInt(td.dataset.row);
                 const colIndex = parseInt(td.dataset.col);
                 const original = td.dataset.original;
-                const current = td.textContent;
+                const current = getCellTextValue(td);
                 const cellKey = `${rowIndex}-${colIndex}`;
                 
                 if (original !== current) {
                     explorerState.editedCells.set(cellKey, current);
-                    explorerState.data[rowIndex][colIndex] = current;
                     td.classList.add('edited');
                 } else {
                     explorerState.editedCells.delete(cellKey);
                     td.classList.remove('edited');
                 }
+                // explorerState.data IMMER aktualisieren (auch wenn == original)
+                explorerState.data[rowIndex][colIndex] = current;
                 
                 updateExplorerEditStatus();
                 
-                // Live-Session Sync (debounced via syncRowToExcel)
-                syncRowToExcel(rowIndex);
+                // Live-Session Sync (debounced — nur geänderte Zelle)
+                syncCellToExcel(rowIndex, colIndex);
             });
             
             // --- Blur (Undo speichern + Live-Sync) ---
@@ -15388,7 +15471,11 @@
                 const colIndex = parseInt(td.dataset.col);
                 const original = td.dataset.original;
                 const lastValue = td.dataset.lastValue;
-                const current = td.textContent;
+                const current = getCellTextValue(td);
+                
+                // Immer explorerState.data aktualisieren (falls input-Event
+                // den letzten Tastendruck noch nicht erfasst hat)
+                explorerState.data[rowIndex][colIndex] = current;
                 
                 if (lastValue !== current) {
                     pushExplorerUndo({
@@ -15397,8 +15484,9 @@
                         originalValue: original
                     });
                     td.dataset.lastValue = current;
-                    syncRowToExcelImmediate(rowIndex);
                 }
+                // Immer sofort syncen bei blur (cancelt auch pendenden Debounce)
+                syncCellToExcelImmediate(rowIndex, colIndex);
             }, true); // useCapture für blur!
             
             // --- Focus ---
@@ -15427,8 +15515,11 @@
                     
                     const rowIndex = parseInt(td.dataset.row);
                     const colIndex = parseInt(td.dataset.col);
-                    const current = td.textContent;
+                    const current = getCellTextValue(td);
                     const lastValue = td.dataset.lastValue;
+                    
+                    // explorerState.data immer aktualisieren
+                    explorerState.data[rowIndex][colIndex] = current;
                     
                     if (lastValue !== current) {
                         pushExplorerUndo({
@@ -15437,7 +15528,7 @@
                             originalValue: td.dataset.original
                         });
                         td.dataset.lastValue = current;
-                        syncRowToExcelImmediate(rowIndex);
+                        syncCellToExcelImmediate(rowIndex, colIndex);
                     }
                     
                     const nextRow = td.parentElement.nextElementSibling;
@@ -15456,7 +15547,7 @@
                     td.classList.remove('edited');
                     td.dataset.lastValue = original;
                     
-                    syncRowToExcelImmediate(rowIndex);
+                    syncCellToExcelImmediate(rowIndex, colIndex);
                     td.blur();
                     updateExplorerEditStatus();
                 } else if (e.key === 'Delete' || e.key === 'Backspace') {
@@ -16024,9 +16115,9 @@
             // Event-Listener für Dropdown-Zellen (delegiert auf tbody)
             // → Alle über setupExplorerTableDelegation() registriert (einmalig)
             
-            // lastValue für alle editierbaren Zellen initialisieren
+            // lastValue für alle editierbaren Zellen initialisieren (ohne Icons)
             document.querySelectorAll('#explorerTableBody td[contenteditable]').forEach(td => {
-                td.dataset.lastValue = td.textContent;
+                td.dataset.lastValue = getCellTextValue(td);
             });
             // lastValue für Dropdown-Zellen initialisieren
             document.querySelectorAll('#explorerTableBody .cell-dropdown').forEach(select => {
@@ -18151,6 +18242,7 @@
                             explorerState.rowMapping = null;
                             explorerState.affectedRows?.clear();
                             explorerState.pendingSheetOperations = [];
+                            explorerState.liveSheetChanges = 0;
                             explorerState.sheetDiskNameMap.clear();
                             
                             // Sortierung wiederherstellen
@@ -18192,6 +18284,7 @@
                             explorerState.affectedRows?.clear();
                             explorerState.rowMapping = null;
                             explorerState.pendingSheetOperations = [];
+                            explorerState.liveSheetChanges = 0;
                             explorerState.sheetDiskNameMap.clear();
                             explorerState.columnOperationsQueue = [];
                             explorerState.rowOperationsQueue = [];
@@ -18220,6 +18313,7 @@
                     // unabhängig davon welcher Export-Pfad (Live/Fallback/Strukturell) genommen wurde
                     explorerState.editedCells.clear();
                     explorerState.pendingSheetOperations = [];
+                    explorerState.liveSheetChanges = 0;
                     explorerState.sheetDiskNameMap.clear();
                     explorerState.columnOperationsQueue = [];
                     explorerState.rowOperationsQueue = [];

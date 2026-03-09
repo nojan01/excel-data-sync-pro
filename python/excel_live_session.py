@@ -1289,7 +1289,7 @@ class ExcelLiveSession:
     # =========================================================================
     
     def set_cell_value(self, row_index: int, col_index: int, value: Any) -> Dict[str, Any]:
-        """Setzt den Wert einer Zelle"""
+        """Setzt den Wert einer einzelnen Zelle (formatierungsschonend)"""
         try:
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
@@ -1297,19 +1297,26 @@ class ExcelLiveSession:
             excel_row = row_index + 2
             excel_col = col_index + 1
             
-            # Alten Wert für Journal holen
-            old_value = self.worksheet.range((excel_row, excel_col)).value
+            self._log(f"set_cell_value: row={row_index}, col={col_index}, excel=({excel_row},{excel_col})")
             
-            # Undo-Snapshot: Komplettes Workbook sichern
-            self._push_undo_snapshot('Zelle bearbeitet')
+            # Undo-Snapshot: Aggressive Drosselung (nur alle 10s)
+            now = time.time()
+            if now - self._last_undo_snapshot_time >= 10.0:
+                self._push_undo_snapshot(f'Zelle bearbeitet ({row_index + 1},{col_index + 1})')
+                self._last_undo_snapshot_time = now
             
-            self.worksheet.range((excel_row, excel_col)).value = value
+            if platform.system() == 'Darwin':
+                self.worksheet.range((excel_row, excel_col)).value = value
+            else:
+                # Windows: screen_updating False→True für zuverlässigen Redraw
+                self.app.screen_updating = False
+                self.worksheet.range((excel_row, excel_col)).value = value
+                self.app.screen_updating = True
             
             # Änderung im Journal protokollieren
             self._journal_add('setCellValue', {
                 'row': row_index,
                 'col': col_index,
-                'oldValue': str(old_value) if old_value else None,
                 'newValue': str(value) if value else None
             })
             
@@ -1320,6 +1327,8 @@ class ExcelLiveSession:
             
         except Exception as e:
             self._log(f"Fehler beim Setzen des Zellwerts: {e}")
+            import traceback
+            self._log(traceback.format_exc())
             return {'success': False, 'error': str(e)}
     
     def set_column_values(self, col_index: int, values: list, start_row: int = 0) -> Dict[str, Any]:
@@ -1394,21 +1403,13 @@ class ExcelLiveSession:
                 # macOS: Direkt über AppleScript für zuverlässigen Display-Refresh
                 self._set_row_values_applescript(excel_row, values)
             else:
-                # Windows: xlwings Range-Write + expliziter Screen-Refresh
-                self.app.screen_updating = True
+                # Windows: screen_updating=False vor Write, dann True danach
+                # Der Übergang False→True erzwingt einen kompletten Redraw
                 self._log(f"set_row_values: Schreibe in Range {range_addr}...")
+                self.app.screen_updating = False
                 self.worksheet.range(range_addr).value = values
-                self._log(f"set_row_values: Range-Write abgeschlossen")
-                # Screen-Refresh nur wenn nicht kurz zuvor schon refreshed
-                # Zu häufige Refreshes (activate + calculate) überlasten Excel
-                now_refresh = time.time()
-                if not hasattr(self, '_last_screen_refresh_time'):
-                    self._last_screen_refresh_time = 0
-                if now_refresh - self._last_screen_refresh_time >= 1.0:
-                    self._force_screen_refresh()
-                    self._last_screen_refresh_time = now_refresh
-                else:
-                    self._log(f"set_row_values: Screen-Refresh übersprungen (letzter vor {now_refresh - self._last_screen_refresh_time:.1f}s)")
+                self.app.screen_updating = True
+                self._log(f"set_row_values: Range-Write + Refresh abgeschlossen")
             
             self._log(f"set_row_values: Erfolgreich (row={row_index}, cols={num_cols})")
             
@@ -1501,9 +1502,10 @@ end tell'''
             
             updated_count = 0
             
-            # Für kleine Batches (≤5 Zellen): Direkt schreiben ohne screen_updating-Tricks
-            # Screen-Updating deaktivieren verursacht auf macOS Probleme bei Einzel-Edits
+            # Für kleine Batches (≤5 Zellen): Direkt schreiben
+            # screen_updating False→True erzwingt zuverlässigen Redraw
             if len(cells) <= 5:
+                self.app.screen_updating = False
                 for cell in cells:
                     row_index = cell.get('row')
                     col_index = cell.get('col')
@@ -1519,9 +1521,8 @@ end tell'''
                     
                     updated_count += 1
                 
-                # macOS: Screen-Refresh erzwingen damit Änderung sichtbar wird
-                if platform.system() == 'Darwin':
-                    self._force_screen_refresh()
+                # Screen-Refresh: False→True erzwingt kompletten Redraw
+                self.app.screen_updating = True
             else:
                 # Performance-Optimierung nur für große Batches
                 app = self.app
@@ -2712,7 +2713,7 @@ end tell'''
         """Verschiebt ein Arbeitsblatt an eine neue Position (Live-Session)"""
         try:
             if not self.workbook:
-                return {'success': False, 'error': 'Keine Datei ge\u00f6ffnet'}
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
             
             sheet_names = [s.name for s in self.workbook.sheets]
             if sheet_name not in sheet_names:
@@ -2720,22 +2721,45 @@ end tell'''
             
             num_sheets = len(self.workbook.sheets)
             if new_index < 0 or new_index >= num_sheets:
-                return {'success': False, 'error': f'Ung\u00fcltiger Index: {new_index}'}
+                return {'success': False, 'error': f'Ungültiger Index: {new_index}'}
             
-            sheet = self.workbook.sheets[sheet_name]
+            current_index = sheet_names.index(sheet_name)
+            if current_index == new_index:
+                sheets = [s.name for s in self.workbook.sheets]
+                return {'success': True, 'sheets': sheets}
             
-            if new_index == 0:
-                # An den Anfang: vor das erste Sheet
-                sheet.api.Move(Before=self.workbook.sheets[0].api)
-            else:
-                # Nach dem Sheet an Position new_index-1
-                # Aber wir m\u00fcssen ber\u00fccksichtigen, dass das Sheet selbst verschoben wird
-                target_sheet = self.workbook.sheets[new_index]
-                current_index = sheet_names.index(sheet_name)
-                if current_index < new_index:
-                    sheet.api.Move(After=target_sheet.api)
+            # Direkt die COM-API mit Worksheets(name) verwenden statt gecachte
+            # xlwings-Referenzen — diese werden durch Sichtbarkeitsänderungen
+            # ungültig (RPC_E_DISCONNECTED).
+            wb_api = self.workbook.api
+            
+            # Versteckte Referenz-Sheets temporär sichtbar machen
+            # (Excel COM ignoriert Move(Before/After=hiddenSheet) stillschweigend)
+            temporarily_shown_names = []
+            try:
+                if new_index == 0:
+                    ref_name = sheet_names[0]
+                    ref_ws = wb_api.Worksheets(ref_name)
+                    if ref_ws.Visible != -1:  # xlSheetVisible = -1
+                        ref_ws.Visible = -1
+                        temporarily_shown_names.append(ref_name)
+                    wb_api.Worksheets(sheet_name).Move(Before=wb_api.Worksheets(ref_name))
                 else:
-                    sheet.api.Move(Before=target_sheet.api)
+                    target_name = sheet_names[new_index]
+                    target_ws = wb_api.Worksheets(target_name)
+                    if target_ws.Visible != -1:
+                        target_ws.Visible = -1
+                        temporarily_shown_names.append(target_name)
+                    if current_index < new_index:
+                        wb_api.Worksheets(sheet_name).Move(After=wb_api.Worksheets(target_name))
+                    else:
+                        wb_api.Worksheets(sheet_name).Move(Before=wb_api.Worksheets(target_name))
+            finally:
+                for name in temporarily_shown_names:
+                    try:
+                        wb_api.Worksheets(name).Visible = 0  # xlSheetHidden = 0
+                    except Exception:
+                        pass
             
             self._log(f"Sheet '{sheet_name}' verschoben zu Index {new_index}")
             sheets = [s.name for s in self.workbook.sheets]
@@ -2743,6 +2767,8 @@ end tell'''
             
         except Exception as e:
             self._log(f"Fehler beim Verschieben: {e}")
+            import traceback
+            self._log(traceback.format_exc())
             return {'success': False, 'error': str(e)}
     
     def _format_datetime_values(self, all_data: list, used_range) -> list:
