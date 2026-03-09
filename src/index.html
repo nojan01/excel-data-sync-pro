@@ -13856,10 +13856,12 @@
             // switchSheet-Promise vorbereiten
             // Im Live-Modus (liveSessionActive+Ready) wird switchSheet MIT Daten
             // direkt im Datenlade-Block gemacht → hier nur für Cache-Fall und Session-Neustart
+            // WICHTIG: Lazy Factory statt IIFE — verhindert doppelte switchSheet COM-Calls
             let switchSheetPromise = null;
+            let switchSheetFactory = null;
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 // Für den Cache-Fall: switchSheet ohne Daten (nur Excel-Position synchronisieren)
-                switchSheetPromise = (async () => {
+                switchSheetFactory = () => (async () => {
                     try {
                         const switchResult = await window.electronAPI.liveSessionSwitchSheet(sheetName, false);
                         if (switchResult.success) {
@@ -13944,7 +13946,12 @@
                 updateHiddenColumnsIndicator();
                 updateAutoFilterIndicator();
                 // switchSheet im Hintergrund abwarten (Cache-Fall: UI ist schon fertig)
-                if (switchSheetPromise) {
+                // Lazy Factory erst jetzt aufrufen (nicht schon oben)
+                if (switchSheetFactory) {
+                    switchSheetFactory().then(res => {
+                        if (!res.ok) showFloatingStatus(`⚠️ Excel Sheet-Wechsel fehlgeschlagen`, 'error');
+                    });
+                } else if (switchSheetPromise) {
                     switchSheetPromise.then(res => {
                         if (!res.ok) showFloatingStatus(`⚠️ Excel Sheet-Wechsel fehlgeschlagen`, 'error');
                     });
@@ -14053,7 +14060,7 @@
                 
                 const [excelResult, switchStatus] = await Promise.all([
                     window.electronAPI.readExcelSheet(explorerState.filePath, diskSheetName, explorerState.filePassword),
-                    switchSheetPromise || Promise.resolve({ ok: true })
+                    switchSheetFactory ? (switchSheetPromise = switchSheetFactory()) : (switchSheetPromise || Promise.resolve({ ok: true }))
                 ]);
                 result = excelResult;
                 
