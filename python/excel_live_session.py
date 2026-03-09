@@ -2492,12 +2492,22 @@ end tell'''
                 return {'success': False, 'error': f'Sheet "{sheet_name}" nicht gefunden'}
             
             target_sheet = self.workbook.sheets[sheet_name]
+            app = self.workbook.app.api
             
             # Pr\u00fcfe ob Sheet ausgeblendet ist
             was_hidden = not target_sheet.visible
             if was_hidden:
                 # Sheet muss zuerst eingeblendet werden, sonst schl\u00e4gt activate() fehl
-                target_sheet.visible = True
+                try:
+                    app.ScreenUpdating = False
+                    app.EnableEvents = False
+                    target_sheet.visible = True
+                finally:
+                    try:
+                        app.EnableEvents = True
+                        app.ScreenUpdating = True
+                    except Exception:
+                        pass
                 self._log(f"Sheet '{sheet_name}' war ausgeblendet \u2192 automatisch eingeblendet")
             
             self.worksheet = target_sheet
@@ -2554,13 +2564,38 @@ end tell'''
                     return {'success': False, 'error': 'Mindestens ein Arbeitsblatt muss sichtbar bleiben'}
             
             target_sheet = self.workbook.sheets[sheet_name]
+            app = self.workbook.app.api
             try:
+                # ScreenUpdating + EnableEvents deaktivieren um Excel-Hänger zu vermeiden
+                app.ScreenUpdating = False
+                app.EnableEvents = False
+                
+                # Beim Ausblenden des aktiven Sheets: erst ein anderes Sheet aktivieren
+                if not visible:
+                    try:
+                        active_name = self.workbook.app.api.ActiveSheet.Name
+                    except Exception:
+                        active_name = None
+                    if active_name == sheet_name:
+                        # Erstes sichtbares anderes Sheet aktivieren
+                        for s in self.workbook.sheets:
+                            if s.name != sheet_name and s.visible:
+                                s.activate()
+                                self._log(f"Aktives Sheet gewechselt zu '{s.name}' vor Ausblenden von '{sheet_name}'")
+                                break
+                
                 target_sheet.visible = visible
             except Exception as write_err:
                 err_msg = str(write_err)
                 if 'read-only' in err_msg.lower() or 'schreibgeschützt' in err_msg.lower() or '0x800A03EC' in err_msg:
                     return {'success': False, 'error': 'Die Datei ist schreibgeschützt. Wird sie von einem anderen Programm oder in der Haupt-GUI verwendet?'}
                 raise
+            finally:
+                try:
+                    app.EnableEvents = True
+                    app.ScreenUpdating = True
+                except Exception:
+                    pass
             
             action_text = "eingeblendet" if visible else "ausgeblendet"
             self._log(f"Sheet '{sheet_name}' {action_text}")

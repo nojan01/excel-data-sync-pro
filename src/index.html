@@ -4772,34 +4772,7 @@
                     }
                 });
                 
-                // Live-Session Sync
-                if (liveActive && cellsToSync.length > 0) {
-                    // Prüfe ob es ein einfaches Suchen/Ersetzen war (alle actions haben gleichen newValue/oldValue Unterschied)
-                    // Falls ja, nutze native findReplace in umgekehrter Richtung
-                    const firstAction = action.actions[0];
-                    const canUseNativeReplace = action.searchText && action.replaceText;
-                    
-                    if (canUseNativeReplace) {
-                        // Umgekehrtes Suchen & Ersetzen
-                        try {
-                            await window.electronAPI.liveSessionFindReplace(
-                                action.replaceText,  // Was wir jetzt suchen
-                                action.searchText,   // Was wir zurücksetzen
-                                action.matchCase || false,
-                                action.wholeWord || false
-                            );
-                        } catch (error) {
-                            console.error('[Undo] Native Replace fehlgeschlagen:', error);
-                        }
-                    } else {
-                        // Fallback: Zellen einzeln setzen
-                        try {
-                            await window.electronAPI.liveSessionSetCellsBatch(cellsToSync);
-                        } catch (error) {
-                            console.error('[Undo] Batch-Sync fehlgeschlagen:', error);
-                        }
-                    }
-                }
+                // DEFERRED: Ersetzen-Undo wird nicht sofort nach Excel synchronisiert
                 
                 updateExplorerEditStatus();
                 renderExplorerTable();
@@ -4922,29 +4895,7 @@
                     }
                 });
                 
-                // Live-Session Sync
-                if (liveActive && cellsToSync.length > 0) {
-                    const canUseNativeReplace = action.searchText && action.replaceText;
-                    
-                    if (canUseNativeReplace) {
-                        try {
-                            await window.electronAPI.liveSessionFindReplace(
-                                action.searchText,
-                                action.replaceText,
-                                action.matchCase || false,
-                                action.wholeWord || false
-                            );
-                        } catch (error) {
-                            console.error('[Redo] Native Replace fehlgeschlagen:', error);
-                        }
-                    } else {
-                        try {
-                            await window.electronAPI.liveSessionSetCellsBatch(cellsToSync);
-                        } catch (error) {
-                            console.error('[Redo] Batch-Sync fehlgeschlagen:', error);
-                        }
-                    }
-                }
+                // DEFERRED: Ersetzen-Redo wird nicht sofort nach Excel synchronisiert
                 
                 updateExplorerEditStatus();
                 renderExplorerTable();
@@ -12961,40 +12912,8 @@
             console.log('[ReplaceAll] undoActions:', undoActions.length);
             console.log('[ReplaceAll] cellsToSync:', cellsToSync.length);
             
-            const liveActive = explorerState.liveSessionActive && explorerState.liveSessionReady;
-            console.log('[ReplaceAll] Live aktiv:', liveActive);
-            
-            // Live Session Sync (wenn aktiv)
-            if (liveActive && replacedCount > 0) {
-                try {
-                    // Für einfache Suchen (kein Regex): Excel's native Replace nutzen - SCHNELL!
-                    if (!useRegex) {
-                        console.log(`[ReplaceAll] Nutze Excel native Replace`);
-                        const result = await window.electronAPI.liveSessionFindReplace(
-                            searchTerm, 
-                            replaceText, 
-                            caseSensitive, 
-                            wholeWord
-                        );
-                        if (result.success) {
-                            console.log('[ReplaceAll] Excel Replace erfolgreich');
-                        } else {
-                            console.error('[ReplaceAll] Excel Replace fehlgeschlagen:', result.error);
-                        }
-                    } else {
-                        // Bei Regex: Fallback auf Zellenweise (langsam, aber korrekt)
-                        console.log(`[ReplaceAll] Regex-Modus: Sync ${cellsToSync.length} Zellen einzeln`);
-                        const result = await window.electronAPI.liveSessionSetCellsBatch(cellsToSync);
-                        if (result.success) {
-                            console.log(`[ReplaceAll] Batch-Sync: ${result.count} Zellen`);
-                        } else {
-                            console.error('[ReplaceAll] Batch-Sync fehlgeschlagen:', result.error);
-                        }
-                    }
-                } catch (error) {
-                    console.error('[ReplaceAll] Live-Sync Fehler:', error);
-                }
-            }
+            // DEFERRED: Änderungen bleiben in explorerState.editedCells — werden erst beim Export/Speichern nach Excel synchronisiert
+            console.log('[ReplaceAll] Live-Sync deferred — wird erst beim Speichern übertragen');
             
             // Tabelle neu rendern und Status aktualisieren
             clearFindHighlights();
@@ -13042,18 +12961,7 @@
             explorerState.data[rowIndex][colIndex] = newValue;
             explorerState.editedCells.set(cellKey, newValue);
             
-            // Live Session Sync (wenn aktiv)
-            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                try {
-                    await window.electronAPI.liveSessionSetCellsBatch([{
-                        row: rowIndex,
-                        col: colIndex,
-                        value: newValue
-                    }]);
-                } catch (error) {
-                    console.error('[Ersetzen] Live-Sync Fehler:', error);
-                }
-            }
+            // DEFERRED: Änderung bleibt in explorerState.editedCells — wird erst beim Export/Speichern nach Excel synchronisiert
             
             // Falls Zelle sichtbar ist, UI aktualisieren
             const td = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
@@ -13856,10 +13764,13 @@
             // switchSheet-Promise vorbereiten
             // Im Live-Modus (liveSessionActive+Ready) wird switchSheet MIT Daten
             // direkt im Datenlade-Block gemacht → hier nur für Cache-Fall und Session-Neustart
+            // WICHTIG: Nicht sofort starten! Nur als Funktion vorbereiten,
+            // damit im Non-Cache-Pfad kein doppelter switchSheet die COM-Queue blockiert.
             let switchSheetPromise = null;
+            let switchSheetFactory = null;
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 // Für den Cache-Fall: switchSheet ohne Daten (nur Excel-Position synchronisieren)
-                switchSheetPromise = (async () => {
+                switchSheetFactory = () => (async () => {
                     try {
                         const switchResult = await window.electronAPI.liveSessionSwitchSheet(sheetName, false);
                         if (switchResult.success) {
@@ -13879,7 +13790,7 @@
             } else if (explorerState.engineMode === 'live') {
                 // Live-Modus aktiv aber Session nicht bereit → Session neu starten
                 console.warn('[loadExplorerSheet] engineMode=live aber Session nicht aktiv → starte Session neu');
-                switchSheetPromise = (async () => {
+                switchSheetFactory = () => (async () => {
                     try {
                         const liveOk = await startLiveSession();
                         if (liveOk) {
@@ -13944,7 +13855,8 @@
                 updateHiddenColumnsIndicator();
                 updateAutoFilterIndicator();
                 // switchSheet im Hintergrund abwarten (Cache-Fall: UI ist schon fertig)
-                if (switchSheetPromise) {
+                if (switchSheetFactory) {
+                    switchSheetPromise = switchSheetFactory();
                     switchSheetPromise.then(res => {
                         if (!res.ok) showFloatingStatus(`⚠️ Excel Sheet-Wechsel fehlgeschlagen`, 'error');
                     });
@@ -14053,13 +13965,13 @@
                 
                 const [excelResult, switchStatus] = await Promise.all([
                     window.electronAPI.readExcelSheet(explorerState.filePath, diskSheetName, explorerState.filePassword),
-                    switchSheetPromise || Promise.resolve({ ok: true })
+                    switchSheetFactory ? (switchSheetPromise = switchSheetFactory()) : Promise.resolve({ ok: true })
                 ]);
                 result = excelResult;
                 
                 const _sheetMs2 = Date.now() - _sheetStart;
                 
-                if (!switchStatus.ok && switchSheetPromise) {
+                if (!switchStatus.ok && switchSheetFactory) {
                     showFloatingStatus('⚠️ Excel Sheet-Wechsel fehlgeschlagen — Daten wurden von Disk geladen', 'error');
                 }
                 
@@ -14656,8 +14568,12 @@
         /**
          * Synchronisiert die aktuellen Filter mit Excel's AutoFilter
          */
-        async function syncFiltersToExcel() {
+        async function syncFiltersToExcel(force = false) {
             if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) {
+                return;
+            }
+            // DEFERRED: Filter werden nur beim Export/Speichern nach Excel synchronisiert
+            if (!force) {
                 return;
             }
             
@@ -16851,15 +16767,7 @@
                 explorerState.visibleColumns = explorerState.visibleColumns.filter(i => i !== colIndex);
             }
             
-            // Live-Session: Spalte in Excel ein-/ausblenden
-            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                try {
-                    const excelColIndex = getExcelColumnPosition(colIndex);
-                    await window.electronAPI.liveSessionHideColumn(excelColIndex, !visible);
-                } catch (error) {
-                    console.error('[LiveSession] Spalten-Sichtbarkeit Fehler:', error);
-                }
-            }
+            // DEFERRED: Spalten-Sichtbarkeit wird erst beim Export/Speichern nach Excel synchronisiert
             
             // Markierung, dass Spalten-Sichtbarkeit geändert wurde
             explorerState.editedCells.set('_columnVisibilityChanged', true);
@@ -16871,23 +16779,7 @@
         };
         
         async function showAllExplorerColumns() {
-            // Live-Session: Alle Spalten in Excel einblenden
-            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                try {
-                    // Alle versteckten Spalten einblenden
-                    const hiddenColumns = explorerState.headers
-                        .map((_, i) => i)
-                        .filter(i => !explorerState.visibleColumns.includes(i));
-                    
-                    for (const colIndex of hiddenColumns) {
-                        const excelColIndex = getExcelColumnPosition(colIndex);
-                        await window.electronAPI.liveSessionHideColumn(excelColIndex, false);
-                    }
-                    console.log('[LiveSession] All columns shown');
-                } catch (error) {
-                    console.error('[LiveSession] showAllColumns error:', error);
-                }
-            }
+            // DEFERRED: Spalten-Sichtbarkeit wird erst beim Export/Speichern nach Excel synchronisiert
             
             explorerState.visibleColumns = explorerState.headers.map((_, i) => i);
             // Markierung, dass Spalten-Sichtbarkeit geändert wurde
@@ -16900,19 +16792,7 @@
         }
         
         async function hideAllExplorerColumns() {
-            // Live-Session: Alle Spalten in Excel ausblenden
-            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                try {
-                    // Alle sichtbaren Spalten ausblenden
-                    for (const colIndex of explorerState.visibleColumns) {
-                        const excelColIndex = getExcelColumnPosition(colIndex);
-                        await window.electronAPI.liveSessionHideColumn(excelColIndex, true);
-                    }
-                    console.log('[LiveSession] All columns hidden');
-                } catch (error) {
-                    console.error('[LiveSession] hideAllColumns error:', error);
-                }
-            }
+            // DEFERRED: Spalten-Sichtbarkeit wird erst beim Export/Speichern nach Excel synchronisiert
             
             explorerState.visibleColumns = [];
             // Markierung, dass Spalten-Sichtbarkeit geändert wurde
@@ -17052,28 +16932,8 @@
             updateAutoFilterIndicator();
             updateHiddenRowsIndicator();
             
-            // LIVE SESSION: AutoFilter in Excel zurücksetzen
-            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                try {
-                    console.log('[LiveSession] clearAutoFilter: starte... (active=true, ready=true)');
-                    showFloatingStatus('⏳ Filter in Excel werden zurückgesetzt...');
-                    const result = await window.electronAPI.liveSessionClearAutoFilter();
-                    console.log('[LiveSession] clearAutoFilter result:', JSON.stringify(result));
-                    if (result && result.success) {
-                        showFloatingStatus('✅ Filter in Excel zurückgesetzt');
-                    } else {
-                        const errMsg = result?.error || 'Unbekannter Fehler';
-                        console.error('[LiveSession] clearAutoFilter failed:', errMsg);
-                        showFloatingStatus(`⚠️ Filter-Reset: ${errMsg}`, true);
-                    }
-                } catch (error) {
-                    console.error('[LiveSession] clearAutoFilter exception:', error);
-                    showFloatingStatus('❌ Filter-Reset in Excel fehlgeschlagen', true);
-                }
-            } else {
-                console.log(`[LiveSession] clearAutoFilter: SKIP - active=${explorerState.liveSessionActive}, ready=${explorerState.liveSessionReady}`);
-                showFloatingStatus('🧹 Filter zurückgesetzt (nur lokal, keine Live-Session)');
-            }
+            // DEFERRED: Filter-Reset wird erst beim Export/Speichern nach Excel synchronisiert
+            showFloatingStatus('🧹 Filter zurückgesetzt');
             
             filterExplorerData();
         }
@@ -17341,17 +17201,55 @@
                     console.log('[Memory] Undo/Redo Stack geleert für Export');
                 }
                 
-                // Im Live-Session-Modus: Daten sind bereits in Excel — nur Save-Befehl nötig
-                // Alle Daten wurden bereits synchronisiert:
-                // - Data Join: via await _syncDataJoinToLiveSession() (insertColumn + setColumnValues)
-                // - Manuelle Edits: via blur-Handler (sofortige Zell-Sync)
-                // Kein erneutes Senden nötig!
+                // Im Live-Session-Modus: Ausstehende Änderungen (Ersetzen, Filter, Spalten-Sichtbarkeit)
+                // werden vor dem Speichern synchronisiert. Manuelle Zell-Edits sind bereits in Excel.
                 let result;
                 let sheetsToExport = null;
                 const _exportStart = performance.now();
                 
                 if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                    console.log('[Export] Live-Session aktiv - nur Save-Befehl nötig...');
+                    console.log('[Export] Live-Session aktiv - synchronisiere ausstehende Änderungen...');
+                    
+                    try {
+                        // 1. Ausstehende Zell-Änderungen synchronisieren (Ersetzen, Undo etc.)
+                        const pendingCells = [];
+                        for (const [key, value] of explorerState.editedCells) {
+                            if (key.startsWith('_')) continue; // Metadaten überspringen
+                            const parts = key.split('-');
+                            if (parts.length === 2) {
+                                const row = parseInt(parts[0]);
+                                const col = parseInt(parts[1]);
+                                if (!isNaN(row) && !isNaN(col)) {
+                                    pendingCells.push({ row, col, value });
+                                }
+                            }
+                        }
+                        if (pendingCells.length > 0) {
+                            console.log(`[Export] Sync ${pendingCells.length} ausstehende Zell-Änderungen...`);
+                            const batchResult = await window.electronAPI.liveSessionSetCellsBatch(pendingCells);
+                            if (batchResult && !batchResult.success) {
+                                console.error('[Export] Batch-Sync fehlgeschlagen:', batchResult.error);
+                            }
+                        }
+                        
+                        // 2. Spalten-Sichtbarkeit synchronisieren
+                        if (explorerState.editedCells.has('_columnVisibilityChanged')) {
+                            console.log('[Export] Sync Spalten-Sichtbarkeit...');
+                            const allCols = explorerState.headers.map((_, i) => i);
+                            for (const colIndex of allCols) {
+                                const visible = explorerState.visibleColumns.includes(colIndex);
+                                const excelColIndex = getExcelColumnPosition(colIndex);
+                                await window.electronAPI.liveSessionHideColumn(excelColIndex, !visible);
+                            }
+                        }
+                        
+                        // 3. Filter synchronisieren
+                        await syncFiltersToExcel(true);
+                        
+                        console.log('[Export] Alle ausstehenden Änderungen synchronisiert');
+                    } catch (syncError) {
+                        console.error('[Export] Sync ausstehender Änderungen fehlgeschlagen:', syncError);
+                    }
                     
                     try {
                         // Passwort-Logik
