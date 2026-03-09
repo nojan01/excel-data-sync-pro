@@ -1967,6 +1967,16 @@
                     </div>
                 </div>
                 
+                <div class="config-group">
+                    <label class="config-label">Suchmuster für Request-Dateien (Duplikat-Prüfung):</label>
+                    <input type="text" class="config-select" id="changeRequestPattern" style="font-family: monospace; padding: 8px 12px;" />
+                    <div style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
+                        Platzhalter: <code>*</code> = beliebige Zeichen, <code>?</code> = ein Zeichen.<br>
+                        Beispiel: <code>202?-??-??_Defence&amp;Space_MVMS_Change_Request.xlsx</code><br>
+                        Dateien im Verzeichnis der Zieldatei, die diesem Muster entsprechen, werden auf Duplikate geprüft.
+                    </div>
+                </div>
+                
                 <div class="config-section-title" style="margin-top: 20px;">Zu kopierende Spalten aus Datei 1:</div>
                 <div class="mapping-list" id="mappingList"></div>
                 
@@ -5556,7 +5566,8 @@
                 sourceColumns: [],
                 targetStartColumn: 1,
                 duplicateCheckColumn: 0,
-                dropdownColumns: []  // Array von Spalten-Indizes, die als Dropdown angezeigt werden sollen
+                dropdownColumns: [],  // Array von Spalten-Indizes, die als Dropdown angezeigt werden sollen
+                changeRequestPattern: '*_Change_Request*.*'  // Suchmuster für Duplikat-Prüfung in Verzeichnis-Dateien
             },
             selectedRow: null,
             selectedRows: [],
@@ -5881,6 +5892,9 @@
                     if (!state.mapping.dropdownColumns) {
                         state.mapping.dropdownColumns = [];
                     }
+                    if (state.mapping.changeRequestPattern === undefined) {
+                        state.mapping.changeRequestPattern = '*_Change_Request*.*';
+                    }
                     state.history = config.history || [];
                     
                     // Extra-Spalten Konfiguration laden
@@ -6146,6 +6160,7 @@
             let html = '<strong>Aktuelle Konfig:</strong><br>';
             html += `Start-Spalte: ${getColumnLetter(getDataStartColumn())}<br>`;
             html += `Duplikat-Check: Spalte ${state.mapping.duplicateCheckColumn + 1}<br>`;
+            html += `Request-Muster: ${state.mapping.changeRequestPattern || '(keins)'}<br>`;
             html += `Spalten: ${state.mapping.sourceColumns.length}`;
             
             preview.innerHTML = html;
@@ -6203,6 +6218,12 @@
                 if (idx === state.mapping.duplicateCheckColumn) option.selected = true;
                 dupSelect.appendChild(option);
             });
+            
+            // Change-Request Pattern Feld befüllen
+            const patternInput = document.getElementById('changeRequestPattern');
+            if (patternInput) {
+                patternInput.value = state.mapping.changeRequestPattern || '*_Change_Request*.*';
+            }
             
             state.mapping.sourceColumns.forEach((colIndex, i) => {
                 const item = document.createElement('div');
@@ -6326,6 +6347,12 @@
         
         function saveMapping() {
             state.mapping.duplicateCheckColumn = parseInt(document.getElementById('duplicateCheckColumn').value);
+            const patternInput = document.getElementById('changeRequestPattern');
+            const newPattern = (patternInput.value || '').trim();
+            if (newPattern !== state.mapping.changeRequestPattern) {
+                state.mapping.changeRequestPattern = newPattern;
+                invalidateChangeRequestCache();
+            }
             saveConfig();
             updateMappingInfo();
             closeMappingModal();
@@ -7160,8 +7187,10 @@
         
         // ==================== Transfer ====================
         
-        // Pattern für Change-Request-Dateien
-        const CHANGE_REQUEST_PATTERN = 'Defence&Space_MVMS_Change_Request_*.*';
+        // Pattern für Change-Request-Dateien (konfigurierbar über Spalten konfigurieren)
+        function getChangeRequestPattern() {
+            return state.mapping.changeRequestPattern || '*_Change_Request*.*';
+        }
         
         /**
          * Lädt alle Change-Request-Dateien aus dem Zieldatei-Verzeichnis
@@ -7172,8 +7201,9 @@
                 return;
             }
             
-            // Verzeichnis aus Zieldatei-Pfad extrahieren
-            const directory = state.file2.filePath.substring(0, state.file2.filePath.lastIndexOf('/'));
+            // Verzeichnis aus Zieldatei-Pfad extrahieren (unterstützt / und \)
+            const lastSep = Math.max(state.file2.filePath.lastIndexOf('/'), state.file2.filePath.lastIndexOf('\\'));
+            const directory = lastSep > 0 ? state.file2.filePath.substring(0, lastSep) : state.file2.filePath;
             
             // Prüfe ob Cache aktuell ist (gleiches Verzeichnis, nicht älter als 5 Minuten)
             const cacheAge = state.changeRequestCache.lastUpdate 
@@ -7185,7 +7215,11 @@
             }
             
             try {
-                const result = await window.electronAPI.findFiles(directory, CHANGE_REQUEST_PATTERN);
+                const pattern = getChangeRequestPattern();
+                if (!pattern) {
+                    return;
+                }
+                const result = await window.electronAPI.findFiles(directory, pattern);
                 
                 if (!result.success) {
                     console.error('[ChangeRequest] Fehler bei Dateisuche:', result.error);
@@ -7194,6 +7228,8 @@
                 
                 // Zieldatei selbst ausschließen (wird separat geprüft)
                 const files = result.files.filter(f => f !== state.file2.filePath);
+                
+                console.log(`[ChangeRequest] Suchmuster "${pattern}" → ${files.length} Dateien gefunden in ${directory}`);
                 
                 // Cache zurücksetzen
                 state.changeRequestCache.files = files;
