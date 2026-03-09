@@ -3014,6 +3014,17 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
         }
 
+        // Quelldatei laden für Ausrichtungsübernahme
+        let sourceWorksheet = null;
+        if (sourceFilePath && sourceSheetName && sourceColumns.length > 0) {
+            try {
+                const sourceWorkbook = await getXlsxPopulate().fromFileAsync(sourceFilePath);
+                sourceWorksheet = sourceWorkbook.sheet(sourceSheetName);
+            } catch (e) {
+                // Quelldatei konnte nicht geladen werden - Ausrichtung wird nicht übernommen
+            }
+        }
+
         // Hilfsfunktion: Deutsches Datum zu Excel-Datum konvertieren
         function parseGermanDateToExcel(dateStr) {
             if (!dateStr || typeof dateStr !== 'string') return null;
@@ -3250,6 +3261,19 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                         // Formatierung von Template-Zeile der Zieldatei kopieren
                         // (Quelldatei kann bedingte Formatierungen nicht liefern)
                         copyStyleFromTemplate(targetCell, colNumber);
+
+                        // Ausrichtung von Quelldatei übernehmen (überschreibt Template)
+                        if (sourceWorksheet && row.sourceRowIndex && sourceColumns[index] !== undefined) {
+                            try {
+                                const srcCell = sourceWorksheet.cell(row.sourceRowIndex, sourceColumns[index] + 1);
+                                const hAlign = srcCell.style('horizontalAlignment');
+                                const vAlign = srcCell.style('verticalAlignment');
+                                if (hAlign) targetCell.style('horizontalAlignment', hAlign);
+                                if (vAlign) targetCell.style('verticalAlignment', vAlign);
+                            } catch (e) {
+                                // Ignoriere Fehler bei einzelnen Zellen
+                            }
+                        }
 
                         const converted = convertValue(value, targetCell);
                         targetCell.value(converted.value);
