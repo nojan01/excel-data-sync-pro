@@ -23,8 +23,7 @@
       "exceljs-writer.js",
       "src/**/*",
       "python/**/*",
-      "!python/__pycache__",
-      "node_modules/**/*"
+      "!python/__pycache__"
     ],
     "asarUnpack": [
       "python/**",
@@ -93,6 +92,7 @@
   "dependencies": {
     "adm-zip": "^0.5.16",
     "exceljs": "^4.4.0",
+    "ssf": "^0.11.2",
     "xlsx-populate": "^1.21.0"
   }
 }

@@ -20,6 +20,11 @@ function getExtractSheetMetadata() {
     if (!_extractSheetMetadata) _extractSheetMetadata = require('./exceljs-reader').extractSheetMetadata;
     return _extractSheetMetadata;
 }
+let _applyNumFmtToLiveData = null;
+function getApplyNumFmtToLiveData() {
+    if (!_applyNumFmtToLiveData) _applyNumFmtToLiveData = require('./exceljs-reader').applyNumFmtToLiveData;
+    return _applyNumFmtToLiveData;
+}
 let _pythonBridge = null;
 function getPythonBridge() {
     if (!_pythonBridge) _pythonBridge = require('./python/python_bridge');
@@ -2327,6 +2332,31 @@ ipcMain.handle('excel:readSheetMetadata', async (event, filePath, sheetName) => 
         const metadata = getExtractSheetMetadata()(cachedBuffer, sheetName);
         return { success: true, ...metadata };
     } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// SSF-basierte Zahlenformatierung für Live-Session-Rohdaten
+// Ersetzt die langsame Python-seitige _apply_number_formats() (200k+ COM-Aufrufe)
+ipcMain.handle('excel:applyNumFmtToLiveData', async (event, filePath, sheetName, headers, data) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    try {
+        let cachedBuffer = getCachedFileBuffer(filePath);
+        if (!cachedBuffer) {
+            try {
+                const buf = await fs.promises.readFile(filePath);
+                setCachedFileBuffer(filePath, buf);
+                cachedBuffer = buf;
+            } catch (readErr) {
+                return { success: false, error: `Datei nicht lesbar: ${readErr.message}` };
+            }
+        }
+        const result = getApplyNumFmtToLiveData()(cachedBuffer, sheetName, headers, data);
+        return { success: true, ...result };
+    } catch (error) {
+        console.error('[applyNumFmt] Fehler:', error);
         return { success: false, error: error.message };
     }
 });

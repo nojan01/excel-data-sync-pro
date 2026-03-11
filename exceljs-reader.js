@@ -10,6 +10,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const AdmZip = require('adm-zip');
+const SSF = require('ssf');
 let XlsxPopulate = null; // Lazy-load für Passwort-Entschlüsselung
 
 // Excel Standard-Theme-Farben (Office-Theme)
@@ -267,173 +268,296 @@ function formatDateWithNumFmt(dt, numFmt) {
     return result.trim();
 }
 
+// ============================================================================
+// EXCEL BUILT-IN NUMBER FORMATS
+// Excel definiert Standard-Formate mit numFmtId 0-163 ohne sie in styles.xml zu speichern.
+// @see https://docs.microsoft.com/en-us/dotnet/api/documentformat.openxml.spreadsheet.numberingformat
+// ============================================================================
+const BUILTIN_NUM_FMTS = {
+    0: 'General',
+    1: '0',
+    2: '0.00',
+    3: '#,##0',
+    4: '#,##0.00',
+    5: '$#,##0_);($#,##0)',
+    6: '$#,##0_);[Red]($#,##0)',
+    7: '$#,##0.00_);($#,##0.00)',
+    8: '$#,##0.00_);[Red]($#,##0.00)',
+    9: '0%',
+    10: '0.00%',
+    11: '0.00E+00',
+    12: '# ?/?',
+    13: '# ??/??',
+    14: 'mm-dd-yy',
+    15: 'd-mmm-yy',
+    16: 'd-mmm',
+    17: 'mmm-yy',
+    18: 'h:mm AM/PM',
+    19: 'h:mm:ss AM/PM',
+    20: 'h:mm',
+    21: 'h:mm:ss',
+    22: 'm/d/yy h:mm',
+    37: '#,##0 ;(#,##0)',
+    38: '#,##0 ;[Red](#,##0)',
+    39: '#,##0.00;(#,##0.00)',
+    40: '#,##0.00;[Red](#,##0.00)',
+    41: '_(* #,##0_);_(* (#,##0);_(* "-"_);_(@_)',
+    42: '_($* #,##0_);_($* (#,##0);_($* "-"_);_(@_)',
+    43: '_(* #,##0.00_);_(* (#,##0.00);_(* "-"??_);_(@_)',
+    44: '_($* #,##0.00_);_($* (#,##0.00);_($* "-"??_);_(@_)',
+    45: 'mm:ss',
+    46: '[h]:mm:ss',
+    47: 'mmss.0',
+    48: '##0.0E+0',
+    49: '@',
+};
+
+/**
+ * Parst xl/styles.xml und baut eine Zuordnung: Style-Index (s-Attribut der Zelle) → numFmt-String.
+ * Wird verwendet um Zahlenformate für Zellen zu bestimmen, die ExcelJS Streaming nicht liefert.
+ * 
+ * @param {Buffer} fileBuffer - Der XLSX-Datei-Buffer
+ * @param {AdmZip} [existingZip] - Optionales AdmZip-Objekt (Wiederverwendung)
+ * @returns {Map<number, string>} Map: styleIndex → numFmt-String (z.B. 0 → "General", 5 → "#,##0.00 €")
+ */
+function parseNumFmtMap(fileBuffer, existingZip) {
+    const styleToNumFmt = new Map();
+    let detectedLocale = null;
+    
+    try {
+        const zip = existingZip || new AdmZip(fileBuffer);
+        const stylesEntry = zip.getEntry('xl/styles.xml');
+        if (!stylesEntry) return { styleToNumFmt, fileLocale: null };
+        
+        const stylesXml = stylesEntry.getData().toString('utf8');
+        
+        // XML-Entity-Dekodierung für Format-Strings (z.B. &quot; → ")
+        function decodeXmlEntities(str) {
+            return str.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&apos;/g, "'");
+        }
+        
+        // 1. Custom numFmts parsen: numFmtId → formatCode
+        const customFmts = {};
+        const numFmtsMatch = stylesXml.match(/<numFmts[^>]*>([\s\S]*?)<\/numFmts>/);
+        if (numFmtsMatch) {
+            const fmtPattern = /<numFmt[^>]*numFmtId="(\d+)"[^>]*formatCode="([^"]*)"[^>]*\/?>/g;
+            // Auch die umgekehrte Reihenfolge (formatCode vor numFmtId) fangen
+            const fmtPattern2 = /<numFmt[^>]*formatCode="([^"]*)"[^>]*numFmtId="(\d+)"[^>]*\/?>/g;
+            let m;
+            while ((m = fmtPattern.exec(numFmtsMatch[1])) !== null) {
+                customFmts[parseInt(m[1])] = decodeXmlEntities(m[2]);
+            }
+            while ((m = fmtPattern2.exec(numFmtsMatch[1])) !== null) {
+                customFmts[parseInt(m[2])] = decodeXmlEntities(m[1]);
+            }
+        }
+        
+        // 2. cellXfs parsen: jeder <xf>-Eintrag hat ein numFmtId
+        const cellXfsMatch = stylesXml.match(/<cellXfs[^>]*>([\s\S]*?)<\/cellXfs>/);
+        if (!cellXfsMatch) return { styleToNumFmt, fileLocale: null };
+        
+        const xfPattern = /<xf[^>]*>/g;
+        let xfMatch;
+        let styleIdx = 0;
+        while ((xfMatch = xfPattern.exec(cellXfsMatch[1])) !== null) {
+            const xfTag = xfMatch[0];
+            const numFmtIdMatch = xfTag.match(/numFmtId="(\d+)"/);
+            if (numFmtIdMatch) {
+                const numFmtId = parseInt(numFmtIdMatch[1]);
+                // Zuerst in Custom-Formaten suchen, dann in Built-in
+                const fmt = customFmts[numFmtId] || BUILTIN_NUM_FMTS[numFmtId] || null;
+                if (fmt && fmt !== 'General') {
+                    styleToNumFmt.set(styleIdx, fmt);
+                }
+            }
+            styleIdx++;
+        }
+        
+        // 3. Datei-Locale erkennen aus allen Format-Strings ([$€-407] → Deutsch)
+        // Deutsche Locale-IDs (LCID hex): 0407=de-DE, 0807=de-CH, 0C07=de-AT, 1007=de-LU, 1407=de-LI
+        // Auch europäische Locales mit gleicher Separator-Konvention:
+        // 0410=it-IT, 0413=nl-NL, 040A=es-ES etc.
+        detectedLocale = null;
+        const allFmts = [...Object.values(customFmts), ...Array.from(styleToNumFmt.values())];
+        for (const fmtStr of allFmts) {
+            const lcidMatch = fmtStr.match(/\[\$[^\]]*-([0-9A-Fa-f]+)\]/);
+            if (lcidMatch) {
+                const lcid = lcidMatch[1].toLowerCase();
+                // Deutsche Locale: endet auf 07 (de-DE=407, de-CH=807, de-AT=c07)
+                if (lcid.endsWith('07') && lcid !== '09' && lcid !== '09') {
+                    detectedLocale = 'de';
+                    break;
+                }
+                // Weitere europäische Locales mit Punkt-Tausender/Komma-Dezimal
+                if (['410', '0410', '413', '0413', '813', '0813',
+                     '40a', '040a', 'c0a', '0c0a', '416', '0416', '816', '0816',
+                     '419', '0419'].includes(lcid)) {
+                    detectedLocale = 'eu';
+                }
+            }
+            // Auch benannte Locales prüfen: [$€-de-DE]
+            if (!detectedLocale && /\[\$[^\]]*-de(-[A-Z]{2})?\]/i.test(fmtStr)) {
+                detectedLocale = 'de';
+                break;
+            }
+        }
+        
+        // 4. Fallback: Betriebssystem-Locale prüfen (wie Excel selbst)
+        // Excel verwendet die System-Trennzeichen für die Anzeige.
+        // Wenn kein LCID gefunden wurde, prüfe ob das OS Komma als Dezimaltrennzeichen nutzt.
+        if (!detectedLocale) {
+            try {
+                const testNum = new Intl.NumberFormat().format(1.1);
+                if (testNum.includes(',')) {
+                    // System nutzt Komma als Dezimaltrennzeichen (z.B. de-DE, it-IT, nl-NL)
+                    detectedLocale = 'eu';
+                    console.log(`[ExcelJS] Kein LCID in Formaten → OS-Locale erkannt (Dezimal-Komma: "${testNum}")`);
+                }
+            } catch (e) {
+                // Intl nicht verfügbar → kein Fallback
+            }
+        }
+        
+        console.log(`[ExcelJS] numFmt-Map: ${styleToNumFmt.size} Styles mit Zahlenformat erkannt (${Object.keys(customFmts).length} custom), Locale: ${detectedLocale || 'nicht erkannt'}`);
+    } catch (err) {
+        console.warn(`[ExcelJS] numFmt-Map Fehler: ${err.message}`);
+    }
+    
+    return { styleToNumFmt, fileLocale: detectedLocale };
+}
+
+/**
+ * Parst die Sheet-XML und extrahiert das s-Attribut (Style-Index) pro Zelle.
+ * Gibt eine Map zurück: "A1" → styleIndex.
+ * 
+ * @param {Buffer} fileBuffer - Der XLSX-Datei-Buffer
+ * @param {string} sheetName - Name des Sheets
+ * @param {AdmZip} [existingZip] - Optionales AdmZip-Objekt
+ * @returns {Map<string, number>} Map: Zelladresse (z.B. "B2") → Style-Index
+ */
+function parseCellStyleIndices(fileBuffer, sheetName, existingZip) {
+    const cellStyleMap = new Map();
+    
+    try {
+        const zip = existingZip || new AdmZip(fileBuffer);
+        
+        // Sheet-Pfad über workbook.xml → relationships finden
+        const workbookEntry = zip.getEntry('xl/workbook.xml');
+        if (!workbookEntry) return cellStyleMap;
+        const workbookXml = workbookEntry.getData().toString('utf8');
+        
+        const sheetsMatch = workbookXml.match(/<sheets>([\s\S]*?)<\/sheets>/);
+        let sheetRId = null;
+        if (sheetsMatch) {
+            const sheetPattern = /<sheet[^>]*name="([^"]*)"[^>]*r:id="(rId\d+)"[^>]*\/?>/g;
+            let sm;
+            while ((sm = sheetPattern.exec(sheetsMatch[1])) !== null) {
+                if (sm[1] === sheetName) {
+                    sheetRId = sm[2];
+                    break;
+                }
+            }
+        }
+        if (!sheetRId) return cellStyleMap;
+        
+        const relsEntry = zip.getEntry('xl/_rels/workbook.xml.rels');
+        if (!relsEntry) return cellStyleMap;
+        const relsXml = relsEntry.getData().toString('utf8');
+        
+        let sheetPath = null;
+        const relElements = relsXml.match(/<Relationship\s[^>]*\/?>/g) || [];
+        for (const relEl of relElements) {
+            const idMatch = relEl.match(/Id="([^"]*)"/);
+            const targetMatch = relEl.match(/Target="([^"]*)"/);
+            if (idMatch && targetMatch && idMatch[1] === sheetRId) {
+                sheetPath = 'xl/' + targetMatch[1].replace(/^\//, '');
+                break;
+            }
+        }
+        if (!sheetPath) return cellStyleMap;
+        
+        const sheetEntry = zip.getEntry(sheetPath);
+        if (!sheetEntry) return cellStyleMap;
+        const sheetXml = sheetEntry.getData().toString('utf8');
+        
+        // Alle <c>-Tags mit r (Adresse) und s (Style) Attributen parsen
+        const cellPattern = /<c\s[^>]*>/g;
+        let cm;
+        while ((cm = cellPattern.exec(sheetXml)) !== null) {
+            const tag = cm[0];
+            const rMatch = tag.match(/\br="([A-Z]+\d+)"/);
+            const sMatch = tag.match(/\bs="(\d+)"/);
+            if (rMatch && sMatch) {
+                cellStyleMap.set(rMatch[1], parseInt(sMatch[1]));
+            }
+        }
+    } catch (err) {
+        console.warn(`[ExcelJS] cellStyleIndices Fehler: ${err.message}`);
+    }
+    
+    return cellStyleMap;
+}
+
 /**
  * Formatiert einen numerischen Wert gemäß dem Excel numFmt-String.
- * Buchhaltungs-/Währungsformate wie _-* #.##0,00 "€"_- oder #,##0.00 speichern
- * intern volle Float-Präzision (z.B. 95.89556867501796), zeigen aber gerundet an (95,20 €).
- * Diese Funktion erkennt Nachkommastellen, Tausendertrenner, Währungssymbole und
- * gibt einen fertig formatierten String zurück.
+ * Verwendet die ssf-Library (Excel-kompatible Formatierungs-Engine) und
+ * tauscht Punkt/Komma für deutsche/EU-Locales.
  *
  * @param {number} value - Der numerische Zellwert
- * @param {string} numFmt - Excel-Format-String (z.B. '#,##0.00', '_-* #.##0,00 "€"_-')
- * @returns {string|number} Formatierter Wert als String (z.B. "95,20 €") oder Originalwert
+ * @param {string} numFmt - Excel-Format-String (z.B. '#,##0.00', '_-* #,##0.00 [$€-407]_-')
+ * @param {string|null} fileLocale - Erkannte Datei-Locale ('de', 'eu', oder null)
+ * @returns {string|number} Formatierter Wert als String (z.B. "845.141,39 €") oder Originalwert
  */
-function roundNumericByFormat(value, numFmt) {
+function roundNumericByFormat(value, numFmt, fileLocale) {
     if (!numFmt || numFmt === 'General' || typeof value !== 'number' || !isFinite(value)) {
         return value;
     }
 
-    // --- 1. Währungssymbol extrahieren (VOR dem Bereinigen!) ---
-    let currencySymbol = '';
-    let currencyPosition = 'suffix'; // 'prefix' oder 'suffix'
-    
-    // Nur den positiven Format-Teil verwenden (vor erstem Semikolon)
-    const originalFmt = numFmt.split(';')[0];
-    
-    // Währungssymbol aus "€", "CHF", "$", etc. in Anführungszeichen
-    const quotedMatch = originalFmt.match(/"([^"]*[€$£¥₹₽CHFkr].*?)"|"(.*?[€$£¥₹₽].*?)"/i);
-    if (quotedMatch) {
-        currencySymbol = (quotedMatch[1] || quotedMatch[2]).trim();
-    }
-    // Währungssymbol aus [$€-de-DE] oder [$€] oder [$CHF-...] Locale-Codes
-    if (!currencySymbol) {
-        const localeMatch = originalFmt.match(/\[\$([^\-\]]+)/);
-        if (localeMatch) {
-            currencySymbol = localeMatch[1].trim();
+    try {
+        // SSF formatiert nach Excel-Standard (US-Notation: Komma=Tausender, Punkt=Dezimal)
+        let result = SSF.format(numFmt, value);
+        
+        // Ergebnis trimmen (Padding-Zeichen _ und * erzeugen Leerzeichen)
+        result = result.trim();
+        
+        // Prüfe ob das Ergebnis sich vom Rohwert unterscheidet (=ob Formatierung griff)
+        if (result === String(value)) {
+            return value;
         }
-    }
-    // Einzelnes Währungszeichen ohne Quotes (z.B. #,##0.00€ oder €#,##0.00)
-    if (!currencySymbol) {
-        const bareMatch = originalFmt.match(/([€$£¥₹₽])/);
-        if (bareMatch) {
-            currencySymbol = bareMatch[1];
+        
+        // Locale-Erkennung: Sollen Punkt und Komma getauscht werden?
+        let isLocaleSwapped = false;
+        
+        // 1. Locale-Code direkt im Format-String: [$€-407] = de-DE
+        const localeCodeMatch = numFmt.match(/\[\$[^\]]*-([0-9A-Fa-f]+)\]/);
+        if (localeCodeMatch) {
+            const lcid = localeCodeMatch[1].toLowerCase();
+            // Deutsche Locales: enden auf 07 (de-DE=407, de-CH=807, de-AT=c07)
+            if (lcid.endsWith('07')) isLocaleSwapped = true;
+            // Weitere EU-Locales mit Punkt-Tausender/Komma-Dezimal
+            if (['410', '0410', '413', '0413', '813', '0813',
+                 '40a', '040a', 'c0a', '0c0a', '416', '0416', '816', '0816',
+                 '419', '0419'].includes(lcid)) isLocaleSwapped = true;
         }
-    }
-    
-    // Position bestimmen: Symbol VOR oder NACH der Zahl?
-    if (currencySymbol) {
-        // Finde Position des Symbols relativ zu den Ziffernplatzhaltern
-        const symbolPos = originalFmt.indexOf(currencySymbol.charAt(0));
-        const firstDigit = originalFmt.search(/[0#]/);
-        if (symbolPos >= 0 && firstDigit >= 0 && symbolPos < firstDigit) {
-            currencyPosition = 'prefix';
+        // 2. Benannte Locales: [$€-de-DE]
+        if (!isLocaleSwapped && /\[\$[^\]]*-de(-[A-Z]{2})?\]/i.test(numFmt)) {
+            isLocaleSwapped = true;
         }
-    }
-
-    // --- 2. Format bereinigen für Dezimalstellen-Erkennung ---
-    let fmt = originalFmt;
-    fmt = fmt.replace(/"[^"]*"/g, '');
-    fmt = fmt.replace(/\\./g, '');
-    fmt = fmt.replace(/\[[^\]]*\]/g, '');
-    fmt = fmt.replace(/_./g, '');
-    fmt = fmt.replace(/\*./g, '');
-
-    // --- 3. Tausendertrenner erkennen ---
-    // International: #,##0 (Komma = Tausender, Punkt = Dezimal)
-    // Deutsch:       #.##0 (Punkt = Tausender, Komma = Dezimal)
-    let useThousandSep = false;
-    let isGermanFormat = false;
-    
-    // Deutsches Format: Punkt als Tausendertrenner VOR Komma als Dezimaltrenner
-    if (/[0#]\.##[0#]/.test(fmt) || /[0#]\.[0#]{3}/.test(fmt)) {
-        // z.B. #.##0,00 → Punkt ist Tausender
-        if (fmt.includes(',')) {
-            isGermanFormat = true;
-            useThousandSep = true;
+        // 3. Fallback auf Datei-Locale (aus styles.xml erkannt)
+        if (!isLocaleSwapped && (fileLocale === 'de' || fileLocale === 'eu')) {
+            isLocaleSwapped = true;
         }
-    }
-    // Internationales Format: Komma als Tausendertrenner
-    if (/[0#],##[0#]/.test(fmt) || /[0#],[0#]{3}/.test(fmt)) {
-        if (!isGermanFormat) {
-            useThousandSep = true;
+        
+        // Punkt/Komma tauschen für DE/EU-Locales
+        if (isLocaleSwapped && /\d/.test(result) && (result.includes(',') || result.includes('.'))) {
+            result = result.replace(/,/g, '\x00').replace(/\./g, ',').replace(/\x00/g, '.');
         }
-    }
-
-    // --- 4. Prozent-Format ---
-    if (fmt.includes('%')) {
-        const percentMatch = fmt.match(/[0#]\.(0+)\s*%/) || fmt.match(/\.(0+)/);
-        if (percentMatch) {
-            const decimals = percentMatch[1].length;
-            const factor = Math.pow(10, decimals + 2);
-            return Math.round(value * factor) / factor;
-        }
+        
+        return result;
+    } catch (err) {
+        // Bei ssf-Fehlern: Rohwert zurückgeben
         return value;
     }
-
-    // --- 5. Dezimalstellen erkennen und Wert formatieren ---
-    let decimals = -1;
-    
-    // Standard-Format (Punkt als Dezimaltrenner): 0.00, #,##0.00
-    let decimalMatch = fmt.match(/\.(0+)(?:[^0#]|$)/);
-    if (decimalMatch && !isGermanFormat) {
-        decimals = decimalMatch[1].length;
-    }
-
-    // Deutsches Format (Komma als Dezimaltrenner): #.##0,00
-    if (decimals < 0) {
-        decimalMatch = fmt.match(/,(0+)(?:[^0#]|$)/);
-        if (decimalMatch) {
-            const commaPos = fmt.indexOf(',');
-            const dotBefore = fmt.lastIndexOf('.', commaPos);
-            if (dotBefore >= 0) {
-                isGermanFormat = true;
-                useThousandSep = true;
-                decimals = decimalMatch[1].length;
-            }
-        }
-    }
-    
-    // Ganzzahl-Format (#,##0 oder 0)
-    if (decimals < 0 && /[0#]/.test(fmt) && /0/.test(fmt)) {
-        if (!fmt.includes('.') && !/,(0+)/.test(fmt)) {
-            decimals = 0;
-        }
-    }
-
-    if (decimals < 0) {
-        return value;
-    }
-
-    // --- 6. Zahl formatieren ---
-    const isNegative = value < 0;
-    const absValue = Math.abs(value);
-    const rounded = absValue.toFixed(decimals);
-    
-    let result;
-    if (useThousandSep) {
-        // Tausendertrenner einfügen
-        const parts = rounded.split('.');
-        const intPart = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, isGermanFormat ? '.' : ',');
-        if (decimals > 0) {
-            const decSep = isGermanFormat ? ',' : '.';
-            result = intPart + decSep + parts[1];
-        } else {
-            result = intPart;
-        }
-    } else {
-        // Ohne Tausendertrenner, aber ggf. deutschen Dezimaltrenner
-        if (isGermanFormat && decimals > 0) {
-            result = rounded.replace('.', ',');
-        } else {
-            result = rounded;
-        }
-    }
-    
-    // Vorzeichen
-    if (isNegative) {
-        result = '-' + result;
-    }
-    
-    // Währungssymbol anfügen
-    if (currencySymbol) {
-        if (currencyPosition === 'prefix') {
-            result = currencySymbol + ' ' + result;
-        } else {
-            result = result + ' ' + currencySymbol;
-        }
-    }
-    
-    return result;
 }
 
 /**
@@ -447,6 +571,22 @@ function colLettersToIndex(letters) {
         index = index * 26 + (letters.charCodeAt(i) - 64);
     }
     return index - 1; // 0-basiert
+}
+
+/**
+ * Konvertiert 1-basierte Spaltennummer zu Buchstaben (1=A, 2=B, ..., 27=AA)
+ * @param {number} colNum - 1-basierte Spaltennummer
+ * @returns {string} Spalten-Buchstaben
+ */
+function _colNumberToLetter(colNum) {
+    let result = '';
+    let n = colNum;
+    while (n > 0) {
+        n--;
+        result = String.fromCharCode(65 + (n % 26)) + result;
+        n = Math.floor(n / 26);
+    }
+    return result;
 }
 
 /**
@@ -1183,7 +1323,8 @@ function extractCellStyle(cell) {
  */
 async function _readSheetStreaming(
     ExcelJS, fileBuffer, sheetName, actualColumnCount,
-    sharedStrings, imageCellSet, cellFormulas, cellHyperlinks, cellStyles, richTextCells
+    sharedStrings, imageCellSet, cellFormulas, cellHyperlinks, cellStyles, richTextCells,
+    numFmtMap, cellStyleIndexMap, fileLocale
 ) {
     const headers = [];
     const data = [];
@@ -1425,8 +1566,29 @@ async function _readSheetStreaming(
             }
             
             // Numerische Werte gemäß numFmt runden (z.B. Buchhaltungsformat 95,90 € → 2 Nachkommastellen)
-            if (typeof cellValue === 'number' && cell.numFmt) {
-                cellValue = roundNumericByFormat(cellValue, cell.numFmt);
+            // Fallback: Wenn ExcelJS kein numFmt liefert, aus styles.xml-Map nachschlagen
+            let effectiveNumFmt = cell.numFmt;
+            if (typeof cellValue === 'number' && !effectiveNumFmt && numFmtMap && cellStyleIndexMap) {
+                // Zelladresse berechnen (z.B. "B5") für Lookup in cellStyleIndexMap
+                const colLetter = _colNumberToLetter(colNumber);
+                const cellAddr = colLetter + rowNumber;
+                const styleIdx = cellStyleIndexMap.get(cellAddr);
+                if (styleIdx !== undefined) {
+                    effectiveNumFmt = numFmtMap.get(styleIdx) || null;
+                    if (effectiveNumFmt && dataRowCounter < 3) {
+                        console.log(`[ExcelJS-FORMAT] Fallback numFmt für ${cellAddr}: style=${styleIdx} → "${effectiveNumFmt}"`);
+                    }
+                }
+            }
+            
+            if (typeof cellValue === 'number' && effectiveNumFmt) {
+                const beforeFormat = cellValue;
+                cellValue = roundNumericByFormat(cellValue, effectiveNumFmt, fileLocale);
+                if (dataRowCounter < 5) {
+                    console.log(`[ExcelJS-FORMAT] Zelle ${styleKey}: numFmt="${effectiveNumFmt}" Wert=${beforeFormat} → ${cellValue}${!cell.numFmt ? ' (FALLBACK)' : ''}`);
+                }
+            } else if (typeof cellValue === 'number' && dataRowCounter < 5) {
+                console.log(`[ExcelJS-FORMAT] Zelle ${styleKey}: KEIN numFmt, Wert=${cellValue}`);
             }
             
             // SharedString-Referenz auflösen (Streaming löst RichText-SharedStrings nicht auf)
@@ -1759,6 +1921,11 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null, cached
         // FALLBACK: Wenn Streaming fehlschlägt (z.B. bei ImportExcel/EPPlus-Dateien
         //   mit ZIP Data Descriptors), automatisch auf Non-Streaming wechseln
         // ============================================================
+        
+        // numFmt-Map aus styles.xml parsen (Fallback für Zellen ohne ExcelJS-numFmt)
+        const { styleToNumFmt: numFmtMap, fileLocale } = parseNumFmtMap(fileBuffer, zip);
+        const cellStyleIndexMap = parseCellStyleIndices(fileBuffer, sheetName, zip);
+        
         const t2 = Date.now();
         let useNonStreaming = hasRichTextSharedStrings;
         let streamingFailed = false;
@@ -1768,7 +1935,8 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null, cached
             try {
                 const streamingResult = await _readSheetStreaming(
                     ExcelJS, fileBuffer, sheetName, actualColumnCount,
-                    sharedStrings, imageCellSet, cellFormulas, cellHyperlinks, cellStyles, richTextCells
+                    sharedStrings, imageCellSet, cellFormulas, cellHyperlinks, cellStyles, richTextCells,
+                    numFmtMap, cellStyleIndexMap, fileLocale
                 );
                 // Streaming erfolgreich — Daten übernehmen
                 headers.push(...streamingResult.headers);
@@ -1898,8 +2066,18 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null, cached
                     }
                     
                     // Numerische Werte gemäß numFmt runden (z.B. Buchhaltungsformat 95,90 € → 2 Nachkommastellen)
-                    if (typeof cellValue === 'number' && cell.numFmt) {
-                        cellValue = roundNumericByFormat(cellValue, cell.numFmt);
+                    // Fallback auf styles.xml-Map wenn ExcelJS kein numFmt liefert
+                    let effectiveNumFmt = cell.numFmt;
+                    if (typeof cellValue === 'number' && !effectiveNumFmt && numFmtMap && cellStyleIndexMap) {
+                        const colLetter = _colNumberToLetter(colNumber);
+                        const cellAddr = colLetter + rowNumber;
+                        const styleIdx = cellStyleIndexMap.get(cellAddr);
+                        if (styleIdx !== undefined) {
+                            effectiveNumFmt = numFmtMap.get(styleIdx) || null;
+                        }
+                    }
+                    if (typeof cellValue === 'number' && effectiveNumFmt) {
+                        cellValue = roundNumericByFormat(cellValue, effectiveNumFmt, fileLocale);
                     }
                     
                     // Objekte (RichText, Hyperlinks, etc.)
@@ -2054,8 +2232,167 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null, cached
     }
 }
 
+/**
+ * Wendet Zahlenformate auf Rohdaten aus der Live-Session an.
+ * Liest Format-Info aus der XLSX-Datei (styles.xml + Sheet-XML-Spaltendefaults)
+ * und formatiert numerische Zellen mit SSF.
+ *
+ * Ersetzt die langsame Python-seitige _apply_number_formats() (~200k COM-Aufrufe)
+ * durch eine rein JS-basierte Lösung (~50–200ms).
+ *
+ * @param {Buffer} fileBuffer - Der gecachte XLSX-Datei-Buffer
+ * @param {string} sheetName - Name des Sheets (wie in workbook.xml)
+ * @param {Array} headers - Header-Array vom Live-Session switchSheet
+ * @param {Array[]} data - 2D-Daten-Array (Zeilen × Spalten) mit Rohzahlen
+ * @returns {{ headers: Array, data: Array[], formattedCols: number }} Formatierte Daten
+ */
+function applyNumFmtToLiveData(fileBuffer, sheetName, headers, data) {
+    if (!data || data.length === 0 || !headers || headers.length === 0) {
+        return { headers, data, formattedCols: 0 };
+    }
+
+    const startTime = Date.now();
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip(fileBuffer);
+
+    // 1. Parse styles.xml → numFmt per style index + locale
+    const { styleToNumFmt, fileLocale } = parseNumFmtMap(fileBuffer, zip);
+    if (styleToNumFmt.size === 0) {
+        console.log(`[applyNumFmt] Keine Zahlenformate in styles.xml → Skip (${Date.now() - startTime}ms)`);
+        return { headers, data, formattedCols: 0 };
+    }
+
+    // 2. Sheet-XML-Pfad finden (workbook.xml → rels → sheet path)
+    const workbookEntry = zip.getEntry('xl/workbook.xml');
+    if (!workbookEntry) return { headers, data, formattedCols: 0 };
+    const workbookXml = workbookEntry.getData().toString('utf8');
+
+    const sheetsMatch = workbookXml.match(/<sheets>([\s\S]*?)<\/sheets>/);
+    let sheetRId = null;
+    if (sheetsMatch) {
+        const sheetPattern = /<sheet[^>]*name="([^"]*)"[^>]*r:id="(rId\d+)"[^>]*\/?>/g;
+        let sm;
+        while ((sm = sheetPattern.exec(sheetsMatch[1])) !== null) {
+            if (sm[1] === sheetName) { sheetRId = sm[2]; break; }
+        }
+    }
+    if (!sheetRId) {
+        console.log(`[applyNumFmt] Sheet "${sheetName}" nicht in workbook.xml → Skip`);
+        return { headers, data, formattedCols: 0 };
+    }
+
+    const relsEntry = zip.getEntry('xl/_rels/workbook.xml.rels');
+    if (!relsEntry) return { headers, data, formattedCols: 0 };
+    const relsXml = relsEntry.getData().toString('utf8');
+    let sheetPath = null;
+    const relElements = relsXml.match(/<Relationship\s[^>]*\/?>/g) || [];
+    for (const relEl of relElements) {
+        const idMatch = relEl.match(/Id="([^"]*)"/);
+        const targetMatch = relEl.match(/Target="([^"]*)"/);
+        if (idMatch && targetMatch && idMatch[1] === sheetRId) {
+            sheetPath = 'xl/' + targetMatch[1].replace(/^\//, '');
+            break;
+        }
+    }
+
+    const sheetEntry = sheetPath ? zip.getEntry(sheetPath) : null;
+    if (!sheetEntry) return { headers, data, formattedCols: 0 };
+    const sheetXml = sheetEntry.getData().toString('utf8');
+
+    const numCols = headers.length;
+    const colFormats = new Array(numCols).fill(null); // colIndex → numFmt string
+
+    // 3a. <cols> Default-Styles pro Spalte
+    const colsMatch = sheetXml.match(/<cols>([\s\S]*?)<\/cols>/);
+    if (colsMatch) {
+        const colPattern = /<col[^>]*>/g;
+        let cm;
+        while ((cm = colPattern.exec(colsMatch[1])) !== null) {
+            const tag = cm[0];
+            const minM = tag.match(/min="(\d+)"/);
+            const maxM = tag.match(/max="(\d+)"/);
+            const styM = tag.match(/style="(\d+)"/);
+            if (minM && maxM && styM) {
+                const fmt = styleToNumFmt.get(parseInt(styM[1]));
+                if (fmt) {
+                    const lo = parseInt(minM[1]) - 1;
+                    const hi = Math.min(parseInt(maxM[1]) - 1, numCols - 1);
+                    for (let i = lo; i <= hi; i++) colFormats[i] = fmt;
+                }
+            }
+        }
+    }
+
+    // 3b. Erste ~20 Datenzeilen aus Sheet-XML samplen für explizite Zellstyles
+    const dimMatch = sheetXml.match(/<dimension\s+ref="([^"]+)"/);
+    let startRow = 1, startCol = 0;
+    if (dimMatch) {
+        const refM = dimMatch[1].match(/^([A-Z]+)(\d+)/);
+        if (refM) {
+            startRow = parseInt(refM[2]);
+            startCol = colLettersToIndex(refM[1]);
+        }
+    }
+    const headerRow = startRow;
+    const sampleEndRow = headerRow + 21; // Header + 20 Datenzeilen
+
+    const sheetDataStart = sheetXml.indexOf('<sheetData');
+    if (sheetDataStart >= 0) {
+        // Nur den Anfang des sheetData parsen (max 1 MB)
+        const sampleXml = sheetXml.substring(sheetDataStart, sheetDataStart + 1024 * 1024);
+        const cellPattern = /<c\s[^>]*>/g;
+        let cellMatch;
+        // Pro Spalte: häufigstes Format aus Samplereihen
+        const colFmtCounts = {};
+        while ((cellMatch = cellPattern.exec(sampleXml)) !== null) {
+            const tag = cellMatch[0];
+            const rM = tag.match(/\br="([A-Z]+)(\d+)"/);
+            const sM = tag.match(/\bs="(\d+)"/);
+            if (!rM || !sM) continue;
+            const rowNum = parseInt(rM[2]);
+            if (rowNum <= headerRow || rowNum > sampleEndRow) continue;
+            const colIdx = colLettersToIndex(rM[1]) - startCol;
+            if (colIdx < 0 || colIdx >= numCols) continue;
+            const fmt = styleToNumFmt.get(parseInt(sM[1]));
+            if (fmt) {
+                if (!colFmtCounts[colIdx]) colFmtCounts[colIdx] = {};
+                colFmtCounts[colIdx][fmt] = (colFmtCounts[colIdx][fmt] || 0) + 1;
+            }
+        }
+        for (const [ci, fmts] of Object.entries(colFmtCounts)) {
+            let best = null, bestN = 0;
+            for (const [f, n] of Object.entries(fmts)) {
+                if (n > bestN) { bestN = n; best = f; }
+            }
+            if (best) colFormats[parseInt(ci)] = best;
+        }
+    }
+
+    // 4. SSF-Formatierung auf alle numerischen Zellen anwenden
+    let formattedCells = 0;
+    for (let c = 0; c < numCols; c++) {
+        const fmt = colFormats[c];
+        if (!fmt) continue;
+        for (let r = 0; r < data.length; r++) {
+            const val = data[r][c];
+            if (typeof val === 'number' && isFinite(val)) {
+                const formatted = roundNumericByFormat(val, fmt, fileLocale);
+                if (formatted !== val) {
+                    data[r][c] = formatted;
+                    formattedCells++;
+                }
+            }
+        }
+    }
+
+    const formattedColCount = colFormats.filter(f => f !== null).length;
+    console.log(`[applyNumFmt] ${formattedCells} Zellen in ${formattedColCount} Spalten formatiert — ${Date.now() - startTime}ms (${data.length} Zeilen, Locale: ${fileLocale || 'Standard'})`);
+    return { headers, data, formattedCols: formattedColCount };
+}
+
 module.exports = {
     readSheetWithExcelJS,
     extractFillsFromXLSX,
-    extractSheetMetadata
+    extractSheetMetadata,
+    applyNumFmtToLiveData
 };

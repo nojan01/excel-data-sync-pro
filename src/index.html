@@ -13854,9 +13854,10 @@
                 // Ohne Live-Session: Daten können trotzdem gelesen werden (ExcelJS liest auch hidden sheets)
             }
             
-            // VOR dem Wechsel: Aktuelles Sheet im Cache speichern wenn es Änderungen gibt
-            // ABER NICHT wenn editedCells leer ist (z.B. nach Export/Reload)
-            if (explorerState.selectedSheet && explorerState.data.length > 0 && explorerState.editedCells.size > 0) {
+            // VOR dem Wechsel: Aktuelles Sheet im Cache speichern (inkl. formatierte Daten)
+            // WICHTIG: Immer cachen, nicht nur bei Änderungen! Sonst gehen ssf-formatierte
+            // Werte verloren wenn Live-Session beim Zurückwechseln Rohwerte liefert.
+            if (explorerState.selectedSheet && explorerState.data.length > 0) {
                 saveCurrentSheetToCache();
             }
             
@@ -14042,6 +14043,20 @@
                 if (switchResult && switchResult.success && switchResult.headers) {
                     // Erfolg: Daten von Excel, Metadaten aus ZIP
                     console.log(`[loadExplorerSheet] LIVE-MODUS fertig in ${_sheetMs}ms — ${switchResult.data?.length} Zeilen, ${switchResult.headers?.length} Spalten`);
+                    
+                    // SSF-Zahlenformatierung auf Rohdaten anwenden (ersetzt Python _apply_number_formats)
+                    const _fmtStart = Date.now();
+                    try {
+                        const fmtResult = await window.electronAPI.applyNumFmtToLiveData(
+                            explorerState.filePath, diskSheetName, switchResult.headers, switchResult.data
+                        );
+                        if (fmtResult.success && fmtResult.data) {
+                            switchResult.data = fmtResult.data;
+                            console.log(`[loadExplorerSheet] SSF-Formatierung: ${fmtResult.formattedCols} Spalten in ${Date.now() - _fmtStart}ms`);
+                        }
+                    } catch (fmtErr) {
+                        console.warn('[loadExplorerSheet] SSF-Formatierung fehlgeschlagen (Rohwerte):', fmtErr);
+                    }
                     
                     // xlwings liefert headers und data getrennt (nicht data[0]=headers wie ExcelJS)
                     result = {

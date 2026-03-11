@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     readExcelFile: (filePath, password) => ipcRenderer.invoke('excel:readFile', filePath, password),
     readExcelSheet: (filePath, sheetName, password) => ipcRenderer.invoke('excel:readSheet', filePath, sheetName, password),
     readSheetMetadata: (filePath, sheetName) => ipcRenderer.invoke('excel:readSheetMetadata', filePath, sheetName),
+    applyNumFmtToLiveData: (filePath, sheetName, headers, data) => ipcRenderer.invoke('excel:applyNumFmtToLiveData', filePath, sheetName, headers, data),
     insertExcelRows: (params) => ipcRenderer.invoke('excel:insertRows', params),
     copyExcelFile: (params) => ipcRenderer.invoke('excel:copyFile', params),
     createTemplateFromSource: (params) => ipcRenderer.invoke('excel:createTemplateFromSource', params),

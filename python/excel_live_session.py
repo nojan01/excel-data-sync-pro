@@ -473,6 +473,13 @@ class ExcelLiveSession:
             except:
                 pass
             
+            # Excel MUSS versteckt bleiben nach books.open
+            try:
+                if not self.app.visible:
+                    self.app.api.Visible = False
+            except:
+                pass
+            
             # Sheet finden
             sheet_names = [s.name for s in self.workbook.sheets]
             if sheet_name not in sheet_names:
@@ -480,6 +487,12 @@ class ExcelLiveSession:
             
             self.worksheet = self.workbook.sheets[sheet_name]
             self.sheet_name = sheet_name
+            
+            # Sheet in Excel aktivieren (damit GUI und Excel synchron sind)
+            try:
+                self.worksheet.activate()
+            except Exception as act_err:
+                self._log(f"Sheet activate() fehlgeschlagen: {act_err}")
             
             # Recovery-System initialisieren
             self.backup_path = self._create_backup(file_path)
@@ -2810,6 +2823,146 @@ end tell'''
         except Exception:
             return str(val)
     
+    def _apply_number_formats(self, all_data: list, used_range) -> list:
+        """Ersetzt Zahlen durch exakt den Text den Excel anzeigt (.Text).
+        
+        Strategie (kein NumberFormat-Parsing, direkte .Text-Prüfung):
+        1. Alle Spalten mit Zahlen auf Breite 255 setzen (verhindert '###')
+        2. Pro Spalte: .Text EINER Zelle lesen und mit str(Rohwert) vergleichen
+           → Wenn unterschiedlich: Spalte braucht .Text für alle Zellen
+        3. .Text für alle numerischen Zellen in erkannten Spalten lesen
+        4. Spaltenbreiten wiederherstellen
+        
+        WICHTIG: Excel darf dabei NICHT sichtbar werden.
+        """
+        self._log(f"_apply_number_formats START: rows={len(all_data) if all_data else 0}, is_list={isinstance(all_data[0], list) if all_data else 'N/A'}")
+        
+        if not all_data or not isinstance(all_data[0], list):
+            self._log("_apply_number_formats SKIP: Keine verschachtelten Listen")
+            return all_data
+        
+        num_rows = len(all_data)
+        num_cols = len(all_data[0]) if all_data else 0
+        if num_cols == 0 or num_rows <= 1:
+            self._log(f"_apply_number_formats SKIP: cols={num_cols}, rows={num_rows}")
+            return all_data
+        
+        ws_api = self.worksheet.api
+        app_api = ws_api.Application
+        start_row = used_range.row
+        start_col = used_range.column
+        
+        # Sichtbarkeit VOR allen COM-Operationen sichern und erzwingen
+        was_visible = True
+        try:
+            was_visible = bool(app_api.Visible)
+            if not was_visible:
+                app_api.Visible = False  # explizit nochmal setzen
+        except Exception:
+            pass
+        
+        # ScreenUpdating deaktivieren (verhindert Flackern bei Breitenänderung)
+        try:
+            app_api.ScreenUpdating = False
+        except Exception:
+            pass
+        
+        try:
+            # Spalten mit Zahlen finden + erste Zahlenzeile merken
+            numeric_cols = {}  # col_idx -> first_number_row
+            for col_idx in range(num_cols):
+                for row_idx in range(1, num_rows):
+                    if isinstance(all_data[row_idx][col_idx], (int, float)):
+                        numeric_cols[col_idx] = row_idx
+                        break
+            
+            if not numeric_cols:
+                self._log("_apply_number_formats: KEINE numerischen Spalten gefunden!")
+                # Zeige Typen der ersten Datenzeile
+                if num_rows > 1:
+                    types = [(i, type(v).__name__, repr(v)[:50]) for i, v in enumerate(all_data[1]) if v not in ('', None)]
+                    self._log(f"  Zeile 1 Typen (nicht-leer): {types[:10]}")
+                return all_data
+            
+            self._log(f"_apply_number_formats: {len(numeric_cols)} numerische Spalten gefunden: {dict(list(numeric_cols.items())[:10])}")
+            
+            # Phase 1: Spaltenbreiten sichern und ALLE numerischen Spalten auf 255 setzen
+            saved_widths = {}
+            for col_idx in numeric_cols:
+                excel_col = start_col + col_idx
+                try:
+                    saved_widths[col_idx] = ws_api.Columns(excel_col).ColumnWidth
+                    ws_api.Columns(excel_col).ColumnWidth = 255
+                except Exception:
+                    pass
+            
+            # Phase 2: Erkennung — .Text vs. Rohwert für EINE Zelle pro Spalte
+            formatted_cols = []
+            for col_idx, first_row in numeric_cols.items():
+                try:
+                    excel_row = start_row + first_row
+                    excel_col = start_col + col_idx
+                    cell_text = str(ws_api.Cells(excel_row, excel_col).Text or '').strip()
+                    raw_val = all_data[first_row][col_idx]
+                    
+                    # Normalisieren: Excel zeigt 1.0 als "1" im General-Format
+                    if isinstance(raw_val, float) and raw_val == int(raw_val) and abs(raw_val) < 1e15:
+                        normalized = str(int(raw_val))
+                    else:
+                        normalized = str(raw_val)
+                    
+                    if cell_text != normalized:
+                        formatted_cols.append(col_idx)
+                        self._log(f"Spalte {col_idx}: raw='{normalized}' display='{cell_text}' → .Text nötig")
+                except Exception as e:
+                    self._log(f"Spalte {col_idx}: Erkennungsfehler: {e}")
+            
+            if not formatted_cols:
+                self._log(f"_apply_number_formats: KEINE formatierten Spalten erkannt (alle {len(numeric_cols)} Spalten stimmen überein)")
+                # Breiten wiederherstellen
+                for col_idx, w in saved_widths.items():
+                    try:
+                        ws_api.Columns(start_col + col_idx).ColumnWidth = w
+                    except Exception:
+                        pass
+                return all_data
+            
+            self._log(f"Formatierte Spalten: {formatted_cols} von {num_cols} Gesamt")
+            
+            # Phase 3: .Text für alle numerischen Zellen in erkannten Spalten lesen
+            for col_idx in formatted_cols:
+                excel_col = start_col + col_idx
+                for row_idx in range(1, num_rows):
+                    val = all_data[row_idx][col_idx]
+                    if not isinstance(val, (int, float)):
+                        continue
+                    try:
+                        cell_text = ws_api.Cells(start_row + row_idx, excel_col).Text
+                        if cell_text and not str(cell_text).startswith('#'):
+                            all_data[row_idx][col_idx] = str(cell_text).strip()
+                    except Exception:
+                        pass  # Bei Fehler Rohwert behalten
+            
+            # Phase 4: Spaltenbreiten wiederherstellen
+            for col_idx, w in saved_widths.items():
+                try:
+                    ws_api.Columns(start_col + col_idx).ColumnWidth = w
+                except Exception:
+                    pass
+            
+            return all_data
+        finally:
+            try:
+                app_api.ScreenUpdating = True
+            except Exception:
+                pass
+            # Excel MUSS versteckt bleiben wenn es vorher versteckt war
+            if not was_visible:
+                try:
+                    app_api.Visible = False
+                except Exception:
+                    pass
+    
     def get_data(self) -> Dict[str, Any]:
         """Liest alle Daten aus dem aktuellen Sheet"""
         try:
@@ -2830,6 +2983,12 @@ end tell'''
                 all_data = self._format_datetime_values(all_data, used_range)
             except Exception as fmt_err:
                 self._log(f"Datum-Formatierung Fehler (Fallback auf str): {fmt_err}")
+            
+            # Zahlenformatierung (Währung, Prozent, k€ etc.) wird jetzt auf der
+            # JS-Seite per SSF erledigt (styles.xml aus ZIP + ssf-Library).
+            # _apply_number_formats() mit 200k+ einzelnen COM-.Text-Aufrufen
+            # war der Hauptgrund für 10–20 Sek. Verzögerung bei großen Sheets.
+            self._log(f"get_data: Zahlenformatierung übersprungen (SSF auf JS-Seite)")
             
             # Erste Zeile = Header
             headers = all_data[0] if isinstance(all_data[0], list) else [all_data[0]]
