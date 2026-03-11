@@ -14605,63 +14605,59 @@
                 }
             }
             
-            // Spaltenfilter
-            explorerState.filters.forEach(filter => {
-                if (!filter.column) return;
-                const colIndex = parseInt(filter.column);
-                const value = (filter.value || '').toLowerCase();
+            // Spaltenfilter — gleiche Spalte = ODER, verschiedene Spalten = UND
+            const validFilters = explorerState.filters.filter(f => f.column);
+            const filtersByColumn = new Map();
+            validFilters.forEach(filter => {
+                const col = filter.column;
+                if (!filtersByColumn.has(col)) filtersByColumn.set(col, []);
+                filtersByColumn.get(col).push(filter);
+            });
+            
+            // Pro Spalten-Gruppe: positive Filter (contains, equals, ...) = OR,
+            // negative Filter (notContains) = AND. Über alle Spalten-Gruppen: AND.
+            filtersByColumn.forEach((columnFilters, col) => {
+                const colIndex = parseInt(col);
                 
-                // Debug: Zeige Datum-Filter-Details für erste 3 Zeilen
-                const isDateFilter = filter.operator.startsWith('date');
-                let dateDebugCount = 0;
+                // Aufteilen in positive und negative Filter
+                const positiveFilters = columnFilters.filter(f => f.operator !== 'notContains');
+                const negativeFilters = columnFilters.filter(f => f.operator === 'notContains');
                 
                 filtered = filtered.filter(item => {
                     const cellValue = String(item.row[colIndex] || '').toLowerCase();
                     const rawCellValue = item.row[colIndex];
                     
-                    switch (filter.operator) {
-                        // Text-Filter
-                        case 'contains': return cellValue.includes(value);
-                        case 'equals': return cellValue === value;
-                        case 'startsWith': return cellValue.startsWith(value);
-                        case 'endsWith': return cellValue.endsWith(value);
-                        case 'notContains': return !cellValue.includes(value);
-                        case 'isEmpty': return !rawCellValue || String(rawCellValue).trim() === '';
-                        case 'isNotEmpty': return rawCellValue && String(rawCellValue).trim() !== '';
-                        
-                        // Datum-Filter — Spalten-Datumsformat erkennen
-                        case 'dateBetween': {
-                            const colDateOrder = detectColumnDateOrder(colIndex);
-                            const result = matchDateFilter(rawCellValue, filter.operator, 0, filter.dateFrom, filter.dateTo, colDateOrder);
-                            if (isDateFilter && dateDebugCount < 3) {
-                                dateDebugCount++;
-                                const parsedCell = parseDateValue(rawCellValue, colDateOrder);
-                                const parsedFrom = filter.dateFrom ? parseDateValue(filter.dateFrom, colDateOrder) : null;
-                                const parsedTo = filter.dateTo ? parseDateValue(filter.dateTo, colDateOrder) : null;
-                                console.log(`[DateFilter] dateBetween (${colDateOrder}): Zelle="${rawCellValue}" → ${parsedCell}, Von="${filter.dateFrom}" → ${parsedFrom}, Bis="${filter.dateTo}" → ${parsedTo}, Ergebnis: ${result}`);
+                    // Positive Filter: OR (mindestens einer muss matchen)
+                    const positiveMatch = positiveFilters.length === 0 || positiveFilters.some(filter => {
+                        const value = (filter.value || '').toLowerCase();
+                        switch (filter.operator) {
+                            case 'contains': return cellValue.includes(value);
+                            case 'equals': return cellValue === value;
+                            case 'startsWith': return cellValue.startsWith(value);
+                            case 'endsWith': return cellValue.endsWith(value);
+                            case 'isEmpty': return !rawCellValue || String(rawCellValue).trim() === '';
+                            case 'isNotEmpty': return rawCellValue && String(rawCellValue).trim() !== '';
+                            case 'dateBetween': {
+                                const colDateOrder = detectColumnDateOrder(colIndex);
+                                return matchDateFilter(rawCellValue, filter.operator, 0, filter.dateFrom, filter.dateTo, colDateOrder);
                             }
-                            return result;
-                        }
-                        case 'dateInDays':
-                        case 'dateOverdueDays':
-                        case 'dateToday':
-                        case 'datePast':
-                        case 'dateFuture':
-                        case 'dateThisWeek':
-                        case 'dateThisMonth': {
-                            const days = parseInt(filter.value) || 0;
-                            const colDateOrder2 = detectColumnDateOrder(colIndex);
-                            const result = matchDateFilter(rawCellValue, filter.operator, days, null, null, colDateOrder2);
-                            if (isDateFilter && dateDebugCount < 3) {
-                                dateDebugCount++;
-                                const parsed = parseDateValue(rawCellValue);
-                                console.log(`[DateFilter] Spalte ${colIndex}, Operator: ${filter.operator}, Zellwert: "${rawCellValue}" (Typ: ${typeof rawCellValue}), Parsed: ${parsed}, Tage: ${days}, Ergebnis: ${result}`);
+                            case 'dateInDays': case 'dateOverdueDays': case 'dateToday':
+                            case 'datePast': case 'dateFuture': case 'dateThisWeek': case 'dateThisMonth': {
+                                const days = parseInt(filter.value) || 0;
+                                const colDateOrder2 = detectColumnDateOrder(colIndex);
+                                return matchDateFilter(rawCellValue, filter.operator, days, null, null, colDateOrder2);
                             }
-                            return result;
+                            default: return true;
                         }
-                        
-                        default: return true;
-                    }
+                    });
+                    
+                    // Negative Filter: AND (ALLE müssen matchen = Zeile darf KEINEN der Begriffe enthalten)
+                    const negativeMatch = negativeFilters.every(filter => {
+                        const value = (filter.value || '').toLowerCase();
+                        return !cellValue.includes(value);
+                    });
+                    
+                    return positiveMatch && negativeMatch;
                 });
             });
             
@@ -15348,9 +15344,20 @@
                 .catch(err => console.error('[CellEdit] Row-Sync fehlgeschlagen:', err));
         }
         
+        // Prüft ob eine Zelle ein Bild (vm) oder Rich Text enthält — solche Zellen dürfen nicht
+        // per setCellValue überschrieben werden, da das die IMAGE/DISPIMG-Formel bzw. Formatierung zerstört.
+        function _isCellProtected(rowIndex, colIndex) {
+            // cellVmMap und richTextCells verwenden "row+1"-Format (inkl. Header-Zeile)
+            const styleKey = `${rowIndex + 1}-${colIndex}`;
+            if (explorerState.cellVmMap && explorerState.cellVmMap[styleKey]) return true;
+            if (explorerState.richTextCells && explorerState.richTextCells[styleKey]) return true;
+            return false;
+        }
+
         // Einzelzellen-Sync (formatierungsschonend — nur die geänderte Zelle wird geschrieben)
         function syncCellToExcel(rowIndex, colIndex) {
             if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) return;
+            if (_isCellProtected(rowIndex, colIndex)) return;
             const cellKey = `${rowIndex}-${colIndex}`;
             if (_syncCellTimers.has(cellKey)) {
                 clearTimeout(_syncCellTimers.get(cellKey));
@@ -15367,6 +15374,7 @@
         }
         function syncCellToExcelImmediate(rowIndex, colIndex) {
             if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) return;
+            if (_isCellProtected(rowIndex, colIndex)) return;
             const cellKey = `${rowIndex}-${colIndex}`;
             if (_syncCellTimers.has(cellKey)) {
                 clearTimeout(_syncCellTimers.get(cellKey));
@@ -15455,6 +15463,9 @@
                 
                 const rowIndex = parseInt(td.dataset.row);
                 const colIndex = parseInt(td.dataset.col);
+                
+                // Bild-/RichText-Zellen: Änderungen ignorieren
+                if (_isCellProtected(rowIndex, colIndex)) return;
                 const original = td.dataset.original;
                 const current = getCellTextValue(td);
                 const cellKey = `${rowIndex}-${colIndex}`;
@@ -15484,6 +15495,10 @@
                 
                 const rowIndex = parseInt(td.dataset.row);
                 const colIndex = parseInt(td.dataset.col);
+                
+                // Bild-/RichText-Zellen: NICHT überschreiben (zerstört IMAGE-Formel)
+                if (_isCellProtected(rowIndex, colIndex)) return;
+                
                 const original = td.dataset.original;
                 const lastValue = td.dataset.lastValue;
                 const current = getCellTextValue(td);

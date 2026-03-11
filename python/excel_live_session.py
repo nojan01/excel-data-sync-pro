@@ -1312,6 +1312,15 @@ class ExcelLiveSession:
             
             self._log(f"set_cell_value: row={row_index}, col={col_index}, excel=({excel_row},{excel_col})")
             
+            # Schutz: Zellen mit IMAGE/DISPIMG-Formeln dürfen nicht überschrieben werden
+            cell = self.worksheet.range((excel_row, excel_col))
+            formula = cell.formula
+            if formula and isinstance(formula, str):
+                formula_upper = formula.upper()
+                if '=DISPIMG(' in formula_upper or '=IMAGE(' in formula_upper or '_xlfn.DISPIMG(' in formula_upper:
+                    self._log(f"set_cell_value: Zelle ({excel_row},{excel_col}) enthält Bild-Formel — Überschreiben verhindert")
+                    return {'success': True, 'skipped': True, 'reason': 'image_formula'}
+            
             # Undo-Snapshot: Aggressive Drosselung (nur alle 10s)
             now = time.time()
             if now - self._last_undo_snapshot_time >= 10.0:
@@ -1861,75 +1870,75 @@ end tell'''
             
             self._log(f"set_autofilter: {len(filters) if filters else 0} Filter")
             
-            is_windows = platform.system() == 'Windows'
-            
             try:
                 if filters and len(filters) > 0:
-                    if is_windows:
-                        # ===== WINDOWS =====
-                        # AutoFilter aktivieren falls noch nicht aktiv
+                    # AutoFilter aktivieren falls noch nicht aktiv
+                    try:
+                        if not self.worksheet.api.AutoFilterMode:
+                            used_range.api.AutoFilter()
+                    except Exception as e:
+                        self._log(f"AutoFilter-Aktivierung Fehler: {e}")
                         try:
-                            if not self.worksheet.api.AutoFilterMode:
-                                used_range.api.AutoFilter()
-                        except Exception as e:
-                            self._log(f"AutoFilter-Aktivierung Fehler: {e}")
-                            # Versuche es trotzdem
-                            try:
-                                used_range.api.AutoFilter()
-                            except:
-                                pass
+                            used_range.api.AutoFilter()
+                        except:
+                            pass
+                    
+                    # Filter nach Spalte gruppieren (gleiche Spalte = OR-Verknüpfung)
+                    from collections import defaultdict
+                    filters_by_col = defaultdict(list)
+                    for f in filters:
+                        col_idx = f.get('colIndex', 0) + 1  # 1-basiert
+                        filters_by_col[col_idx].append(f)
+                    
+                    self._active_filter_fields = []  # Merken für Clear
+                    for col_idx, col_filters in filters_by_col.items():
+                        criteria_list = []
+                        is_date = False
                         
-                        # Filter für jede Spalte setzen
-                        self._active_filter_fields = []  # Merken für Clear
-                        for f in filters:
-                            col_idx = f.get('colIndex', 0) + 1  # 1-basiert
+                        for f in col_filters:
                             criteria = f.get('criteria', '')
                             operator = f.get('operator', 'equals')
                             date_from = f.get('dateFrom', None)
                             date_to = f.get('dateTo', None)
                             
-                            # ---- Text-Filter ----
+                            # ---- Text-Filter → Wildcard-Criteria ----
                             if operator == 'contains':
-                                criteria = f'*{criteria}*'
+                                criteria_list.append(f'*{criteria}*')
                             elif operator == 'notContains':
-                                criteria = f'<>*{criteria}*'
+                                criteria_list.append(f'<>*{criteria}*')
                             elif operator == 'startsWith':
-                                criteria = f'{criteria}*'
+                                criteria_list.append(f'{criteria}*')
                             elif operator == 'endsWith':
-                                criteria = f'*{criteria}'
+                                criteria_list.append(f'*{criteria}')
                             elif operator == 'isEmpty':
-                                criteria = '='
+                                criteria_list.append('=')
                             elif operator == 'isNotEmpty':
-                                criteria = '<>'
+                                criteria_list.append('<>')
+                            elif operator == 'equals':
+                                criteria_list.append(criteria)
                             
                             # ---- Datums-Filter ----
                             elif operator in ('dateToday', 'datePast', 'dateFuture',
                                               'dateThisWeek', 'dateThisMonth',
                                               'dateInDays', 'dateOverdueDays', 'dateBetween'):
-                                self._log(f"Windows: Datums-Filter Spalte {col_idx}: op={operator}, from={date_from}, to={date_to}")
+                                is_date = True
+                                self._log(f"Datums-Filter Spalte {col_idx}: op={operator}, from={date_from}, to={date_to}")
                                 try:
-                                    # Datumsformat der Spalte erkennen und ISO-Daten umwandeln
-                                    # Excel AutoFilter erwartet Kriterien im angezeigten Zellformat
                                     def _convert_date_for_excel(iso_date_str, col_index):
                                         """Konvertiert ISO-Datum (YYYY-MM-DD) ins Zellformat der Spalte"""
                                         try:
                                             dt = datetime.strptime(iso_date_str, '%Y-%m-%d')
                                         except:
-                                            return iso_date_str  # Fallback: unverändert
+                                            return iso_date_str
                                         
                                         try:
-                                            # NumberFormat der ersten Datenzelle dieser Spalte lesen
                                             col_letter = self._get_column_letter(col_index)
                                             cell = self.worksheet.range(f'{col_letter}2')
                                             num_fmt = cell.number_format or ''
                                             self._log(f"  Spalte {col_index} NumberFormat: '{num_fmt}'")
                                             
-                                            # Bekannte Excel-Datumsformate → Python strftime
-                                            # WICHTIG: Reihenfolge von m/d im Format bestimmt MM.DD vs DD.MM
                                             nf = num_fmt.lower().replace('\\', '').strip()
                                             
-                                            # Position von m und d im Format bestimmen
-                                            # (Suche erstes 'm' und erstes 'd' das nicht in anderen Tokens steckt)
                                             import re as _re
                                             m_pos = -1
                                             d_pos = -1
@@ -1943,39 +1952,28 @@ end tell'''
                                             month_first = m_pos < d_pos if m_pos >= 0 and d_pos >= 0 else False
                                             self._log(f"  Format-Analyse: m_pos={m_pos}, d_pos={d_pos}, month_first={month_first}")
                                             
-                                            # Separator erkennen
                                             sep = '.'
                                             for ch in nf:
                                                 if ch in './-':
                                                     sep = ch
                                                     break
                                             
-                                            # Jahr-Format erkennen
                                             has_4y = 'yyyy' in nf
                                             
                                             if 'yyyy' in nf:
                                                 y_pos = nf.index('yyyy')
                                                 if y_pos == 0 or (m_pos >= 0 and y_pos < m_pos):
-                                                    # YYYY zuerst: YYYY-MM-DD
                                                     return dt.strftime(f'%Y{sep}%m{sep}%d')
                                             
-                                            # Padding erkennen: 'dd' = 2-stellig, 'd' = ohne führende Null
                                             has_dd = 'dd' in nf
                                             has_mm = 'mm' in nf
                                             
                                             if month_first:
-                                                # MM.DD.YY oder M.DD.YY
-                                                m_fmt = '%m' if has_mm else '%#m'
-                                                d_fmt = '%d' if has_dd else '%#d'
-                                                y_fmt = '%Y' if has_4y else '%#y' if not has_4y else '%Y'
-                                                # Windows: %#y gibt keine führende Null, aber strftime hat kein 2-digit year
-                                                # Verwende stattdessen manuelles Format
                                                 y_str = str(dt.year) if has_4y else str(dt.year % 100).zfill(2)
                                                 m_str = str(dt.month).zfill(2) if has_mm else str(dt.month)
                                                 d_str = str(dt.day).zfill(2) if has_dd else str(dt.day)
                                                 return f'{m_str}{sep}{d_str}{sep}{y_str}'
                                             else:
-                                                # DD.MM.YY oder D.M.YYYY
                                                 y_str = str(dt.year) if has_4y else str(dt.year % 100).zfill(2)
                                                 m_str = str(dt.month).zfill(2) if has_mm else str(dt.month)
                                                 d_str = str(dt.day).zfill(2) if has_dd else str(dt.day)
@@ -1983,7 +1981,6 @@ end tell'''
                                         except Exception as e:
                                             self._log(f"  NumberFormat-Erkennung fehlgeschlagen: {e}")
                                         
-                                        # Fallback: Beispielwert der Zelle lesen und Format ableiten
                                         try:
                                             col_letter = self._get_column_letter(col_index)
                                             cell_val = self.worksheet.range(f'{col_letter}2').value
@@ -1991,11 +1988,9 @@ end tell'''
                                             self._log(f"  Fallback: Beispielwert='{sample}' (Typ: {type(cell_val).__name__})")
                                             
                                             if '.' in sample and sample.count('.') == 2:
-                                                # Punkt-Trenner → prüfe ob MM.DD oder DD.MM
-                                                # Suche eindeutigen Wert in den Daten
                                                 import re as _re2
-                                                last_row = min(used_range.last_cell.row, 52)
-                                                col_vals = self.worksheet.range(f'{col_letter}2:{col_letter}{last_row}').value
+                                                last_row_fb = min(used_range.last_cell.row, 52)
+                                                col_vals = self.worksheet.range(f'{col_letter}2:{col_letter}{last_row_fb}').value
                                                 if not isinstance(col_vals, list):
                                                     col_vals = [col_vals]
                                                 is_mdy = False
@@ -2008,7 +2003,7 @@ end tell'''
                                                             is_mdy = True
                                                             break
                                                         if pp1 > 12 and pp2 <= 12:
-                                                            break  # DD.MM confirmed
+                                                            break
                                                 if is_mdy:
                                                     self._log(f"  Fallback: MM.DD Format erkannt")
                                                     return f'{dt.month}.{dt.day:02d}.{dt.year % 100:02d}'
@@ -2021,14 +2016,12 @@ end tell'''
                                         except Exception as e:
                                             self._log(f"  Fallback-Fehler: {e}")
                                         
-                                        # Letzter Fallback: M/D/YYYY (englisch, gängigste COM-Variante)
                                         return dt.strftime('%#m/%#d/%Y')
                                     
                                     c1 = None
                                     c2 = None
-                                    xl_op = None  # 1 = xlAnd
+                                    xl_op = None
                                     
-                                    # ISO-Daten ins Zellformat konvertieren
                                     excel_from = _convert_date_for_excel(date_from, col_idx) if date_from else None
                                     excel_to = _convert_date_for_excel(date_to, col_idx) if date_to else None
                                     self._log(f"  Konvertiert: from={date_from} → {excel_from}, to={date_to} → {excel_to}")
@@ -2042,7 +2035,7 @@ end tell'''
                                     elif excel_to:
                                         c1 = f"<={excel_to}"
                                     else:
-                                        self._log(f"Windows: Datums-Filter Spalte {col_idx} übersprungen (keine Daten)")
+                                        self._log(f"Datums-Filter Spalte {col_idx} übersprungen (keine Daten)")
                                         continue
                                     
                                     if c2 and xl_op:
@@ -2050,138 +2043,31 @@ end tell'''
                                     else:
                                         used_range.api.AutoFilter(Field=col_idx, Criteria1=c1)
                                     self._active_filter_fields.append(col_idx)
-                                    self._log(f"Windows: Datums-Filter Spalte {col_idx} gesetzt: c1={c1}, c2={c2}")
+                                    self._log(f"Datums-Filter Spalte {col_idx} gesetzt: c1={c1}, c2={c2}")
                                 except Exception as e:
                                     self._log(f"Fehler bei Datums-Filter Spalte {col_idx}: {e}")
-                                continue  # Skip den normalen AutoFilter-Aufruf unten
-                            
-                            self._log(f"Windows: Setze Filter Spalte {col_idx}: operator={operator}, criteria='{criteria}'")
-                            
+                        
+                        # ---- Text-Criteria anwenden (nach der for-Schleife) ----
+                        if not is_date and criteria_list:
                             try:
-                                # AutoFilter mit Kriterien setzen
-                                used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria)
+                                # Sobald ein negativer Criteria dabei ist → AND (xlAnd=1), sonst OR (xlOr=2)
+                                any_negative = any(c.startswith('<>') for c in criteria_list)
+                                xl_operator = 1 if any_negative else 2  # xlAnd=1, xlOr=2
+                                
+                                if len(criteria_list) == 1:
+                                    self._log(f"Filter Spalte {col_idx}: criteria='{criteria_list[0]}'")
+                                    used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria_list[0])
+                                elif len(criteria_list) == 2:
+                                    op_name = 'AND' if any_negative else 'OR'
+                                    self._log(f"Filter Spalte {col_idx}: {op_name} '{criteria_list[0]}' | '{criteria_list[1]}'")
+                                    used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria_list[0], Operator=xl_operator, Criteria2=criteria_list[1])
+                                else:
+                                    op_name = 'AND' if any_negative else 'OR'
+                                    self._log(f"Filter Spalte {col_idx}: {len(criteria_list)} Criteria — verwende erste 2 mit {op_name}")
+                                    used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria_list[0], Operator=xl_operator, Criteria2=criteria_list[1])
                                 self._active_filter_fields.append(col_idx)
                             except Exception as e:
                                 self._log(f"Fehler bei Filter Spalte {col_idx}: {e}")
-                    else:
-                        # ===== macOS =====
-                        # Auf macOS funktioniert weder appscript auto_filter()
-                        # noch VBA via AppleScript zuverlässig.
-                        # Batch-Zeilen-Ausblendung: Spalten-Daten in einem Aufruf
-                        # lesen, zusammenhängende Bereiche gruppiert ausblenden.
-                        
-                        last_row = used_range.last_cell.row
-                        rows_to_hide = set()
-                        
-                        for f in filters:
-                            col_idx = f.get('colIndex', 0) + 1
-                            criteria = f.get('criteria', '').lower()
-                            operator = f.get('operator', 'equals')
-                            col_letter = self._get_column_letter(col_idx)
-                            
-                            # Ganze Spalte auf einmal lesen (1 API-Aufruf)
-                            col_range = self.worksheet.range(f'{col_letter}2:{col_letter}{last_row}')
-                            col_values = col_range.value
-                            if not isinstance(col_values, list):
-                                col_values = [col_values]
-                            
-                            # Datum-Grenzen für Datums-Filter vorbereiten
-                            date_from = f.get('dateFrom', None)
-                            date_to = f.get('dateTo', None)
-                            date_from_dt = None
-                            date_to_dt = None
-                            is_date_op = operator in ('dateToday', 'datePast', 'dateFuture',
-                                                       'dateThisWeek', 'dateThisMonth',
-                                                       'dateInDays', 'dateOverdueDays', 'dateBetween')
-                            if is_date_op:
-                                try:
-                                    if date_from:
-                                        date_from_dt = datetime.strptime(date_from, '%Y-%m-%d')
-                                    if date_to:
-                                        date_to_dt = datetime.strptime(date_to, '%Y-%m-%d')
-                                except Exception as e:
-                                    self._log(f"macOS: Datums-Parse Fehler: {e}")
-                            
-                            for idx, cell_value in enumerate(col_values):
-                                row_num = idx + 2
-                                cell_str = str(cell_value).lower() if cell_value is not None else ''
-                                matches = False
-                                
-                                if is_date_op:
-                                    # Datums-Vergleich
-                                    cell_date = None
-                                    if isinstance(cell_value, datetime):
-                                        cell_date = cell_value
-                                    elif isinstance(cell_value, date):
-                                        cell_date = datetime.combine(cell_value, dtime())
-                                    elif cell_value:
-                                        # Versuche String als Datum zu parsen
-                                        for dfmt in ('%Y-%m-%d', '%d.%m.%Y', '%m/%d/%Y', '%d/%m/%Y'):
-                                            try:
-                                                cell_date = datetime.strptime(str(cell_value).strip(), dfmt)
-                                                break
-                                            except:
-                                                pass
-                                    
-                                    if cell_date:
-                                        cell_date = cell_date.replace(hour=0, minute=0, second=0, microsecond=0)
-                                        if date_from_dt and date_to_dt:
-                                            matches = date_from_dt <= cell_date <= date_to_dt
-                                        elif date_from_dt:
-                                            matches = cell_date >= date_from_dt
-                                        elif date_to_dt:
-                                            matches = cell_date <= date_to_dt
-                                    # cell_date == None → matches bleibt False
-                                elif operator == 'contains':
-                                    matches = criteria in cell_str
-                                elif operator == 'notContains':
-                                    matches = criteria not in cell_str
-                                elif operator == 'startsWith':
-                                    matches = cell_str.startswith(criteria)
-                                elif operator == 'endsWith':
-                                    matches = cell_str.endswith(criteria)
-                                elif operator == 'equals':
-                                    matches = cell_str == criteria
-                                elif operator == 'isEmpty':
-                                    matches = cell_value is None or cell_str.strip() == ''
-                                elif operator == 'isNotEmpty':
-                                    matches = cell_value is not None and cell_str.strip() != ''
-                                else:
-                                    matches = criteria in cell_str
-                                if not matches:
-                                    rows_to_hide.add(row_num)
-                        
-                        self._log(f"Filter: {len(rows_to_hide)} von {last_row - 1} Zeilen ausblenden")
-                        
-                        # Alle Zeilen einblenden (1 API-Aufruf)
-                        try:
-                            all_rows = self.worksheet.range(f'A2:A{last_row}')
-                            all_rows.api.entire_row.hidden.set(False)
-                        except Exception as e:
-                            self._log(f"Einblenden-Fehler: {e}")
-                        
-                        # Zusammenhängende Bereiche gruppiert ausblenden
-                        if rows_to_hide:
-                            sorted_rows = sorted(rows_to_hide)
-                            ranges = []
-                            start = end = sorted_rows[0]
-                            for row in sorted_rows[1:]:
-                                if row == end + 1:
-                                    end = row
-                                else:
-                                    ranges.append((start, end))
-                                    start = end = row
-                            ranges.append((start, end))
-                            
-                            hidden_count = 0
-                            for start_row, end_row in ranges:
-                                try:
-                                    rng = self.worksheet.range(f'A{start_row}:A{end_row}')
-                                    rng.api.entire_row.hidden.set(True)
-                                    hidden_count += (end_row - start_row + 1)
-                                except Exception as e:
-                                    self._log(f"Hide {start_row}:{end_row} Fehler: {e}")
-                            self._log(f"{hidden_count} Zeilen in {len(ranges)} Bereichen ausgeblendet")
                 else:
                     # ===== AutoFilter entfernen / Alle Zeilen einblenden =====
                     # Delegiere an clear_autofilter
@@ -2208,15 +2094,8 @@ end tell'''
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
             
-            is_windows = platform.system() == 'Windows'
-            self._log(f"clear_autofilter: Start (platform={platform.system()})")
-            
-            if is_windows:
-                # ===== WINDOWS: AutoFilter entfernen =====
-                return self._clear_autofilter_windows()
-            else:
-                # ===== macOS: Alle Zeilen einblenden =====
-                return self._clear_autofilter_macos()
+            self._log(f"clear_autofilter: Start")
+            return self._clear_autofilter_windows()
         except Exception as e:
             self._log(f"clear_autofilter Fehler: {e}")
             return {'success': False, 'error': str(e)}
@@ -2395,98 +2274,6 @@ end tell'''
             
         except Exception as e:
             self._log(f"Windows: clear_autofilter Fehler: {e}")
-            return {'success': False, 'error': str(e)}
-    
-    def _clear_autofilter_macos(self) -> Dict[str, Any]:
-        """macOS: Alle versteckten Zeilen einblenden (AutoFilter wird via row.hidden simuliert)."""
-        try:
-            used_range = self.worksheet.used_range
-            if used_range:
-                last_row = used_range.last_cell.row
-            else:
-                last_row = 1
-            
-            self._log(f"macOS: Einblenden aller Zeilen (last_row={last_row})")
-            
-            if last_row <= 1:
-                self._log("macOS: Nur Header, nichts zum Einblenden")
-                return {'success': True, 'filterCount': 0}
-            
-            # Methode 1: Alle Zeilen des Sheets auf einmal einblenden
-            unhidden = False
-            try:
-                self.worksheet.api.rows.hidden.set(False)
-                self._log("macOS: Methode 1 (sheet.rows.hidden=False) erfolgreich")
-                unhidden = True
-            except Exception as e1:
-                self._log(f"macOS: Methode 1 fehlgeschlagen: {e1}")
-            
-            # Methode 2: Bereich A2:A{last_row} einblenden
-            if not unhidden:
-                try:
-                    all_rows = self.worksheet.range(f'A2:A{last_row}')
-                    all_rows.api.entire_row.hidden.set(False)
-                    self._log(f"macOS: Methode 2 (range A2:A{last_row}) erfolgreich")
-                    unhidden = True
-                except Exception as e2:
-                    self._log(f"macOS: Methode 2 fehlgeschlagen: {e2}")
-            
-            # Methode 3: Zeilen einzeln in Blöcken von 100 einblenden
-            if not unhidden:
-                self._log("macOS: Methode 3 — blockweise Einblendung")
-                block_size = 100
-                error_count = 0
-                for start in range(2, last_row + 1, block_size):
-                    end = min(start + block_size - 1, last_row)
-                    try:
-                        rng = self.worksheet.range(f'A{start}:A{end}')
-                        rng.api.entire_row.hidden.set(False)
-                    except Exception as e3:
-                        error_count += 1
-                        self._log(f"macOS: Block {start}-{end} Fehler: {e3}")
-                if error_count == 0:
-                    unhidden = True
-                    self._log("macOS: Methode 3 erfolgreich")
-                else:
-                    self._log(f"macOS: Methode 3 mit {error_count} Fehlern")
-            
-            # Methode 4: Zeile für Zeile (letzter Versuch)
-            if not unhidden:
-                self._log("macOS: Methode 4 — zeilenweise Einblendung")
-                for row_num in range(2, last_row + 1):
-                    try:
-                        self.worksheet.range(f'A{row_num}').api.entire_row.hidden.set(False)
-                    except:
-                        pass
-                unhidden = True
-                self._log("macOS: Methode 4 abgeschlossen")
-            
-            if not unhidden:
-                return {'success': False, 'error': 'Konnte Zeilen nicht einblenden'}
-            
-            # Scroll-Position auf A1 zurücksetzen
-            # Nach Filter-Reset springt Excel oft auf einen leeren Bereich
-            try:
-                import subprocess
-                script = '''
-                    tell application "Microsoft Excel"
-                        tell active window
-                            set scroll row of active pane to 1
-                            set scroll column of active pane to 1
-                        end tell
-                        select range "A1" of active sheet
-                    end tell
-                '''
-                subprocess.run(['osascript', '-e', script], timeout=5, capture_output=True)
-                self._log("macOS: Scroll-Position auf A1 zurückgesetzt")
-            except Exception as e:
-                self._log(f"macOS: Scroll-Reset Fehler (ignoriert): {e}")
-            
-            self._log("macOS: clear_autofilter OK")
-            return {'success': True, 'filterCount': 0}
-            
-        except Exception as e:
-            self._log(f"macOS: clear_autofilter Fehler: {e}")
             return {'success': False, 'error': str(e)}
     
     def switch_sheet(self, sheet_name: str, include_data: bool = False) -> Dict[str, Any]:
