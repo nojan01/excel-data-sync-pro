@@ -14,6 +14,7 @@ Vorteile:
 Kommunikation: JSON über stdin/stdout
 """
 
+import atexit
 import json
 import sys
 import os
@@ -90,6 +91,15 @@ class ExcelLiveSession:
         self._undo_in_progress = False
         self.MAX_UNDO = 10
         self._last_undo_snapshot_time: float = 0  # Für Drosselung bei schnellen Edits
+        
+        # Undo-Verzeichnis: Windows Temp (lokal, immer schreibbar)
+        import tempfile
+        self._undo_dir = os.path.join(tempfile.gettempdir(), 'ExcelDataSyncPro_undo')
+        try:
+            os.makedirs(self._undo_dir, exist_ok=True)
+            self._cleanup_leftover_undo_files()
+        except Exception:
+            pass
         
         # Recovery-System
         self.backup_path: Optional[str] = None
@@ -494,6 +504,32 @@ class ExcelLiveSession:
             except Exception as act_err:
                 self._log(f"Sheet activate() fehlgeschlagen: {act_err}")
             
+            # Berechnung NACH dem Öffnen erneut auf manual forcieren
+            # (Workbooks können ihre eigene Einstellung mitbringen und auf automatic zurücksetzen)
+            try:
+                self.app.calculation = 'manual'
+                self.app.enable_events = False
+                self._log("calculation='manual' + enable_events=False für gesamte Session")
+            except Exception as calc_err:
+                self._log(f"Session-Calc-Setup fehlgeschlagen: {calc_err}")
+            
+            # Bedingte Formatierung deaktivieren (Performance-Optimierung)
+            # CF-Regeln die über die gesamte Datei gehen verursachen massive
+            # Recalculations bei JEDER Zelländerung → komplett abschalten
+            has_cf = False
+            if platform.system() == 'Windows':
+                try:
+                    cf_count = self.worksheet.api.Cells.FormatConditions.Count
+                    has_cf = cf_count > 0
+                    self._log(f"FormatConditions.Count = {cf_count}")
+                except Exception:
+                    pass
+                try:
+                    self.worksheet.api.EnableFormatConditionsCalculation = False
+                    self._log("EnableFormatConditionsCalculation = False")
+                except Exception as cf_err:
+                    self._log(f"CF-Deaktivierung fehlgeschlagen: {cf_err}")
+            
             # Recovery-System initialisieren
             self.backup_path = self._create_backup(file_path)
             self.journal_path = self._init_journal(file_path)
@@ -514,8 +550,8 @@ class ExcelLiveSession:
                     pass
             
             _total = _time.time() - _t0
-            self._log(f"Datei geöffnet in {_total:.1f}s, Sheet: {sheet_name}, Sheets: {sheet_names}, ReadOnly: {is_read_only}")
-            return {'success': True, 'sheets': sheet_names, 'backupPath': self.backup_path, 'readOnly': is_read_only}
+            self._log(f"Datei geöffnet in {_total:.1f}s, Sheet: {sheet_name}, Sheets: {sheet_names}, ReadOnly: {is_read_only}, HasCF: {has_cf}")
+            return {'success': True, 'sheets': sheet_names, 'backupPath': self.backup_path, 'readOnly': is_read_only, 'hasConditionalFormatting': has_cf}
             
         except Exception as e:
             self._log(f"Fehler beim Öffnen nach {_time.time() - _t0:.1f}s: {e}")
@@ -552,6 +588,16 @@ class ExcelLiveSession:
             else:
                 effective_password = None
             
+            # Vor dem Speichern: Berechnung einmalig triggern, damit Formeln aktuell sind
+            if platform.system() == 'Windows':
+                try:
+                    self.app.calculation = 'automatic'  # triggert 1× Recalc
+                    self.app.enable_events = True
+                    if self.worksheet:
+                        self.worksheet.api.EnableFormatConditionsCalculation = True
+                except Exception as recalc_err:
+                    self._log(f"Pre-Save Recalc fehlgeschlagen: {recalc_err}")
+            
             if output_path and output_path != self.file_path:
                 self._log(f"Speichere unter: {output_path}")
                 
@@ -580,6 +626,17 @@ class ExcelLiveSession:
             # Passwort aktualisieren
             if password is not None:
                 self.file_password = password if password else None
+            
+            # Nach dem Speichern: Session-Performance-Modus wiederherstellen
+            if platform.system() == 'Windows':
+                try:
+                    self.app.calculation = 'manual'
+                    self.app.enable_events = False
+                    if self.worksheet:
+                        self.worksheet.api.EnableFormatConditionsCalculation = False
+                    self._log("Session-Performance-Modus nach Save wiederhergestellt")
+                except Exception as restore_err:
+                    self._log(f"Post-Save Restore fehlgeschlagen: {restore_err}")
             
             _t1 = _time.time()
             self._log(f"save_file: Excel save took {(_t1 - _t0)*1000:.0f}ms")
@@ -652,20 +709,21 @@ class ExcelLiveSession:
             return
         
         try:
-            import tempfile
             # Gleiche Dateiendung wie Original verwenden
             _, ext = os.path.splitext(self.file_path)
             if not ext:
                 ext = '.xlsx'
             
-            # Eindeutiger Temp-Dateiname
-            temp_fd, temp_path = tempfile.mkstemp(
-                suffix=ext,
-                prefix=f'_undo_{os.getpid()}_'
-            )
-            os.close(temp_fd)  # Dateihandle schließen, SaveCopyAs braucht nur den Pfad
+            # Lokal im Scriptverzeichnis speichern (nicht im Temp/Netzwerk!)
+            filename = f'_undo_{os.getpid()}_{int(time.time() * 1000)}{ext}'
+            temp_path = os.path.join(self._undo_dir, filename)
             
             if platform.system() == 'Windows':
+                # CutCopyMode zurücksetzen vor SaveCopyAs (verhindert Clipboard-Konflikte/Hänger)
+                try:
+                    self.app.api.CutCopyMode = False
+                except Exception:
+                    pass
                 # SaveCopyAs: Speichert eine Kopie OHNE das offene Workbook zu ändern
                 self.workbook.api.SaveCopyAs(temp_path)
             else:
@@ -692,8 +750,37 @@ class ExcelLiveSession:
         except Exception as e:
             self._log(f"Undo-Snapshot Fehler (Operation wird trotzdem ausgeführt): {e}")
     
+    def _push_undo_command(self, label: str, action: str, params: Dict[str, Any]):
+        """Speichert eine Undo-Operation als Gegenbefehl (kein Disk-I/O).
+        
+        Statt das gesamte Workbook zu kopieren, wird nur die inverse Operation
+        gespeichert. Extrem schnell, auch bei großen Dateien über Netzwerk.
+        
+        Args:
+            label: Beschreibung (wird beim Undo angezeigt)
+            action: Name der inversen Methode (z.B. 'delete_row', 'move_column')
+            params: Parameter für die inverse Methode
+        """
+        if self._undo_in_progress:
+            return
+        
+        self.undo_stack.append({
+            'type': 'command',
+            'label': label,
+            'action': action,
+            'params': params
+        })
+        
+        while len(self.undo_stack) > self.MAX_UNDO:
+            old = self.undo_stack.pop(0)
+            self._cleanup_undo_entry(old)
+        
+        self._log(f"Undo-Command: {label} → {action}({params})")
+    
     def _cleanup_undo_entry(self, entry: Dict):
-        """Löscht die Temp-Datei eines Undo-Eintrags."""
+        """Löscht die Temp-Datei eines Undo-Eintrags (nur für Snapshots)."""
+        if entry.get('type') != 'snapshot':
+            return
         try:
             temp_path = entry.get('temp_path')
             if temp_path and os.path.exists(temp_path):
@@ -706,14 +793,26 @@ class ExcelLiveSession:
         for entry in self.undo_stack:
             self._cleanup_undo_entry(entry)
         self.undo_stack.clear()
+        self._cleanup_leftover_undo_files()
         self._log("Alle Undo-Temp-Dateien aufgeräumt")
+    
+    def _cleanup_leftover_undo_files(self):
+        """Löscht alle Dateien im _undo/ Verzeichnis (Reste von Abstürzen)."""
+        try:
+            if os.path.isdir(self._undo_dir):
+                for f in os.listdir(self._undo_dir):
+                    fp = os.path.join(self._undo_dir, f)
+                    if os.path.isfile(fp):
+                        os.unlink(fp)
+        except Exception as e:
+            self._log(f"Undo-Cleanup Fehler: {e}")
     
     def undo(self) -> Dict[str, Any]:
         """Macht die letzte Aktion rückgängig.
         
-        Stellt den kompletten Workbook-Zustand aus dem Snapshot wieder her:
-        Schließt das Workbook, kopiert den Snapshot zurück, öffnet es erneut.
-        100% Fidelity: Formatierung, Formeln, bedingte Formatierung — alles.
+        Hybrides Undo-System:
+        - type='command': Führt die inverse Operation aus (kein Disk-I/O, blitzschnell)
+        - type='snapshot': Stellt kompletten Workbook-Zustand aus Datei wieder her (nur bei Löschungen)
         """
         try:
             if not self.file_path:
@@ -724,112 +823,15 @@ class ExcelLiveSession:
             
             entry = self.undo_stack.pop()
             label = entry.get('label', 'Unbekannt')
-            temp_path = entry.get('temp_path')
-            sheet_name = entry.get('sheet_name', self.sheet_name)
-            
-            if not temp_path or not os.path.exists(temp_path):
-                return {'success': False, 'error': 'Undo-Snapshot nicht gefunden'}
+            entry_type = entry.get('type', 'snapshot')
             
             self._undo_in_progress = True
-            original_path = self.file_path
-            password = self.file_password
-            
-            self._log(f"Undo: {label} — Restore von {os.path.basename(temp_path)}")
             
             try:
-                # 0. Fenster-Zustand sichern (damit Excel nicht minimiert wird)
-                window_state = None
-                app_visible = True
-                try:
-                    if platform.system() == 'Windows':
-                        # xlMaximized=-4137, xlMinimized=-4140, xlNormal=-4143
-                        window_state = self.app.api.WindowState
-                        app_visible = self.app.api.Visible
-                    else:
-                        try:
-                            window_state = self.app.api.bounds.get()
-                        except Exception:
-                            pass
-                except Exception as ws_err:
-                    self._log(f"Undo: WindowState lesen Fehler: {ws_err}")
-                
-                # 1. Workbook schließen (ohne Speichern)
-                try:
-                    self.app.display_alerts = False
-                    if platform.system() == 'Windows':
-                        self.workbook.api.Saved = True  # Verhindert "Speichern?"-Dialog
-                        self.workbook.api.Close(SaveChanges=False)
-                    else:
-                        try:
-                            self.workbook.api.saved.set(True)
-                        except Exception:
-                            pass
-                        self.workbook.close()
-                except Exception as close_err:
-                    self._log(f"Undo: Schließen-Fehler (wird ignoriert): {close_err}")
-                
-                self.workbook = None
-                self.worksheet = None
-                
-                # 2. Snapshot-Datei → Original-Pfad kopieren
-                self._log(f"Undo: Kopiere Snapshot → {os.path.basename(original_path)}")
-                shutil.copy2(temp_path, original_path)
-                
-                # 3. Workbook wieder öffnen
-                self._log("Undo: Workbook wieder öffnen...")
-                try:
-                    self.app.screen_updating = False
-                except Exception:
-                    pass
-                
-                if password:
-                    self.workbook = self.app.books.open(original_path, update_links=False, password=password)
+                if entry_type == 'command':
+                    return self._undo_command(entry, label)
                 else:
-                    self.workbook = self.app.books.open(original_path, update_links=False)
-                
-                # 4. Sheet aktivieren
-                try:
-                    self.worksheet = self.workbook.sheets[sheet_name]
-                    self.sheet_name = sheet_name
-                except Exception:
-                    # Fallback: Erstes Sheet
-                    self.worksheet = self.workbook.sheets[0]
-                    self.sheet_name = self.worksheet.name
-                    self._log(f"Undo: Sheet '{sheet_name}' nicht gefunden, verwende '{self.sheet_name}'")
-                
-                self.worksheet.activate()
-                self.file_path = original_path
-                
-                # 5. Fenster-Zustand wiederherstellen
-                try:
-                    if platform.system() == 'Windows':
-                        if app_visible:
-                            self.app.api.Visible = True
-                        if window_state is not None:
-                            self.app.api.WindowState = window_state
-                    else:
-                        if window_state is not None:
-                            try:
-                                self.app.api.bounds.set(window_state)
-                            except Exception:
-                                pass
-                except Exception as ws_err:
-                    self._log(f"Undo: WindowState wiederherstellen Fehler: {ws_err}")
-                
-                try:
-                    self.app.screen_updating = True
-                except Exception:
-                    pass
-                
-                # 5. Temp-Datei aufräumen
-                try:
-                    os.unlink(temp_path)
-                except Exception:
-                    pass
-                
-                self._log(f"Undo erfolgreich: {label} (noch {len(self.undo_stack)} Undo-Schritte)")
-                return {'success': True, 'undone': label, 'undoCount': len(self.undo_stack)}
-                
+                    return self._undo_snapshot(entry, label)
             finally:
                 self._undo_in_progress = False
             
@@ -837,6 +839,130 @@ class ExcelLiveSession:
             self._undo_in_progress = False
             self._log(f"Undo Fehler: {e}")
             return {'success': False, 'error': str(e)}
+    
+    def _undo_command(self, entry: Dict, label: str) -> Dict[str, Any]:
+        """Führt eine inverse Operation aus (Command-basiertes Undo)."""
+        action = entry.get('action')
+        params = entry.get('params', {})
+        
+        self._log(f"Undo (Command): {label} → {action}({params})")
+        
+        # Dispatch zur inversen Methode
+        method = getattr(self, action, None)
+        if not method:
+            return {'success': False, 'error': f'Unbekannte Undo-Aktion: {action}'}
+        
+        result = method(**params)
+        
+        if result.get('success'):
+            self._log(f"Undo erfolgreich: {label} (noch {len(self.undo_stack)} Undo-Schritte)")
+            return {'success': True, 'undone': label, 'action': action, 'undoCount': len(self.undo_stack)}
+        else:
+            return {'success': False, 'error': f'Undo fehlgeschlagen: {result.get("error")}'}
+    
+    def _undo_snapshot(self, entry: Dict, label: str) -> Dict[str, Any]:
+        """Stellt den Workbook-Zustand aus einem Snapshot wieder her (nur für Löschungen)."""
+        temp_path = entry.get('temp_path')
+        sheet_name = entry.get('sheet_name', self.sheet_name)
+        
+        if not temp_path or not os.path.exists(temp_path):
+            return {'success': False, 'error': 'Undo-Snapshot nicht gefunden'}
+        
+        original_path = self.file_path
+        password = self.file_password
+        
+        self._log(f"Undo (Snapshot): {label} — Restore von {os.path.basename(temp_path)}")
+        
+        # 0. Fenster-Zustand sichern
+        window_state = None
+        app_visible = True
+        try:
+            if platform.system() == 'Windows':
+                window_state = self.app.api.WindowState
+                app_visible = self.app.api.Visible
+            else:
+                try:
+                    window_state = self.app.api.bounds.get()
+                except Exception:
+                    pass
+        except Exception as ws_err:
+            self._log(f"Undo: WindowState lesen Fehler: {ws_err}")
+        
+        # 1. Workbook schließen (ohne Speichern)
+        try:
+            self.app.display_alerts = False
+            if platform.system() == 'Windows':
+                self.workbook.api.Saved = True
+                self.workbook.api.Close(SaveChanges=False)
+            else:
+                try:
+                    self.workbook.api.saved.set(True)
+                except Exception:
+                    pass
+                self.workbook.close()
+        except Exception as close_err:
+            self._log(f"Undo: Schließen-Fehler (wird ignoriert): {close_err}")
+        
+        self.workbook = None
+        self.worksheet = None
+        
+        # 2. Snapshot → Original kopieren
+        self._log(f"Undo: Kopiere Snapshot → {os.path.basename(original_path)}")
+        shutil.copy2(temp_path, original_path)
+        
+        # 3. Workbook wieder öffnen
+        self._log("Undo: Workbook wieder öffnen...")
+        try:
+            self.app.screen_updating = False
+        except Exception:
+            pass
+        
+        if password:
+            self.workbook = self.app.books.open(original_path, update_links=False, password=password)
+        else:
+            self.workbook = self.app.books.open(original_path, update_links=False)
+        
+        # 4. Sheet aktivieren
+        try:
+            self.worksheet = self.workbook.sheets[sheet_name]
+            self.sheet_name = sheet_name
+        except Exception:
+            self.worksheet = self.workbook.sheets[0]
+            self.sheet_name = self.worksheet.name
+            self._log(f"Undo: Sheet '{sheet_name}' nicht gefunden, verwende '{self.sheet_name}'")
+        
+        self.worksheet.activate()
+        self.file_path = original_path
+        
+        # 5. Fenster-Zustand wiederherstellen
+        try:
+            if platform.system() == 'Windows':
+                if app_visible:
+                    self.app.api.Visible = True
+                if window_state is not None:
+                    self.app.api.WindowState = window_state
+            else:
+                if window_state is not None:
+                    try:
+                        self.app.api.bounds.set(window_state)
+                    except Exception:
+                        pass
+        except Exception as ws_err:
+            self._log(f"Undo: WindowState wiederherstellen Fehler: {ws_err}")
+        
+        try:
+            self.app.screen_updating = True
+        except Exception:
+            pass
+        
+        # 6. Temp-Datei aufräumen
+        try:
+            os.unlink(temp_path)
+        except Exception:
+            pass
+        
+        self._log(f"Undo erfolgreich: {label} (noch {len(self.undo_stack)} Undo-Schritte)")
+        return {'success': True, 'undone': label, 'undoCount': len(self.undo_stack)}
     
     def close_session(self, save: bool = False) -> Dict[str, Any]:
         """Schließt die Session
@@ -852,6 +978,21 @@ class ExcelLiveSession:
                     self.app.display_alerts = False
                 except Exception as e:
                     self._log(f"display_alerts Fehler: {e}")
+            
+            # Session-weite Einstellungen zurücksetzen
+            if self.app and platform.system() == 'Windows':
+                try:
+                    self.app.calculation = 'automatic'
+                    self.app.enable_events = True
+                    self._log("calculation='automatic' + enable_events=True (Session-Ende)")
+                except Exception as calc_err:
+                    self._log(f"Calc-Restore fehlgeschlagen: {calc_err}")
+            if self.worksheet and platform.system() == 'Windows':
+                try:
+                    self.worksheet.api.EnableFormatConditionsCalculation = True
+                    self._log("EnableFormatConditionsCalculation = True (Session-Ende)")
+                except Exception as cf_err:
+                    self._log(f"CF-Reaktivierung fehlgeschlagen: {cf_err}")
             
             if self.workbook:
                 try:
@@ -925,6 +1066,25 @@ class ExcelLiveSession:
             self._log(f"Fehler beim Löschen der Zeile: {e}")
             return {'success': False, 'error': str(e)}
     
+    def delete_rows_range(self, row_index: int, count: int = 1) -> Dict[str, Any]:
+        """Löscht mehrere aufeinanderfolgende Zeilen (für Undo von insert_row).
+        Kein Undo-Snapshot — wird nur intern von _undo_command aufgerufen."""
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            excel_row_start = row_index + 2
+            excel_row_end = excel_row_start + count - 1
+            
+            self._log(f"delete_rows_range: Lösche {count} Zeile(n) ab {excel_row_start}")
+            self.worksheet.range(f'{excel_row_start}:{excel_row_end}').delete()
+            
+            return {'success': True, 'deletedAt': row_index, 'count': count}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Löschen der Zeilen: {e}")
+            return {'success': False, 'error': str(e)}
+    
     def insert_row(self, row_index: int, count: int = 1) -> Dict[str, Any]:
         """Fügt leere Zeilen ein (0-basierter Index, ohne Header)"""
         try:
@@ -934,8 +1094,12 @@ class ExcelLiveSession:
             excel_row_start = row_index + 2
             excel_row_end = excel_row_start + count - 1
             
-            # Undo-Snapshot: Komplettes Workbook sichern
-            self._push_undo_snapshot(f'{count} Zeile(n) eingefügt')
+            # Undo: Inverse Operation = eingefügte Zeilen wieder löschen
+            self._push_undo_command(
+                f'{count} Zeile(n) eingefügt',
+                'delete_rows_range',
+                {'row_index': row_index, 'count': count}
+            )
             
             self._log(f"Füge {count} Zeile(n) bei {excel_row_start} ein")
             self.worksheet.range(f'{excel_row_start}:{excel_row_end}').insert(shift='down')
@@ -970,8 +1134,12 @@ class ExcelLiveSession:
             excel_from = from_index + 2
             excel_to = to_index + 2
             
-            # Undo-Snapshot: Komplettes Workbook sichern
-            self._push_undo_snapshot(f'Zeile verschoben ({from_index + 1} → {to_index + 1})')
+            # Undo: Inverse Operation = zurück verschieben
+            self._push_undo_command(
+                f'Zeile verschoben ({from_index + 1} → {to_index + 1})',
+                'move_row',
+                {'from_index': to_index, 'to_index': from_index}
+            )
             
             self._log(f"Verschiebe Zeile {excel_from} nach {excel_to}")
             
@@ -1183,6 +1351,28 @@ class ExcelLiveSession:
             self._log(f"Fehler beim Löschen der Spalte: {e}")
             return {'success': False, 'error': str(e)}
     
+    def delete_columns_range(self, col_index: int, count: int = 1) -> Dict[str, Any]:
+        """Löscht mehrere aufeinanderfolgende Spalten (für Undo von insert_column).
+        Kein Undo-Snapshot — wird nur intern von _undo_command aufgerufen."""
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            for i in range(count - 1, -1, -1):  # Rückwärts löschen damit Indizes stimmen
+                excel_col = col_index + 1 + i
+                col_letter = self._get_column_letter(excel_col)
+                self._log(f"delete_columns_range: Lösche Spalte {col_letter}")
+                if platform.system() == 'Darwin':
+                    self.worksheet.range(f'{col_letter}:{col_letter}').api.entire_column.delete()
+                else:
+                    self.worksheet.range(f'{col_letter}:{col_letter}').api.Delete()
+            
+            return {'success': True, 'deletedAt': col_index, 'count': count}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Löschen der Spalten: {e}")
+            return {'success': False, 'error': str(e)}
+    
     def insert_column(self, col_index: int, count: int = 1, headers: list = None) -> Dict[str, Any]:
         """Fügt leere Spalten ein"""
         try:
@@ -1191,8 +1381,12 @@ class ExcelLiveSession:
             
             excel_col = col_index + 1
             
-            # Undo-Snapshot: Komplettes Workbook sichern
-            self._push_undo_snapshot(f'{count} Spalte(n) eingefügt')
+            # Undo: Inverse Operation = eingefügte Spalten wieder löschen
+            self._push_undo_command(
+                f'{count} Spalte(n) eingefügt',
+                'delete_columns_range',
+                {'col_index': col_index, 'count': count}
+            )
             
             for i in range(count):
                 insert_letter = self._get_column_letter(excel_col + i)
@@ -1215,7 +1409,7 @@ class ExcelLiveSession:
             return {'success': False, 'error': str(e)}
     
     def move_column(self, from_index: int, to_index: int) -> Dict[str, Any]:
-        """Verschiebt eine Spalte per Cut & Insert (verhindert doppelte Header)"""
+        """Verschiebt eine Spalte per Insert → Copy → Delete (zuverlässig auf allen Plattformen)"""
         try:
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
@@ -1227,44 +1421,62 @@ class ExcelLiveSession:
             excel_to = to_index + 1
             
             source_letter = self._get_column_letter(excel_from)
+            target_letter = self._get_column_letter(excel_to)
             
-            # Undo-Snapshot: Komplettes Workbook sichern
-            self._push_undo_snapshot(f'Spalte verschoben ({from_index + 1} → {to_index + 1})')
+            # Undo: Inverse Operation = zurück verschieben
+            self._push_undo_command(
+                f'Spalte verschoben ({from_index + 1} → {to_index + 1})',
+                'move_column',
+                {'from_index': to_index, 'to_index': from_index}
+            )
             
             self._log(f"Verschiebe Spalte {source_letter} (idx {from_index}) -> idx {to_index}")
             
             last_row = self.worksheet.used_range.last_cell.row if self.worksheet.used_range else 1000
             
-            # Schritt 1: Quelldaten in Zwischenspeicher lesen (Header + Daten)
-            source_rng = self.worksheet.range(f'{source_letter}1:{source_letter}{last_row}')
-            col_data = source_rng.value
-            # Einzelwert in Liste umwandeln
-            if not isinstance(col_data, list):
-                col_data = [col_data]
+            # Screen-Updates + Events aus für atomare Operation (verhindert Excel-Hänger)
+            app = self.app
+            app.screen_updating = False
+            try:
+                app.api.EnableEvents = False
+            except Exception:
+                pass
             
-            # Schritt 2: Quellspalte löschen
-            self.worksheet.range(f'{source_letter}:{source_letter}').delete()
+            try:
+                # Verwende Cut → Insert (atomar, keine temporäre Header-Duplikation)
+                # Bei Insert+Copy+Delete gab es bei Tables/ListObjects doppelte Header
+                # → Excel hängt automatisch eine Nummer an (z.B. "Name2")
+                
+                source_col = self.worksheet.range(f'{source_letter}:{source_letter}')
+                
+                if from_index > to_index:
+                    # Nach LINKS verschieben: Cut Quelle, Insert vor Ziel
+                    target_col = self.worksheet.range(f'{target_letter}:{target_letter}')
+                    source_col.api.Cut()
+                    target_col.api.Insert()
+                else:
+                    # Nach RECHTS verschieben: Cut Quelle, Insert vor Ziel+1
+                    after_target_letter = self._get_column_letter(excel_to + 1)
+                    after_target_col = self.worksheet.range(f'{after_target_letter}:{after_target_letter}')
+                    source_col.api.Cut()
+                    after_target_col.api.Insert()
+                
+                # CutCopyMode zurücksetzen
+                try:
+                    app.api.CutCopyMode = False
+                except Exception:
+                    pass
+            finally:
+                # Events + Screen-Updates immer wieder aktivieren
+                try:
+                    app.api.EnableEvents = True
+                except Exception:
+                    pass
+                app.screen_updating = True
             
-            # Schritt 3: Zielposition anpassen (nach Löschung verschieben sich Indizes)
-            if from_index < to_index:
-                # Spalte war links, nach Löschung verschiebt sich Ziel um 1 nach links
-                insert_col = excel_to  # excel_to - 1 + 1 = excel_to
-            else:
-                # Spalte war rechts, Ziel bleibt gleich
-                insert_col = excel_to
-            
-            insert_letter = self._get_column_letter(insert_col)
-            
-            # Schritt 4: Leere Spalte an Zielposition einfügen
-            self.worksheet.range(f'{insert_letter}:{insert_letter}').insert(shift='right')
-            
-            # Schritt 5: Daten in neue Spalte schreiben
-            target_rng = self.worksheet.range(f'{insert_letter}1:{insert_letter}{len(col_data)}')
-            # xlwings erwartet für vertikale Ranges eine verschachtelte Liste
-            target_rng.value = [[v] for v in col_data]
-            
-            # Screen refresh erzwingen
-            self._force_screen_refresh()
+            # Journal-Eintrag
+            self._journal_add('moveColumn', {'fromIndex': from_index, 'toIndex': to_index})
+            self._check_auto_save()
             
             return {'success': True, 'movedFrom': from_index, 'movedTo': to_index}
             
@@ -1301,6 +1513,65 @@ class ExcelLiveSession:
     # ZELL-OPERATIONEN
     # =========================================================================
     
+    def restore_cell_value(self, row_index: int, col_index: int, value: Any) -> Dict[str, Any]:
+        """Stellt einen einzelnen Zellwert wieder her (nur für Undo-Dispatch)."""
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            excel_row = row_index + 2
+            excel_col = col_index + 1
+            self._log(f"restore_cell_value (Undo): ({excel_row},{excel_col}) = {value!r}")
+            if platform.system() == 'Darwin':
+                self.worksheet.range((excel_row, excel_col)).value = value
+            else:
+                self.app.screen_updating = False
+                self.worksheet.range((excel_row, excel_col)).value = value
+                self.app.screen_updating = True
+            return {'success': True, 'row': row_index, 'col': col_index, 'value': value}
+        except Exception as e:
+            self._log(f"Fehler restore_cell_value: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def restore_cells_batch(self, cells: list) -> Dict[str, Any]:
+        """Stellt mehrere Zellwerte wieder her (nur für Undo-Dispatch)."""
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            if not cells:
+                return {'success': True, 'count': 0}
+            self._log(f"restore_cells_batch (Undo): {len(cells)} Zellen")
+            app = self.app
+            app.screen_updating = False
+            try:
+                from collections import defaultdict
+                rows_map = defaultdict(dict)
+                for cell in cells:
+                    r = cell.get('row')
+                    c = cell.get('col')
+                    if r is not None and c is not None:
+                        rows_map[r][c] = cell.get('value')
+                for row_index in sorted(rows_map.keys()):
+                    cols = rows_map[row_index]
+                    excel_row = row_index + 2
+                    if len(cols) == 1:
+                        col_index = next(iter(cols))
+                        self.worksheet.range((excel_row, col_index + 1)).value = cols[col_index]
+                    else:
+                        sorted_cols = sorted(cols.keys())
+                        min_c = sorted_cols[0]
+                        max_c = sorted_cols[-1]
+                        row_values = [cols.get(c) for c in range(min_c, max_c + 1)]
+                        start_letter = self._get_column_letter(min_c + 1)
+                        end_letter = self._get_column_letter(max_c + 1)
+                        rng = f'{start_letter}{excel_row}:{end_letter}{excel_row}'
+                        self.worksheet.range(rng).value = row_values
+            finally:
+                app.screen_updating = True
+            return {'success': True, 'count': len(cells)}
+        except Exception as e:
+            self._log(f"Fehler restore_cells_batch: {e}")
+            return {'success': False, 'error': str(e)}
+    
     def set_cell_value(self, row_index: int, col_index: int, value: Any) -> Dict[str, Any]:
         """Setzt den Wert einer einzelnen Zelle (formatierungsschonend)"""
         try:
@@ -1321,11 +1592,13 @@ class ExcelLiveSession:
                     self._log(f"set_cell_value: Zelle ({excel_row},{excel_col}) enthält Bild-Formel — Überschreiben verhindert")
                     return {'success': True, 'skipped': True, 'reason': 'image_formula'}
             
-            # Undo-Snapshot: Aggressive Drosselung (nur alle 10s)
-            now = time.time()
-            if now - self._last_undo_snapshot_time >= 10.0:
-                self._push_undo_snapshot(f'Zelle bearbeitet ({row_index + 1},{col_index + 1})')
-                self._last_undo_snapshot_time = now
+            # Alten Wert lesen für Undo
+            old_value = cell.value
+            self._push_undo_command(
+                f'Zelle ({row_index + 1},{col_index + 1}) geändert',
+                'restore_cell_value',
+                {'row_index': row_index, 'col_index': col_index, 'value': old_value}
+            )
             
             if platform.system() == 'Darwin':
                 self.worksheet.range((excel_row, excel_col)).value = value
@@ -1372,9 +1645,6 @@ class ExcelLiveSession:
             col_letter = self._get_column_letter(excel_col)
             range_addr = f'{col_letter}{excel_start_row}:{col_letter}{end_row}'
             
-            # Undo-Snapshot: Komplettes Workbook sichern
-            self._push_undo_snapshot(f'Spaltenwerte geändert (Spalte {col_letter})')
-            
             # Werte als vertikale Liste formatieren (jeder Wert in eigener Liste)
             vertical_values = [[v] for v in values]
             
@@ -1410,16 +1680,6 @@ class ExcelLiveSession:
             range_addr = f'{start_col_letter}{excel_row}:{end_col_letter}{excel_row}'
             
             self._log(f"set_row_values: row={row_index}, excel_row={excel_row}, cols={num_cols}, range={range_addr}")
-            
-            # Undo-Snapshot: Aggressive Drosselung bei schnellen aufeinanderfolgenden Edits
-            # SaveCopyAs / workbook.save() sind sehr teuer und können Excel blockieren
-            # Nur Snapshot erstellen wenn letzter > 10 Sekunden her
-            now = time.time()
-            if now - self._last_undo_snapshot_time >= 10.0:
-                self._push_undo_snapshot(f'Zeilenwerte geändert (Zeile {row_index + 1})')
-                self._last_undo_snapshot_time = now
-            else:
-                self._log(f"set_row_values: Undo-Snapshot übersprungen (letzter vor {now - self._last_undo_snapshot_time:.1f}s)")
             
             if platform.system() == 'Darwin':
                 # macOS: Direkt über AppleScript für zuverlässigen Display-Refresh
@@ -1505,11 +1765,7 @@ end tell'''
                 return
     
     def set_cells_batch(self, cells: list) -> Dict[str, Any]:
-        """Setzt mehrere Zellen auf einmal (für Suchen & Ersetzen)
-        
-        LEGACY: Wird nur noch für Einzelzellen verwendet.
-        Für Bulk-Ersetzungen: find_replace() nutzen.
-        """
+        """Setzt mehrere Zellen auf einmal — zeilenweise gruppiert für Performance."""
         try:
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
@@ -1519,63 +1775,58 @@ end tell'''
             
             self._log(f"set_cells_batch: Setze {len(cells)} Zellen")
             
-            # Undo-Snapshot: Komplettes Workbook sichern
-            self._push_undo_snapshot(f'{len(cells)} Zelle(n) geändert')
-            
             updated_count = 0
+            app = self.app
+            app.screen_updating = False
             
-            # Für kleine Batches (≤5 Zellen): Direkt schreiben
-            # screen_updating False→True erzwingt zuverlässigen Redraw
-            if len(cells) <= 5:
-                self.app.screen_updating = False
+            try:
+                # Zellen nach Zeile gruppieren für Range-Writes statt Einzelzellen
+                from collections import defaultdict
+                rows_map = defaultdict(dict)
                 for cell in cells:
-                    row_index = cell.get('row')
-                    col_index = cell.get('col')
-                    value = cell.get('value')
-                    
-                    if row_index is None or col_index is None:
+                    r = cell.get('row')
+                    c = cell.get('col')
+                    if r is None or c is None:
                         continue
-                    
+                    rows_map[r][c] = cell.get('value')
+                
+                # Alte Werte lesen für Undo (vor dem Schreiben)
+                old_cells = []
+                for row_index in sorted(rows_map.keys()):
+                    cols = rows_map[row_index]
+                    excel_row = row_index + 2
+                    for col_index in sorted(cols.keys()):
+                        old_val = self.worksheet.range((excel_row, col_index + 1)).value
+                        old_cells.append({'row': row_index, 'col': col_index, 'value': old_val})
+                
+                self._push_undo_command(
+                    f'{len(old_cells)} Zelle(n) geändert',
+                    'restore_cells_batch',
+                    {'cells': old_cells}
+                )
+                
+                for row_index in sorted(rows_map.keys()):
+                    cols = rows_map[row_index]
                     excel_row = row_index + 2  # +2 für Header
-                    excel_col = col_index + 1
                     
-                    self.worksheet.range((excel_row, excel_col)).value = value
-                    
-                    updated_count += 1
-                
-                # Screen-Refresh: False→True erzwingt kompletten Redraw
-                self.app.screen_updating = True
-            else:
-                # Performance-Optimierung nur für große Batches
-                app = self.app
-                original_screen_updating = app.screen_updating
-                original_calculation = app.calculation
-                
-                try:
-                    app.screen_updating = False
-                    app.calculation = 'manual'
-                    
-                    for cell in cells:
-                        row_index = cell.get('row')
-                        col_index = cell.get('col')
-                        value = cell.get('value')
-                        
-                        if row_index is None or col_index is None:
-                            continue
-                        
-                        excel_row = row_index + 2  # +2 für Header
-                        excel_col = col_index + 1
-                        
-                        self.worksheet.range((excel_row, excel_col)).value = value
+                    if len(cols) == 1:
+                        # Einzelzelle direkt setzen
+                        col_index = next(iter(cols))
+                        self.worksheet.range((excel_row, col_index + 1)).value = cols[col_index]
                         updated_count += 1
-                    
-                    # Am Ende: Formeln neu berechnen
-                    app.calculate()
-                    
-                finally:
-                    # Ursprüngliche Einstellungen wiederherstellen
-                    app.screen_updating = original_screen_updating
-                    app.calculation = original_calculation
+                    else:
+                        # Zusammenhängenden Bereich als Range schreiben
+                        sorted_cols = sorted(cols.keys())
+                        min_c = sorted_cols[0]
+                        max_c = sorted_cols[-1]
+                        row_values = [cols.get(c) for c in range(min_c, max_c + 1)]
+                        start_letter = self._get_column_letter(min_c + 1)
+                        end_letter = self._get_column_letter(max_c + 1)
+                        rng = f'{start_letter}{excel_row}:{end_letter}{excel_row}'
+                        self.worksheet.range(rng).value = row_values
+                        updated_count += len(cols)
+            finally:
+                app.screen_updating = True
             
             # Änderungen im Journal protokollieren (vereinfacht)
             self._journal_add('setCellsBatch', {
@@ -1690,6 +1941,12 @@ end tell'''
                 
                 # Native xlwings copy - kopiert Werte + alle Formatierungen
                 source_range.copy(destination=dest_range)
+                
+                # CutCopyMode sofort zurücksetzen (verhindert Clipboard-Konflikte bei SaveCopyAs)
+                try:
+                    app.api.CutCopyMode = False
+                except Exception:
+                    pass
                 
                 # Merged Cells am Ziel explizit anlegen
                 for merge in merged_regions:
@@ -2315,8 +2572,22 @@ end tell'''
             self.sheet_name = sheet_name
             self.worksheet.activate()
             
+            # CF-Erkennung für neues Sheet
+            has_cf = False
+            try:
+                cf_count = self.worksheet.api.Cells.FormatConditions.Count
+                has_cf = cf_count > 0
+                if has_cf:
+                    self._log(f"Sheet '{sheet_name}' hat {cf_count} Conditional Formatting Regeln")
+                    try:
+                        self.worksheet.api.EnableFormatConditionsCalculation = False
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            
             self._log(f"Sheet gewechselt zu: {sheet_name}")
-            result = {'success': True, 'sheetName': sheet_name, 'wasHidden': was_hidden}
+            result = {'success': True, 'sheetName': sheet_name, 'wasHidden': was_hidden, 'hasConditionalFormatting': has_cf}
             
             # Daten direkt mitliefern (kombinierter switch+getData in einem Roundtrip)
             if include_data:
@@ -2922,6 +3193,7 @@ end tell'''
 
 def main():
     session = ExcelLiveSession()
+    atexit.register(session._cleanup_all_undo_files)
     session.run()
 
 
