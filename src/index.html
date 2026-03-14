@@ -12970,10 +12970,8 @@
             const searchTerm = document.getElementById('findText').value;
             if (!searchTerm) return;
             
-            // Erst suchen falls nötig
-            if (findReplaceState.matches.length === 0 || searchTerm !== findReplaceState.lastSearchTerm) {
-                performFind();
-            }
+            // Immer frische Suche, damit nach Undo/Einzelersetzung alle Treffer korrekt sind
+            performFind();
             
             if (findReplaceState.matches.length === 0) return;
             
@@ -13183,9 +13181,13 @@
             document.getElementById('btnReplaceAll')?.addEventListener('click', replaceAll);
             
             // Undo Button
-            document.getElementById('btnFindReplaceUndo')?.addEventListener('click', () => {
-                if (undoExplorer()) {
+            document.getElementById('btnFindReplaceUndo')?.addEventListener('click', async () => {
+                if (await undoExplorer()) {
                     showFloatingStatus('Rückgängig gemacht');
+                    // Suchergebnisse aktualisieren, damit rückgängig gemachte Zellen wieder in matches sind
+                    if (findReplaceState.lastSearchTerm) {
+                        performFind();
+                    }
                 } else {
                     showFloatingStatus('Nichts zum Rückgängigmachen', true);
                 }
@@ -17681,6 +17683,11 @@
                 const remaining = undoResult.undoCount != null ? ` (${undoResult.undoCount} verbleibend)` : '';
                 showFloatingStatus(`↩️ Rückgängig: ${label}${remaining}`);
                 updateExplorerEditStatus();
+                
+                // Find&Replace Match-Liste aktualisieren (falls Panel offen)
+                if (findReplaceState.lastSearchTerm && document.getElementById('findReplacePanel')?.style.display !== 'none') {
+                    performFind();
+                }
                 
             } catch (err) {
                 console.error('[Undo] Fehler:', err);
