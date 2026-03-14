@@ -74,6 +74,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onBeforeClose: (callback) => ipcRenderer.on('app:beforeClose', callback),
     confirmClose: (canClose) => ipcRenderer.send('app:confirmClose', canClose),
 
+    // Prüft ob eine Datei per "Öffnen mit..." übergeben wurde (synchron, kein Event)
+    hasStartupFile: () => ipcRenderer.invoke('app:hasStartupFile'),
+
     // Event-Listener für "Öffnen mit..." - Datei wird per Kommandozeile/Doppelklick übergeben
     onOpenFile: (callback) => ipcRenderer.on('app:openFile', (event, filePath) => callback(filePath)),
 
@@ -85,7 +88,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     liveSessionStart: () => ipcRenderer.invoke('liveSession:start'),
     liveSessionInitApp: () => ipcRenderer.invoke('liveSession:initApp'),
     liveSessionOpenFile: (filePath, sheetName, password) => ipcRenderer.invoke('liveSession:openFile', filePath, sheetName, password),
-    liveSessionSaveFile: (outputPath, password) => ipcRenderer.invoke('liveSession:saveFile', outputPath, password),
+    liveSessionSaveFile: (outputPath, password, selectedSheets) => ipcRenderer.invoke('liveSession:saveFile', outputPath, password, selectedSheets),
     liveSessionClose: () => ipcRenderer.invoke('liveSession:close'),
 
     // Passwort-Funktionen

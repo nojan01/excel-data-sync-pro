@@ -1476,13 +1476,15 @@ function createWindow() {
         {
             label: 'View',
             submenu: [
-                // Reload/DevTools nur im Entwicklungsmodus
+                // Reload nur im Entwicklungsmodus
                 ...(isDevMode ? [
                     { role: 'reload', accelerator: 'CmdOrCtrl+R' },
                     { role: 'forceReload', accelerator: 'CmdOrCtrl+Shift+R' },
-                    { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Shift+I' },
                     { type: 'separator' },
                 ] : []),
+                // DevTools immer verfügbar (für Debugging beim Kunden)
+                { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Shift+I' },
+                { type: 'separator' },
                 { role: 'resetZoom' },
                 { role: 'zoomIn' },
                 { role: 'zoomOut' },
@@ -1615,6 +1617,12 @@ app.whenReady().then(async () => {
     }).catch(error => {
         console.log('[App] ⚠ Excel-Prüfung fehlgeschlagen:', error.message);
         securityLog.log('WARN', 'EXCEL_CHECK_FAILED', { error: error.message });
+    });
+
+    // IPC-Handler: Prüft ob eine Datei per "Öffnen mit..." übergeben wurde
+    // Wird vom Frontend abgefragt, um Config-Dateien-Ladung zu überspringen
+    ipcMain.handle('app:hasStartupFile', () => {
+        return pendingFileOpen || null;
     });
 
     // Prüfe ob eine Datei per Kommandozeile/"Öffnen mit..." übergeben wurde
@@ -4270,7 +4278,7 @@ ipcMain.handle('liveSession:openFile', async (event, filePath, sheetName, passwo
 
 // Datei speichern
 // password: undefined = altes Passwort beibehalten, null = Passwort entfernen, 'xxx' = neues Passwort
-ipcMain.handle('liveSession:saveFile', async (event, outputPath, password) => {
+ipcMain.handle('liveSession:saveFile', async (event, outputPath, password, selectedSheets) => {
     try {
         const session = getLiveSession();
         
@@ -4292,7 +4300,7 @@ ipcMain.handle('liveSession:saveFile', async (event, outputPath, password) => {
             pythonPasswordArg = password;
         }
         
-        const result = await session.saveFile(outputPath, pythonPasswordArg);
+        const result = await session.saveFile(outputPath, pythonPasswordArg, selectedSheets || null);
         
         if (!result.success) {
             return result;

@@ -490,12 +490,22 @@
             white-space: nowrap;
         }
         
+        .results-table tr.virtual-spacer td {
+            padding: 0;
+            border: none;
+        }
+        
         .results-table th {
             background: var(--bg-light);
             font-weight: 600;
             position: sticky;
             top: 0;
             z-index: 1;
+        }
+        
+        /* Virtual Scrolling: Zweite Header-Zeile unter der ersten positionieren */
+        #explorerTableHead tr:nth-child(2) th {
+            top: 22px; /* Höhe der Spaltenbuchstaben-Zeile */
         }
         
         /* Sortierbare Header */
@@ -3602,6 +3612,7 @@
             <input type="number" class="filter-days config-input" placeholder="Tage" style="width: 60px; display: none;" min="0">
             <input type="text" class="filter-date-from config-input" placeholder="Von..." style="width: 130px; display: none;" title="Von-Datum">
             <input type="text" class="filter-date-to config-input" placeholder="Bis..." style="width: 130px; display: none;" title="Bis-Datum">
+            <button type="button" class="btn btn-primary btn-sm sync-filter" style="padding: 2px 7px; font-size: 13px;" title="Filter an Excel senden (Enter)">⏎</button>
             <button type="button" class="btn btn-secondary btn-sm remove-filter" style="padding: 2px 8px;">✕</button>
         </div>
     </template>
@@ -4760,8 +4771,8 @@
                         explorerState.editedCells.set(cellKey, oldValue);
                     }
                     
-                    // Für Live-Session sammeln
-                    cellsToSync.push({ row: rowIndex, col: colIndex, value: oldValue });
+                    // Für Live-Session sammeln (oldValue = was aktuell in Excel steht = newValue der ursprünglichen Aktion)
+                    cellsToSync.push({ row: rowIndex, col: colIndex, value: oldValue, oldValue: subAction.newValue });
                     
                     // UI aktualisieren
                     const cell = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
@@ -4828,7 +4839,7 @@
             if (liveActive) {
                 try {
                     await window.electronAPI.liveSessionSetCellsBatch(_mapCellsBatchCols([
-                        { row: rowIndex, col: colIndex, value: oldValue }
+                        { row: rowIndex, col: colIndex, value: oldValue, oldValue: newValue }
                     ]));
                 } catch (error) {
                     console.error('[Undo] Live-Sync fehlgeschlagen:', error);
@@ -4910,8 +4921,8 @@
                         explorerState.editedCells.set(cellKey, newValue);
                     }
                     
-                    // Für Live-Session sammeln
-                    cellsToSync.push({ row: rowIndex, col: colIndex, value: newValue });
+                    // Für Live-Session sammeln (oldValue = was aktuell in Excel steht = oldValue der Aktion)
+                    cellsToSync.push({ row: rowIndex, col: colIndex, value: newValue, oldValue: subAction.oldValue });
                     
                     // UI aktualisieren
                     const cell = document.querySelector(`#explorerTableBody td[data-row="${rowIndex}"][data-col="${colIndex}"]`);
@@ -4973,7 +4984,7 @@
             if (liveActive) {
                 try {
                     await window.electronAPI.liveSessionSetCellsBatch(_mapCellsBatchCols([
-                        { row: rowIndex, col: colIndex, value: newValue }
+                        { row: rowIndex, col: colIndex, value: newValue, oldValue: oldValue }
                     ]));
                 } catch (error) {
                     console.error('[Redo] Live-Sync fehlgeschlagen:', error);
@@ -8259,7 +8270,7 @@
             elements.createTemplateModal.classList.add('hidden');
         }
         
-        async function applyLoadedConfig(config) {
+        async function applyLoadedConfig(config, skipFiles = false) {
             state.mapping = config.mapping || state.mapping;
             
             // Extra-Spalten Konfiguration laden
@@ -8292,6 +8303,15 @@
                 updateCommentPlaceholders();
                 updateFlagCommentVisibility();
                 updateColumnDisplays();
+            }
+            
+            // Bei "Öffnen mit...": Nur Mapping/Settings laden, Dateien überspringen
+            if (skipFiles) {
+                console.log('[Config] skipFiles=true → Quell-/Zieldatei/Template werden NICHT geladen');
+                updateMappingInfo();
+                updateMappingPreview();
+                saveConfig();
+                return;
             }
             
             // Lade Dateien aus Pfaden
@@ -8691,6 +8711,11 @@
             }
             
             try {
+                // Filter vor dem Speichern an Excel senden
+                if (explorerState.filters.some(f => f.column && f.value)) {
+                    await syncFiltersToExcel();
+                }
+                
                 const result = await window.electronAPI.liveSessionSaveFile(outputPath, password);
                 if (result.success) {
                     showFloatingStatus(`✓ Export via Live-Session: ${outputPath.split('/').pop()}`, 'success');
@@ -8788,7 +8813,12 @@
             liveSessionReady: false,   // true wenn Session bereit für Operationen
             excelVisible: false,       // true wenn Excel-Fenster sichtbar ist
             // VM-Map für Bild-Zellen (Copy&Paste von Zell-Bildern)
-            cellVmMap: {}  // "styleKeyRow-col" -> vmValue (z.B. "19-6" -> "1")
+            cellVmMap: {},  // "styleKeyRow-col" -> vmValue (z.B. "19-6" -> "1")
+            // Virtual Scrolling
+            virtualRowHeight: 30,     // Geschätzte Zeilenhöhe in px
+            virtualBufferRows: 50,    // Puffer-Zeilen ober-/unterhalb des Viewports
+            virtualVisibleStart: -1,  // Erster gerenderter Index in filteredData
+            virtualVisibleEnd: -1     // Letzter gerenderter Index in filteredData
         };
         
         // ==================== Data Join State & Functions ====================
@@ -11113,27 +11143,26 @@
             const oldMenu = document.querySelector('.hidden-rows-menu');
             if (oldMenu) oldMenu.remove();
             
-            let menuHtml = '<div class="context-menu hidden-rows-menu">';
-            menuHtml += `<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">☰ ${currentLanguage === 'en' ? 'Hidden Rows' : 'Versteckte Zeilen'}</div>`;
-            menuHtml += '<div class="context-menu-divider"></div>';
-            
-            // Liste der versteckten Zeilen (max 20 anzeigen)
             const hiddenArray = Array.from(explorerState.hiddenRows).sort((a, b) => a - b);
-            const displayLimit = 20;
             
-            hiddenArray.slice(0, displayLimit).forEach(rowIndex => {
+            let menuHtml = '<div class="context-menu hidden-rows-menu" style="display: flex; flex-direction: column; max-height: 400px;">';
+            // Sticky header
+            menuHtml += `<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default; flex-shrink: 0;">☰ ${currentLanguage === 'en' ? 'Hidden Rows' : 'Versteckte Zeilen'} (${hiddenArray.length})</div>`;
+            menuHtml += '<div class="context-menu-divider" style="flex-shrink: 0;"></div>';
+            // Sticky "Alle einblenden" button at top
+            menuHtml += `<div class="context-menu-item" data-action="show-all" style="color: var(--primary); font-weight: 600; flex-shrink: 0;">✅ ${currentLanguage === 'en' ? 'Show all' : 'Alle einblenden'}</div>`;
+            menuHtml += '<div class="context-menu-divider" style="flex-shrink: 0;"></div>';
+            // Scrollable list
+            menuHtml += '<div style="overflow-y: auto; flex: 1; min-height: 0;">';
+            
+            hiddenArray.forEach(rowIndex => {
                 const rowPreview = explorerState.data[rowIndex]?.slice(0, 2).join(', ').substring(0, 30) || '...';
                 menuHtml += `<div class="context-menu-item" data-action="show-row" data-row="${rowIndex}">
                     👁️ ${currentLanguage === 'en' ? 'Row' : 'Zeile'} ${rowIndex + 1}: ${escapeHtml(rowPreview)}...
                 </div>`;
             });
             
-            if (hiddenArray.length > displayLimit) {
-                menuHtml += `<div class="context-menu-item" style="color: var(--text-muted); cursor: default;">... und ${hiddenArray.length - displayLimit} weitere</div>`;
-            }
-            
-            menuHtml += '<div class="context-menu-divider"></div>';
-            menuHtml += '<div class="context-menu-item" data-action="show-all" style="color: var(--primary);">✅ Alle einblenden</div>';
+            menuHtml += '</div>'; // end scrollable
             menuHtml += '</div>';
             
             const menu = document.createElement('div');
@@ -11147,14 +11176,24 @@
             menuEl.style.left = rect.left + 'px';
             menuEl.style.top = (rect.bottom + 5) + 'px';
             
-            // Event-Handler
-            menuEl.querySelectorAll('[data-action="show-row"]').forEach(item => {
-                item.addEventListener('click', () => {
-                    const row = parseInt(item.dataset.row);
-                    showExplorerRow(row);
-                    menuEl.remove();
+            // Event-Handler für einzelne Zeilen (Event-Delegation für Performance bei vielen Einträgen)
+            const scrollContainer = menuEl.querySelector('[style*="overflow-y"]');
+            if (scrollContainer) {
+                scrollContainer.addEventListener('click', (evt) => {
+                    const item = evt.target.closest('[data-action="show-row"]');
+                    if (item) {
+                        const row = parseInt(item.dataset.row);
+                        showExplorerRow(row);
+                        // Menü nach Einzelklick aktualisieren statt schließen
+                        if (explorerState.hiddenRows.size > 0) {
+                            menuEl.remove();
+                            showHiddenRowsMenu(e);
+                        } else {
+                            menuEl.remove();
+                        }
+                    }
                 });
-            });
+            }
             
             menuEl.querySelector('[data-action="show-all"]')?.addEventListener('click', () => {
                 showAllHiddenRows();
@@ -11215,26 +11254,24 @@
                 .map((header, i) => ({ index: i, header }))
                 .filter(({ index }) => !explorerState.visibleColumns.includes(index));
             
-            let menuHtml = '<div class="context-menu hidden-columns-menu">';
-            menuHtml += `<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default;">📊 ${currentLanguage === 'en' ? 'Hidden Columns' : 'Versteckte Spalten'}</div>`;
-            menuHtml += '<div class="context-menu-divider"></div>';
+            let menuHtml = '<div class="context-menu hidden-columns-menu" style="display: flex; flex-direction: column; max-height: 400px;">';
+            // Sticky header
+            menuHtml += `<div class="context-menu-item" style="font-weight: 600; color: var(--text-muted); cursor: default; flex-shrink: 0;">📊 ${currentLanguage === 'en' ? 'Hidden Columns' : 'Versteckte Spalten'} (${hiddenColumns.length})</div>`;
+            menuHtml += '<div class="context-menu-divider" style="flex-shrink: 0;"></div>';
+            // Sticky "Alle einblenden" button at top
+            menuHtml += `<div class="context-menu-item" data-action="show-all" style="color: var(--primary); font-weight: 600; flex-shrink: 0;">✅ ${currentLanguage === 'en' ? 'Show all' : 'Alle einblenden'}</div>`;
+            menuHtml += '<div class="context-menu-divider" style="flex-shrink: 0;"></div>';
+            // Scrollable list
+            menuHtml += '<div style="overflow-y: auto; flex: 1; min-height: 0;">';
             
-            // Liste der versteckten Spalten (max 20 anzeigen)
-            const displayLimit = 20;
-            
-            hiddenColumns.slice(0, displayLimit).forEach(({ index, header }) => {
+            hiddenColumns.forEach(({ index, header }) => {
                 const displayHeader = header ? header.substring(0, 30) : `Spalte ${index + 1}`;
                 menuHtml += `<div class="context-menu-item" data-action="show-column" data-col="${index}">
                     👁️ ${escapeHtml(displayHeader)}${header && header.length > 30 ? '...' : ''}
                 </div>`;
             });
             
-            if (hiddenColumns.length > displayLimit) {
-                menuHtml += `<div class="context-menu-item" style="color: var(--text-muted); cursor: default;">... ${currentLanguage === 'en' ? 'and' : 'und'} ${hiddenColumns.length - displayLimit} ${currentLanguage === 'en' ? 'more' : 'weitere'}</div>`;
-            }
-            
-            menuHtml += '<div class="context-menu-divider"></div>';
-            menuHtml += `<div class="context-menu-item" data-action="show-all" style="color: var(--primary);">✅ ${currentLanguage === 'en' ? 'Show all' : 'Alle einblenden'}</div>`;
+            menuHtml += '</div>'; // end scrollable
             menuHtml += '</div>';
             
             const menu = document.createElement('div');
@@ -11248,14 +11285,25 @@
             menuEl.style.left = rect.left + 'px';
             menuEl.style.top = (rect.bottom + 5) + 'px';
             
-            // Event-Handler für einzelne Spalten
-            menuEl.querySelectorAll('[data-action="show-column"]').forEach(item => {
-                item.addEventListener('click', () => {
-                    const col = parseInt(item.dataset.col);
-                    showExplorerColumn(col);
-                    menuEl.remove();
+            // Event-Handler für einzelne Spalten (Event-Delegation für Performance)
+            const scrollContainer = menuEl.querySelector('[style*="overflow-y"]');
+            if (scrollContainer) {
+                scrollContainer.addEventListener('click', (evt) => {
+                    const item = evt.target.closest('[data-action="show-column"]');
+                    if (item) {
+                        const col = parseInt(item.dataset.col);
+                        showExplorerColumn(col);
+                        // Menü nach Einzelklick aktualisieren statt schließen
+                        const remainingHidden = explorerState.headers.length - explorerState.visibleColumns.length;
+                        if (remainingHidden > 0) {
+                            menuEl.remove();
+                            showHiddenColumnsMenu(e);
+                        } else {
+                            menuEl.remove();
+                        }
+                    }
                 });
-            });
+            }
             
             menuEl.querySelector('[data-action="show-all"]')?.addEventListener('click', () => {
                 showAllExplorerColumns();
@@ -12220,7 +12268,7 @@
             
             // Live-Session: Nur betroffene Zellen an Excel syncen (nicht ganze Zeilen)
             if (explorerState.liveSessionActive && explorerState.liveSessionReady && undoActions.length > 0) {
-                const cells = undoActions.map(a => ({ row: a.rowIndex, col: a.colIndex, value: '' }));
+                const cells = undoActions.map(a => ({ row: a.rowIndex, col: a.colIndex, value: '', oldValue: a.oldValue }));
                 console.log('[CellEdit] deleteSelectedCellsContent: Sync', cells.length, 'Zellen via Batch');
                 window.electronAPI.liveSessionSetCellsBatch(_mapCellsBatchCols(cells))
                     .then(res => console.log('[CellEdit] Delete-Batch Ergebnis:', JSON.stringify(res)))
@@ -12600,7 +12648,8 @@
                             window.electronAPI.liveSessionSetCellsBatch(_mapCellsBatchCols([{
                                 row: rowIndex,
                                 col: colIndex,
-                                value: text
+                                value: text,
+                                oldValue: oldValue
                             }]))
                                 .then(res => console.log('[Paste] Sync Ergebnis:', JSON.stringify(res)))
                                 .catch(err => console.error('[Paste] Sync fehlgeschlagen:', err));
@@ -12619,6 +12668,7 @@
                         
                         if (td) {
                             const original = td.dataset.original;
+                            const prevValue = explorerState.data[rowIndex][colIndex];
                             explorerState.data[rowIndex][colIndex] = text;
                             explorerState.editedCells.set(cellKey, text);
                             
@@ -12632,7 +12682,7 @@
                             if (text !== original) {
                                 td.classList.add('edited');
                             }
-                            cellsToSync.push({ row: rowIndex, col: colIndex, value: text });
+                            cellsToSync.push({ row: rowIndex, col: colIndex, value: text, oldValue: prevValue });
                             count++;
                         }
                     });
@@ -12810,26 +12860,44 @@
             
             const match = findReplaceState.matches[findReplaceState.currentMatchIndex];
             
-            // Berechne auf welcher Seite diese Zeile ist und navigiere dorthin
-            const pageForRow = Math.floor(match.rowIndex / explorerState.pageSize) + 1;
-            if (explorerState.currentPage !== pageForRow) {
-                explorerState.currentPage = pageForRow;
-                renderExplorerTable();
+            // Virtual Scrolling: Zur Zeile scrollen und re-rendern
+            // Finde filteredData-Index für die Zeile
+            const filteredIdx = explorerState.filteredData.findIndex(item => item.originalIndex === match.rowIndex);
+            if (filteredIdx >= 0) {
+                // Prüfe ob Zeile bereits im sichtbaren Bereich liegt
+                const needsScroll = filteredIdx < explorerState.virtualVisibleStart || 
+                                    filteredIdx >= explorerState.virtualVisibleEnd;
+                if (needsScroll) {
+                    scrollToVirtualRow(filteredIdx);
+                    // Force Re-Render damit die Zeile im DOM ist
+                    explorerState.virtualVisibleStart = -1;
+                    renderExplorerTable(true);
+                }
             }
             
             // Jetzt nach dem Rendern die TD-Zelle finden und markieren
             setTimeout(() => {
                 const td = document.querySelector(`#explorerTableBody td[data-row="${match.rowIndex}"][data-col="${match.colIndex}"]`);
                 if (td) {
-                    // Alle Treffer auf der aktuellen Seite markieren
-                    const pageStart = (explorerState.currentPage - 1) * explorerState.pageSize;
-                    const pageEnd = pageStart + explorerState.pageSize;
-                    findReplaceState.matches.forEach(m => {
-                        if (m.rowIndex >= pageStart && m.rowIndex < pageEnd) {
-                            const mtd = document.querySelector(`#explorerTableBody td[data-row="${m.rowIndex}"][data-col="${m.colIndex}"]`);
-                            if (mtd) mtd.classList.add('find-match');
-                        }
-                    });
+                    // Nur sichtbare Treffer markieren (nur im aktuellen Viewport)
+                    // Statt alle 3000+ Matches per querySelector zu suchen,
+                    // nur die im sichtbaren Bereich (virtualVisibleStart..End) markieren
+                    const visStart = explorerState.virtualVisibleStart;
+                    const visEnd = explorerState.virtualVisibleEnd;
+                    
+                    // Set für schnelle Lookup der sichtbaren originalIndex-Werte
+                    const visibleOriginalIndices = new Set();
+                    for (let i = visStart; i < visEnd && i < explorerState.filteredData.length; i++) {
+                        visibleOriginalIndices.add(explorerState.filteredData[i].originalIndex);
+                    }
+                    
+                    // Nur Matches im sichtbaren Bereich highlighten
+                    for (let i = 0; i < findReplaceState.matches.length; i++) {
+                        const m = findReplaceState.matches[i];
+                        if (!visibleOriginalIndices.has(m.rowIndex)) continue;
+                        const mtd = document.querySelector(`#explorerTableBody td[data-row="${m.rowIndex}"][data-col="${m.colIndex}"]`);
+                        if (mtd) mtd.classList.add('find-match');
+                    }
                     
                     td.classList.add('find-current');
                     td.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
@@ -12869,7 +12937,7 @@
         }
         
         // Einzelne Ersetzung
-        async function replaceOne() {
+        function replaceOne() {
             if (findReplaceState.matches.length === 0 || findReplaceState.currentMatchIndex < 0) {
                 findNext();
                 return;
@@ -12878,8 +12946,8 @@
             const replaceText = document.getElementById('replaceText').value;
             const match = findReplaceState.matches[findReplaceState.currentMatchIndex];
             
-            // Zelle ersetzen
-            await replaceCellContent(match.rowIndex, match.colIndex, replaceText);
+            // Zelle ersetzen (synchron, Live-Sync im Hintergrund)
+            replaceCellContent(match.rowIndex, match.colIndex, replaceText);
             
             // Treffer aus Liste entfernen
             findReplaceState.matches.splice(findReplaceState.currentMatchIndex, 1);
@@ -12954,7 +13022,8 @@
                     cellsToSync.push({
                         row: match.rowIndex,
                         col: match.colIndex,
-                        value: newValue
+                        value: newValue,
+                        oldValue: oldValue
                     });
                     
                     // Daten aktualisieren (explorerState.data)
@@ -13035,7 +13104,7 @@
         }
         
         // Zelleninhalt mit Regex ersetzen
-        async function replaceCellContent(rowIndex, colIndex, replaceText) {
+        function replaceCellContent(rowIndex, colIndex, replaceText) {
             const searchTerm = document.getElementById('findText').value;
             const caseSensitive = document.getElementById('findCaseSensitive').checked;
             const wholeWord = document.getElementById('findWholeWord').checked;
@@ -13072,17 +13141,16 @@
             explorerState.data[rowIndex][colIndex] = newValue;
             explorerState.editedCells.set(cellKey, newValue);
             
-            // Live Session Sync (wenn aktiv)
+            // Live Session Sync (wenn aktiv) — Fire-and-forget, nicht blockierend
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
-                try {
-                    await window.electronAPI.liveSessionSetCellsBatch(_mapCellsBatchCols([{
-                        row: rowIndex,
-                        col: colIndex,
-                        value: newValue
-                    }]));
-                } catch (error) {
+                window.electronAPI.liveSessionSetCellsBatch(_mapCellsBatchCols([{
+                    row: rowIndex,
+                    col: colIndex,
+                    value: newValue,
+                    oldValue: oldValue
+                }])).catch(error => {
                     console.error('[Ersetzen] Live-Sync Fehler:', error);
-                }
+                });
             }
             
             // Falls Zelle sichtbar ist, UI aktualisieren
@@ -14797,11 +14865,11 @@
                                     const dateOrd = detectColumnDateOrder(colIdx);
                                     if (f.dateFrom) {
                                         const parsed = parseDateValue(f.dateFrom, dateOrd);
-                                        dateFrom = parsed ? fmt(parsed) : f.dateFrom;
+                                        dateFrom = parsed ? fmt(parsed) : null;
                                     }
                                     if (f.dateTo) {
                                         const parsed = parseDateValue(f.dateTo, dateOrd);
-                                        dateTo = parsed ? fmt(parsed) : f.dateTo;
+                                        dateTo = parsed ? fmt(parsed) : null;
                                     }
                                     console.log(`[syncFilters] dateBetween col ${colIdx} order=${dateOrd}: "${f.dateFrom}" → ${dateFrom}, "${f.dateTo}" → ${dateTo}`);
                                     break;
@@ -14826,14 +14894,13 @@
                         };
                     });
                 
-                if (excelFilters.length > 0) {
-                    const result = await window.electronAPI.liveSessionSetAutoFilter(excelFilters);
-                    if (result && !result.success) {
-                        console.error('[LiveSession] Filter fehlgeschlagen:', result);
-                    }
-                } else {
-                    // Keine Filter - AutoFilter in Excel entfernen
-                    await window.electronAPI.liveSessionClearAutoFilter();
+                // setAutoFilter mit leerer Liste = nur App-eigene Filter entfernen
+                // (pre-existierende Excel-Filter bleiben erhalten)
+                console.log('[syncFilters] Sende', excelFilters.length, 'Filter an Excel:', JSON.stringify(excelFilters));
+                const result = await window.electronAPI.liveSessionSetAutoFilter(excelFilters);
+                console.log('[syncFilters] Ergebnis:', JSON.stringify(result));
+                if (result && !result.success) {
+                    console.error('[LiveSession] Filter fehlgeschlagen:', result);
                 }
             } catch (error) {
                 console.error('[LiveSession] Filter-Sync Fehler:', error);
@@ -15111,24 +15178,37 @@
                     updateDatePlaceholders(row);
                 }
                 
-                updateFiltersFromDOM();
+                updateFiltersFromDOM(true);
             };
             
+            row.querySelector('.sync-filter').onclick = () => {
+                syncFiltersToExcel();
+            };
             row.querySelector('.remove-filter').onclick = () => {
                 row.remove();
-                updateFiltersFromDOM();
+                updateFiltersFromDOM(true);
             };
             row.querySelector('.filter-column').onchange = () => {
                 const op = operatorSelect.value;
                 if (op === 'dateBetween') {
                     updateDatePlaceholders(row);
                 }
-                updateFiltersFromDOM();
+                updateFiltersFromDOM(true);
             };
             const debouncedUpdateFilters = debounce(updateFiltersFromDOM, 300);
+            // Datumsfelder: Nur GUI filtern, KEIN Excel-Sync per Debounce.
+            // Excel-Sync erfolgt nur per Enter (siehe onkeydown unten).
+            const debouncedUpdateFiltersGuiOnly = debounce(() => {
+                updateFiltersFromDOM(); // ohne syncNow → geht in den Debounce-Pfad
+                // Debounce-Timer für Excel-Sync abbrechen
+                if (updateFiltersFromDOM._syncTimer) {
+                    clearTimeout(updateFiltersFromDOM._syncTimer);
+                    updateFiltersFromDOM._syncTimer = null;
+                }
+            }, 300);
             daysInput.oninput = debouncedUpdateFilters;
-            dateFromInput.oninput = debouncedUpdateFilters;
-            dateToInput.oninput = debouncedUpdateFilters;
+            dateFromInput.oninput = debouncedUpdateFiltersGuiOnly;
+            dateToInput.oninput = debouncedUpdateFiltersGuiOnly;
             valueInput.oninput = debouncedUpdateFilters;
             
             // Enter-Handler für Datums-Textfelder
@@ -15302,12 +15382,18 @@
         // Reduziert die Anzahl der Listener von O(Zellen) auf O(1) pro Event-Typ.
         let _explorerDelegationSetup = false;
         let _explorerMouseUpHandler = null;
+        // Virtual Scrolling
+        let _virtualScrollSetup = false;
+        let _virtualScrollRAF = null;
         
         // Hilfsfunktion: Komplette Zeile an Excel übertragen (für Cell-Edit + Dropdown)
         // Debounced per Row: Schnelle Edits an derselben Zeile werden zusammengefasst
         const _syncRowTimers = new Map();
         const _syncCellTimers = new Map();
         let _isPastingSyncLock = false;  // Unterdrückt syncCell während Paste
+        // Batch-Buffer für Zell-Syncs: sammelt Änderungen und sendet als ein setCellsBatch
+        const _pendingCellSyncs = new Map(); // key: "row-col" → {row, col, value, oldValue}
+        let _cellSyncBatchTimer = null;
         
         // Hilfsfunktion: Reinen Text-Wert einer Zelle lesen (ohne Icons wie ƒ, 🔗, ⊞)
         // Zellen können <span class="formula-icon">, <span class="hyperlink-icon">,
@@ -15403,12 +15489,25 @@
             return false;
         }
 
-        // Einzelzellen-Sync (formatierungsschonend — nur die geänderte Zelle wird geschrieben)
+        // Batch-Flush: Alle gesammelten Zell-Änderungen als ein setCellsBatch senden
+        function _flushCellSyncBatch() {
+            if (_pendingCellSyncs.size === 0) return;
+            const cells = Array.from(_pendingCellSyncs.values());
+            _pendingCellSyncs.clear();
+            _cellSyncBatchTimer = null;
+            console.log('[CellEdit] Batch-Flush:', cells.length, 'Zellen via setCellsBatch');
+            window.electronAPI.liveSessionSetCellsBatch(_mapCellsBatchCols(cells))
+                .then(res => console.log('[CellEdit] Batch-Sync Ergebnis:', JSON.stringify(res)))
+                .catch(err => console.error('[CellEdit] Batch-Sync fehlgeschlagen:', err));
+        }
+
+        // Einzelzellen-Sync (formatierungsschonend — sammelt in Batch-Buffer)
         function syncCellToExcel(rowIndex, colIndex) {
             if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) return;
             if (_isPastingSyncLock) return;
             if (_isCellProtected(rowIndex, colIndex)) return;
             const cellKey = `${rowIndex}-${colIndex}`;
+            // Per-Cell Debounce abbrechen
             if (_syncCellTimers.has(cellKey)) {
                 clearTimeout(_syncCellTimers.get(cellKey));
             }
@@ -15417,10 +15516,11 @@
                 const value = explorerState.data[rowIndex] ? explorerState.data[rowIndex][colIndex] : undefined;
                 const sendValue = (value === null || value === undefined) ? '' : value;
                 const excelCol = _logicalToExcelCol(colIndex);
-                console.log('[CellEdit] syncCellToExcel:', rowIndex, colIndex, '(Excel:', excelCol, ') →', JSON.stringify(sendValue));
-                window.electronAPI.liveSessionSetCellValue(rowIndex, excelCol, sendValue)
-                    .then(res => console.log('[CellEdit] Cell-Sync Ergebnis:', JSON.stringify(res)))
-                    .catch(err => console.error('[CellEdit] Cell-Sync fehlgeschlagen:', err));
+                // In Batch-Buffer aufnehmen (Excel-Spaltenindex verwenden)
+                _pendingCellSyncs.set(cellKey, { row: rowIndex, col: colIndex, value: sendValue });
+                // Batch-Timer (re)starten
+                if (_cellSyncBatchTimer) clearTimeout(_cellSyncBatchTimer);
+                _cellSyncBatchTimer = setTimeout(_flushCellSyncBatch, 200);
             }, 500));
         }
         function syncCellToExcelImmediate(rowIndex, colIndex) {
@@ -15440,10 +15540,13 @@
             const value = explorerState.data[rowIndex] ? explorerState.data[rowIndex][colIndex] : undefined;
             const sendValue = (value === null || value === undefined) ? '' : value;
             const excelCol = _logicalToExcelCol(colIndex);
-            console.log('[CellEdit] syncCellToExcelImmediate:', rowIndex, colIndex, '(Excel:', excelCol, ') →', JSON.stringify(sendValue));
-            window.electronAPI.liveSessionSetCellValue(rowIndex, excelCol, sendValue)
-                .then(res => console.log('[CellEdit] Cell-Sync Ergebnis:', JSON.stringify(res)))
-                .catch(err => console.error('[CellEdit] Cell-Sync fehlgeschlagen:', err));
+            // In Batch-Buffer aufnehmen und sofort flushen
+            _pendingCellSyncs.set(cellKey, { row: rowIndex, col: colIndex, value: sendValue });
+            if (_cellSyncBatchTimer) {
+                clearTimeout(_cellSyncBatchTimer);
+                _cellSyncBatchTimer = null;
+            }
+            _flushCellSyncBatch();
         }
         
         function setupExplorerTableDelegation() {
@@ -15734,7 +15837,7 @@
             }
         }
 
-        function renderExplorerTable() {
+        function renderExplorerTable(bodyOnly) {
             const btnToggleExcel = document.getElementById('btnToggleExcel');
             const btnDataJoin = document.getElementById('btnDataJoin');
             
@@ -15750,30 +15853,53 @@
                 return;
             }
             
-            // Drop-Zone ausblenden wenn Daten vorhanden
-            showExplorerDropZone(false);
-            
-            // Excel-Toggle-Button nur aktivieren, wenn Live-Session aktiv ist
-            if (btnToggleExcel) {
-                btnToggleExcel.disabled = !(explorerState.liveSessionActive && explorerState.liveSessionReady);
+            if (!bodyOnly) {
+                // Drop-Zone ausblenden wenn Daten vorhanden
+                showExplorerDropZone(false);
+                
+                // Excel-Toggle-Button nur aktivieren, wenn Live-Session aktiv ist
+                if (btnToggleExcel) {
+                    btnToggleExcel.disabled = !(explorerState.liveSessionActive && explorerState.liveSessionReady);
+                }
+                // Data Join Button aktivieren
+                if (btnDataJoin) btnDataJoin.disabled = false;
             }
-            // Data Join Button aktivieren
-            if (btnDataJoin) btnDataJoin.disabled = false;
             
-            // Pagination berechnen
+            // Virtual Scrolling: Sichtbaren Bereich berechnen
+            const container = document.getElementById('explorerTableContainer');
             const totalRows = explorerState.filteredData.length;
-            const totalPages = Math.max(1, Math.ceil(totalRows / explorerState.pageSize));
+            const rowHeight = explorerState.virtualRowHeight;
+            const buffer = explorerState.virtualBufferRows;
             
-            // Sicherstellen, dass currentPage gültig ist
-            if (explorerState.currentPage > totalPages) {
-                explorerState.currentPage = totalPages;
-            }
-            if (explorerState.currentPage < 1) {
-                explorerState.currentPage = 1;
+            // Bei vollem Re-Render: Virtual Scroll State zurücksetzen
+            if (!bodyOnly) {
+                explorerState.virtualVisibleStart = -1;
+                explorerState.virtualVisibleEnd = -1;
             }
             
-            const startIndex = (explorerState.currentPage - 1) * explorerState.pageSize;
-            const endIndex = Math.min(startIndex + explorerState.pageSize, totalRows);
+            const scrollTop = container.scrollTop;
+            // Thead-Höhe abziehen (sticky header nimmt Platz ein)
+            const theadHeight = elements.explorerTableHead ? elements.explorerTableHead.offsetHeight : 0;
+            const viewportHeight = Math.max(container.clientHeight - theadHeight, 300); // Fallback 300px
+            
+            const firstVisible = Math.max(0, Math.floor((scrollTop - theadHeight) / rowHeight));
+            const lastVisible = Math.max(0, Math.ceil((scrollTop - theadHeight + viewportHeight) / rowHeight));
+            
+            const startIndex = Math.max(0, firstVisible - buffer);
+            const endIndex = Math.min(totalRows, lastVisible + buffer);
+            
+            // Bei bodyOnly (Scroll): Prüfen ob Re-Render nötig
+            if (bodyOnly && explorerState.virtualVisibleStart >= 0) {
+                const bufferThreshold = Math.floor(buffer / 3);
+                if (firstVisible >= explorerState.virtualVisibleStart + bufferThreshold &&
+                    lastVisible <= explorerState.virtualVisibleEnd - bufferThreshold) {
+                    return; // Noch innerhalb des Puffers
+                }
+            }
+            
+            explorerState.virtualVisibleStart = startIndex;
+            explorerState.virtualVisibleEnd = endIndex;
+            
             const pageData = explorerState.filteredData.slice(startIndex, endIndex);
             
             // Header mit Sortierung und Drag & Drop
@@ -15782,8 +15908,9 @@
                 ? explorerState.columnOrder.filter(col => explorerState.visibleColumns.includes(col))
                 : explorerState.visibleColumns;
             
+            if (!bodyOnly) {
             // Prüfe ob alle sichtbaren Zeilen ausgewählt sind
-            const allVisibleSelected = pageData.length > 0 && pageData.every(item => explorerState.selectedRows.has(item.originalIndex));
+            const allVisibleSelected = explorerState.filteredData.length > 0 && explorerState.filteredData.every(item => explorerState.selectedRows.has(item.originalIndex));
             
             // Erste Zeile: Excel-Spaltenbuchstaben (A, B, C, ...)
             let headerHtml = '<tr class="column-letter-row">';
@@ -15905,11 +16032,20 @@
             headerHtml += '</tr>';
             elements.explorerTableHead.innerHTML = headerHtml;
             
+            // Dynamisch top-Offset der zweiten Header-Zeile berechnen
+            const firstHeaderRow = elements.explorerTableHead.querySelector('tr:first-child');
+            if (firstHeaderRow) {
+                const firstRowHeight = firstHeaderRow.offsetHeight;
+                elements.explorerTableHead.querySelectorAll('tr:nth-child(2) th').forEach(th => {
+                    th.style.top = firstRowHeight + 'px';
+                });
+            }
             // Select-All Checkbox Event-Listener
             const selectAllCheckbox = document.getElementById('selectAllRows');
             if (selectAllCheckbox) {
                 selectAllCheckbox.addEventListener('change', function() {
-                    pageData.forEach(item => {
+                    // Alle gefilterten Zeilen auswählen/abwählen (nicht nur sichtbare)
+                    explorerState.filteredData.forEach(item => {
                         if (this.checked) {
                             explorerState.selectedRows.add(item.originalIndex);
                         } else {
@@ -15991,9 +16127,18 @@
                     explorerState.draggedColumn = null;
                 });
             });
+            } // end if (!bodyOnly)
             
-            // Body - nur die aktuelle Seite rendern (mit editierbaren Zellen)
+            // Body - Virtual Scrolling (sichtbare Zeilen + Puffer)
+            // Spacer oben für korrekte Scroll-Höhe
+            const colCount = displayColumns.length + 2; // +2 für Zeilennummer + Checkbox
+            const topSpacerHeight = startIndex * rowHeight;
+            const bottomSpacerHeight = Math.max(0, (totalRows - endIndex) * rowHeight);
+            
             let bodyHtml = '';
+            if (topSpacerHeight > 0) {
+                bodyHtml += `<tr class="virtual-spacer"><td colspan="${colCount}" style="height:${topSpacerHeight}px;padding:0;border:none;"></td></tr>`;
+            }
             pageData.forEach(item => {
                 const originalIndex = item.originalIndex;
                 const row = item.row;
@@ -16042,13 +16187,10 @@
                         if (visibleColSpan > 1) {
                             mergedAttrs += ` colspan="${visibleColSpan}"`;
                         }
-                        // rowspan - berechne wie viele Zeilen auf der aktuellen Seite sichtbar sind
+                        // rowspan - berechne wie viele Zeilen im sichtbaren Bereich sind
                         if (mergeInfo.rowSpan > 1) {
-                            // Berechne wie viele Zeilen des Merges auf dieser Seite sichtbar sind
-                            const pageStartIndex = (explorerState.currentPage - 1) * explorerState.pageSize;
-                            const pageEndIndex = pageStartIndex + explorerState.pageSize - 1;
-                            const mergeEndRow = originalIndex + mergeInfo.rowSpan - 1;
-                            const visibleRowSpan = Math.min(mergeInfo.rowSpan, pageEndIndex - originalIndex + 1);
+                            // Berechne wie viele Zeilen des Merges im aktuellen Virtual-Scroll-Bereich sichtbar sind
+                            const visibleRowSpan = Math.min(mergeInfo.rowSpan, endIndex - originalIndex);
                             if (visibleRowSpan > 1) {
                                 mergedAttrs += ` rowspan="${visibleRowSpan}"`;
                             }
@@ -16185,6 +16327,10 @@
                 });
                 bodyHtml += '</tr>';
             });
+            // Spacer unten für korrekte Scroll-Höhe
+            if (bottomSpacerHeight > 0) {
+                bodyHtml += `<tr class="virtual-spacer"><td colspan="${colCount}" style="height:${bottomSpacerHeight}px;padding:0;border:none;"></td></tr>`;
+            }
             elements.explorerTableBody.innerHTML = bodyHtml || '<tr><td colspan="100" style="text-align: center; padding: 20px;">Keine Daten gefunden</td></tr>';
             
             // Zeilen-Highlights werden jetzt direkt im HTML-Build gesetzt (keine nachträgliche DOM-Traversierung mehr)
@@ -16207,20 +16353,47 @@
                 select.dataset.lastValue = select.value;
             });
             
-            // Ergebnis-Info mit Pagination
+            // Ergebnis-Info
             if (totalRows > 0) {
                 const editedCount = explorerState.editedCells.size;
                 const editedInfo = editedCount > 0 ? ` (${editedCount} ${t('editedLabel')})` : '';
-                elements.explorerResultCount.textContent = `${t('showingRows')} ${startIndex + 1}-${endIndex} ${t('ofRows')} ${totalRows} ${t('rowsLabel')} (${t('totalLabel')}: ${explorerState.data.length})${editedInfo}`;
+                elements.explorerResultCount.textContent = `${totalRows} ${t('rowsLabel')} (${t('totalLabel')}: ${explorerState.data.length})${editedInfo}`;
             } else {
                 elements.explorerResultCount.textContent = `0 ${t('ofRows')} ${explorerState.data.length} ${t('rowsLabel')}`;
             }
             
-            // Pagination UI aktualisieren
-            updateExplorerPagination(totalPages);
+            // Pagination UI ausblenden (Virtual Scrolling ersetzt Pagination)
+            document.getElementById('explorerPagination').style.display = 'none';
+            
+            // Virtual Scroll Listener einmalig registrieren
+            if (!_virtualScrollSetup) {
+                _virtualScrollSetup = true;
+                container.addEventListener('scroll', _onVirtualScroll);
+                // Bei Größenänderung des Containers neu rendern
+                new ResizeObserver(() => _onVirtualScroll()).observe(container);
+            }
             
             // Row Move Toolbar aktualisieren
             updateRowMoveToolbar();
+        }
+        
+        // Virtual Scroll Handler: wird bei Scroll auf dem Table-Container aufgerufen
+        function _onVirtualScroll() {
+            if (_virtualScrollRAF) return;
+            _virtualScrollRAF = requestAnimationFrame(() => {
+                _virtualScrollRAF = null;
+                renderExplorerTable(true); // bodyOnly
+            });
+        }
+        
+        // Scrollt den Table-Container so, dass eine bestimmte Zeile sichtbar ist
+        function scrollToVirtualRow(rowIndex) {
+            const container = document.getElementById('explorerTableContainer');
+            const theadHeight = elements.explorerTableHead ? elements.explorerTableHead.offsetHeight : 0;
+            const targetTop = theadHeight + rowIndex * explorerState.virtualRowHeight;
+            const viewportHeight = container.clientHeight;
+            // Zeile in die Mitte des Viewports scrollen
+            container.scrollTop = Math.max(0, targetTop - viewportHeight / 2);
         }
         
         // Aktualisiert die Row Move Toolbar basierend auf der Auswahl
@@ -16984,17 +17157,15 @@
         }
         
         function explorerGoToPage(page) {
-            const totalPages = Math.ceil(explorerState.filteredData.length / explorerState.pageSize);
-            explorerState.currentPage = Math.max(1, Math.min(page, totalPages));
-            renderExplorerTable();
-            
-            // Zum Tabellenanfang scrollen
-            document.getElementById('explorerTableContainer').scrollTop = 0;
+            // Legacy: Pagination ersetzt durch Virtual Scrolling
+            // Scroll zur entsprechenden Position
+            const rowIndex = (page - 1) * explorerState.pageSize;
+            scrollToVirtualRow(Math.min(rowIndex, explorerState.filteredData.length - 1));
         }
         
         function explorerChangePageSize(newSize) {
             explorerState.pageSize = parseInt(newSize);
-            explorerState.currentPage = 1; // Zurück zur ersten Seite
+            // Virtual Scrolling: kein Page-Wechsel nötig
             renderExplorerTable();
         }
         
@@ -17143,13 +17314,16 @@
                     updateDatePlaceholders(row);
                 }
                 
-                updateFiltersFromDOM();
+                updateFiltersFromDOM(true);
             };
             
             // Event-Listener
+            row.querySelector('.sync-filter').onclick = () => {
+                syncFiltersToExcel();
+            };
             row.querySelector('.remove-filter').onclick = () => {
                 row.remove();
-                updateFiltersFromDOM();
+                updateFiltersFromDOM(true);
             };
             row.querySelector('.filter-column').onchange = () => {
                 // Placeholders aktualisieren wenn Spalte gewechselt
@@ -17157,11 +17331,24 @@
                 if (op === 'dateBetween') {
                     updateDatePlaceholders(row);
                 }
-                updateFiltersFromDOM();
+                updateFiltersFromDOM(true);
             };
             daysInput.oninput = updateFiltersFromDOM;
-            dateFromInput.oninput = updateFiltersFromDOM;
-            dateToInput.oninput = updateFiltersFromDOM;
+            // Datumsfelder: Nur GUI filtern beim Tippen, Excel-Sync nur per Enter
+            dateFromInput.oninput = () => {
+                updateFiltersFromDOM();
+                if (updateFiltersFromDOM._syncTimer) {
+                    clearTimeout(updateFiltersFromDOM._syncTimer);
+                    updateFiltersFromDOM._syncTimer = null;
+                }
+            };
+            dateToInput.oninput = () => {
+                updateFiltersFromDOM();
+                if (updateFiltersFromDOM._syncTimer) {
+                    clearTimeout(updateFiltersFromDOM._syncTimer);
+                    updateFiltersFromDOM._syncTimer = null;
+                }
+            };
             
             // Enter in Datums-Textfeldern sendet an Excel
             dateFromInput.onkeydown = (e) => {
@@ -17185,7 +17372,7 @@
             document.getElementById('btnClearExplorerFilters').disabled = false;
         }
         
-        function updateFiltersFromDOM() {
+        function updateFiltersFromDOM(syncNow) {
             const rows = document.querySelectorAll('.explorer-filter-row');
             explorerState.filters = Array.from(rows).map(row => {
                 const operator = row.querySelector('.filter-operator').value;
@@ -17218,9 +17405,25 @@
             }).filter(f => f.column && (f.value || f.days || f.dateFrom || f.dateTo));
             updateFilterBadge();
             filterExplorerData();
+            
+            // Filter automatisch an Excel senden wenn Live-Session aktiv
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                if (updateFiltersFromDOM._syncTimer) clearTimeout(updateFiltersFromDOM._syncTimer);
+                if (syncNow) {
+                    // Diskrete Aktion (✕ Entfernen, Operator-/Spaltenwechsel): sofort senden
+                    syncFiltersToExcel();
+                } else {
+                    // Tastatureingabe: Debounced, damit nicht bei jedem Tastendruck gesendet wird
+                    updateFiltersFromDOM._syncTimer = setTimeout(() => {
+                        syncFiltersToExcel();
+                    }, 600);
+                }
+            }
         }
         
         async function clearExplorerFilters() {
+            // Pendente Debounce-Syncs abbrechen
+            if (updateFiltersFromDOM._syncTimer) clearTimeout(updateFiltersFromDOM._syncTimer);
             document.getElementById('explorerFilters').innerHTML = '';
             explorerState.filters = [];
             document.getElementById('btnClearExplorerFilters').disabled = true;
@@ -17233,26 +17436,28 @@
             updateAutoFilterIndicator();
             updateHiddenRowsIndicator();
             
-            // LIVE SESSION: AutoFilter in Excel zurücksetzen
+            // LIVE SESSION: Nur App-eigene AutoFilter in Excel zurücksetzen
+            // (pre-existierende Excel-Filter bleiben erhalten)
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 try {
-                    console.log('[LiveSession] clearAutoFilter: starte... (active=true, ready=true)');
+                    console.log('[LiveSession] clearAppFilters: starte... (active=true, ready=true)');
                     showFloatingStatus('⏳ Filter in Excel werden zurückgesetzt...');
-                    const result = await window.electronAPI.liveSessionClearAutoFilter();
-                    console.log('[LiveSession] clearAutoFilter result:', JSON.stringify(result));
+                    // setAutoFilter([]) = nur App-Filter entfernen, Excel-eigene behalten
+                    const result = await window.electronAPI.liveSessionSetAutoFilter([]);
+                    console.log('[LiveSession] clearAppFilters result:', JSON.stringify(result));
                     if (result && result.success) {
                         showFloatingStatus('✅ Filter in Excel zurückgesetzt');
                     } else {
                         const errMsg = result?.error || 'Unbekannter Fehler';
-                        console.error('[LiveSession] clearAutoFilter failed:', errMsg);
+                        console.error('[LiveSession] clearAppFilters failed:', errMsg);
                         showFloatingStatus(`⚠️ Filter-Reset: ${errMsg}`, true);
                     }
                 } catch (error) {
-                    console.error('[LiveSession] clearAutoFilter exception:', error);
+                    console.error('[LiveSession] clearAppFilters exception:', error);
                     showFloatingStatus('❌ Filter-Reset in Excel fehlgeschlagen', true);
                 }
             } else {
-                console.log(`[LiveSession] clearAutoFilter: SKIP - active=${explorerState.liveSessionActive}, ready=${explorerState.liveSessionReady}`);
+                console.log(`[LiveSession] clearAppFilters: SKIP - active=${explorerState.liveSessionActive}, ready=${explorerState.liveSessionReady}`);
                 showFloatingStatus('🧹 Filter zurückgesetzt (nur lokal, keine Live-Session)');
             }
             
@@ -17339,6 +17544,15 @@
             }
             
             try {
+                // 0. Ausstehende Batch-Syncs sofort flushen (damit Python-Stack synchron bleibt)
+                if (_cellSyncBatchTimer) {
+                    clearTimeout(_cellSyncBatchTimer);
+                    _cellSyncBatchTimer = null;
+                }
+                if (_pendingCellSyncs.size > 0) {
+                    _flushCellSyncBatch();
+                }
+                
                 // 1. Undo an Python-Session senden (pop Undo-Stack + reverse)
                 const undoResult = await window.electronAPI.liveSessionUndo();
                 console.log('[Undo] Step 1 - Undo Result:', JSON.stringify(undoResult));
@@ -17358,47 +17572,58 @@
                     console.log('[Undo] move_column → Fast-Path (kein readExcelSheet)');
                     renderExplorerTable();
                 } else if (undoResult.action === 'restore_cell_value' || undoResult.action === 'restore_cells_batch') {
-                    // Zellwert-Undo: Python hat Excel aktualisiert, Frontend-Daten lokal anpassen
-                    console.log('[Undo] Zellwert-Undo → Fast-Path (lokales Update)');
-                    // undoResult enthält die Info welche Zellen restauriert wurden —
-                    // einfachste Lösung: originalData als "Wahrheit" neu laden
-                    // Da readExcelSheet gecacht ist und Werte sich geändert haben,
-                    // machen wir ein schnelles Reload
-                    explorerState.sheetDataCache.clear();
-                    explorerState.editedCells.clear();
-                    const sheetName2 = explorerState.selectedSheet;
-                    const result2 = await window.electronAPI.readExcelSheet(
-                        explorerState.filePath, sheetName2, explorerState.filePassword
-                    );
-                    if (result2 && result2.success && result2.data) {
-                        const rawData2 = (result2.data || []).slice(1);
-                        const newData2 = rawData2.map(row => Array.isArray(row) ? row : [row]);
-                        explorerState.data = newData2;
-                        explorerState.originalData = newData2.map(row => [...row]);
-                        explorerState.filteredData = newData2.map((row, index) => ({ originalIndex: index, row }));
-                        if (explorerState.hiddenRows.size > 0) {
-                            explorerState.filteredData = explorerState.filteredData.filter(
-                                item => !explorerState.hiddenRows.has(item.originalIndex)
-                            );
+                    // Zellwert-Undo: Python hat Excel via COM bereits aktualisiert.
+                    // Frontend-Daten lokal aus dem Frontend-Undo-Stack aktualisieren.
+                    // KEIN readExcelSheet! (verursacht Hang auf Windows wegen Excel-Datei-Lock)
+                    console.log('[Undo] Zellwert-Undo → Fast-Path (lokales Update aus Frontend-Stack)');
+                    
+                    if (undoRedoState.explorerUndoStack.length > 0) {
+                        const frontendAction = undoRedoState.explorerUndoStack.pop();
+                        undoRedoState.explorerRedoStack.push(frontendAction);
+                        
+                        if (frontendAction.type === 'multi') {
+                            // Multi-Zellen Undo (z.B. Suchen/Ersetzen)
+                            frontendAction.actions.forEach(subAction => {
+                                const { rowIndex, colIndex, oldValue, originalValue } = subAction;
+                                explorerState.data[rowIndex][colIndex] = oldValue;
+                                const filteredItem = explorerState.filteredData.find(item => item.originalIndex === rowIndex);
+                                if (filteredItem && filteredItem.row) filteredItem.row[colIndex] = oldValue;
+                                const cellKey = `${rowIndex}-${colIndex}`;
+                                if (oldValue === originalValue) {
+                                    explorerState.editedCells.delete(cellKey);
+                                } else {
+                                    explorerState.editedCells.set(cellKey, oldValue);
+                                }
+                            });
+                        } else {
+                            // Einzelzellen-Undo
+                            const { rowIndex, colIndex, oldValue } = frontendAction;
+                            explorerState.data[rowIndex][colIndex] = oldValue;
+                            const filteredItem = explorerState.filteredData.find(item => item.originalIndex === rowIndex);
+                            if (filteredItem && filteredItem.row) filteredItem.row[colIndex] = oldValue;
+                            const cellKey = `${rowIndex}-${colIndex}`;
+                            if (oldValue === frontendAction.originalValue) {
+                                explorerState.editedCells.delete(cellKey);
+                            } else {
+                                explorerState.editedCells.set(cellKey, oldValue);
+                            }
                         }
-                        if (explorerState.sortColumn !== null) applyExplorerSort();
-                        explorerState.rowMapping = newData2.map((_, i) => i);
                     }
                     renderExplorerTable();
                 } else {
-                    // Andere Undo-Typen (delete_row, insert_row etc.): Datei neu lesen
-                    console.log('[Undo] Step 2 - readExcelSheet aufrufen...');
-                    const sheetName = explorerState.selectedSheet;
+                    // Andere Undo-Typen (delete_column, insert_column, delete_row etc.):
+                    // Daten über COM (Live-Session) lesen — NICHT von Disk (readExcelSheet)!
+                    // readExcelSheet nutzt fs.readFile(), was auf Windows durch Excel-File-Lock
+                    // extrem langsam ist oder komplett hängt.
+                    console.log('[Undo] Step 2 - liveSessionGetData aufrufen (COM, kein Disk-I/O)...');
                     explorerState.sheetDataCache.clear();
                     explorerState.editedCells.clear();
-                    const result = await window.electronAPI.readExcelSheet(
-                        explorerState.filePath, sheetName, explorerState.filePassword
-                    );
+                    
+                    const result = await window.electronAPI.liveSessionGetData();
                     
                     if (result && result.success && result.headers && result.headers.length > 0) {
-                        const headers = result.headers;
-                        const rawData = (result.data || []).slice(1);
-                        const newHeaders = headers.map(h => h != null ? String(h) : '');
+                        const newHeaders = result.headers.map(h => h != null ? String(h) : '');
+                        const rawData = result.data || [];
                         const newData = rawData.map(row => {
                             if (!Array.isArray(row)) return [row];
                             return row;
@@ -17411,44 +17636,19 @@
                         explorerState.data = newData;
                         explorerState.originalData = newData.map(row => [...row]);
                         
-                        explorerState.cellStyles = result.cellStyles || {};
-                        explorerState.cellFormulas = result.cellFormulas || {};
-                        explorerState.cellHyperlinks = result.cellHyperlinks || {};
-                        explorerState.richTextCells = result.richTextCells || {};
-                        explorerState.dataValidations = result.dataValidations || {};
-                        explorerState.mergedCells = result.mergedCells || [];
-                        explorerState.autoFilterRange = result.autoFilterRange || null;
-                        explorerState.headerStyles = result.headerStyles || {};
-                        explorerState.cellVmMap = {};
-                        if (result.imageCells && result.imageCells.length > 0) {
-                            for (const ic of result.imageCells) {
-                                if (ic.vmValue) {
-                                    explorerState.cellVmMap[`${ic.row}-${ic.col}`] = ic.vmValue;
-                                }
-                            }
-                        }
-                        
-                        explorerState.rowHighlights.clear();
-                        explorerState.originalRowHighlights.clear();
-                        if (result.rowHighlights && result.rowHighlights.length > 0) {
-                            for (const [rowIdx, colorName] of result.rowHighlights) {
-                                explorerState.rowHighlights.set(rowIdx, colorName);
-                                explorerState.originalRowHighlights.set(rowIdx, colorName);
-                            }
-                        }
-                        
-                        explorerState.hiddenRows = new Set(result.hiddenRows || []);
-                        
                         if (columnsChanged) {
                             console.log('[Undo] Spaltenstruktur geändert → Layout-Reset');
-                            if (result.hiddenColumns && result.hiddenColumns.length > 0) {
-                                const hiddenSet = new Set(result.hiddenColumns);
-                                explorerState.visibleColumns = newHeaders.map((_, i) => i).filter(i => !hiddenSet.has(i));
-                            } else {
-                                explorerState.visibleColumns = newHeaders.map((_, i) => i);
-                            }
+                            explorerState.visibleColumns = newHeaders.map((_, i) => i);
                             explorerState.sortColumn = null;
                             explorerState.sortDirection = null;
+                            // Metadaten resetten (stimmen nach Snapshot nicht mehr)
+                            explorerState.cellStyles = {};
+                            explorerState.cellFormulas = {};
+                            explorerState.cellHyperlinks = {};
+                            explorerState.richTextCells = {};
+                            explorerState.mergedCells = [];
+                            explorerState.headerStyles = {};
+                            explorerState.cellVmMap = {};
                             updateColumnToggles();
                         }
                         
@@ -17464,11 +17664,6 @@
                             applyExplorerSort();
                         }
                         
-                        const totalPages = Math.max(1, Math.ceil(explorerState.filteredData.length / explorerState.pageSize));
-                        if (explorerState.currentPage > totalPages) {
-                            explorerState.currentPage = totalPages;
-                        }
-                        
                         explorerState.rowMapping = newData.map((_, i) => i);
                         
                         renderExplorerTable();
@@ -17476,7 +17671,7 @@
                         updateHiddenColumnsIndicator();
                         updateAutoFilterIndicator();
                     } else {
-                        console.warn('[Undo] readExcelSheet fehlgeschlagen:', result?.error);
+                        console.warn('[Undo] liveSessionGetData fehlgeschlagen:', result?.error);
                         showFloatingStatus('⚠️ Undo ausgeführt, aber Daten konnten nicht gelesen werden', 'warning');
                         renderExplorerTable();
                     }
@@ -17547,6 +17742,12 @@
                     console.log('[Export] Live-Session aktiv - nur Save-Befehl nötig...');
                     
                     try {
+                        // Filter vor dem Speichern an Excel senden
+                        if (explorerState.filters.some(f => f.column && f.value)) {
+                            console.log('[Export] Synchronisiere Filter zu Excel vor dem Speichern...');
+                            await syncFiltersToExcel();
+                        }
+                        
                         // Passwort-Logik
                         let passwordToUse;
                         if (exportPassword === undefined) {
@@ -17557,7 +17758,7 @@
                             passwordToUse = exportPassword;
                         }
                         
-                        result = await window.electronAPI.liveSessionSaveFile(savePath, passwordToUse);
+                        result = await window.electronAPI.liveSessionSaveFile(savePath, passwordToUse, selectedSheets);
                         console.log(`[Export TIMING] liveSessionSaveFile: ${(performance.now() - _exportStart).toFixed(0)}ms`);
                         
                         if (result.success) {
@@ -18300,7 +18501,10 @@
                         console.log(`[Export TIMING] originalData copy: ${(performance.now() - _copyStart).toFixed(0)}ms (${explorerState.data.length} Zeilen)`);
                         
                         // Dateipfad aktualisieren falls "Speichern unter"
-                        if (savePath !== explorerState.filePath) {
+                        // NICHT aktualisieren bei gefiltertem Export (nicht alle Sheets),
+                        // da das Original-Workbook weiterhin am Original-Pfad geöffnet bleibt
+                        const isFilteredExport = selectedSheets.length < explorerState.sheets.length;
+                        if (savePath !== explorerState.filePath && !isFilteredExport) {
                             explorerState.filePath = savePath;
                             explorerState.fileName = savePath.split('/').pop();
                             document.getElementById('explorerFileName').textContent = explorerState.fileName;
@@ -18349,10 +18553,10 @@
                                 renderExplorerTable();
                             }
                             
-                            // Seite wiederherstellen
-                            if (currentPage <= Math.ceil(explorerState.filteredData.length / explorerState.pageSize)) {
-                                explorerState.currentPage = currentPage;
-                                renderExplorerTable();
+                            // Scroll-Position wiederherstellen (Virtual Scrolling)
+                            if (currentPage > 1) {
+                                const rowIndex = (currentPage - 1) * explorerState.pageSize;
+                                scrollToVirtualRow(Math.min(rowIndex, explorerState.filteredData.length - 1));
                             }
                         } else {
                             // Keine strukturelle Änderung: Schneller Refresh ohne Datei neu lesen
@@ -19957,15 +20161,25 @@
             document.getElementById('btnCancelDiff').onclick = closeDiffPreview;
             document.getElementById('btnConfirmTransfer').onclick = confirmTransferFromDiff;
             
+            // Prüfe ob eine Datei per "Öffnen mit..." übergeben wurde
+            // Falls ja: Config-Dateien (Quell-/Zieldatei/Template) NICHT laden → Startup beschleunigen
+            let _hasStartupFile = false;
+            try {
+                _hasStartupFile = !!(await window.electronAPI.hasStartupFile());
+            } catch (e) { /* OK, API evtl. nicht vorhanden */ }
+            
             // Automatisch config.json aus Programmordner oder Arbeitsordner laden beim Start
             console.log('[Config] Suche automatisch nach config.json...');
             console.log('[Config] Arbeitsordner:', state.workingDirectory || '(nicht gesetzt)');
+            if (_hasStartupFile) {
+                console.log('[Config] Startup-Datei erkannt → Überspringe Laden von Quell-/Zieldatei/Template');
+            }
             try {
                 const autoResult = await window.electronAPI.loadConfigFromAppDir(state.workingDirectory);
                 console.log('[Config] loadConfigFromAppDir Ergebnis:', autoResult);
                 
                 if (autoResult.success && autoResult.config) {
-                    await applyLoadedConfig(autoResult.config);
+                    await applyLoadedConfig(autoResult.config, _hasStartupFile);
                     console.log('[Config] config.json automatisch geladen:', autoResult.path);
                     console.log('[Config] Computername:', autoResult.computerName || '(unbekannt)');
                     console.log('[Config] Hat Computer-Abschnitt:', autoResult.hasComputerSection);

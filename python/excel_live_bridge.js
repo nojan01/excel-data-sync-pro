@@ -346,11 +346,12 @@ class ExcelLiveSession {
      * @param {string|null} outputPath - Optionaler neuer Pfad
      * @param {string|null} password - Optionales Passwort (null=beibehalten, ''=entfernen, 'xxx'=neu)
      */
-    async saveFile(outputPath = null, password = null) {
+    async saveFile(outputPath = null, password = null, selectedSheets = null) {
         return this._sendCommand({
             action: 'save',
             outputPath: outputPath,
-            password: password
+            password: password,
+            selectedSheets: selectedSheets
         });
     }
     

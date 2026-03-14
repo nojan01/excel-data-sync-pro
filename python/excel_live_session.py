@@ -557,12 +557,13 @@ class ExcelLiveSession:
             self._log(f"Fehler beim Öffnen nach {_time.time() - _t0:.1f}s: {e}")
             return {'success': False, 'error': str(e)}
     
-    def save_file(self, output_path: Optional[str] = None, password: Optional[str] = None) -> Dict[str, Any]:
+    def save_file(self, output_path: Optional[str] = None, password: Optional[str] = None, selected_sheets: Optional[list] = None) -> Dict[str, Any]:
         """Speichert die Datei (optional unter neuem Namen und/oder mit Passwort)
         
         Args:
             output_path: Optionaler neuer Dateipfad
             password: Optionales Passwort (None = kein Passwort, '' = Passwort entfernen, 'xxx' = neues Passwort)
+            selected_sheets: Optionale Liste von Sheet-Namen die exportiert werden sollen (None = alle)
         """
         import time as _time
         _t0 = _time.time()
@@ -597,6 +598,15 @@ class ExcelLiveSession:
                         self.worksheet.api.EnableFormatConditionsCalculation = True
                 except Exception as recalc_err:
                     self._log(f"Pre-Save Recalc fehlgeschlagen: {recalc_err}")
+            
+            # Sheet-Filterung: Nur ausgewählte Sheets exportieren
+            all_sheet_names = [s.name for s in self.workbook.sheets]
+            needs_sheet_filter = (selected_sheets is not None 
+                                  and len(selected_sheets) > 0 
+                                  and len(selected_sheets) < len(all_sheet_names))
+            
+            if needs_sheet_filter:
+                return self._save_filtered(output_path, password, effective_password, keep_password, selected_sheets, all_sheet_names)
             
             if output_path and output_path != self.file_path:
                 self._log(f"Speichere unter: {output_path}")
@@ -650,6 +660,82 @@ class ExcelLiveSession:
             
         except Exception as e:
             self._log(f"Fehler beim Speichern: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _save_filtered(self, output_path, password, effective_password, keep_password, selected_sheets, all_sheet_names):
+        """Speichert nur ausgewählte Sheets via SaveCopyAs + Sheet-Löschung"""
+        import time as _time, tempfile, os
+        _t0 = _time.time()
+        
+        final_path = output_path or self.file_path
+        sheets_to_delete = [name for name in all_sheet_names if name not in selected_sheets]
+        self._log(f"_save_filtered: {len(selected_sheets)} von {len(all_sheet_names)} Sheets, lösche: {sheets_to_delete}")
+        
+        try:
+            # 1. Kopie erstellen mit SaveCopyAs (ändert NICHT die aktuelle Workbook-Zuordnung)
+            temp_dir = tempfile.mkdtemp(prefix='edsp_export_')
+            temp_path = os.path.join(temp_dir, 'temp_export.xlsx')
+            self.workbook.api.SaveCopyAs(temp_path)
+            self._log(f"SaveCopyAs -> {temp_path}")
+            
+            # 2. Kopie öffnen (im selben unsichtbaren Excel-Prozess)
+            old_alerts = self.app.display_alerts
+            self.app.display_alerts = False
+            copy_wb = self.app.books.open(temp_path)
+            
+            try:
+                # 3. Nicht ausgewählte Sheets löschen
+                for sheet_name in sheets_to_delete:
+                    try:
+                        copy_wb.sheets[sheet_name].delete()
+                    except Exception as del_err:
+                        self._log(f"Sheet '{sheet_name}' löschen fehlgeschlagen: {del_err}")
+                
+                # 4. Passwort setzen falls nötig
+                if effective_password:
+                    copy_wb.api.Password = effective_password
+                elif not keep_password and self.file_password:
+                    copy_wb.api.Password = ''
+                
+                # 5. Als finale Datei speichern
+                if final_path != temp_path:
+                    copy_wb.api.SaveAs(final_path, FileFormat=51)
+                else:
+                    copy_wb.save()
+                
+                self._log(f"Gefilterte Datei gespeichert: {final_path}")
+            finally:
+                # 6. Kopie schließen
+                copy_wb.close()
+                self.app.display_alerts = old_alerts
+                
+                # Temp-Dateien aufräumen
+                try:
+                    if os.path.exists(temp_path):
+                        os.remove(temp_path)
+                    os.rmdir(temp_dir)
+                except Exception:
+                    pass
+            
+            # Nach dem Speichern: Session-Performance-Modus wiederherstellen
+            if platform.system() == 'Windows':
+                try:
+                    self.app.calculation = 'manual'
+                    self.app.enable_events = False
+                    if self.worksheet:
+                        self.worksheet.api.EnableFormatConditionsCalculation = False
+                except Exception as restore_err:
+                    self._log(f"Post-Save Restore fehlgeschlagen: {restore_err}")
+            
+            _t1 = _time.time()
+            self._log(f"_save_filtered: took {(_t1 - _t0)*1000:.0f}ms")
+            
+            self._cleanup_recovery(success=True)
+            
+            return {'success': True, 'outputPath': final_path, 'hasPassword': bool(effective_password)}
+            
+        except Exception as e:
+            self._log(f"Fehler bei gefiltertem Speichern: {e}")
             return {'success': False, 'error': str(e)}
     
     def set_password(self, password: Optional[str]) -> Dict[str, Any]:
@@ -1572,7 +1658,7 @@ class ExcelLiveSession:
             self._log(f"Fehler restore_cells_batch: {e}")
             return {'success': False, 'error': str(e)}
     
-    def set_cell_value(self, row_index: int, col_index: int, value: Any) -> Dict[str, Any]:
+    def set_cell_value(self, row_index: int, col_index: int, value: Any, old_value: Any = None) -> Dict[str, Any]:
         """Setzt den Wert einer einzelnen Zelle (formatierungsschonend)"""
         try:
             if not self.worksheet:
@@ -1592,8 +1678,9 @@ class ExcelLiveSession:
                     self._log(f"set_cell_value: Zelle ({excel_row},{excel_col}) enthält Bild-Formel — Überschreiben verhindert")
                     return {'success': True, 'skipped': True, 'reason': 'image_formula'}
             
-            # Alten Wert lesen für Undo
-            old_value = cell.value
+            # Alten Wert für Undo: vom Frontend übernehmen oder von COM lesen
+            if old_value is None:
+                old_value = cell.value
             self._push_undo_command(
                 f'Zelle ({row_index + 1},{col_index + 1}) geändert',
                 'restore_cell_value',
@@ -1783,21 +1870,35 @@ end tell'''
                 # Zellen nach Zeile gruppieren für Range-Writes statt Einzelzellen
                 from collections import defaultdict
                 rows_map = defaultdict(dict)
+                old_values_map = {}
+                has_all_old_values = True
                 for cell in cells:
                     r = cell.get('row')
                     c = cell.get('col')
                     if r is None or c is None:
                         continue
                     rows_map[r][c] = cell.get('value')
+                    if 'oldValue' in cell:
+                        old_values_map[(r, c)] = cell['oldValue']
+                    else:
+                        has_all_old_values = False
                 
-                # Alte Werte lesen für Undo (vor dem Schreiben)
+                # Alte Werte: vom Frontend übernehmen oder von COM lesen
                 old_cells = []
-                for row_index in sorted(rows_map.keys()):
-                    cols = rows_map[row_index]
-                    excel_row = row_index + 2
-                    for col_index in sorted(cols.keys()):
-                        old_val = self.worksheet.range((excel_row, col_index + 1)).value
-                        old_cells.append({'row': row_index, 'col': col_index, 'value': old_val})
+                if has_all_old_values and old_values_map:
+                    # Frontend hat alte Werte mitgeliefert — kein COM-Zugriff nötig
+                    for row_index in sorted(rows_map.keys()):
+                        cols = rows_map[row_index]
+                        for col_index in sorted(cols.keys()):
+                            old_cells.append({'row': row_index, 'col': col_index, 'value': old_values_map.get((row_index, col_index))})
+                else:
+                    # Fallback: Alte Werte von COM lesen
+                    for row_index in sorted(rows_map.keys()):
+                        cols = rows_map[row_index]
+                        excel_row = row_index + 2
+                        for col_index in sorted(cols.keys()):
+                            old_val = self.worksheet.range((excel_row, col_index + 1)).value
+                            old_cells.append({'row': row_index, 'col': col_index, 'value': old_val})
                 
                 self._push_undo_command(
                     f'{len(old_cells)} Zelle(n) geändert',
@@ -2147,6 +2248,38 @@ end tell'''
                         col_idx = f.get('colIndex', 0) + 1  # 1-basiert
                         filters_by_col[col_idx].append(f)
                     
+                    # Zuvor von der App gesetzte Filter-Felder ermitteln, die NICHT mehr in der neuen Liste sind
+                    # NUR App-eigene Felder zurücksetzen — vorhandene Excel-Filter NICHT antasten!
+                    new_col_set = set(filters_by_col.keys())
+                    old_fields = getattr(self, '_active_filter_fields', [])
+                    stale_fields = [f for f in old_fields if f not in new_col_set]
+                    
+                    if stale_fields:
+                        self._log(f"Entferne veraltete Filter-Felder: {stale_fields}")
+                        for col_idx in stale_fields:
+                            try:
+                                # AutoFilter.Range statt used_range → funktioniert auch
+                                # wenn alle Zeilen ausgeblendet sind (0 Treffer)
+                                af = self.worksheet.api.AutoFilter
+                                if af:
+                                    af.Range.AutoFilter(Field=col_idx)
+                                else:
+                                    used_range.api.AutoFilter(Field=col_idx)
+                                self._log(f"  Filter Feld {col_idx} zurückgesetzt")
+                            except Exception as e:
+                                self._log(f"  Filter Feld {col_idx} Reset-Fehler: {e}")
+                        # Fallback: Falls nach Reset immer noch alles ausgeblendet
+                        try:
+                            af = self.worksheet.api.AutoFilter
+                            if af and af.Range.Columns.Count > 0:
+                                visible = self.worksheet.api.Rows.SpecialCells(12).Count  # xlCellTypeVisible=12
+                                total = self.worksheet.api.UsedRange.Rows.Count
+                                if visible <= 1 and total > 1:  # nur Header sichtbar
+                                    self._log("  ShowAllData Fallback (0 sichtbare Zeilen nach Reset)")
+                                    self.worksheet.api.ShowAllData()
+                        except Exception:
+                            pass
+                    
                     self._active_filter_fields = []  # Merken für Clear
                     for col_idx, col_filters in filters_by_col.items():
                         criteria_list = []
@@ -2181,128 +2314,132 @@ end tell'''
                                 is_date = True
                                 self._log(f"Datums-Filter Spalte {col_idx}: op={operator}, from={date_from}, to={date_to}")
                                 try:
-                                    def _convert_date_for_excel(iso_date_str, col_index):
-                                        """Konvertiert ISO-Datum (YYYY-MM-DD) ins Zellformat der Spalte"""
-                                        try:
-                                            dt = datetime.strptime(iso_date_str, '%Y-%m-%d')
-                                        except:
-                                            return iso_date_str
+                                    def _date_to_serial(iso_date_str):
+                                        """Konvertiert ISO-Datum zu Excel-Seriennummer (Integer)"""
+                                        dt = datetime.strptime(iso_date_str, '%Y-%m-%d')
+                                        excel_epoch = datetime(1899, 12, 30)
+                                        return (dt - excel_epoch).days
+                                    
+                                    # Prüfe ob Spalte echte Datumswerte enthält
+                                    col_letter = self._get_column_letter(col_idx)
+                                    cell_val = self.worksheet.range(f'{col_letter}2').value
+                                    is_real_date = isinstance(cell_val, datetime)
+                                    self._log(f"  Spalte {col_idx} ({col_letter}): Wert={cell_val}, Typ={type(cell_val).__name__}, is_real_date={is_real_date}")
+                                    
+                                    if is_real_date:
+                                        # ===== Echte Datumsspalte =====
+                                        # Strategie 1: xlDynamic (Operator=11) für einfache Fälle
+                                        # → Das ist was Excel selbst in der UI nutzt, kein Datumsformat nötig.
+                                        dynamic_map = {
+                                            'dateToday': 1,      # xlFilterToday
+                                            'dateThisWeek': 4,   # xlFilterThisWeek
+                                            'dateThisMonth': 7,  # xlFilterThisMonth
+                                        }
                                         
-                                        try:
-                                            col_letter = self._get_column_letter(col_index)
-                                            cell = self.worksheet.range(f'{col_letter}2')
-                                            num_fmt = cell.number_format or ''
-                                            self._log(f"  Spalte {col_index} NumberFormat: '{num_fmt}'")
+                                        if operator in dynamic_map:
+                                            dyn_const = dynamic_map[operator]
+                                            self._log(f"  xlDynamic: Operator=11, Criteria1={dyn_const}")
+                                            used_range.api.AutoFilter(Field=col_idx, Operator=11, Criteria1=dyn_const)
+                                            self._active_filter_fields.append(col_idx)
+                                            self._log(f"  Datums-Filter Spalte {col_idx} per xlDynamic gesetzt")
+                                        else:
+                                            # Strategie 2: Locale-formatierte Datums-Strings
+                                            # AutoFilter erwartet Datums-Criteria im Format der
+                                            # Excel-Application-Locale (Application.International).
+                                            # Seriennummern funktionieren NICHT als Criteria.
+                                            def _iso_to_filter_date(iso_str):
+                                                dt = datetime.strptime(iso_str, '%Y-%m-%d')
+                                                try:
+                                                    app = self.worksheet.book.app
+                                                    date_order = int(app.api.International(32))
+                                                    date_sep = str(app.api.International(17))
+                                                    self._log(f"  International: order={date_order}, sep='{date_sep}'")
+                                                except Exception as ie:
+                                                    self._log(f"  International FEHLER: {ie}, fallback DE")
+                                                    date_order = 1
+                                                    date_sep = '.'
+                                                d = f"{dt.day:02d}"
+                                                m = f"{dt.month:02d}"
+                                                y = str(dt.year)
+                                                if date_order == 0:    # MDY (US)
+                                                    return f"{m}{date_sep}{d}{date_sep}{y}"
+                                                elif date_order == 2:  # YMD
+                                                    return f"{y}{date_sep}{m}{date_sep}{d}"
+                                                else:                  # DMY (DE, UK, etc.)
+                                                    return f"{d}{date_sep}{m}{date_sep}{y}"
                                             
-                                            nf = num_fmt.lower().replace('\\', '').strip()
+                                            fmt_from = _iso_to_filter_date(date_from) if date_from else None
+                                            fmt_to = _iso_to_filter_date(date_to) if date_to else None
+                                            self._log(f"  Locale-Datum: from={fmt_from}, to={fmt_to}")
                                             
-                                            import re as _re
-                                            m_pos = -1
-                                            d_pos = -1
-                                            for _m in _re.finditer(r'[md]', nf):
-                                                ch = _m.group()
-                                                if ch == 'm' and m_pos < 0:
-                                                    m_pos = _m.start()
-                                                elif ch == 'd' and d_pos < 0:
-                                                    d_pos = _m.start()
-                                            
-                                            month_first = m_pos < d_pos if m_pos >= 0 and d_pos >= 0 else False
-                                            self._log(f"  Format-Analyse: m_pos={m_pos}, d_pos={d_pos}, month_first={month_first}")
-                                            
-                                            sep = '.'
-                                            for ch in nf:
-                                                if ch in './-':
-                                                    sep = ch
-                                                    break
-                                            
-                                            has_4y = 'yyyy' in nf
-                                            
-                                            if 'yyyy' in nf:
-                                                y_pos = nf.index('yyyy')
-                                                if y_pos == 0 or (m_pos >= 0 and y_pos < m_pos):
-                                                    return dt.strftime(f'%Y{sep}%m{sep}%d')
-                                            
-                                            has_dd = 'dd' in nf
-                                            has_mm = 'mm' in nf
-                                            
-                                            if month_first:
-                                                y_str = str(dt.year) if has_4y else str(dt.year % 100).zfill(2)
-                                                m_str = str(dt.month).zfill(2) if has_mm else str(dt.month)
-                                                d_str = str(dt.day).zfill(2) if has_dd else str(dt.day)
-                                                return f'{m_str}{sep}{d_str}{sep}{y_str}'
+                                            if fmt_from and fmt_to:
+                                                c1 = f">={fmt_from}"
+                                                c2 = f"<={fmt_to}"
+                                                self._log(f"  AutoFilter: c1='{c1}', Operator=xlAnd, c2='{c2}'")
+                                                used_range.api.AutoFilter(Field=col_idx, Criteria1=c1, Operator=1, Criteria2=c2)
+                                            elif fmt_from:
+                                                c1 = f">={fmt_from}"
+                                                self._log(f"  AutoFilter: c1='{c1}'")
+                                                used_range.api.AutoFilter(Field=col_idx, Criteria1=c1)
+                                            elif fmt_to:
+                                                c1 = f"<={fmt_to}"
+                                                self._log(f"  AutoFilter: c1='{c1}'")
+                                                used_range.api.AutoFilter(Field=col_idx, Criteria1=c1)
                                             else:
-                                                y_str = str(dt.year) if has_4y else str(dt.year % 100).zfill(2)
-                                                m_str = str(dt.month).zfill(2) if has_mm else str(dt.month)
-                                                d_str = str(dt.day).zfill(2) if has_dd else str(dt.day)
-                                                return f'{d_str}{sep}{m_str}{sep}{y_str}'
-                                        except Exception as e:
-                                            self._log(f"  NumberFormat-Erkennung fehlgeschlagen: {e}")
-                                        
-                                        try:
-                                            col_letter = self._get_column_letter(col_index)
-                                            cell_val = self.worksheet.range(f'{col_letter}2').value
-                                            sample = str(cell_val or '')
-                                            self._log(f"  Fallback: Beispielwert='{sample}' (Typ: {type(cell_val).__name__})")
-                                            
-                                            if '.' in sample and sample.count('.') == 2:
-                                                import re as _re2
-                                                last_row_fb = min(used_range.last_cell.row, 52)
-                                                col_vals = self.worksheet.range(f'{col_letter}2:{col_letter}{last_row_fb}').value
-                                                if not isinstance(col_vals, list):
-                                                    col_vals = [col_vals]
-                                                is_mdy = False
-                                                for cv in col_vals:
-                                                    s = str(cv or '').strip()
-                                                    dm = _re2.match(r'^(\d{1,2})\.(\d{1,2})\.(\d{2,4})', s)
-                                                    if dm:
-                                                        pp1, pp2 = int(dm.group(1)), int(dm.group(2))
-                                                        if pp2 > 12 and pp1 <= 12:
-                                                            is_mdy = True
-                                                            break
-                                                        if pp1 > 12 and pp2 <= 12:
-                                                            break
-                                                if is_mdy:
-                                                    self._log(f"  Fallback: MM.DD Format erkannt")
-                                                    return f'{dt.month}.{dt.day:02d}.{dt.year % 100:02d}'
-                                                else:
+                                                self._log(f"  Datums-Filter Spalte {col_idx} übersprungen (kein from/to)")
+                                                continue
+                                            self._active_filter_fields.append(col_idx)
+                                            self._log(f"  Datums-Filter Spalte {col_idx} gesetzt")
+                                    else:
+                                        # ===== Text-Datumsspalte =====
+                                        # Formatierung muss zum Text in den Zellen passen
+                                        def _format_date_for_text_col(iso_date_str, col_index):
+                                            try:
+                                                dt = datetime.strptime(iso_date_str, '%Y-%m-%d')
+                                            except:
+                                                return iso_date_str
+                                            try:
+                                                cl = self._get_column_letter(col_index)
+                                                sample = str(self.worksheet.range(f'{cl}2').value or '')
+                                                self._log(f"  Text-Datum Beispiel: '{sample}'")
+                                                if '.' in sample and sample.count('.') == 2:
                                                     return dt.strftime('%d.%m.%Y')
-                                            elif '/' in sample:
-                                                return dt.strftime('%#m/%#d/%Y')
-                                            elif '-' in sample and not sample[:4].isdigit():
-                                                return dt.strftime('%d-%m-%Y')
-                                        except Exception as e:
-                                            self._log(f"  Fallback-Fehler: {e}")
+                                                elif '/' in sample:
+                                                    return dt.strftime('%m/%d/%Y')
+                                                elif '-' in sample:
+                                                    return dt.strftime('%Y-%m-%d')
+                                            except:
+                                                pass
+                                            return dt.strftime('%d.%m.%Y')
                                         
-                                        return dt.strftime('%#m/%#d/%Y')
-                                    
-                                    c1 = None
-                                    c2 = None
-                                    xl_op = None
-                                    
-                                    excel_from = _convert_date_for_excel(date_from, col_idx) if date_from else None
-                                    excel_to = _convert_date_for_excel(date_to, col_idx) if date_to else None
-                                    self._log(f"  Konvertiert: from={date_from} → {excel_from}, to={date_to} → {excel_to}")
-                                    
-                                    if excel_from and excel_to:
-                                        c1 = f">={excel_from}"
-                                        c2 = f"<={excel_to}"
-                                        xl_op = 1  # xlAnd
-                                    elif excel_from:
-                                        c1 = f">={excel_from}"
-                                    elif excel_to:
-                                        c1 = f"<={excel_to}"
-                                    else:
-                                        self._log(f"Datums-Filter Spalte {col_idx} übersprungen (keine Daten)")
-                                        continue
-                                    
-                                    if c2 and xl_op:
-                                        used_range.api.AutoFilter(Field=col_idx, Criteria1=c1, Operator=xl_op, Criteria2=c2)
-                                    else:
-                                        used_range.api.AutoFilter(Field=col_idx, Criteria1=c1)
-                                    self._active_filter_fields.append(col_idx)
-                                    self._log(f"Datums-Filter Spalte {col_idx} gesetzt: c1={c1}, c2={c2}")
+                                        fmt_from = _format_date_for_text_col(date_from, col_idx) if date_from else None
+                                        fmt_to = _format_date_for_text_col(date_to, col_idx) if date_to else None
+                                        self._log(f"  Text-Format: from={fmt_from}, to={fmt_to}")
+                                        
+                                        c1 = None
+                                        c2 = None
+                                        if fmt_from and fmt_to:
+                                            c1 = f">={fmt_from}"
+                                            c2 = f"<={fmt_to}"
+                                        elif fmt_from:
+                                            c1 = f">={fmt_from}"
+                                        elif fmt_to:
+                                            c1 = f"<={fmt_to}"
+                                        
+                                        if not c1:
+                                            self._log(f"  Text-Datums-Filter Spalte {col_idx} übersprungen")
+                                            continue
+                                        
+                                        if c2:
+                                            used_range.api.AutoFilter(Field=col_idx, Criteria1=c1, Operator=1, Criteria2=c2)
+                                        else:
+                                            used_range.api.AutoFilter(Field=col_idx, Criteria1=c1)
+                                        self._active_filter_fields.append(col_idx)
+                                        self._log(f"  Text-Datums-Filter Spalte {col_idx} gesetzt: c1={c1}, c2={c2}")
                                 except Exception as e:
-                                    self._log(f"Fehler bei Datums-Filter Spalte {col_idx}: {e}")
+                                    self._log(f"FEHLER bei Datums-Filter Spalte {col_idx}: {e}")
+                                    import traceback
+                                    self._log(traceback.format_exc())
                         
                         # ---- Text-Criteria anwenden (nach der for-Schleife) ----
                         if not is_date and criteria_list:
@@ -2326,16 +2463,45 @@ end tell'''
                             except Exception as e:
                                 self._log(f"Fehler bei Filter Spalte {col_idx}: {e}")
                 else:
-                    # ===== AutoFilter entfernen / Alle Zeilen einblenden =====
-                    # Delegiere an clear_autofilter
-                    return self.clear_autofilter()
+                    # ===== Keine App-Filter mehr aktiv =====
+                    # NUR die von der App gesetzten Filter-Felder zurücksetzen
+                    # Vorhandene Excel-AutoFilter (z.B. beim Dateiöffnen) NICHT antasten!
+                    old_fields = getattr(self, '_active_filter_fields', [])
+                    if old_fields:
+                        self._log(f"Entferne {len(old_fields)} App-Filter-Felder: {old_fields}")
+                        for col_idx in old_fields:
+                            try:
+                                # AutoFilter.Range statt used_range → funktioniert auch
+                                # wenn alle Zeilen ausgeblendet sind (0 Treffer)
+                                af = self.worksheet.api.AutoFilter
+                                if af:
+                                    af.Range.AutoFilter(Field=col_idx)
+                                else:
+                                    used_range.api.AutoFilter(Field=col_idx)
+                                self._log(f"  App-Filter Feld {col_idx} zurückgesetzt")
+                            except Exception as e:
+                                self._log(f"  App-Filter Feld {col_idx} Reset-Fehler: {e}")
+                        # Fallback: Falls nach Reset immer noch alles ausgeblendet
+                        try:
+                            af = self.worksheet.api.AutoFilter
+                            if af and af.Range.Columns.Count > 0:
+                                visible = self.worksheet.api.Rows.SpecialCells(12).Count  # xlCellTypeVisible=12
+                                total = self.worksheet.api.UsedRange.Rows.Count
+                                if visible <= 1 and total > 1:  # nur Header sichtbar
+                                    self._log("  ShowAllData Fallback (0 sichtbare Zeilen nach Reset)")
+                                    self.worksheet.api.ShowAllData()
+                        except Exception:
+                            pass
+                        self._active_filter_fields = []
+                    else:
+                        self._log("Keine App-Filter zum Zurücksetzen")
                         
             except Exception as api_error:
                 self._log(f"AutoFilter API Fehler: {api_error}")
                 return {'success': False, 'error': str(api_error)}
             
-            self._log(f"AutoFilter abgeschlossen: {len(filters) if filters else 0} Filter")
-            return {'success': True, 'filterCount': len(filters) if filters else 0}
+            self._log(f"AutoFilter abgeschlossen: {len(filters) if filters else 0} Filter, aktive Felder: {self._active_filter_fields}")
+            return {'success': True, 'filterCount': len(filters) if filters else 0, 'activeFields': list(self._active_filter_fields)}
             
         except Exception as e:
             self._log(f"Fehler beim Setzen des AutoFilters: {e}")
@@ -3068,7 +3234,7 @@ end tell'''
         
         handlers = {
             'open': lambda: self.open_file(cmd.get('filePath'), cmd.get('sheetName'), cmd.get('password')),
-            'save': lambda: self.save_file(cmd.get('outputPath'), cmd.get('password')),
+            'save': lambda: self.save_file(cmd.get('outputPath'), cmd.get('password'), cmd.get('selectedSheets')),
             'close': lambda: self.close_session(save=cmd.get('save', False)),
             'getData': lambda: self.get_data(),
             'switchSheet': lambda: self.switch_sheet(cmd.get('sheetName'), cmd.get('includeData', False)),
@@ -3098,7 +3264,7 @@ end tell'''
             'hideColumn': lambda: self.hide_column(cmd.get('colIndex'), cmd.get('hidden', True)),
             
             # Zellen
-            'setCellValue': lambda: self.set_cell_value(cmd.get('rowIndex'), cmd.get('colIndex'), cmd.get('value')),
+            'setCellValue': lambda: self.set_cell_value(cmd.get('rowIndex'), cmd.get('colIndex'), cmd.get('value'), old_value=cmd.get('oldValue')),
             'setColumnValues': lambda: self.set_column_values(cmd.get('colIndex'), cmd.get('values', []), cmd.get('startRow', 0)),
             'setRowValues': lambda: self.set_row_values(cmd.get('rowIndex'), cmd.get('values', [])),
             'setCellsBatch': lambda: self.set_cells_batch(cmd.get('cells', [])),
