@@ -3454,8 +3454,7 @@ def _filter_rows_xml_regex(sheet_content, row_mapping, new_max_row, hidden_rows=
                     count=1
                 )
                 # Zell-Referenzen in der Zeile ändern: r="AB123" → r="AB456"
-                row_xml = re.sub(
-                    r'(r="[A-Z]{1,3})' + str(orig_excel_row) + r'"',
+                row_el_row) + r'"',
                     r'\g<1>' + str(new_excel_row) + '"',
                     row_xml
                 )

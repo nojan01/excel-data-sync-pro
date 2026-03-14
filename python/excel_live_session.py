@@ -330,7 +330,9 @@ class ExcelLiveSession:
                 pass
     
     def set_visible(self, visible: bool = True) -> Dict[str, Any]:
-        """Zeigt oder versteckt das Excel-Fenster"""
+        """Zeigt oder versteckt das Excel-Fenster.
+        Wenn sichtbar: Interactive=False → Read-Only-Vorschau, kein Schließen möglich.
+        Wenn versteckt: Interactive=True → normale Steuerung durch xlwings."""
         try:
             if not self.app:
                 self._log("Keine Excel-App aktiv")
@@ -338,7 +340,18 @@ class ExcelLiveSession:
             
             # xlwings visible-Eigenschaft verwenden
             self.app.visible = visible
-            self._log(f"Excel Sichtbarkeit gesetzt: {visible}")
+            
+            # Interactive-Schutz: Wenn sichtbar → Benutzerinteraktion sperren
+            # Verhindert versehentliches Schließen/Bearbeiten von Excel
+            try:
+                if platform.system() == 'Windows':
+                    self.app.api.Interactive = not visible
+                else:
+                    self.app.api.interactive.set(not visible)
+            except Exception as int_err:
+                self._log(f"Interactive-Flag Fehler (ignoriert): {int_err}")
+            
+            self._log(f"Excel Sichtbarkeit gesetzt: {visible}, Interactive={not visible}")
             
             return {'success': True, 'visible': visible}
         except Exception as e:
@@ -1064,6 +1077,16 @@ class ExcelLiveSession:
                     self.app.display_alerts = False
                 except Exception as e:
                     self._log(f"display_alerts Fehler: {e}")
+            
+            # Interactive wieder aktivieren (falls als Read-Only-Vorschau gesperrt)
+            if self.app:
+                try:
+                    if platform.system() == 'Windows':
+                        self.app.api.Interactive = True
+                    else:
+                        self.app.api.interactive.set(True)
+                except Exception as int_err:
+                    self._log(f"Interactive-Restore Fehler (ignoriert): {int_err}")
             
             # Session-weite Einstellungen zurücksetzen
             if self.app and platform.system() == 'Windows':
