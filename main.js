@@ -2658,7 +2658,6 @@ ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, origin
             message: result.message,
             sheetsExported: result.sheetsExported,
             method: result.method || 'openpyxl',
-            debugLog: result.debugLog || '',
             passwordProtected: !!password,
             stats: { totalTimeMs: duration }
         };

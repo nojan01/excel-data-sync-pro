@@ -100,27 +100,6 @@ THEME_COLORS = [
 ]
 
 
-def _check_zip_drawings(zip_path, label):
-    """Diagnose-Helper: Prüft ob ein ZIP drawing-relevante Dateien enthält."""
-    import zipfile
-    import re
-    import sys
-    try:
-        with zipfile.ZipFile(zip_path, 'r') as zf:
-            names = zf.namelist()
-            drawings = [n for n in names if 'drawing' in n.lower() or 'media/' in n.lower()]
-            has_drawing_el = False
-            for n in names:
-                if n.startswith('xl/worksheets/') and n.endswith('.xml') and '/_rels/' not in n:
-                    content = zf.read(n).decode('utf-8', errors='replace')
-                    if re.search(r'<drawing[\s>]', content):
-                        has_drawing_el = True
-                        break
-            sys.stderr.write(f"[CHECKPOINT {label}] drawings/media files: {drawings}, <drawing> in sheet XML: {has_drawing_el}\n")
-    except Exception as e:
-        sys.stderr.write(f"[CHECKPOINT {label}] Fehler: {e}\n")
-
-
 def _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map):
     """
     Wendet vm-Attribute auf eingefügte Kopien von Bild-Zellen an.
@@ -214,10 +193,24 @@ def _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map):
         
         # Bestehende vm-Zellen ermitteln (bereits durch restore wiederhergestellt)
         existing_vm = set()
-        for vm_match in re.finditer(r'<c\s[^>]*?r="([A-Z]+\d+)"[^>]*?\bvm="\d+"', ws_content):
+        # Sammle auch Style-Index (s="...") der Original-vm-Zellen, um ihn auf Kopien zu übertragen
+        vm_val_to_style = {}  # vm-Wert → s-Index des Originals
+        for vm_match in re.finditer(r'<c\s[^>]*?r="([A-Z]+\d+)"[^>]*?\bvm="(\d+)"', ws_content):
             existing_vm.add(vm_match.group(1))
-        for vm_match in re.finditer(r'<c\s[^>]*?\bvm="\d+"[^>]*?r="([A-Z]+\d+)"', ws_content):
-            existing_vm.add(vm_match.group(1))
+            vm_val = vm_match.group(2)
+            if vm_val not in vm_val_to_style:
+                full_tag = vm_match.group(0)
+                s_m = re.search(r'\bs="(\d+)"', full_tag)
+                if s_m:
+                    vm_val_to_style[vm_val] = s_m.group(1)
+        for vm_match in re.finditer(r'<c\s[^>]*?\bvm="(\d+)"[^>]*?r="([A-Z]+\d+)"', ws_content):
+            existing_vm.add(vm_match.group(2))
+            vm_val = vm_match.group(1)
+            if vm_val not in vm_val_to_style:
+                full_tag = vm_match.group(0)
+                s_m = re.search(r'\bs="(\d+)"', full_tag)
+                if s_m:
+                    vm_val_to_style[vm_val] = s_m.group(1)
         
         # Nur neue vm-Zellen (die nicht schon vom Original-Restore gesetzt wurden)
         new_vm_refs = {ref: val for ref, val in vm_refs.items() if ref not in existing_vm}
@@ -230,6 +223,9 @@ def _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map):
         vm_added = 0
         vm_created = 0
         for cell_ref, vm_val in new_vm_refs.items():
+            # Original-Style ermitteln (vom Original-vm-Zelle mit gleichem vm-Wert)
+            orig_style_idx = vm_val_to_style.get(vm_val)
+            
             # Finde die Zelle in der Zieldatei
             cell_pattern = re.compile(r'(<c\s[^>]*?r="' + re.escape(cell_ref) + r'"[^>]*?)(/?>)')
             match = cell_pattern.search(ws_content)
@@ -242,6 +238,13 @@ def _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map):
                 c_tag = re.sub(r'\bt="[^"]*"', 't="e"', c_tag)
                 if ' t="' not in c_tag:
                     c_tag = c_tag.replace('<c ', '<c t="e" ', 1)
+                
+                # Style vom Original übernehmen (enthält Alignment/Font/Format für korrekte Darstellung)
+                if orig_style_idx and f's="{orig_style_idx}"' not in c_tag:
+                    if re.search(r'\bs="\d+"', c_tag):
+                        c_tag = re.sub(r'\bs="\d+"', f's="{orig_style_idx}"', c_tag)
+                    else:
+                        c_tag = c_tag.replace('<c ', f'<c s="{orig_style_idx}" ', 1)
                 
                 # value auf #VALUE! setzen (gleich wie Original-Bild-Zelle)
                 rest_start = match.end()
@@ -265,13 +268,14 @@ def _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map):
                 vm_added += 1
             elif not match:
                 # Zelle existiert nicht - in passender Zeile erstellen
+                style_attr = f' s="{orig_style_idx}"' if orig_style_idx else ''
                 row_num_match = re.search(r'(\d+)$', cell_ref)
                 if row_num_match:
                     row_num = row_num_match.group(1)
                     row_pattern = re.compile(r'(<row\s[^>]*?\br="' + re.escape(row_num) + r'"[^>]*?>)')
                     row_match = row_pattern.search(ws_content)
                     if row_match:
-                        cell_el = f'<c r="{cell_ref}" t="e" vm="{vm_val}"><v>#VALUE!</v></c>'
+                        cell_el = f'<c r="{cell_ref}"{style_attr} t="e" vm="{vm_val}"><v>#VALUE!</v></c>'
                         insert_pos = row_match.end()
                         ws_content = ws_content[:insert_pos] + cell_el + ws_content[insert_pos:]
                         vm_created += 1
@@ -279,7 +283,7 @@ def _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map):
                         # Zeile existiert auch nicht - Zeile + Zelle erstellen
                         sheet_data_end = re.search(r'</sheetData>', ws_content)
                         if sheet_data_end:
-                            row_el = f'<row r="{row_num}"><c r="{cell_ref}" t="e" vm="{vm_val}"><v>#VALUE!</v></c></row>\n'
+                            row_el = f'<row r="{row_num}"><c r="{cell_ref}"{style_attr} t="e" vm="{vm_val}"><v>#VALUE!</v></c></row>\n'
                             insert_pos = sheet_data_end.start()
                             ws_content = ws_content[:insert_pos] + row_el + ws_content[insert_pos:]
                             vm_created += 1
@@ -1390,37 +1394,7 @@ def restore_external_links_from_original(output_path, original_path, structural_
         with zipfile.ZipFile(output_path, 'r') as zf:
             zf.extractall(temp_dir)
         with zipfile.ZipFile(original_path, 'r') as zf:
-            # DEBUG: Zeige alle Dateien im Original-ZIP die mit Bildern/Drawings zu tun haben
-            all_names = zf.namelist()
-            drawing_related = [n for n in all_names if any(k in n.lower() for k in ['draw', 'media', 'image', 'picture', 'vml', 'richdata', 'rdrichvalue'])]
-            sys.stderr.write(f"[restore_ext] Original-ZIP Dateien (drawing/media-related): {drawing_related}\n")
-            sys.stderr.write(f"[restore_ext] Original-ZIP alle xl/ Dateien: {[n for n in all_names if n.startswith('xl/')]}\n")
             zf.extractall(orig_temp_dir)
-        
-        # DEBUG: Inhalt von sheet1.xml.rels anzeigen
-        orig_rels_file = os.path.join(orig_temp_dir, 'xl', 'worksheets', '_rels', 'sheet1.xml.rels')
-        if os.path.exists(orig_rels_file):
-            with open(orig_rels_file, 'r', encoding='utf-8') as f:
-                rels_content = f.read()
-            sys.stderr.write(f"[restore_ext] sheet1.xml.rels Inhalt: {rels_content[:500]}\n")
-        
-        # DEBUG: Prüfe ob <drawing> Element in original sheet1.xml vorhanden
-        orig_sheet1 = os.path.join(orig_temp_dir, 'xl', 'worksheets', 'sheet1.xml')
-        if os.path.exists(orig_sheet1):
-            with open(orig_sheet1, 'r', encoding='utf-8') as f:
-                sheet1_content = f.read()
-            has_drawing = '<drawing ' in sheet1_content or '<drawing>' in sheet1_content
-            has_legacy = '<legacyDrawing ' in sheet1_content
-            has_picture = '<picture ' in sheet1_content
-            sys.stderr.write(f"[restore_ext] Original sheet1.xml: <drawing>={has_drawing}, <legacyDrawing>={has_legacy}, <picture>={has_picture}\n")
-        
-        # DEBUG: Prüfe ob <drawing> Element in output sheet1.xml vorhanden
-        dest_sheet1 = os.path.join(temp_dir, 'xl', 'worksheets', 'sheet1.xml')
-        if os.path.exists(dest_sheet1):
-            with open(dest_sheet1, 'r', encoding='utf-8') as f:
-                dest_sheet1_content = f.read()
-            has_drawing_dest = '<drawing ' in dest_sheet1_content or '<drawing>' in dest_sheet1_content
-            sys.stderr.write(f"[restore_ext] Output sheet1.xml: <drawing>={has_drawing_dest}\n")
         
         ext_links_dir = os.path.join(temp_dir, 'xl', 'externalLinks')
         orig_ext_links_dir = os.path.join(orig_temp_dir, 'xl', 'externalLinks')
@@ -2667,127 +2641,6 @@ def restore_external_links_from_original(output_path, original_path, structural_
                     written.add(arc_name)
         
         shutil.copy2(temp_xlsx, output_path)
-        sys.stderr.write(f"[restore_ext] XLSX wiederhergestellt (ZIP-to-ZIP, {len(written)} Einträge)\n")
-        
-        # DIAGNOSE: Dump des endgültigen ZIP-Inhalts für Image-Debugging
-        # Läuft IMMER (auch wenn fixed_count == 0), um den Endzustand zu zeigen
-        try:
-            with zipfile.ZipFile(output_path, 'r') as zf:
-                all_names = zf.namelist()
-                img_related = [n for n in all_names if any(k in n.lower() for k in 
-                    ['draw', 'media', 'image', 'picture', 'vml', 'richdata', 'rdrichvalue', 'metadata', '_rels/sheet'])]
-                sys.stderr.write(f"[DIAGNOSE] === FINAL ZIP STATE ===\n")
-                sys.stderr.write(f"[DIAGNOSE] Image-relevante Dateien ({len(img_related)}):\n")
-                for n in sorted(img_related):
-                    size = zf.getinfo(n).file_size
-                    sys.stderr.write(f"[DIAGNOSE]   {n} ({size} bytes)\n")
-                
-                # Slicer-/Drawing-Kette analysieren
-                slicer_related = [n for n in all_names if any(k in n.lower() for k in 
-                    ['slicer', 'ctrlprop'])]
-                if slicer_related:
-                    sys.stderr.write(f"[DIAGNOSE] Slicer-relevante Dateien ({len(slicer_related)}):\n")
-                    for n in sorted(slicer_related):
-                        size = zf.getinfo(n).file_size
-                        sys.stderr.write(f"[DIAGNOSE]   {n} ({size} bytes)\n")
-                
-                # Drawing-XMLs analysieren
-                for n in sorted(all_names):
-                    if n.startswith('xl/drawings/') and n.endswith('.xml') and '/_rels/' not in n:
-                        drawing_xml = zf.read(n).decode('utf-8', errors='replace')
-                        has_slicer_uri = any(uri in drawing_xml for uri in [
-                            'schemas.microsoft.com/office/drawing/2010/slicer',
-                            'schemas.microsoft.com/office/drawing/2014/slicer'])
-                        anchor_count = len(re.findall(r'<(?:xdr:)?(?:twoCellAnchor|oneCellAnchor)', drawing_xml))
-                        mc_count = len(re.findall(r'<mc:AlternateContent', drawing_xml))
-                        sys.stderr.write(f"[DIAGNOSE] {n}: {len(drawing_xml)} bytes, "
-                                       f"anchors={anchor_count}, mc:AC={mc_count}, "
-                                       f"slicer_uri={has_slicer_uri}\n")
-                        # Drawing rels
-                        dr_rels_name = n.replace('xl/drawings/', 'xl/drawings/_rels/') + '.rels'
-                        if dr_rels_name in all_names:
-                            dr_rels = zf.read(dr_rels_name).decode('utf-8', errors='replace')
-                            dr_rels_entries = re.findall(r'Id="([^"]+)"[^>]*Target="([^"]+)"', dr_rels)
-                            sys.stderr.write(f"[DIAGNOSE]   rels: {dr_rels_entries}\n")
-                        else:
-                            sys.stderr.write(f"[DIAGNOSE]   KEINE drawing rels ({dr_rels_name})\n")
-                
-                # Sheet XMLs prüfen
-                for n in sorted(all_names):
-                    if n.startswith('xl/worksheets/') and n.endswith('.xml') and '/_rels/' not in n:
-                        sheet_xml = zf.read(n).decode('utf-8', errors='replace')
-                        has_drawing = bool(re.search(r'<drawing[\s>]', sheet_xml))
-                        has_tp = bool(re.search(r'<tableParts', sheet_xml))
-                        has_vm = bool(re.search(r'\bvm=', sheet_xml))
-                        has_mc = 'mc:Ignorable' in sheet_xml
-                        
-                        # Check worksheet-level <extLst> (last one before </worksheet>)
-                        has_extlst = False
-                        ws_end_pos = sheet_xml.rfind('</worksheet>')
-                        if ws_end_pos >= 0:
-                            ext_start = sheet_xml.rfind('<extLst', 0, ws_end_pos)
-                            if ext_start >= 0:
-                                ext_end = sheet_xml.find('</extLst>', ext_start)
-                                if ext_end >= 0:
-                                    after_ext = sheet_xml[ext_end + len('</extLst>'):].strip()
-                                    has_extlst = after_ext.startswith('</worksheet>')
-                        
-                        # rId-Werte extrahieren
-                        dr_rid = re.search(r'<drawing r:id="(rId\d+)"', sheet_xml)
-                        tp_rids = re.findall(r'<tablePart[^>]*r:id="(rId\d+)"', sheet_xml)
-                        ps_rid = re.search(r'<pageSetup[^>]*r:id="(rId\d+)"', sheet_xml)
-                        vm_vals = re.findall(r'\bvm="(\d+)"', sheet_xml)
-                        
-                        # Namespace im Root
-                        root_m = re.search(r'(<worksheet\b[^>]{0,100})', sheet_xml)
-                        root_preview = root_m.group(1) if root_m else 'N/A'
-                        
-                        sys.stderr.write(f"[DIAGNOSE] {n}: drawing={has_drawing}({dr_rid.group(1) if dr_rid else '-'}), "
-                                        f"tableParts={has_tp}({','.join(tp_rids) if tp_rids else '-'}), "
-                                        f"vm={has_vm}({','.join(vm_vals[:3]) if vm_vals else '-'}), "
-                                        f"mc:Ignorable={has_mc}, "
-                                        f"pageSetup_rid={ps_rid.group(1) if ps_rid else '-'}, "
-                                        f"extLst={has_extlst}\n")
-                        sys.stderr.write(f"[DIAGNOSE]   root: {root_preview}...\n")
-                        
-                        # Rels für dieses Sheet prüfen
-                        sheet_name_only = n.split('/')[-1]
-                        rels_name = f"xl/worksheets/_rels/{sheet_name_only}.rels"
-                        if rels_name in all_names:
-                            rels_xml = zf.read(rels_name).decode('utf-8', errors='replace')
-                            rels_entries = re.findall(r'Id="(rId\d+)"[^>]*Type="[^"]*?/(\w+)"[^>]*Target="([^"]*)"', rels_xml)
-                            sys.stderr.write(f"[DIAGNOSE]   rels ({rels_name}):\n")
-                            for rid, rtype, target in rels_entries:
-                                sys.stderr.write(f"[DIAGNOSE]     {rid} -> {rtype} ({target})\n")
-                        else:
-                            sys.stderr.write(f"[DIAGNOSE]   KEINE RELS DATEI für {sheet_name_only}\n")
-                
-                # Content_Types Slicer-Einträge prüfen
-                if '[Content_Types].xml' in all_names:
-                    ct_xml = zf.read('[Content_Types].xml').decode('utf-8', errors='replace')
-                    ct_slicer = [m.group(0) for m in re.finditer(r'<Override[^>]*slicer[^>]*/>', ct_xml, re.IGNORECASE)]
-                    if ct_slicer:
-                        sys.stderr.write(f"[DIAGNOSE] [Content_Types].xml hat {len(ct_slicer)} Slicer-Override(s):\n")
-                        for s in ct_slicer:
-                            sys.stderr.write(f"[DIAGNOSE]   {s}\n")
-                    else:
-                        sys.stderr.write(f"[DIAGNOSE] [Content_Types].xml: KEINE Slicer-Overrides\n")
-                
-                # workbook.xml.rels Slicer-Einträge prüfen
-                wb_rels_name = 'xl/_rels/workbook.xml.rels'
-                if wb_rels_name in all_names:
-                    wb_rels_xml = zf.read(wb_rels_name).decode('utf-8', errors='replace')
-                    wb_slicer_rels = re.findall(r'<Relationship[^>]*(?:slicer|Slicer)[^>]*/>', wb_rels_xml)
-                    if wb_slicer_rels:
-                        sys.stderr.write(f"[DIAGNOSE] workbook.xml.rels hat {len(wb_slicer_rels)} Slicer-Rel(s):\n")
-                        for r in wb_slicer_rels:
-                            sys.stderr.write(f"[DIAGNOSE]   {r}\n")
-                    else:
-                        sys.stderr.write(f"[DIAGNOSE] workbook.xml.rels: KEINE Slicer-Rels\n")
-                
-                sys.stderr.write(f"[DIAGNOSE] === END ===\n")
-        except Exception as diag_err:
-            sys.stderr.write(f"[DIAGNOSE] Fehler: {diag_err}\n")
     
     finally:
         if temp_dir:
@@ -3454,8 +3307,9 @@ def _filter_rows_xml_regex(sheet_content, row_mapping, new_max_row, hidden_rows=
                     count=1
                 )
                 # Zell-Referenzen in der Zeile ändern: r="AB123" → r="AB456"
-                row_el_row) + r'"',
-                    r'\g<1>' + str(new_excel_row) + '"',
+                row_xml = re.sub(
+                    r'(<c\s[^>]*?\br=")([A-Z]+)' + str(orig_excel_row) + r'"',
+                    r'\g<1>\g<2>' + str(new_excel_row) + '"',
                     row_xml
                 )
             
@@ -3686,7 +3540,9 @@ def _filter_table_xml_regex(table_content, new_max_row):
 
 def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
                           hidden_columns=None, hidden_rows=None,
-                          row_highlights=None):
+                          row_highlights=None, cleared_row_highlights=None,
+                          cell_styles=None, cell_fonts=None,
+                          rich_text_cells=None, merged_cells=None):
     """
     Direkte XML-Bearbeitung von Zellwerten OHNE openpyxl-Roundtrip.
     
@@ -3713,6 +3569,11 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
         hidden_columns: Liste versteckter Spalten (0-basiert) oder None
         hidden_rows: Liste versteckter Zeilen (0-basiert) oder None
         row_highlights: Dict mit "rowIdx" → hexColor (0-basiert, ohne Header) oder None
+        cleared_row_highlights: Liste von rowIdx (0-basiert) deren Highlights entfernt werden
+        cell_styles: Dict mit "row-col" → {fill, bold, ...} oder "#RRGGBB"
+        cell_fonts: Dict mit "row-col" → {name, size, bold, italic, color}
+        rich_text_cells: Dict mit "row-col" → [{text, styles}]
+        merged_cells: Liste von {startRow, startCol, endRow, endCol, rowSpan, colSpan}
     """
     import zipfile
     import tempfile
@@ -3862,6 +3723,56 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
                 else:
                     sys.stderr.write(f"[DIRECT_XML] WARNUNG: styles.xml nicht gefunden\n")
             
+            # 6c. Cleared Row-Highlights direkt im XML entfernen (ohne openpyxl!)
+            if cleared_row_highlights:
+                styles_zip_path = 'xl/styles.xml'
+                if styles_zip_path in src_zip.namelist():
+                    styles_raw = styles_content_mod if styles_modified else src_zip.read(styles_zip_path).decode('utf-8')
+                    result = _clear_row_highlights_xml_inmemory(sheet_content, styles_raw, cleared_row_highlights)
+                    if result is not None:
+                        sheet_content, styles_content_mod = result
+                        styles_modified = True
+                        modified = True
+                        sys.stderr.write(f"[DIRECT_XML] Cleared Row-Highlights via XML entfernt\n")
+                    else:
+                        sys.stderr.write(f"[DIRECT_XML] WARNUNG: Cleared Row-Highlights fehlgeschlagen (keine Styles)\n")
+                else:
+                    sys.stderr.write(f"[DIRECT_XML] WARNUNG: styles.xml nicht gefunden\n")
+            
+            # 6d. Zell-Formatierungen (Fill, Font, Alignment) direkt im XML setzen
+            if cell_styles or cell_fonts:
+                styles_zip_path = 'xl/styles.xml'
+                if styles_zip_path in src_zip.namelist():
+                    styles_raw = styles_content_mod if styles_modified else src_zip.read(styles_zip_path).decode('utf-8')
+                    result = _apply_cell_formats_xml(
+                        sheet_content, styles_raw, ss_content,
+                        cell_styles, cell_fonts, shared_strings
+                    )
+                    if result is not None:
+                        sheet_content, styles_content_mod, ss_content = result
+                        styles_modified = True
+                        modified = True
+                        sys.stderr.write(f"[DIRECT_XML] Zell-Formatierungen via XML angewendet\n")
+                    else:
+                        sys.stderr.write(f"[DIRECT_XML] WARNUNG: Zell-Formatierungen fehlgeschlagen\n")
+                else:
+                    sys.stderr.write(f"[DIRECT_XML] WARNUNG: styles.xml nicht gefunden für Formatierung\n")
+            
+            # 6e. RichText-Zellen direkt im XML setzen (inlineStr statt SharedStrings)
+            if rich_text_cells:
+                result = _apply_rich_text_xml(sheet_content, ss_content, rich_text_cells, shared_strings)
+                if result is not None:
+                    sheet_content, ss_content = result
+                    modified = True
+                    sys.stderr.write(f"[DIRECT_XML] RichText via XML angewendet\n")
+                else:
+                    sys.stderr.write(f"[DIRECT_XML] WARNUNG: RichText fehlgeschlagen\n")
+            
+            # 6f. Merged Cells direkt im XML setzen
+            if merged_cells:
+                sheet_content = _apply_merged_cells_xml(sheet_content, merged_cells)
+                modified = True
+            
             # 7. SharedStrings aktualisieren falls neue Strings hinzugefügt wurden
             ss_modified = False
             if has_shared_strings and hasattr(_replace_cell_value_in_xml, '_new_strings'):
@@ -3992,6 +3903,62 @@ def _build_cell_xml(cell_ref, new_type, new_val, style_attr, vm_attr,
     return None
 
 
+def _find_sorted_cell_insert_pos(sheet_content, row_content_start, new_col_letter):
+    """
+    Findet die korrekte sortierte Einfügeposition für eine neue Zelle innerhalb einer Row.
+    Excel verlangt, dass <c> Elemente in aufsteigender Spaltenreihenfolge stehen.
+    
+    Args:
+        sheet_content: Das gesamte Sheet-XML
+        row_content_start: Position direkt nach dem <row ...> Tag
+        new_col_letter: Spaltenbuchstabe der neuen Zelle (z.B. "A", "B", "AA")
+    
+    Returns:
+        Position im String, an der die neue Zelle eingefügt werden soll
+    """
+    new_col_idx = column_index_from_string(new_col_letter)
+    
+    # Finde das Ende der Row
+    segment = sheet_content[row_content_start:]
+    row_end = segment.find('</row>')
+    if row_end == -1:
+        return row_content_start  # Fallback: am Anfang einfügen
+    
+    row_segment = segment[:row_end]
+    
+    # Finde alle Zellen in der Row und deren Spalten-Index
+    for m in re.finditer(r'<c\s[^>]*?r="([A-Z]{1,3})\d+"', row_segment):
+        existing_col = m.group(1)
+        if column_index_from_string(existing_col) > new_col_idx:
+            # Neue Zelle kommt VOR dieser existierenden Zelle
+            return row_content_start + m.start()
+    
+    # Alle existierenden Zellen kommen vor der neuen → am Ende einfügen (vor </row>)
+    return row_content_start + row_end
+
+
+def _find_sorted_row_insert_pos(sheet_content, new_row_num):
+    """
+    Findet die korrekte sortierte Einfügeposition für eine neue Row in <sheetData>.
+    Excel verlangt, dass <row> Elemente in aufsteigender Zeilennummer stehen.
+    
+    Args:
+        sheet_content: Das gesamte Sheet-XML
+        new_row_num: Zeilennummer der neuen Row (int)
+    
+    Returns:
+        Position im String, an der die neue Row eingefügt werden soll
+    """
+    for m in re.finditer(r'<row\s[^>]*?\br="(\d+)"', sheet_content):
+        existing_row = int(m.group(1))
+        if existing_row > new_row_num:
+            return m.start()
+    
+    # Alle existierenden Rows kommen vor der neuen → vor </sheetData>
+    sd_end = sheet_content.find('</sheetData>')
+    return sd_end if sd_end != -1 else len(sheet_content)
+
+
 def _batch_replace_cells_in_xml(sheet_content, edits_by_ref, main_ns, shared_strings, has_shared_strings):
     """
     Ersetzt ALLE Zellwerte in EINEM Durchlauf durch das Sheet-XML.
@@ -4076,7 +4043,9 @@ def _batch_replace_cells_in_xml(sheet_content, edits_by_ref, main_ns, shared_str
         for row_num, cells_xml in rows_to_insert.items():
             if not cells_xml:
                 continue
-            cells_str = ''.join(cells_xml)
+            
+            # Zellen nach Spalte sortieren (Excel erwartet aufsteigende Spaltenreihenfolge)
+            cells_xml.sort(key=lambda c: column_index_from_string(re.search(r'r="([A-Z]+)', c).group(1)))
             
             # Suche die Zeile
             row_pattern = re.compile(
@@ -4086,13 +4055,17 @@ def _batch_replace_cells_in_xml(sheet_content, edits_by_ref, main_ns, shared_str
             row_match = row_pattern.search(sheet_content)
             
             if row_match:
-                # Nach dem <row ...> Tag einfügen
-                insert_pos = row_match.end()
-                sheet_content = sheet_content[:insert_pos] + cells_str + sheet_content[insert_pos:]
+                # Jede Zelle an sortierter Position einfügen
+                for cell_xml in cells_xml:
+                    col_letter = re.search(r'r="([A-Z]+)', cell_xml).group(1)
+                    insert_pos = _find_sorted_cell_insert_pos(sheet_content, row_match.end(), col_letter)
+                    sheet_content = sheet_content[:insert_pos] + cell_xml + sheet_content[insert_pos:]
             else:
-                # Zeile existiert nicht → vor </sheetData> erstellen
+                # Zeile existiert nicht → sortiert in <sheetData> einfügen
+                cells_str = ''.join(cells_xml)
                 new_row = f'<row r="{row_num}">{cells_str}</row>\n'
-                sheet_content = sheet_content.replace('</sheetData>', new_row + '</sheetData>')
+                insert_pos = _find_sorted_row_insert_pos(sheet_content, int(row_num))
+                sheet_content = sheet_content[:insert_pos] + new_row + sheet_content[insert_pos:]
     
     # SharedStrings-Tracker aktualisieren (für Kompatibilität mit altem Code)
     if not hasattr(_replace_cell_value_in_xml, '_new_strings'):
@@ -4371,6 +4344,91 @@ def _set_hidden_rows_in_xml(sheet_content, hidden_rows, main_ns):
     return sheet_content
 
 
+def _apply_hidden_rows_to_xlsx(xlsx_path, sheet_name, hidden_rows):
+    """
+    Wendet Hidden-Row-Attribute auf eine fertige XLSX-Datei an (ZIP-to-ZIP).
+    
+    Setzt hidden="1" auf Zeilen die versteckt sein sollen und entfernt
+    das Attribut von Zeilen die sichtbar sein sollen. ZIP-to-ZIP Ansatz
+    ohne openpyxl → alle Strukturen bleiben intakt.
+    """
+    import zipfile
+    import shutil
+    from xml.etree import ElementTree as ET
+
+    MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
+    R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+
+    temp_output = xlsx_path + '.hr_tmp'
+
+    try:
+        with zipfile.ZipFile(xlsx_path, 'r') as src_zip:
+            # Sheet-ZIP-Pfad finden
+            wb_xml = src_zip.read('xl/workbook.xml').decode('utf-8')
+            wb_root = ET.fromstring(wb_xml)
+
+            sheet_rid = None
+            for sheet_el in wb_root.iter(f'{{{MAIN_NS}}}sheet'):
+                if sheet_el.get('name') == sheet_name:
+                    sheet_rid = sheet_el.get(f'{{{R_NS}}}id')
+                    break
+
+            if not sheet_rid:
+                sys.stderr.write(f"[HIDDEN_ROWS] Sheet '{sheet_name}' nicht gefunden\n")
+                return
+
+            rels_xml = src_zip.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+            rels_root = ET.fromstring(rels_xml)
+
+            sheet_file = None
+            for rel_el in rels_root.iter(f'{{{RELS_NS}}}Relationship'):
+                if rel_el.get('Id') == sheet_rid:
+                    sheet_file = rel_el.get('Target')
+                    break
+
+            if not sheet_file:
+                sys.stderr.write(f"[HIDDEN_ROWS] Relationship {sheet_rid} nicht gefunden\n")
+                return
+
+            sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+            parts = sheet_zip_path.split('/')
+            normalized = []
+            for p in parts:
+                if p == '..':
+                    if normalized:
+                        normalized.pop()
+                elif p != '.':
+                    normalized.append(p)
+            sheet_zip_path = '/'.join(normalized)
+
+            # Sheet-XML lesen und hidden rows anwenden
+            sheet_content = src_zip.read(sheet_zip_path).decode('utf-8')
+            sheet_content = _set_hidden_rows_in_xml(sheet_content, hidden_rows, MAIN_NS)
+
+            # ZIP neu schreiben mit modifiziertem Sheet
+            with zipfile.ZipFile(temp_output, 'w') as dst_zip:
+                for item in src_zip.infolist():
+                    if item.filename.endswith('/'):
+                        continue
+                    if item.filename.startswith('__MACOSX') or item.filename.endswith('.DS_Store'):
+                        continue
+                    if item.filename == sheet_zip_path:
+                        item.compress_type = zipfile.ZIP_DEFLATED
+                        dst_zip.writestr(item, sheet_content.encode('utf-8'))
+                    else:
+                        dst_zip.writestr(item, src_zip.read(item.filename))
+
+        os.remove(xlsx_path)
+        shutil.move(temp_output, xlsx_path)
+        sys.stderr.write(f"[HIDDEN_ROWS] {len(hidden_rows)} hidden rows angewendet auf '{sheet_name}'\n")
+
+    except Exception as e:
+        if os.path.exists(temp_output):
+            os.remove(temp_output)
+        raise
+
+
 def _apply_highlights_to_xlsx(xlsx_path, sheet_name, row_highlights):
     """
     Wendet Row-Highlights auf eine fertige XLSX-Datei an (ZIP-to-ZIP).
@@ -4458,6 +4516,1014 @@ def _apply_highlights_to_xlsx(xlsx_path, sheet_name, row_highlights):
     os.remove(xlsx_path)
     shutil.move(temp_output, xlsx_path)
     sys.stderr.write(f"[HL_XLSX] Row-Highlights erfolgreich angewendet auf {xlsx_path}\n")
+
+
+def _clear_row_highlights_xml(xlsx_path, sheet_name, cleared_row_indices):
+    """
+    Entfernt Row-Highlights direkt im XML, ohne openpyxl-Roundtrip.
+    
+    Setzt die Zellen der angegebenen Zeilen auf ihren Original-Style zurück,
+    indem das s-Attribut auf den xfId des aktuellen XF-Eintrags gesetzt wird
+    (d.h. die Basis-Formatierung ohne Highlight-Fill).
+    
+    Einfacher Ansatz: fillId auf 0 (kein Fill) setzen indem wir einen neuen
+    XF-Eintrag erstellen der dem aktuellen entspricht aber fillId=0 hat.
+    """
+    import zipfile
+    import shutil
+    import re
+    from xml.etree import ElementTree as ET
+    
+    MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
+    
+    if not cleared_row_indices:
+        return
+    
+    temp_output = xlsx_path + '.clr_tmp'
+    
+    with zipfile.ZipFile(xlsx_path, 'r') as src_zip:
+        # Sheet-ZIP-Pfad finden
+        wb_xml = src_zip.read('xl/workbook.xml').decode('utf-8')
+        wb_root = ET.fromstring(wb_xml)
+        
+        sheet_rid = None
+        for sheet_el in wb_root.iter(f'{{{MAIN_NS}}}sheet'):
+            if sheet_el.get('name') == sheet_name:
+                sheet_rid = sheet_el.get(f'{{{R_NS}}}id')
+                break
+        
+        if not sheet_rid:
+            sys.stderr.write(f"[CLR_HL] Sheet '{sheet_name}' nicht gefunden\n")
+            return
+        
+        rels_xml = src_zip.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+        rels_root = ET.fromstring(rels_xml)
+        
+        sheet_file = None
+        for rel_el in rels_root.iter(f'{{{RELS_NS}}}Relationship'):
+            if rel_el.get('Id') == sheet_rid:
+                sheet_file = rel_el.get('Target')
+                break
+        
+        if not sheet_file:
+            sys.stderr.write(f"[CLR_HL] Relationship {sheet_rid} nicht gefunden\n")
+            return
+        
+        sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+        parts = sheet_zip_path.split('/')
+        normalized = [p for p in parts if p != '.' and p != '..']
+        sheet_zip_path = '/'.join(normalized)
+        
+        sheet_content = src_zip.read(sheet_zip_path).decode('utf-8')
+        styles_content = src_zip.read('xl/styles.xml').decode('utf-8')
+        
+        # XF-Einträge aus cellXfs parsen
+        cellxfs_match = re.search(r'<cellXfs\s+count="(\d+)">(.*?)</cellXfs>', styles_content, re.DOTALL)
+        if not cellxfs_match:
+            sys.stderr.write(f"[CLR_HL] <cellXfs> nicht gefunden\n")
+            return
+        
+        cellxfs_count = int(cellxfs_match.group(1))
+        cellxfs_inner = cellxfs_match.group(2)
+        xf_entries = re.findall(r'<xf\b[^>]*?(?:/>|>(?:.*?)</xf>)', cellxfs_inner, re.DOTALL)
+        
+        # Excel-Zeilen ermitteln
+        cleared_excel_rows = set()
+        for row_idx in cleared_row_indices:
+            cleared_excel_rows.add(int(row_idx) + 2)
+        
+        # Für jede Zelle der zu löschenden Zeilen: erstelle XF mit fillId=0
+        styles_needed = set()  # Set von aktuellen style-Indices
+        for excel_row in cleared_excel_rows:
+            row_pattern = re.compile(
+                r'<row\s[^>]*?\br="' + str(excel_row) + r'"[^>]*?>(.*?)</row>',
+                re.DOTALL
+            )
+            row_match = row_pattern.search(sheet_content)
+            if row_match:
+                row_inner = row_match.group(1)
+                for cell_m in re.finditer(r'<c\s[^>]*?(?:/?>)', row_inner):
+                    cell_el = cell_m.group(0)
+                    s_m = re.search(r'\bs="(\d+)"', cell_el)
+                    if s_m:
+                        current_s = int(s_m.group(1))
+                        # Nur Styles die einen Fill haben (fillId > 0)
+                        if current_s < len(xf_entries):
+                            xf = xf_entries[current_s]
+                            fill_m = re.search(r'fillId="(\d+)"', xf)
+                            if fill_m and int(fill_m.group(1)) > 0:
+                                styles_needed.add(current_s)
+        
+        if not styles_needed:
+            sys.stderr.write(f"[CLR_HL] Keine Styles zum Zurücksetzen gefunden\n")
+            return
+        
+        # Für jeden Style einen neuen XF mit fillId=0 erstellen
+        style_map = {}  # alter_s → neuer_s
+        new_xfs_xml = ''
+        
+        for current_s in sorted(styles_needed):
+            old_xf = xf_entries[current_s]
+            new_xf = re.sub(r'fillId="\d+"', 'fillId="0"', old_xf)
+            if 'applyFill="' in new_xf:
+                new_xf = re.sub(r'applyFill="\d+"', 'applyFill="0"', new_xf)
+            
+            new_s = cellxfs_count
+            style_map[current_s] = new_s
+            new_xfs_xml += new_xf
+            cellxfs_count += 1
+        
+        # cellXfs aktualisieren
+        if new_xfs_xml:
+            styles_content = styles_content.replace('</cellXfs>', new_xfs_xml + '</cellXfs>')
+            styles_content = re.sub(r'(<cellXfs\s+)count="\d+"', f'\\1count="{cellxfs_count}"', styles_content)
+        
+        # Zell-Styles im Sheet-XML aktualisieren
+        for excel_row in sorted(cleared_excel_rows):
+            row_pattern = re.compile(
+                r'(<row\s[^>]*?\br="' + str(excel_row) + r'"[^>]*?>)(.*?)(</row>)',
+                re.DOTALL
+            )
+            row_match = row_pattern.search(sheet_content)
+            if row_match:
+                row_open = row_match.group(1)
+                row_inner = row_match.group(2)
+                row_close = row_match.group(3)
+                
+                def _clear_cell_style(cell_m):
+                    cell_el = cell_m.group(0)
+                    s_m = re.search(r'\bs="(\d+)"', cell_el)
+                    if s_m:
+                        current_s = int(s_m.group(1))
+                        new_s = style_map.get(current_s)
+                        if new_s is not None:
+                            return re.sub(r'\bs="\d+"', f's="{new_s}"', cell_el)
+                    return cell_el
+                
+                new_inner = re.sub(r'<c\s[^>]*?(?:/?>)', _clear_cell_style, row_inner)
+                sheet_content = (sheet_content[:row_match.start()] +
+                               row_open + new_inner + row_close +
+                               sheet_content[row_match.end():])
+        
+        sys.stderr.write(f"[CLR_HL] {len(cleared_excel_rows)} Zeilen von Highlights befreit, {len(style_map)} Styles angepasst\n")
+        
+        # ZIP-to-ZIP schreiben
+        with zipfile.ZipFile(temp_output, 'w') as dst_zip:
+            for item in src_zip.infolist():
+                if item.filename.startswith('__MACOSX') or item.filename.endswith('.DS_Store'):
+                    continue
+                if item.filename == sheet_zip_path:
+                    item.compress_type = zipfile.ZIP_DEFLATED
+                    dst_zip.writestr(item, sheet_content.encode('utf-8'))
+                elif item.filename == 'xl/styles.xml':
+                    item.compress_type = zipfile.ZIP_DEFLATED
+                    dst_zip.writestr(item, styles_content.encode('utf-8'))
+                else:
+                    dst_zip.writestr(item, src_zip.read(item.filename))
+    
+    os.remove(xlsx_path)
+    shutil.move(temp_output, xlsx_path)
+    sys.stderr.write(f"[CLR_HL] Highlights erfolgreich entfernt aus {xlsx_path}\n")
+
+
+def _clear_row_highlights_xml_inmemory(sheet_content, styles_content, cleared_row_indices):
+    """
+    Entfernt Row-Highlights direkt in Sheet-XML + styles.xml (In-Memory).
+    
+    Setzt die Zellen der angegebenen Zeilen auf fillId=0 zurück,
+    indem für jeden betroffenen Style ein neuer XF-Eintrag ohne Fill erstellt wird.
+    
+    Args:
+        sheet_content: Sheet-XML als String
+        styles_content: styles.xml als String
+        cleared_row_indices: list/set von Row-Indices (0-basiert, ohne Header)
+    
+    Returns:
+        (new_sheet_content, new_styles_content) oder None bei Fehler
+    """
+    import re
+    
+    if not cleared_row_indices:
+        return None
+    
+    # XF-Einträge aus cellXfs parsen
+    cellxfs_match = re.search(r'<cellXfs\s+count="(\d+)">(.*?)</cellXfs>', styles_content, re.DOTALL)
+    if not cellxfs_match:
+        sys.stderr.write(f"[CLR_HL_MEM] <cellXfs> nicht gefunden\n")
+        return None
+    
+    cellxfs_count = int(cellxfs_match.group(1))
+    cellxfs_inner = cellxfs_match.group(2)
+    xf_entries = re.findall(r'<xf\b[^>]*?(?:/>|>(?:.*?)</xf>)', cellxfs_inner, re.DOTALL)
+    
+    # Excel-Zeilen ermitteln
+    cleared_excel_rows = set()
+    for row_idx in cleared_row_indices:
+        cleared_excel_rows.add(int(row_idx) + 2)
+    
+    # Für jede Zelle der zu löschenden Zeilen: sammle Styles die einen Fill haben
+    styles_needed = set()
+    for excel_row in cleared_excel_rows:
+        row_pattern = re.compile(
+            r'<row\s[^>]*?\br="' + str(excel_row) + r'"[^>]*?>(.*?)</row>',
+            re.DOTALL
+        )
+        row_match = row_pattern.search(sheet_content)
+        if row_match:
+            row_inner = row_match.group(1)
+            for cell_m in re.finditer(r'<c\s[^>]*?(?:/?>)', row_inner):
+                cell_el = cell_m.group(0)
+                s_m = re.search(r'\bs="(\d+)"', cell_el)
+                if s_m:
+                    current_s = int(s_m.group(1))
+                    if current_s < len(xf_entries):
+                        xf = xf_entries[current_s]
+                        fill_m = re.search(r'fillId="(\d+)"', xf)
+                        if fill_m and int(fill_m.group(1)) > 0:
+                            styles_needed.add(current_s)
+    
+    if not styles_needed:
+        sys.stderr.write(f"[CLR_HL_MEM] Keine Styles zum Zurücksetzen gefunden\n")
+        return None
+    
+    # Für jeden Style einen neuen XF mit fillId=0 erstellen
+    style_map = {}
+    new_xfs_xml = ''
+    
+    for current_s in sorted(styles_needed):
+        old_xf = xf_entries[current_s]
+        new_xf = re.sub(r'fillId="\d+"', 'fillId="0"', old_xf)
+        if 'applyFill="' in new_xf:
+            new_xf = re.sub(r'applyFill="\d+"', 'applyFill="0"', new_xf)
+        
+        new_s = cellxfs_count
+        style_map[current_s] = new_s
+        new_xfs_xml += new_xf
+        cellxfs_count += 1
+    
+    # cellXfs aktualisieren
+    new_styles = styles_content
+    if new_xfs_xml:
+        new_styles = new_styles.replace('</cellXfs>', new_xfs_xml + '</cellXfs>')
+        new_styles = re.sub(r'(<cellXfs\s+)count="\d+"', f'\\1count="{cellxfs_count}"', new_styles)
+    
+    # Zell-Styles im Sheet-XML aktualisieren
+    new_sheet = sheet_content
+    for excel_row in sorted(cleared_excel_rows):
+        row_pattern = re.compile(
+            r'(<row\s[^>]*?\br="' + str(excel_row) + r'"[^>]*?>)(.*?)(</row>)',
+            re.DOTALL
+        )
+        row_match = row_pattern.search(new_sheet)
+        if row_match:
+            row_open = row_match.group(1)
+            row_inner = row_match.group(2)
+            row_close = row_match.group(3)
+            
+            def _clear_cell_style(cell_m):
+                cell_el = cell_m.group(0)
+                s_m = re.search(r'\bs="(\d+)"', cell_el)
+                if s_m:
+                    current_s = int(s_m.group(1))
+                    new_s = style_map.get(current_s)
+                    if new_s is not None:
+                        return re.sub(r'\bs="\d+"', f's="{new_s}"', cell_el)
+                return cell_el
+            
+            new_inner = re.sub(r'<c\s[^>]*?(?:/?>)', _clear_cell_style, row_inner)
+            new_sheet = (new_sheet[:row_match.start()] +
+                        row_open + new_inner + row_close +
+                        new_sheet[row_match.end():])
+    
+    sys.stderr.write(f"[CLR_HL_MEM] {len(cleared_excel_rows)} Zeilen, {len(style_map)} Styles angepasst\n")
+    return (new_sheet, new_styles)
+
+
+def _apply_cell_formats_xml(sheet_content, styles_content, ss_content,
+                             cell_styles, cell_fonts, shared_strings):
+    """
+    Wendet Zell-Formatierungen (Fill, Font, Alignment) direkt im XML an.
+    
+    Vermeidet den openpyxl-Roundtrip komplett → keine PatternFill-Korruption,
+    keine extLst-Verluste, keine doppelten cellXfs-Einträge.
+    
+    Strategie:
+    1. Für jede einzigartige Kombination aus (Farbe, Font-Eigenschaften, Alignment)
+       die nötigen <fill>, <font> Einträge in styles.xml erstellen
+    2. Für jede Zelle einen passenden <xf> in <cellXfs> erstellen/finden
+    3. Zell-Attribute s="..." im Sheet-XML auf neue <xf>-Indizes setzen
+    
+    Args:
+        sheet_content: Sheet-XML als String
+        styles_content: styles.xml als String
+        ss_content: sharedStrings.xml als String (oder None)
+        cell_styles: dict {"row-col": {fill, bold, italic, ...}} oder {"row-col": "#RRGGBB"}
+        cell_fonts: dict {"row-col": {name, size, bold, italic, color}}
+        shared_strings: Liste der SharedStrings
+    
+    Returns:
+        (new_sheet_content, new_styles_content, new_ss_content) oder None bei Fehler
+    """
+    import re
+    
+    if not cell_styles and not cell_fonts:
+        return sheet_content, styles_content, ss_content
+    
+    sys.stderr.write(f"[FMT_XML] Start: {len(cell_styles) if cell_styles else 0} Styles, "
+                     f"{len(cell_fonts) if cell_fonts else 0} Fonts\n")
+    
+    # ---- Parse styles.xml Sektionen ----
+    
+    # Fills parsen
+    fills_match = re.search(r'<fills\s+count="(\d+)">(.*?)</fills>', styles_content, re.DOTALL)
+    if not fills_match:
+        sys.stderr.write(f"[FMT_XML] FEHLER: <fills> nicht gefunden\n")
+        return None
+    fills_count = int(fills_match.group(1))
+    fills_inner = fills_match.group(2)
+    existing_fills = re.findall(r'<fill\b[^/]*?>.*?</fill>', fills_inner, re.DOTALL)
+    existing_fills += re.findall(r'<fill\s*/>', fills_inner)
+    
+    # Fonts parsen
+    fonts_match = re.search(r'<fonts\s+count="(\d+)"[^>]*>(.*?)</fonts>', styles_content, re.DOTALL)
+    if not fonts_match:
+        sys.stderr.write(f"[FMT_XML] FEHLER: <fonts> nicht gefunden\n")
+        return None
+    fonts_count = int(fonts_match.group(1))
+    fonts_inner = fonts_match.group(2)
+    existing_fonts = re.findall(r'<font\b[^/]*?>.*?</font>', fonts_inner, re.DOTALL)
+    
+    # cellXfs parsen
+    cellxfs_match = re.search(r'<cellXfs\s+count="(\d+)">(.*?)</cellXfs>', styles_content, re.DOTALL)
+    if not cellxfs_match:
+        sys.stderr.write(f"[FMT_XML] FEHLER: <cellXfs> nicht gefunden\n")
+        return None
+    cellxfs_count = int(cellxfs_match.group(1))
+    cellxfs_inner = cellxfs_match.group(2)
+    xf_entries = re.findall(r'<xf\b[^>]*?(?:/>|>(?:.*?)</xf>)', cellxfs_inner, re.DOTALL)
+    
+    # ---- Sammle alle benötigten Format-Änderungen pro Zelle ----
+    # Merge cell_styles und cell_fonts in eine einheitliche Struktur pro Zelle
+    cell_formats = {}  # "row-col" → {fill, bold, italic, size, name, color, textAlign, verticalAlign, wrapText}
+    
+    if cell_styles:
+        for key, style_data in cell_styles.items():
+            if isinstance(style_data, str):
+                # Altes Format: nur Hintergrundfarbe
+                cell_formats[key] = {'fill': style_data}
+            elif isinstance(style_data, dict):
+                cell_formats[key] = dict(style_data)
+    
+    if cell_fonts:
+        for key, font_data in cell_fonts.items():
+            if key not in cell_formats:
+                cell_formats[key] = {}
+            cf = cell_formats[key]
+            if isinstance(font_data, dict):
+                if font_data.get('name'):
+                    cf['fontName'] = font_data['name']
+                if font_data.get('size'):
+                    cf['fontSize'] = font_data['size']
+                if 'bold' in font_data:
+                    cf['bold'] = font_data['bold']
+                if 'italic' in font_data:
+                    cf['italic'] = font_data['italic']
+                if font_data.get('color'):
+                    cf['fontColor'] = font_data['color']
+    
+    if not cell_formats:
+        return sheet_content, styles_content, ss_content
+    
+    # ---- Zellen im Sheet-XML lokalisieren und aktuelle s="..." Indizes lesen ----
+    cell_current_styles = {}  # "row-col" → current s index
+    for key in cell_formats:
+        parts = key.split('-')
+        if len(parts) != 2:
+            continue
+        row_idx = int(parts[0])
+        col_idx = int(parts[1])
+        excel_row = row_idx + 2  # 0-basiert + Header
+        excel_col = col_idx + 1
+        col_letter = get_column_letter(excel_col)
+        cell_ref = f"{col_letter}{excel_row}"
+        
+        # Finde die Zelle im XML
+        cell_pattern = re.compile(
+            r'<c\s[^>]*?r="' + re.escape(cell_ref) + r'"[^>]*?(?:/?>)',
+            re.DOTALL
+        )
+        cell_match = cell_pattern.search(sheet_content)
+        if cell_match:
+            s_m = re.search(r'\bs="(\d+)"', cell_match.group(0))
+            cell_current_styles[key] = int(s_m.group(1)) if s_m else 0
+        else:
+            cell_current_styles[key] = 0
+    
+    # ---- Erstelle neue Fill-Einträge für einzigartige Farben ----
+    new_fills_xml = ''
+    fill_color_to_id = {}
+    
+    for key, fmt in cell_formats.items():
+        fill_color = fmt.get('fill')
+        if not fill_color or fill_color == 'transparent':
+            continue
+        if fill_color in fill_color_to_id:
+            continue
+        
+        # Normalisiere Farbe zu ARGB
+        if isinstance(fill_color, str):
+            if fill_color.startswith('#'):
+                argb = fill_color[1:].upper()
+                if len(argb) == 6:
+                    argb = 'FF' + argb
+            else:
+                argb = fill_color.upper() if len(fill_color) == 8 else 'FF' + fill_color.upper()
+        else:
+            continue
+        
+        # Prüfe ob Fill bereits existiert
+        existing_idx = None
+        for idx, fill_xml in enumerate(existing_fills):
+            if f'rgb="{argb}"' in fill_xml and 'patternType="solid"' in fill_xml:
+                existing_idx = idx
+                break
+        
+        if existing_idx is not None:
+            fill_color_to_id[fill_color] = existing_idx
+        else:
+            new_fill = f'<fill><patternFill patternType="solid"><fgColor rgb="{argb}"/><bgColor indexed="64"/></patternFill></fill>'
+            new_fills_xml += new_fill
+            fill_color_to_id[fill_color] = fills_count
+            fills_count += 1
+    
+    if new_fills_xml:
+        styles_content = styles_content.replace('</fills>', new_fills_xml + '</fills>')
+        styles_content = re.sub(r'(<fills\s+)count="\d+"', f'\\1count="{fills_count}"', styles_content)
+    
+    # ---- Erstelle neue Font-Einträge für einzigartige Font-Kombinationen ----
+    new_fonts_xml = ''
+    font_key_to_id = {}  # frozenset → fontId
+    
+    for key, fmt in cell_formats.items():
+        has_font_change = any(fmt.get(k) is not None for k in 
+                            ['bold', 'italic', 'fontName', 'fontSize', 'fontColor',
+                             'underline', 'strikethrough'])
+        if not has_font_change:
+            continue
+        
+        # Lese bestehende Font-Eigenschaften aus dem aktuellen XF
+        current_s = cell_current_styles.get(key, 0)
+        base_font_id = 0
+        if current_s < len(xf_entries):
+            fi_m = re.search(r'fontId="(\d+)"', xf_entries[current_s])
+            if fi_m:
+                base_font_id = int(fi_m.group(1))
+        
+        # Parse bestehende Font-Eigenschaften
+        base_font_xml = existing_fonts[base_font_id] if base_font_id < len(existing_fonts) else '<font><sz val="11"/><name val="Calibri"/></font>'
+        
+        # Extrahiere Basis-Werte
+        base_bold = '<b/>' in base_font_xml or '<b ' in base_font_xml
+        base_italic = '<i/>' in base_font_xml or '<i ' in base_font_xml
+        base_underline = '<u/>' in base_font_xml or '<u ' in base_font_xml
+        base_strike = '<strike/>' in base_font_xml or '<strike ' in base_font_xml
+        sz_m = re.search(r'<sz\s+val="([^"]+)"', base_font_xml)
+        base_size = float(sz_m.group(1)) if sz_m else 11.0
+        nm_m = re.search(r'<name\s+val="([^"]+)"', base_font_xml)
+        base_name = nm_m.group(1) if nm_m else 'Calibri'
+        # Font-Farbe: Originalwert behalten (kann theme="1" etc. sein)
+        color_m = re.search(r'<color\s[^/]*?/>', base_font_xml)
+        base_color_xml = color_m.group(0) if color_m else ''
+        # Scheme-Attribut
+        scheme_m = re.search(r'<scheme\s+val="([^"]+)"', base_font_xml)
+        base_scheme = scheme_m.group(1) if scheme_m else None
+        # Familie
+        family_m = re.search(r'<family\s+val="(\d+)"', base_font_xml)
+        base_family = family_m.group(1) if family_m else None
+        # Charset
+        charset_m = re.search(r'<charset\s+val="(\d+)"', base_font_xml)
+        base_charset = charset_m.group(1) if charset_m else None
+        
+        # Neue Werte anwenden
+        new_bold = fmt.get('bold', base_bold)
+        new_italic = fmt.get('italic', base_italic)
+        new_underline = fmt.get('underline', base_underline)
+        new_strike = fmt.get('strikethrough', base_strike)
+        new_size = fmt.get('fontSize', base_size)
+        new_name = fmt.get('fontName', base_name)
+        
+        new_color_xml = base_color_xml
+        font_color = fmt.get('fontColor')
+        if font_color:
+            if isinstance(font_color, str):
+                if font_color.startswith('#'):
+                    fc_argb = font_color[1:].upper()
+                    if len(fc_argb) == 6:
+                        fc_argb = 'FF' + fc_argb
+                else:
+                    fc_argb = font_color.upper() if len(font_color) == 8 else 'FF' + font_color.upper()
+                new_color_xml = f'<color rgb="{fc_argb}"/>'
+        
+        # Erstelle Font-Signatur für Deduplizierung
+        font_sig = (new_bold, new_italic, new_underline, new_strike,
+                    str(new_size), new_name, new_color_xml,
+                    base_family, base_charset, base_scheme)
+        font_sig_key = str(font_sig)
+        
+        if font_sig_key in font_key_to_id:
+            fmt['_fontId'] = font_key_to_id[font_sig_key]
+            continue
+        
+        # Baue Font-XML (Reihenfolge ist wichtig für Excel!)
+        font_xml_parts = ['<font>']
+        if new_bold:
+            font_xml_parts.append('<b/>')
+        if new_italic:
+            font_xml_parts.append('<i/>')
+        if new_underline:
+            font_xml_parts.append('<u/>')
+        if new_strike:
+            font_xml_parts.append('<strike/>')
+        font_xml_parts.append(f'<sz val="{new_size}"/>')
+        if new_color_xml:
+            font_xml_parts.append(new_color_xml)
+        font_xml_parts.append(f'<name val="{new_name}"/>')
+        if base_family:
+            font_xml_parts.append(f'<family val="{base_family}"/>')
+        if base_charset:
+            font_xml_parts.append(f'<charset val="{base_charset}"/>')
+        if base_scheme:
+            font_xml_parts.append(f'<scheme val="{base_scheme}"/>')
+        font_xml_parts.append('</font>')
+        
+        new_font_xml = ''.join(font_xml_parts)
+        new_fonts_xml += new_font_xml
+        font_key_to_id[font_sig_key] = fonts_count
+        fmt['_fontId'] = fonts_count
+        fonts_count += 1
+    
+    if new_fonts_xml:
+        styles_content = styles_content.replace('</fonts>', new_fonts_xml + '</fonts>')
+        styles_content = re.sub(r'(<fonts\s+)count="\d+"', f'\\1count="{fonts_count}"', styles_content)
+    
+    # ---- Erstelle neue XF-Einträge für jede Zelle ----
+    new_xfs_xml = ''
+    cell_new_styles = {}  # "row-col" → neuer s-Index
+    xf_cache = {}  # (alte_s, fillId, fontId, alignment_key) → neuer s-Index
+    
+    for key, fmt in cell_formats.items():
+        current_s = cell_current_styles.get(key, 0)
+        
+        # Bestimme fillId
+        fill_color = fmt.get('fill')
+        new_fill_id = None
+        if fill_color and fill_color != 'transparent':
+            new_fill_id = fill_color_to_id.get(fill_color)
+        
+        # Bestimme fontId
+        new_font_id = fmt.get('_fontId')
+        
+        # Bestimme Alignment
+        text_align = fmt.get('textAlign')
+        vert_align = fmt.get('verticalAlign')
+        if vert_align == 'middle':
+            vert_align = 'center'
+        wrap_text = fmt.get('wrapText')
+        
+        # Wenn keine Änderungen → überspringen
+        if new_fill_id is None and new_font_id is None and text_align is None and vert_align is None and wrap_text is None:
+            continue
+        
+        # Cache-Key für XF-Deduplizierung
+        cache_key = (current_s, new_fill_id, new_font_id, text_align, vert_align, wrap_text)
+        if cache_key in xf_cache:
+            cell_new_styles[key] = xf_cache[cache_key]
+            continue
+        
+        # Basis-XF lesen
+        if current_s < len(xf_entries):
+            old_xf = xf_entries[current_s]
+        else:
+            old_xf = '<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>'
+        
+        new_xf = old_xf
+        
+        # FillId ersetzen
+        if new_fill_id is not None:
+            if 'fillId="' in new_xf:
+                new_xf = re.sub(r'fillId="\d+"', f'fillId="{new_fill_id}"', new_xf)
+            else:
+                new_xf = new_xf.replace('<xf ', f'<xf fillId="{new_fill_id}" ', 1)
+            if 'applyFill="' in new_xf:
+                new_xf = re.sub(r'applyFill="\d+"', 'applyFill="1"', new_xf)
+            else:
+                new_xf = new_xf.replace('<xf ', '<xf applyFill="1" ', 1)
+        
+        # FontId ersetzen
+        if new_font_id is not None:
+            if 'fontId="' in new_xf:
+                new_xf = re.sub(r'fontId="\d+"', f'fontId="{new_font_id}"', new_xf)
+            else:
+                new_xf = new_xf.replace('<xf ', f'<xf fontId="{new_font_id}" ', 1)
+            if 'applyFont="' in new_xf:
+                new_xf = re.sub(r'applyFont="\d+"', 'applyFont="1"', new_xf)
+            else:
+                new_xf = new_xf.replace('<xf ', '<xf applyFont="1" ', 1)
+        
+        # Alignment-XML bauen
+        if text_align is not None or vert_align is not None or wrap_text is not None:
+            # Bestehende alignment parsen
+            align_match = re.search(r'<alignment\s([^/]*?)/>', new_xf)
+            if not align_match:
+                align_match = re.search(r'<alignment\s([^>]*?)>', new_xf)
+            
+            align_attrs = {}
+            if align_match:
+                for attr_m in re.finditer(r'(\w+)="([^"]*)"', align_match.group(1)):
+                    align_attrs[attr_m.group(1)] = attr_m.group(2)
+            
+            if text_align is not None:
+                align_attrs['horizontal'] = text_align
+            if vert_align is not None:
+                align_attrs['vertical'] = vert_align
+            if wrap_text is not None:
+                align_attrs['wrapText'] = '1' if wrap_text else '0'
+            
+            align_xml = '<alignment ' + ' '.join(f'{k}="{v}"' for k, v in align_attrs.items()) + '/>'
+            
+            # Ersetze oder füge alignment ein
+            if re.search(r'<alignment\s[^/]*?/>', new_xf):
+                new_xf = re.sub(r'<alignment\s[^/]*?/>', align_xml, new_xf)
+            elif '/>' in new_xf and '<alignment' not in new_xf:
+                # Self-closing XF → öffnen und alignment einfügen
+                new_xf = new_xf.replace('/>', f'>{align_xml}</xf>', 1)
+            
+            if 'applyAlignment="' in new_xf:
+                new_xf = re.sub(r'applyAlignment="\d+"', 'applyAlignment="1"', new_xf)
+            else:
+                new_xf = new_xf.replace('<xf ', '<xf applyAlignment="1" ', 1)
+        
+        new_s = cellxfs_count
+        cell_new_styles[key] = new_s
+        xf_cache[cache_key] = new_s
+        new_xfs_xml += new_xf
+        cellxfs_count += 1
+    
+    # cellXfs aktualisieren
+    if new_xfs_xml:
+        styles_content = styles_content.replace('</cellXfs>', new_xfs_xml + '</cellXfs>')
+        styles_content = re.sub(r'(<cellXfs\s+)count="\d+"', f'\\1count="{cellxfs_count}"', styles_content)
+    
+    # ---- Zell-Styles im Sheet-XML aktualisieren ----
+    modified_cells = 0
+    for key, new_s in cell_new_styles.items():
+        parts = key.split('-')
+        if len(parts) != 2:
+            continue
+        row_idx = int(parts[0])
+        col_idx = int(parts[1])
+        excel_row = row_idx + 2
+        excel_col = col_idx + 1
+        col_letter = get_column_letter(excel_col)
+        cell_ref = f"{col_letter}{excel_row}"
+        
+        # Finde die Zelle und ändere s="..."
+        cell_pattern = re.compile(
+            r'(<c\s[^>]*?r="' + re.escape(cell_ref) + r'"[^>]*?)(/?>)',
+            re.DOTALL
+        )
+        cell_match = cell_pattern.search(sheet_content)
+        if cell_match:
+            cell_open = cell_match.group(1)
+            cell_close = cell_match.group(2)
+            if re.search(r'\bs="\d+"', cell_open):
+                new_open = re.sub(r'\bs="\d+"', f's="{new_s}"', cell_open)
+            else:
+                new_open = cell_open.replace('<c ', f'<c s="{new_s}" ', 1)
+            sheet_content = (sheet_content[:cell_match.start()] +
+                           new_open + cell_close +
+                           sheet_content[cell_match.end():])
+            modified_cells += 1
+    
+    sys.stderr.write(f"[FMT_XML] Fertig: {modified_cells} Zellen formatiert, "
+                     f"{len(xf_cache)} neue XF-Einträge\n")
+    
+    return sheet_content, styles_content, ss_content
+
+
+def _apply_rich_text_xml(sheet_content, ss_content, rich_text_cells, shared_strings):
+    """
+    Wendet RichText-Formatierung direkt im XML an (ohne openpyxl).
+    
+    Strategie: Konvertiert RichText-Zellen zu inlineStr-Format im Sheet-XML.
+    Das ist einfacher als SharedStrings zu modifizieren und voll Excel-kompatibel.
+    
+    Args:
+        sheet_content: Sheet-XML als String
+        ss_content: sharedStrings.xml als String (wird nicht modifiziert)
+        rich_text_cells: dict {"row-col": [{text, styles}]}
+        shared_strings: Liste der SharedStrings
+    
+    Returns:
+        (new_sheet_content, new_ss_content) oder None bei Fehler
+    """
+    import re
+    
+    if not rich_text_cells:
+        return sheet_content, ss_content
+    
+    sys.stderr.write(f"[RT_XML] Start: {len(rich_text_cells)} RichText-Zellen\n")
+    MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    applied = 0
+    
+    for key, parts in rich_text_cells.items():
+        try:
+            key_parts = key.split('-')
+            if len(key_parts) != 2:
+                continue
+            row_idx = int(key_parts[0])
+            col_idx = int(key_parts[1])
+            excel_row = row_idx + 2
+            excel_col = col_idx + 1
+            col_letter = get_column_letter(excel_col)
+            cell_ref = f"{col_letter}{excel_row}"
+            
+            if not isinstance(parts, list) or len(parts) == 0:
+                continue
+            
+            # Baue inlineStr XML
+            runs_xml = ''
+            for part in parts:
+                text = part.get('text', '')
+                styles = part.get('styles', {})
+                
+                # Escape XML-Sonderzeichen
+                text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                
+                # Font-Properties für diesen Run
+                # Jeder Run braucht vollständige Font-Definition (sz, rFont, color)
+                # damit Excel die inlineStr-Zelle korrekt verarbeiten kann.
+                rpr_parts = []
+                
+                # Bold/Italic/Strike/Underline (nur wenn aktiv)
+                if styles.get('bold'):
+                    rpr_parts.append('<b/>')
+                if styles.get('italic'):
+                    rpr_parts.append('<i/>')
+                if styles.get('underline'):
+                    rpr_parts.append('<u/>')
+                if styles.get('strikethrough'):
+                    rpr_parts.append('<strike/>')
+                
+                # Größe (immer, mit Default 11)
+                font_size = styles.get('fontSize') or 11
+                rpr_parts.append(f'<sz val="{font_size}"/>')
+                
+                # Farbe (immer, mit Default theme="1" für Schwarz)
+                if styles.get('color'):
+                    color_val = styles['color']
+                    if isinstance(color_val, str) and color_val.startswith('#'):
+                        color_val = color_val[1:]
+                    if len(color_val) == 6:
+                        color_val = 'FF' + color_val
+                    rpr_parts.append(f'<color rgb="{color_val.upper()}"/>')
+                else:
+                    rpr_parts.append('<color theme="1"/>')
+                
+                # Font-Name (immer, mit Default "Calibri")
+                font_name = styles.get('fontName') or 'Calibri'
+                rpr_parts.append(f'<rFont val="{font_name}"/>')
+                
+                # Family + Scheme (Standard-Werte für gängige Fonts)
+                rpr_parts.append('<family val="2"/>')
+                if font_name == 'Calibri':
+                    rpr_parts.append('<scheme val="minor"/>')
+                
+                # Jeder Run hat jetzt immer <rPr>
+                rpr_xml = '<rPr>' + ''.join(rpr_parts) + '</rPr>'
+                # Preserve spaces
+                t_attr = ' xml:space="preserve"' if text.startswith(' ') or text.endswith(' ') else ''
+                runs_xml += f'<r>{rpr_xml}<t{t_attr}>{text}</t></r>'
+            
+            # Ersetze die Zelle im Sheet-XML
+            # Pattern: Finde <c r="REF"...>...</c> oder <c r="REF".../> 
+            cell_pattern = re.compile(
+                r'(<c\s[^>]*?r="' + re.escape(cell_ref) + r'"[^>]*?)(/\s*>|>(.*?)</c>)',
+                re.DOTALL
+            )
+            cell_match = cell_pattern.search(sheet_content)
+            
+            if cell_match:
+                cell_open = cell_match.group(1)
+                # Behalte s="..." und r="..." Attribute, entferne t="..."
+                cell_open = re.sub(r'\s+t="[^"]*"', '', cell_open)
+                # Setze t="inlineStr"
+                cell_open += ' t="inlineStr"'
+                
+                new_cell = f'{cell_open}><is>{runs_xml}</is></c>'
+                sheet_content = (sheet_content[:cell_match.start()] +
+                               new_cell +
+                               sheet_content[cell_match.end():])
+                applied += 1
+            else:
+                # Zelle existiert nicht → sortiert in Zeile einfügen
+                row_pattern = re.compile(
+                    r'(<row\s[^>]*?\br="' + str(excel_row) + r'"[^>]*?>)',
+                    re.DOTALL
+                )
+                row_match = row_pattern.search(sheet_content)
+                if row_match:
+                    new_cell = f'<c r="{cell_ref}" t="inlineStr"><is>{runs_xml}</is></c>'
+                    insert_pos = _find_sorted_cell_insert_pos(sheet_content, row_match.end(), col_letter)
+                    sheet_content = sheet_content[:insert_pos] + new_cell + sheet_content[insert_pos:]
+                    applied += 1
+        except Exception as e:
+            sys.stderr.write(f"[RT_XML] Fehler bei {key}: {e}\n")
+    
+    sys.stderr.write(f"[RT_XML] Fertig: {applied} RichText-Zellen angewendet\n")
+    return sheet_content, ss_content
+
+
+def _apply_merged_cells_xml(sheet_content, merged_cells_list):
+    """
+    Wendet Merged Cells direkt im Sheet-XML an (ohne openpyxl).
+    
+    Verwendet differentiellen Ansatz: vergleicht bestehende mit Ziel-Merges
+    und ändert nur was nötig ist.
+    
+    Args:
+        sheet_content: Sheet-XML als String
+        merged_cells_list: [{startRow, startCol, endRow, endCol, rowSpan, colSpan}]
+    
+    Returns:
+        new_sheet_content
+    """
+    import re
+    
+    if not merged_cells_list:
+        return sheet_content
+    
+    sys.stderr.write(f"[MERGE_XML] Start: {len(merged_cells_list)} Merges\n")
+    
+    # Ziel-Merge-Bereiche aufbauen
+    target_ranges = []
+    for merge in merged_cells_list:
+        start_row = merge.get('startRow', 0) + 1  # 0-basiert → 1-basiert
+        start_col = merge.get('startCol', 0) + 1
+        end_row = merge.get('endRow', 0) + 1
+        end_col = merge.get('endCol', 0) + 1
+        
+        if start_row > 0 and start_col > 0 and end_row >= start_row and end_col >= start_col:
+            cell_range = f"{get_column_letter(start_col)}{start_row}:{get_column_letter(end_col)}{end_row}"
+            target_ranges.append(cell_range)
+    
+    if not target_ranges:
+        return sheet_content
+    
+    target_set = set(target_ranges)
+    
+    # Bestehende <mergeCells> parsen
+    merge_match = re.search(r'<mergeCells\s+count="\d+">(.*?)</mergeCells>', sheet_content, re.DOTALL)
+    existing_set = set()
+    if merge_match:
+        for mc_m in re.finditer(r'<mergeCell\s+ref="([^"]+)"\s*/>', merge_match.group(1)):
+            existing_set.add(mc_m.group(1))
+    
+    # Differenz berechnen
+    if target_set == existing_set:
+        sys.stderr.write(f"[MERGE_XML] Keine Änderungen nötig\n")
+        return sheet_content
+    
+    # Neues <mergeCells> Element bauen
+    merge_cells_xml = f'<mergeCells count="{len(target_ranges)}">'
+    for ref in target_ranges:
+        merge_cells_xml += f'<mergeCell ref="{ref}"/>'
+    merge_cells_xml += '</mergeCells>'
+    
+    # Ersetze oder füge ein
+    if merge_match:
+        sheet_content = (sheet_content[:merge_match.start()] +
+                        merge_cells_xml +
+                        sheet_content[merge_match.end():])
+    else:
+        # Vor </worksheet> einfügen
+        sheet_content = sheet_content.replace('</worksheet>', merge_cells_xml + '</worksheet>')
+    
+    sys.stderr.write(f"[MERGE_XML] Fertig: {len(target_ranges)} Merges gesetzt "
+                     f"(war: {len(existing_set)})\n")
+    return sheet_content
+
+
+def _apply_cell_formats_to_xlsx(xlsx_path, sheet_name, cell_styles, cell_fonts,
+                                 rich_text_cells, merged_cells_list):
+    """
+    Wendet Zellformatierungen auf eine fertige XLSX-Datei an (ZIP-to-ZIP).
+
+    Liest Sheet-XML, styles.xml und sharedStrings.xml, wendet Fill/Font/Alignment,
+    RichText und MergedCells direkt im XML an, schreibt zurück ins ZIP.
+    Kein openpyxl → keine PatternFill-Korruption, keine cellXfs-Konflikte.
+    """
+    import zipfile
+    import shutil
+    from xml.etree import ElementTree as ET
+
+    if not cell_styles and not cell_fonts and not rich_text_cells and not merged_cells_list:
+        return
+
+    MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
+    R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+
+    temp_output = xlsx_path + '.fmt_tmp'
+
+    with zipfile.ZipFile(xlsx_path, 'r') as src_zip:
+        # Sheet-ZIP-Pfad finden (gleiche Logik wie _apply_highlights_to_xlsx)
+        wb_xml = src_zip.read('xl/workbook.xml').decode('utf-8')
+        wb_root = ET.fromstring(wb_xml)
+
+        sheet_rid = None
+        for sheet_el in wb_root.iter(f'{{{MAIN_NS}}}sheet'):
+            if sheet_el.get('name') == sheet_name:
+                sheet_rid = sheet_el.get(f'{{{R_NS}}}id')
+                break
+
+        if not sheet_rid:
+            raise ValueError(f"Sheet '{sheet_name}' nicht gefunden")
+
+        rels_xml = src_zip.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+        rels_root = ET.fromstring(rels_xml)
+
+        sheet_file = None
+        for rel_el in rels_root.iter(f'{{{RELS_NS}}}Relationship'):
+            if rel_el.get('Id') == sheet_rid:
+                sheet_file = rel_el.get('Target')
+                break
+
+        if not sheet_file:
+            raise ValueError(f"Relationship {sheet_rid} nicht gefunden")
+
+        sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+        parts = sheet_zip_path.split('/')
+        normalized = []
+        for p in parts:
+            if p == '..':
+                if normalized:
+                    normalized.pop()
+            elif p != '.':
+                normalized.append(p)
+        sheet_zip_path = '/'.join(normalized)
+
+        # Sheet-XML, styles.xml und sharedStrings.xml lesen
+        sheet_content = src_zip.read(sheet_zip_path).decode('utf-8')
+        styles_content = src_zip.read('xl/styles.xml').decode('utf-8')
+
+        ss_content = None
+        try:
+            ss_content = src_zip.read('xl/sharedStrings.xml').decode('utf-8')
+        except KeyError:
+            pass
+
+        # 1. Cell Formats (Fill, Font, Alignment) anwenden
+        if cell_styles or cell_fonts:
+            result = _apply_cell_formats_xml(sheet_content, styles_content, ss_content,
+                                             cell_styles, cell_fonts, None)
+            if result:
+                sheet_content, styles_content, ss_content = result
+
+        # 2. RichText anwenden
+        if rich_text_cells:
+            result = _apply_rich_text_xml(sheet_content, ss_content, rich_text_cells, None)
+            if result:
+                sheet_content, ss_content = result
+
+        # 3. Merged Cells anwenden
+        if merged_cells_list:
+            sheet_content = _apply_merged_cells_xml(sheet_content, merged_cells_list)
+
+        # ZIP-to-ZIP: Alle Einträge kopieren, modifizierte ersetzen
+        with zipfile.ZipFile(temp_output, 'w') as dst_zip:
+            for item in src_zip.infolist():
+                if item.filename.startswith('__MACOSX') or item.filename.endswith('.DS_Store'):
+                    continue
+
+                if item.filename == sheet_zip_path:
+                    item.compress_type = zipfile.ZIP_DEFLATED
+                    dst_zip.writestr(item, sheet_content.encode('utf-8'))
+                elif item.filename == 'xl/styles.xml':
+                    item.compress_type = zipfile.ZIP_DEFLATED
+                    dst_zip.writestr(item, styles_content.encode('utf-8'))
+                elif item.filename == 'xl/sharedStrings.xml' and ss_content is not None:
+                    item.compress_type = zipfile.ZIP_DEFLATED
+                    dst_zip.writestr(item, ss_content.encode('utf-8'))
+                else:
+                    dst_zip.writestr(item, src_zip.read(item.filename))
+
+    # Ersetze Original
+    os.remove(xlsx_path)
+    shutil.move(temp_output, xlsx_path)
+    sys.stderr.write(f"[FMT_XLSX] Cell-Formate erfolgreich angewendet auf {xlsx_path}\n")
 
 
 def _apply_row_highlights_xml(sheet_content, styles_content, row_highlights):
@@ -4559,7 +5625,7 @@ def _apply_row_highlights_xml(sheet_content, styles_content, row_highlights):
     cellxfs_inner = cellxfs_match.group(2)
     
     # XF-Einträge parsen (self-closing und non-self-closing)
-    xf_entries = re.findall(r'<xf\b[^>]*(?:/>|>(?:.*?)</xf>)', cellxfs_inner, re.DOTALL)
+    xf_entries = re.findall(r'<xf\b[^>]*?(?:/>|>(?:.*?)</xf>)', cellxfs_inner, re.DOTALL)
     
     sys.stderr.write(f"[HL_XML] {len(xf_entries)} bestehende XF-Einträge, count={cellxfs_count}\n")
     
@@ -4690,6 +5756,15 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
     if original_path is None:
         original_path = file_path
     
+    sys.stderr.write(f"[DIAG-PY] === write_sheet START ===\n")
+    sys.stderr.write(f"[DIAG-PY] file_path={file_path}\n")
+    sys.stderr.write(f"[DIAG-PY] output_path={output_path}\n")
+    sys.stderr.write(f"[DIAG-PY] original_path={original_path}\n")
+    sys.stderr.write(f"[DIAG-PY] sheet_name={sheet_name}\n")
+    sys.stderr.write(f"[DIAG-PY] fullRewrite={changes.get('fullRewrite')}, structuralChange={changes.get('structuralChange')}\n")
+    sys.stderr.write(f"[DIAG-PY] fromFile={changes.get('fromFile')}\n")
+    sys.stderr.write(f"[DIAG-PY] same_file={os.path.normpath(original_path) == os.path.normpath(output_path)}\n")
+    
     # KRITISCH: Wenn original_path == file_path == output_path (Speichern in gleicher Datei),
     # muss eine Backup-Kopie erstellt werden BEVOR openpyxl die Datei überschreibt.
     # Sonst kann restore_external_links_from_original nichts wiederherstellen.
@@ -4707,6 +5782,162 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         restore_external_links_from_original._backup_original_path = _backup_path
     
     try:
+        # =====================================================================
+        # FAST PATH: Spalten-Ops (Reorder/Delete/Insert/Hide) → XML-DIREKT ohne openpyxl-Load
+        # Spart das komplette Laden des Workbooks mit openpyxl (~20-30s bei großen Dateien)
+        # =====================================================================
+        _fp_xml_failed = False
+        _fp_column_order = changes.get('columnOrder')
+        _fp_from_file = changes.get('fromFile', False)
+        _fp_deleted_cols_pre = changes.get('deletedColumns', [])
+        _fp_inserted_cols_pre = changes.get('insertedColumns')
+        _fp_has_any_col_ops = (_fp_column_order and len(_fp_column_order) > 0) or bool(_fp_deleted_cols_pre) or bool(_fp_inserted_cols_pre)
+        sys.stderr.write(f"[DIAG-PY] FAST PATH CHECK: _fp_has_any_col_ops={_fp_has_any_col_ops}, _fp_from_file={_fp_from_file}\n")
+        sys.stderr.write(f"[DIAG-PY] columnOrder={'len=' + str(len(_fp_column_order)) if _fp_column_order else 'None'}, "
+                         f"deletedCols={_fp_deleted_cols_pre}, insertedCols={_fp_inserted_cols_pre is not None}\n")
+        if _fp_has_any_col_ops and not _fp_from_file:
+            _fp_deleted_cols = _fp_deleted_cols_pre
+            _fp_inserted_cols = _fp_inserted_cols_pre
+            _fp_deleted_rows = changes.get('deletedRowIndices', [])
+            _fp_inserted_rows = changes.get('insertedRowInfo')
+            _fp_row_order = changes.get('rowOrder')
+            _fp_edited_cells = changes.get('editedCells', {})
+            _fp_has_cell_edits = bool(_fp_edited_cells and any(not k.startswith('_') for k in _fp_edited_cells))
+            _fp_has_copy_styles = bool(changes.get('cellStyles')) or bool(changes.get('cellFonts')) or bool(changes.get('richTextCells')) or bool(changes.get('mergedCells', []))
+            _fp_has_row_ops = _fp_deleted_rows or _fp_inserted_rows or (_fp_row_order and len(_fp_row_order) > 0)
+            
+            # Data Join Erkennung: Wenn ALLE Zell-Edits in eingefügten Spalten liegen,
+            # sind sie bereits in data[] enthalten und werden von XML-DIREKT geschrieben.
+            # → Dann sind die editedCells redundant und blockieren den Fast Path nicht.
+            _fp_edits_in_inserted_only = False
+            if _fp_has_cell_edits and _fp_inserted_cols:
+                _fp_ins_ops = _fp_inserted_cols.get('operations', [])
+                if not _fp_ins_ops and _fp_inserted_cols.get('position') is not None:
+                    _fp_ins_ops = [{'position': _fp_inserted_cols['position'], 'count': _fp_inserted_cols.get('count', 1)}]
+                if _fp_ins_ops:
+                    _fp_ins_col_set = set()
+                    for _fp_op in _fp_ins_ops:
+                        _fp_pos = _fp_op['position']
+                        _fp_cnt = _fp_op.get('count', 1)
+                        for _fp_i in range(_fp_cnt):
+                            _fp_ins_col_set.add(_fp_pos + _fp_i)
+                    _fp_edits_in_inserted_only = True
+                    for _fp_k in _fp_edited_cells:
+                        if _fp_k.startswith('_'):
+                            continue
+                        _fp_parts = _fp_k.split('-')
+                        if len(_fp_parts) >= 2:
+                            try:
+                                _fp_edit_col = int(_fp_parts[1])
+                                if _fp_edit_col not in _fp_ins_col_set:
+                                    _fp_edits_in_inserted_only = False
+                                    break
+                            except ValueError:
+                                _fp_edits_in_inserted_only = False
+                                break
+                        else:
+                            _fp_edits_in_inserted_only = False
+                            break
+            
+            _fp_row_mapping = changes.get('rowMapping')
+            _fp_row_mapping_ok = True
+            if _fp_row_mapping:
+                for i, val in enumerate(_fp_row_mapping):
+                    if val != i:
+                        _fp_row_mapping_ok = False
+                        break
+            _fp_affected_rows = changes.get('affectedRows', [])
+            
+            _fp_eligible = (not _fp_has_row_ops and
+                           (not _fp_has_cell_edits or _fp_edits_in_inserted_only) and
+                           _fp_row_mapping_ok and
+                           not _fp_affected_rows)
+            
+            sys.stderr.write(f"[DIAG-PY] _fp_eligible={_fp_eligible}, _fp_has_row_ops={_fp_has_row_ops}, "
+                             f"_fp_has_cell_edits={_fp_has_cell_edits}, _fp_edits_in_inserted_only={_fp_edits_in_inserted_only}, "
+                             f"_fp_row_mapping_ok={_fp_row_mapping_ok}, _fp_affected_rows={bool(_fp_affected_rows)}\n")
+            sys.stderr.write(f"[DIAG-PY] original_path={original_path}\n")
+            sys.stderr.write(f"[DIAG-PY] output_path={output_path}\n")
+            sys.stderr.write(f"[DIAG-PY] file_path={file_path}\n")
+            sys.stderr.write(f"[DIAG-PY] deletedColumns={_fp_deleted_cols_pre}, columnOrder={'len=' + str(len(_fp_column_order)) if _fp_column_order else 'None'}\n")
+            sys.stderr.write(f"[DIAG-PY] insertedColumns={_fp_inserted_cols_pre is not None}\n")
+            
+            if _fp_eligible:
+                sys.stderr.write(f"[XML-DIREKT-FAST] Verwende XML-Direkt-Weg OHNE openpyxl-Load\n")
+                try:
+                    # Sicherstellen dass das Skript-Verzeichnis im sys.path ist
+                    # (embedded Python mit ._pth fügt es nicht automatisch hinzu)
+                    _fp_script_dir = os.path.dirname(os.path.abspath(__file__))
+                    if _fp_script_dir not in sys.path:
+                        sys.path.insert(0, _fp_script_dir)
+                    from excel_xml_ops import direct_xml_column_operations
+                    
+                    _fp_headers = changes.get('headers', [])
+                    _fp_data = changes.get('data', [])
+                    _fp_hidden_columns = changes.get('hiddenColumns', [])
+                    _fp_hidden_rows = changes.get('hiddenRows', [])
+                    _fp_row_highlights = changes.get('rowHighlights', {})
+                    _fp_cleared_highlights = changes.get('clearedRowHighlights', [])
+                    
+                    _fp_result = direct_xml_column_operations(
+                        file_path=original_path,
+                        output_path=output_path,
+                        sheet_name=sheet_name,
+                        deleted_columns=_fp_deleted_cols if _fp_deleted_cols else None,
+                        inserted_columns=_fp_inserted_cols,
+                        column_order=_fp_column_order,
+                        hidden_columns=_fp_hidden_columns,
+                        headers=_fp_headers,
+                        data=_fp_data
+                    )
+                    
+                    # Slicer-Strip bei Reorder
+                    _fp_has_slicers = _fp_result.get('has_slicers', True)
+                    if _fp_has_slicers:
+                        try:
+                            _strip_slicers_from_zip(output_path)
+                        except Exception as slicer_err:
+                            sys.stderr.write(f"[XML-DIREKT-FAST] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
+                    else:
+                        sys.stderr.write(f"[XML-DIREKT-FAST] Slicer-Strip übersprungen: keine Slicers\n")
+                    
+                    # Hidden Rows
+                    if _fp_hidden_rows:
+                        sys.stderr.write(f"[XML-DIREKT-FAST] {len(_fp_hidden_rows)} hidden rows via XML anwenden\n")
+                        try:
+                            _apply_hidden_rows_to_xlsx(output_path, sheet_name, _fp_hidden_rows)
+                        except Exception as hr_err:
+                            sys.stderr.write(f"[XML-DIREKT-FAST] WARNUNG: hidden rows Fehler: {hr_err}\n")
+                    
+                    # Row Highlights
+                    if _fp_row_highlights:
+                        sys.stderr.write(f"[XML-DIREKT-FAST] {len(_fp_row_highlights)} row_highlights via XML anwenden\n")
+                        try:
+                            _apply_highlights_to_xlsx(output_path, sheet_name, _fp_row_highlights)
+                        except Exception as hl_err:
+                            sys.stderr.write(f"[XML-DIREKT-FAST] WARNUNG: row_highlights Fehler: {hl_err}\n")
+                    
+                    # Cleared Row Highlights
+                    if _fp_cleared_highlights:
+                        try:
+                            _clear_row_highlights_xml(output_path, sheet_name, _fp_cleared_highlights)
+                        except Exception as cl_err:
+                            sys.stderr.write(f"[XML-DIREKT-FAST] WARNUNG: cleared_row_highlights Fehler: {cl_err}\n")
+                    
+                    sys.stderr.write(f"[XML-DIREKT-FAST] Erfolgreich: {_fp_result.get('method', 'unknown')}\n")
+                    return {'success': True, 'outputPath': output_path, 'method': _fp_result.get('method', 'xml-col-ops-fast')}
+                
+                except Exception as fp_err:
+                    sys.stderr.write(f"[XML-DIREKT-FAST] FEHLER: {fp_err} — Fallback auf openpyxl-Load\n")
+                    import traceback
+                    traceback.print_exc(file=sys.stderr)
+                    _fp_xml_failed = True  # Verhindert redundanten XML-DIREKT-Versuch später
+                    # Fallback: continue with standard openpyxl path below
+        
+        # =====================================================================
+        # STANDARD PATH: openpyxl-basierte Verarbeitung
+        # =====================================================================
+        
         # Original-Workbook laden
         # Workaround für openpyxl Bug mit extLst in PatternFill
         # rich_text=True damit CellRichText-Objekte erhalten bleiben
@@ -4754,22 +5985,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         
         # VM-Map für eingefügte Bild-Zellen (Copy&Paste)
         vm_cell_map = changes.get('vmCellMap', {})
-        
-        # DEBUG: Zeige alle relevanten Flags
-        import sys
-        sys.stderr.write(f"[WRITE_SHEET] row_highlights={row_highlights}, cleared_row_highlights={cleared_row_highlights}\n")
-        sys.stderr.write(f"[WRITE_SHEET] row_mapping={bool(row_mapping)}, structural_change={structural_change}, full_rewrite={full_rewrite}\n")
-        sys.stderr.write(f"[WRITE_SHEET] deleted_rows={deleted_rows}, inserted_rows={bool(inserted_rows)}, row_order={bool(row_order)}\n")
-        sys.stderr.write(f"[WRITE_SHEET] deleted_columns={deleted_columns}, inserted_columns={bool(inserted_columns)}, column_order={bool(column_order)}\n")
-        
-        # DEBUG: mergedCells vom Frontend
-        imported_mc_debug = changes.get('mergedCells', [])
-        sys.stderr.write(f"[WRITE_SHEET] mergedCells count={len(imported_mc_debug)}\n")
-        if imported_mc_debug:
-            for i, mc in enumerate(imported_mc_debug[:5]):
-                sys.stderr.write(f"[WRITE_SHEET] mergedCells[{i}]: startRow={mc.get('startRow')}, startCol={mc.get('startCol')}, endRow={mc.get('endRow')}, endCol={mc.get('endCol')}\n")
-            if len(imported_mc_debug) > 5:
-                sys.stderr.write(f"[WRITE_SHEET] ... und {len(imported_mc_debug) - 5} weitere\n")
         
         # =====================================================================
         # FALL 1: fromFile - Nur versteckte Spalten/Zeilen setzen
@@ -4836,7 +6051,13 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             
             only_column_ops = has_column_operations and not has_row_operations and not inserted_rows and not has_cell_edits and not has_copy_styles
             
-            if only_column_ops:
+            # XML-DIREKT für REINEN Column-Reorder (kein Delete, kein Insert, keine Edits)
+            # Arbeitet direkt auf dem ZIP/XML → kein openpyxl-Roundtrip → schnell + korruptionsfrei
+            only_column_reorder = (only_column_ops and 
+                                   column_order and len(column_order) > 0 and
+                                   not deleted_columns and not inserted_columns)
+            
+            if only_column_reorder and not _fp_xml_failed:
                 sys.stderr.write(f"[XML-DIREKT] Verwende XML-Direkt-Weg für Spaltenoperationen\n")
                 sys.stderr.write(f"[XML-DIREKT] deleted={deleted_columns}, inserted={inserted_columns is not None}, "
                                  f"reorder={column_order is not None}, hidden={hidden_columns}\n")
@@ -4873,6 +6094,16 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         reason = "keine Slicers" if not has_slicers else "Insert-only (Slicers bleiben valide)"
                         sys.stderr.write(f"[XML-DIREKT] Slicer-Strip übersprungen: {reason}\n")
                     
+                    # Hidden Rows nachträglich anwenden (direkt im XML, ZIP-to-ZIP)
+                    # SCHRITT 1 sendet jetzt hiddenRows mit (statt SCHRITT 2),
+                    # damit kein unnötiger SCHRITT 2 Pass läuft.
+                    if hidden_rows:
+                        sys.stderr.write(f"[XML-DIREKT] {len(hidden_rows)} hidden rows via XML anwenden\n")
+                        try:
+                            _apply_hidden_rows_to_xlsx(output_path, sheet_name, hidden_rows)
+                        except Exception as hr_err:
+                            sys.stderr.write(f"[XML-DIREKT] WARNUNG: hidden rows Fehler: {hr_err}\n")
+                    
                     # Row Highlights nachträglich anwenden (direkt im XML)
                     if row_highlights:
                         sys.stderr.write(f"[XML-DIREKT] {len(row_highlights)} row_highlights via XML anwenden\n")
@@ -4881,11 +6112,132 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         except Exception as hl_err:
                             sys.stderr.write(f"[XML-DIREKT] WARNUNG: row_highlights Fehler: {hl_err}\n")
                     
+                    # Cleared Row Highlights nachträglich entfernen (direkt im XML)
+                    if cleared_row_highlights:
+                        try:
+                            _clear_row_highlights_xml(output_path, sheet_name, cleared_row_highlights)
+                        except Exception as cl_err:
+                            sys.stderr.write(f"[XML-DIREKT] WARNUNG: cleared_row_highlights Fehler: {cl_err}\n")
+                    
                     sys.stderr.write(f"[XML-DIREKT] Erfolgreich: {result.get('method', 'unknown')}\n")
                     return {'success': True, 'outputPath': output_path, 'method': result.get('method', 'xml-col-ops')}
                 
                 except Exception as xml_err:
                     sys.stderr.write(f"[XML-DIREKT] Fehler: {xml_err} — Fallback auf openpyxl-Pipeline\n")
+                    import traceback
+                    traceback.print_exc(file=sys.stderr)
+                    # Bei Fehler: Workbook neu öffnen und normalen Pipeline-Pfad nehmen
+                    wb = load_workbook(original_path)
+                    ws = wb[sheet_name]
+            
+            # =====================================================================
+            # XML-HYBRID: Spaltenoperationen via XML + Zell-Edits via openpyxl
+            # Schneller als voller openpyxl-Pipeline-Roundtrip, da die schweren
+            # Spaltenoperationen direkt im XML gemacht werden (kein Zell-Backup/Rewrite)
+            # =====================================================================
+            column_ops_with_edits = has_column_operations and not has_row_operations and not inserted_rows and (has_cell_edits or has_copy_styles)
+            
+            # XML-HYBRID DEAKTIVIERT: Gleiche Begründung wie XML-DIREKT oben.
+            # Spalten-Ops + Edits gehen jetzt zusammen durch die openpyxl-Pipeline.
+            if False and column_ops_with_edits:
+                sys.stderr.write(f"[XML-HYBRID] Verwende XML-Direkt für Spalten + openpyxl für Edits\n")
+                sys.stderr.write(f"[XML-HYBRID] edits={has_cell_edits}, styles={has_copy_styles}\n")
+                
+                try:
+                    wb.close()  # openpyxl-Workbook schließen — XML-DIREKT arbeitet direkt am ZIP
+                    from excel_xml_ops import direct_xml_column_operations
+                    
+                    result = direct_xml_column_operations(
+                        file_path=original_path,
+                        output_path=output_path,
+                        sheet_name=sheet_name,
+                        deleted_columns=deleted_columns,
+                        inserted_columns=inserted_columns,
+                        column_order=column_order,
+                        hidden_columns=hidden_columns,
+                        headers=headers,
+                        data=data
+                    )
+                    
+                    # Slicer-Infrastruktur entfernen falls nötig
+                    has_slicers = result.get('has_slicers', True)
+                    is_insert_only = bool(inserted_columns) and not deleted_columns
+                    if has_slicers and not is_insert_only:
+                        try:
+                            _strip_slicers_from_zip(output_path)
+                        except Exception as slicer_err:
+                            sys.stderr.write(f"[XML-HYBRID] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
+                    
+                    # Gezielter openpyxl-Pass NUR für Zell-Edits + Styles (keine Spaltenmanipulation)
+                    sys.stderr.write(f"[XML-HYBRID] Öffne Ergebnis für Zell-Edits...\n")
+                    wb2 = load_workbook(output_path)
+                    ws2 = wb2[sheet_name]
+                    
+                    # Zell-Edits anwenden
+                    real_edits = {k: v for k, v in edited_cells.items() if not k.startswith('_')} if edited_cells else {}
+                    if real_edits:
+                        sys.stderr.write(f"[XML-HYBRID] {len(real_edits)} Zell-Edits anwenden\n")
+                        for key, value in real_edits.items():
+                            parts = key.split('-')
+                            if len(parts) != 2:
+                                continue
+                            row_idx = int(parts[0])
+                            col_idx = int(parts[1])
+                            cell = ws2.cell(row=row_idx + 2, column=col_idx + 1)
+                            apply_cell_value(cell, value)
+                    
+                    # Cell Styles, Fonts, RichText, MergedCells werden NACH Save per XML angewendet
+                    # (openpyxl PatternFill vor wb.save() korrumpiert cellXfs)
+                    imported_cell_styles_h = changes.get('cellStyles', {})
+                    cell_fonts_h = changes.get('cellFonts', {})
+                    imported_rich_text_h = changes.get('richTextCells', {})
+                    imported_merged_cells_h = changes.get('mergedCells', [])
+                    
+                    # Versteckte Zeilen anwenden (das ist sicher per openpyxl)
+                    if hidden_rows:
+                        _apply_hidden_rows(ws2, hidden_rows)
+                    
+                    wb2.save(output_path)
+                    wb2.close()
+                    
+                    # Cell Formats per XML (NACH Save, vor Highlights)
+                    if imported_cell_styles_h or cell_fonts_h or imported_rich_text_h or imported_merged_cells_h:
+                        try:
+                            _apply_cell_formats_to_xlsx(output_path, sheet_name,
+                                                        imported_cell_styles_h, cell_fonts_h,
+                                                        imported_rich_text_h, imported_merged_cells_h)
+                        except Exception as fmt_err:
+                            sys.stderr.write(f"[XML-HYBRID] Cell-Format XML Fehler: {fmt_err}\n")
+                    
+                    # Row Highlights via XML (NACH openpyxl-Save damit sie nicht überschrieben werden)
+                    if row_highlights:
+                        sys.stderr.write(f"[XML-HYBRID] {len(row_highlights)} row_highlights via XML anwenden\n")
+                        try:
+                            _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+                        except Exception as hl_err:
+                            sys.stderr.write(f"[XML-HYBRID] WARNUNG: row_highlights Fehler: {hl_err}\n")
+                    
+                    # Cleared Row Highlights via XML (NACH Save)
+                    if cleared_row_highlights:
+                        try:
+                            _clear_row_highlights_xml(output_path, sheet_name, cleared_row_highlights)
+                        except Exception as cl_err:
+                            sys.stderr.write(f"[XML-HYBRID] WARNUNG: cleared_row_highlights Fehler: {cl_err}\n")
+                    
+                    # Post-Processing: Beziehungen und externe Links reparieren
+                    fix_xlsx_relationships(output_path)
+                    restore_external_links_from_original(output_path, original_path, structural_change=True)
+                    
+                    try:
+                        _strip_slicers_from_zip(output_path)
+                    except Exception:
+                        pass
+                    
+                    sys.stderr.write(f"[XML-HYBRID] Erfolgreich\n")
+                    return {'success': True, 'outputPath': output_path, 'method': 'xml-col-ops-hybrid'}
+                
+                except Exception as hybrid_err:
+                    sys.stderr.write(f"[XML-HYBRID] Fehler: {hybrid_err} — Fallback auf openpyxl-Pipeline\n")
                     import traceback
                     traceback.print_exc(file=sys.stderr)
                     # Bei Fehler: Workbook neu öffnen und normalen Pipeline-Pfad nehmen
@@ -5260,17 +6612,15 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                 ws.column_dimensions[new_col_letter].hidden = wb_data['hidden']
                             if wb_data.get('bestFit'):
                                 ws.column_dimensions[new_col_letter].bestFit = wb_data['bestFit']
-                            if wb_data.get('customWidth'):
-                                ws.column_dimensions[new_col_letter].customWidth = wb_data['customWidth']
             
             # ===== SCHRITT 10: Versteckte Spalten =====
             sys.stderr.write(f"[PIPELINE] Schritt 10: Spalten verstecken\n")
             _apply_hidden_columns(ws, hidden_columns)
             
             # ===== SCHRITT 11: Row Highlights =====
-            sys.stderr.write(f"[PIPELINE] Schritt 11: Row Highlights\n")
-            if row_highlights:
-                _apply_row_highlights(ws, row_highlights, len(headers) if headers else 0)
+            # HINWEIS: Row Highlights werden NACH wb.save() via XML angewendet,
+            # um Formatierungs-Korruption durch openpyxl-PatternFill zu vermeiden.
+            sys.stderr.write(f"[PIPELINE] Schritt 11: Row Highlights (deferred auf nach Save)\n")
             
             # ===== SCHRITT 11b: Zell-Edits und Copy-Paste-Daten anwenden =====
             # Bei kombinierten Operationen (Zeilen+Spalten+Edits) werden editedCells,
@@ -5288,25 +6638,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     cell = ws.cell(row=row_idx + 2, column=col_idx + 1)
                     apply_cell_value(cell, value)
             
+            # Cell Styles, Fonts, RichText, MergedCells werden NACH Save per XML angewendet
+            # (openpyxl PatternFill vor wb.save() korrumpiert cellXfs)
             imported_cell_styles_p = changes.get('cellStyles', {})
-            if imported_cell_styles_p:
-                sys.stderr.write(f"[PIPELINE] Schritt 11b: {len(imported_cell_styles_p)} cellStyles anwenden\n")
-                _apply_imported_cell_styles(ws, imported_cell_styles_p)
-            
             cell_fonts_p = changes.get('cellFonts', {})
-            if cell_fonts_p:
-                sys.stderr.write(f"[PIPELINE] Schritt 11b: {len(cell_fonts_p)} cellFonts anwenden\n")
-                _apply_cell_fonts(ws, cell_fonts_p)
-            
             imported_rich_text_p = changes.get('richTextCells', {})
-            if imported_rich_text_p:
-                sys.stderr.write(f"[PIPELINE] Schritt 11b: {len(imported_rich_text_p)} richTextCells anwenden\n")
-                _apply_imported_rich_text(ws, imported_rich_text_p)
-            
             imported_merged_cells_p = changes.get('mergedCells', [])
-            if imported_merged_cells_p:
-                sys.stderr.write(f"[PIPELINE] Schritt 11b: {len(imported_merged_cells_p)} mergedCells anwenden\n")
-                _apply_imported_merged_cells(ws, imported_merged_cells_p)
             
             # ===== SCHRITT 12: Tables reparieren =====
             sys.stderr.write(f"[PIPELINE] Schritt 12: Tables reparieren\n")
@@ -5347,18 +6684,14 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             sys.stderr.write(f"[PIPELINE] Schritt 13: Speichern\n")
             wb.save(output_path)
             wb.close()
-            _check_zip_drawings(output_path, "nach wb.save()")
             fix_xlsx_relationships(output_path)
-            _check_zip_drawings(output_path, "nach fix_xlsx_relationships()")
             
             # ===== SCHRITT 14: XML restore =====
             sys.stderr.write(f"[PIPELINE] Schritt 14: XML restore\n")
             if table_changes:
                 restore_table_xml_from_original(output_path, original_path, table_changes)
-                _check_zip_drawings(output_path, "nach restore_table_xml()")
             
             restore_external_links_from_original(output_path, original_path, structural_change=True)
-            _check_zip_drawings(output_path, "nach restore_external_links()")
             
             # Sicherheitsnetz: Slicer-Infrastruktur entfernen falls restore_external_links
             # trotz structural_change noch Artefakte hinterlassen hat
@@ -5366,6 +6699,30 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 _strip_slicers_from_zip(output_path)
             except Exception as slicer_err:
                 sys.stderr.write(f"[PIPELINE] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
+            
+            # ===== SCHRITT 14b: Cell Formats per XML (NACH Save, vor Highlights) =====
+            if imported_cell_styles_p or cell_fonts_p or imported_rich_text_p or imported_merged_cells_p:
+                try:
+                    _apply_cell_formats_to_xlsx(output_path, sheet_name,
+                                                imported_cell_styles_p, cell_fonts_p,
+                                                imported_rich_text_p, imported_merged_cells_p)
+                except Exception as fmt_err:
+                    sys.stderr.write(f"[PIPELINE] Cell-Format XML Fehler: {fmt_err}\n")
+            
+            # ===== SCHRITT 15: Row Highlights via XML (NACH Save) =====
+            if row_highlights:
+                sys.stderr.write(f"[PIPELINE] Schritt 15: {len(row_highlights)} row_highlights via XML anwenden\n")
+                try:
+                    _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+                except Exception as hl_err:
+                    sys.stderr.write(f"[PIPELINE] WARNUNG: row_highlights Fehler: {hl_err}\n")
+            
+            # ===== SCHRITT 15b: Cleared Row Highlights via XML (NACH Save) =====
+            if cleared_row_highlights:
+                try:
+                    _clear_row_highlights_xml(output_path, sheet_name, cleared_row_highlights)
+                except Exception as cl_err:
+                    sys.stderr.write(f"[PIPELINE] WARNUNG: cleared_row_highlights Fehler: {cl_err}\n")
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-pipeline'}
         
@@ -5490,9 +6847,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             _apply_hidden_columns(ws, hidden_columns)
             _apply_hidden_rows(ws, hidden_rows)
             
-            # Row Highlights (FALL 1.5 - Spalten einfügen)
-            if row_highlights:
-                _apply_row_highlights(ws, row_highlights, ws.max_column)
+            # Row Highlights (FALL 1.5) — werden nach wb.save() via XML angewendet
             
             # Tables reparieren: Am Ende EINMAL aus Header-Zellen neu aufbauen
             for table_name in ws.tables:
@@ -5540,6 +6895,13 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 _strip_slicers_from_zip(output_path)
             except Exception as slicer_err:
                 sys.stderr.write(f"[FALL 1.5] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
+            
+            # Row Highlights via XML (nach Save)
+            if row_highlights:
+                try:
+                    _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+                except Exception as hl_err:
+                    sys.stderr.write(f"[FALL 1.5] WARNUNG: row_highlights Fehler: {hl_err}\n")
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-insert-only'}
         
@@ -5681,9 +7043,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             _apply_hidden_columns(ws, hidden_columns)
             _apply_hidden_rows(ws, hidden_rows)
             
-            # Row Highlights (FALL 1.9 - Spalten löschen und einfügen)
-            if row_highlights:
-                _apply_row_highlights(ws, row_highlights, ws.max_column)
+            # Row Highlights (FALL 1.9) — werden nach wb.save() via XML angewendet
             
             # Tables reparieren: Am Ende EINMAL aus Header-Zellen neu aufbauen
             for table_name in ws.tables:
@@ -5732,6 +7092,13 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             except Exception as slicer_err:
                 sys.stderr.write(f"[FALL 1.9] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
             
+            # Row Highlights via XML (nach Save)
+            if row_highlights:
+                try:
+                    _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+                except Exception as hl_err:
+                    sys.stderr.write(f"[FALL 1.9] WARNUNG: row_highlights Fehler: {hl_err}\n")
+            
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-delete-and-insert'}
         
         # =====================================================================
@@ -5777,9 +7144,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             _apply_hidden_columns(ws, hidden_columns)
             _apply_hidden_rows(ws, hidden_rows)
             
-            # Row Highlights (FALL 1.6 - Spalten löschen)
-            if row_highlights:
-                _apply_row_highlights(ws, row_highlights, ws.max_column)
+            # Row Highlights (FALL 1.6) — werden nach wb.save() via XML angewendet
             
             # Sammle Table-Infos für restore
             table_changes = {}
@@ -5807,6 +7172,13 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 _strip_slicers_from_zip(output_path)
             except Exception as slicer_err:
                 sys.stderr.write(f"[FALL 1.6] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
+            
+            # Row Highlights via XML (nach Save)
+            if row_highlights:
+                try:
+                    _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+                except Exception as hl_err:
+                    sys.stderr.write(f"[FALL 1.6] WARNUNG: row_highlights Fehler: {hl_err}\n")
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-delete-only'}
         
@@ -5879,9 +7251,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             _apply_hidden_columns(ws, hidden_columns, len(headers))
             _apply_hidden_rows(ws, hidden_rows, len(data) if data else 0)
             
-            # Row Highlights
-            if row_highlights:
-                _apply_row_highlights(ws, row_highlights, len(headers))
+            # Row Highlights (FALL 1.7) — werden nach wb.save() via XML angewendet
             
             # WICHTIG: Bei Spalten-Verschieben die tableColumns AKTUALISIEREN!
             # Die Spalten wurden physisch umgeordnet, also müssen die Column-Namen
@@ -5925,6 +7295,13 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 _strip_slicers_from_zip(output_path)
             except Exception as slicer_err:
                 sys.stderr.write(f"[FALL 1.7] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
+            
+            # Row Highlights via XML (nach Save)
+            if row_highlights:
+                try:
+                    _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+                except Exception as hl_err:
+                    sys.stderr.write(f"[FALL 1.7] WARNUNG: row_highlights Fehler: {hl_err}\n")
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-column-order'}
         
@@ -5975,12 +7352,20 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     _apply_hidden_columns(ws, hidden_columns, len(headers))
                     _apply_hidden_rows(ws, hidden_rows, len(data))
                     
-                    if row_highlights:
-                        _apply_row_highlights(ws, row_highlights, len(headers))
+                    # Row Highlights NICHT hier (openpyxl korrumpiert Formatierung)
+                    # Werden nach dem Speichern per XML angewendet
                     
                     wb.save(output_path)
                     wb.close()
                     fix_xlsx_relationships(output_path)
+                    
+                    # Row Highlights per XML (nach Save)
+                    if row_highlights:
+                        try:
+                            _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+                        except Exception as hl_err:
+                            sys.stderr.write(f"[FALL 2 xlwings] Highlight-XML Fehler: {hl_err}\n")
+                    
                     return {
                         'success': True, 
                         'outputPath': output_path,
@@ -6002,13 +7387,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 identity_mapping = list(range(len(row_mapping)))
                 current_max_row = ws.max_row
                 rows_changed = current_max_row - 1 - len(row_mapping)  # -1 für Header (positiv=gelöscht, negativ=eingefügt)
-                
-                # DEBUG: Zeige alle relevanten Variablen
-                sys.stderr.write(f"[ZIP-DEBUG] current_max_row (ws.max_row)={current_max_row}\n")
-                sys.stderr.write(f"[ZIP-DEBUG] len(row_mapping)={len(row_mapping)}\n")
-                sys.stderr.write(f"[ZIP-DEBUG] rows_changed={rows_changed}\n")
-                sys.stderr.write(f"[ZIP-DEBUG] deleted_rows aus Frontend={deleted_rows}\n")
-                sys.stderr.write(f"[ZIP-DEBUG] row_mapping[:10]={row_mapping[:10]}\n")
                 
                 # ZIP-Ansatz aktivieren wenn:
                 # - Zeilen gelöscht wurden (rows_changed > 0)
@@ -6033,8 +7411,13 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     sys.stderr.write(f"[ZIP-ANSATZ] Basis-Datei: {basis_datei}\n")
                     
                     # Immer die Basis-Datei zur Ausgabe kopieren (erhält ALLE Formatierungen!)
-                    shutil.copy2(basis_datei, output_path)
-                    sys.stderr.write(f"[ZIP-ANSATZ] Datei kopiert: {basis_datei} -> {output_path}\n")
+                    # AUSNAHME: Wenn basis_datei == output_path (z.B. nach pendingSheetOperations),
+                    # ist die Datei bereits am Zielort → Kopie überspringen (SameFileError vermeiden).
+                    if os.path.normpath(basis_datei) != os.path.normpath(output_path):
+                        shutil.copy2(basis_datei, output_path)
+                        sys.stderr.write(f"[ZIP-ANSATZ] Datei kopiert: {basis_datei} -> {output_path}\n")
+                    else:
+                        sys.stderr.write(f"[ZIP-ANSATZ] Kopie übersprungen (Basis == Ausgabe): {basis_datei}\n")
                     
                     # Jetzt direkt die XML im ZIP manipulieren
                     # xlsx ist ein ZIP mit XML-Dateien drin
@@ -6203,6 +7586,21 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             shutil.move(temp_zip, output_path)
                             sys.stderr.write(f"[ZIP-ANSATZ] REGEX-Pfad erfolgreich gespeichert\n")
                             
+                            # Row Highlights via XML anwenden (kein openpyxl-Roundtrip!)
+                            if row_highlights:
+                                sys.stderr.write(f"[ZIP-ANSATZ] REGEX-Pfad: Wende {len(row_highlights)} Row Highlights via XML an\n")
+                                try:
+                                    _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+                                except Exception as hl_err:
+                                    sys.stderr.write(f"[ZIP-ANSATZ] WARNUNG: Row-Highlights Fehler: {hl_err}\n")
+                            
+                            if cleared_row_highlights:
+                                sys.stderr.write(f"[ZIP-ANSATZ] REGEX-Pfad: Entferne {len(cleared_row_highlights)} Row Highlights via XML\n")
+                                try:
+                                    _clear_row_highlights_xml(output_path, sheet_name, cleared_row_highlights)
+                                except Exception as clr_err:
+                                    sys.stderr.write(f"[ZIP-ANSATZ] WARNUNG: Clear-Highlights Fehler: {clr_err}\n")
+                            
                             # Sicherheitsnetz: Slicer-Artefakte entfernen
                             try:
                                 _strip_slicers_from_zip(output_path)
@@ -6302,20 +7700,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         # Finde gelöschte Zeilen als Excel-Zeilen
                         deleted_excel_rows = set(idx + 2 for idx in frontend_deleted_rows)
                         
-                        # Debug: Zeige die ersten Mappings
-                        sys.stderr.write(f"[ZIP-ANSATZ] row_mapping (erste 10): {row_mapping[:10]}\n")
-                        first_mappings = list(row_shift_map.items())[:5]
-                        sys.stderr.write(f"[ZIP-ANSATZ] row_shift_map (erste 5): {first_mappings}\n")
-                        
                         # Bestimme ob nur Verschiebung (keine Löschung/Einfügung)
                         is_pure_reorder = len(frontend_deleted_rows) == 0 and len(inserted_rows_set) == 0
-                        
-                        if deleted_excel_rows:
-                            sys.stderr.write(f"[ZIP-ANSATZ] Gelöschte Zeilen (Excel): {sorted(deleted_excel_rows)[:10]}...\n")
-                        if inserted_rows_set:
-                            sys.stderr.write(f"[ZIP-ANSATZ] Eingefügte Zeilen: {sorted(inserted_rows_set)[:10]}...\n")
-                        if is_pure_reorder:
-                            sys.stderr.write(f"[ZIP-ANSATZ] Reine Verschiebung - CF-Bereiche werden NICHT angepasst\n")
                         
                         cf_elements = sheet_tree.findall('.//main:conditionalFormatting', ns)
                         cf_updated = 0
@@ -6488,14 +7874,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                                                         cell.remove(is_elem)
                                         
                                         new_rows.append((new_excel_row, new_row_elem))
-                                        sys.stderr.write(f"[ZIP-ANSATZ] Neue Zeile {new_excel_row} erstellt\n")
                                 else:
                                     # original_idx ist bereits der Original-Index!
                                     orig_excel_row = original_idx + 2  # Original Excel-Zeile
-                                    
-                                    # Debug für erste 5 Zeilen
-                                    if new_data_idx < 5:
-                                        sys.stderr.write(f"[ZIP-ANSATZ] Mapping: neue Pos {new_data_idx} (Excel {new_excel_row}) <- original {original_idx} (Excel {orig_excel_row})\n")
                                     
                                     if orig_excel_row in row_dict:
                                         # WICHTIG: deepcopy machen, damit das Original nicht modifiziert wird!
@@ -6709,31 +8090,21 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         
                         shutil.move(temp_zip, output_path)
                         
-                        # Row Highlights müssen NACH dem ZIP-Ansatz angewendet werden
-                        # Da ZIP nur XML manipuliert, öffnen wir die Datei erneut für Highlights
-                        if row_highlights or cleared_row_highlights:
-                            wb_hl = load_workbook(output_path, rich_text=True)
-                            ws_hl = wb_hl[sheet_name]
-                            
-                            # Markierungen anwenden
-                            if row_highlights:
-                                sys.stderr.write(f"[ZIP-ANSATZ] Wende {len(row_highlights)} Row Highlights an\n")
-                                _apply_row_highlights(ws_hl, row_highlights, ws_hl.max_column)
-                            
-                            # Markierungen entfernen
-                            if cleared_row_highlights:
-                                sys.stderr.write(f"[ZIP-ANSATZ] Entferne {len(cleared_row_highlights)} Row Highlights\n")
-                                for row_idx in cleared_row_highlights:
-                                    excel_row = row_idx + 2
-                                    for col_idx in range(1, ws_hl.max_column + 1):
-                                        cell = ws_hl.cell(row=excel_row, column=col_idx)
-                                        cell.fill = PatternFill()  # Keine Füllung
-                            
-                            wb_hl.save(output_path)
-                            wb_hl.close()
-                            fix_xlsx_relationships(output_path)
-                            restore_table_xml_from_original(output_path, original_path, table_changes=None)
-                            restore_external_links_from_original(output_path, original_path)
+                        # Row Highlights NACH dem ZIP-Ansatz anwenden — direkt im XML
+                        # KEIN openpyxl-Roundtrip, da dieser Zell-Formatierung zerstört!
+                        if row_highlights:
+                            sys.stderr.write(f"[ZIP-ANSATZ] Wende {len(row_highlights)} Row Highlights via XML an\n")
+                            try:
+                                _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+                            except Exception as hl_err:
+                                sys.stderr.write(f"[ZIP-ANSATZ] WARNUNG: Row-Highlights Fehler: {hl_err}\n")
+                        
+                        if cleared_row_highlights:
+                            sys.stderr.write(f"[ZIP-ANSATZ] Entferne {len(cleared_row_highlights)} Row Highlights via XML\n")
+                            try:
+                                _clear_row_highlights_xml(output_path, sheet_name, cleared_row_highlights)
+                            except Exception as clr_err:
+                                sys.stderr.write(f"[ZIP-ANSATZ] WARNUNG: Clear-Highlights Fehler: {clr_err}\n")
                         
                         sys.stderr.write(f"[ZIP-ANSATZ] Erfolgreich gespeichert\n")
                         
@@ -6810,18 +8181,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     _apply_hidden_columns(ws, hidden_columns, len(headers))
                     _apply_hidden_rows(ws, hidden_rows, len(data))
                     
-                    # Row Highlights anwenden
-                    if row_highlights:
-                        _apply_row_highlights(ws, row_highlights, len(headers))
+                    # Row Highlights — werden nach wb.save() via XML angewendet
                     
-                    # Cleared Row Highlights entfernen
-                    if cleared_row_highlights:
-                        sys.stderr.write(f"[SHUTIL-ANSATZ] Entferne {len(cleared_row_highlights)} Row Highlights\n")
-                        for row_idx in cleared_row_highlights:
-                            excel_row = row_idx + 2
-                            for col_idx in range(1, len(headers) + 1):
-                                cell = ws.cell(row=excel_row, column=col_idx)
-                                cell.fill = PatternFill()  # Keine Füllung
+                    # Cleared Row Highlights — werden nach wb.save() via XML entfernt
                     
                     # AutoFilter setzen
                     if frontend_auto_filter or original_auto_filter:
@@ -6839,6 +8201,20 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     # WICHTIG: Table-XML vom Original wiederherstellen!
                     restore_table_xml_from_original(output_path, original_path, table_changes=None)
                     restore_external_links_from_original(output_path, original_path)
+                    
+                    # Row Highlights via XML (nach Save)
+                    if row_highlights:
+                        try:
+                            _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+                        except Exception as hl_err:
+                            sys.stderr.write(f"[SHUTIL-ANSATZ] WARNUNG: row_highlights Fehler: {hl_err}\n")
+                    
+                    # Cleared Row Highlights via XML (nach Save)
+                    if cleared_row_highlights:
+                        try:
+                            _clear_row_highlights_xml(output_path, sheet_name, cleared_row_highlights)
+                        except Exception as cl_err:
+                            sys.stderr.write(f"[SHUTIL-ANSATZ] WARNUNG: cleared_row_highlights Fehler: {cl_err}\n")
                     
                     sys.stderr.write(f"[SHUTIL-ANSATZ] Erfolgreich gespeichert\n")
                     return {
@@ -6898,7 +8274,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         has_rich_text_support = False
                     
                     # Sammle alle Original-Zeilen die wir brauchen
-                    styles_found = 0
                     for orig_data_idx in set(row_mapping):
                         excel_row = orig_data_idx + 2  # +2: Excel 1-basiert + Header
                         row_info = {}
@@ -6910,12 +8285,6 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             # Prüfe ob der Wert RichText ist
                             cell_value = cell.value
                             is_rich_text = has_rich_text_support and isinstance(cell_value, CellRichText) if has_rich_text_support else False
-                            
-                            # Debug: Prüfe ob Zelle Formatierung hat
-                            has_fill = cell.fill and cell.fill.patternType and cell.fill.patternType != 'none'
-                            has_font = cell.font and (cell.font.bold or cell.font.italic or cell.font.color)
-                            if has_fill or has_font:
-                                styles_found += 1
                             
                             row_info[col_idx] = {
                                 'value': cell_value,
@@ -7301,37 +8670,29 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             
             # ================================================================
             # SCHRITT 8: ROW HIGHLIGHTS
+            # Row Highlights NICHT hier per openpyxl (korrumpiert Formatierung)
+            # Werden nach dem Speichern per XML angewendet (siehe unten)
             # ================================================================
-            if row_highlights:
-                _apply_row_highlights(ws, row_highlights, len(headers))
             
             # ================================================================
-            # SCHRITT 8.5: NUMBER FORMATS UND CELL FONTS (für Data Join)
+            # SCHRITT 8.5: NUMBER FORMATS (sicher per openpyxl) +
+            # Cell Styles/Fonts/RichText werden NACH Save per XML angewendet
             # ================================================================
             number_formats = changes.get('numberFormats', {})
             cell_fonts = changes.get('cellFonts', {})
             imported_cell_styles = changes.get('cellStyles', {})
             if number_formats:
                 _apply_number_formats(ws, number_formats)
-            if cell_fonts:
-                _apply_cell_fonts(ws, cell_fonts)
-            if imported_cell_styles:
-                _apply_imported_cell_styles(ws, imported_cell_styles)
+            # cell_fonts und imported_cell_styles werden NACH Save per XML angewendet
+            # (openpyxl PatternFill vor wb.save() korrumpiert cellXfs)
             
-            # RichText aus Copy-Paste anwenden
+            # RichText wird NACH Save per XML angewendet
             imported_rich_text = changes.get('richTextCells', {})
-            if imported_rich_text:
-                _apply_imported_rich_text(ws, imported_rich_text)
             
             # ================================================================
-            # SCHRITT 9: CLEARED ROW HIGHLIGHTS (Markierungen entfernen)
+            # SCHRITT 9: CLEARED ROW HIGHLIGHTS
+            # Werden nach dem Speichern per XML entfernt (siehe unten)
             # ================================================================
-            if cleared_row_highlights:
-                for row_idx in cleared_row_highlights:
-                    excel_row = row_idx + 2
-                    for col_idx in range(1, len(headers) + 1):
-                        cell = ws.cell(row=excel_row, column=col_idx)
-                        cell.fill = PatternFill()  # Keine Füllung
             
             # ================================================================
             # SCHRITT 9.5: ÜBERSCHÜSSIGE ZEILEN UND MERGED CELLS ENTFERNEN
@@ -7423,6 +8784,30 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             except Exception as slicer_err:
                 sys.stderr.write(f"[FALL 2] WARNUNG: Slicer-Strip Fehler: {slicer_err}\n")
             
+            # Cell Formats per XML (NACH Save, vor Highlights)
+            if imported_cell_styles or cell_fonts or imported_rich_text:
+                try:
+                    imported_merged_cells_f2 = changes.get('mergedCells', [])
+                    _apply_cell_formats_to_xlsx(output_path, sheet_name,
+                                                imported_cell_styles, cell_fonts,
+                                                imported_rich_text, imported_merged_cells_f2)
+                except Exception as fmt_err:
+                    sys.stderr.write(f"[FALL 2] Cell-Format XML Fehler: {fmt_err}\n")
+            
+            # Row Highlights per XML (nach Save + Slicer-Strip)
+            if row_highlights:
+                try:
+                    _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+                except Exception as hl_err:
+                    sys.stderr.write(f"[FALL 2 Option B] Highlight-XML Fehler: {hl_err}\n")
+            
+            # Cleared Row Highlights per XML (nach Save)
+            if cleared_row_highlights:
+                try:
+                    _clear_row_highlights_xml(output_path, sheet_name, cleared_row_highlights)
+                except Exception as cl_err:
+                    sys.stderr.write(f"[FALL 2 Option B] Clear-Highlight Fehler: {cl_err}\n")
+            
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl'}
         
         # =====================================================================
@@ -7449,67 +8834,91 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         # - mergedCells: ALLE pre-existierenden Merged Cells
         # - rowHighlights: ALLE aktuellen Highlights (auch pre-existierende)
         #
-        # Diese Daten sind KEINE neuen Änderungen - sie sind pre-existierend!
-        # FALL 3a preserviert sie automatisch aus dem Original.
+        # FALL 3a (XML-Direkt) kann jetzt ALLE Formatierungen anwenden:
+        # - Fill/Hintergrund (cellStyles) → _apply_cell_formats_xml
+        # - Font (cellFonts) → _apply_cell_formats_xml
+        # - RichText → _apply_rich_text_xml (inlineStr)
+        # - MergedCells → _apply_merged_cells_xml
+        # - Highlights + Cleared Highlights → bestehende XML-Funktionen
         #
-        # NUR wenn das Frontend _hasFormatChanges gesetzt hat (Paste-mit-Format,
-        # Data Join Styles, oder Highlight-Fill-Löschung), sind echte
-        # Formatierungsänderungen vorhanden → FALL 3b nötig.
+        # FALL 3b (openpyxl) wird NUR noch als Fallback bei FALL 3a Fehler genutzt.
         has_format_flag = changes.get('hasFormatChanges', False)
-        has_extra_changes = has_format_flag
-        has_highlight_changes = bool(cleared_row_highlights)  # Nur wenn Highlights explizit entfernt
+        has_highlight_changes = bool(cleared_row_highlights)
         has_visibility_changes = bool(hidden_rows) or bool(hidden_columns)
         
-        # Safety-Net: Wenn hasFormatChanges NUR wegen Row-Highlights gesetzt wurde
-        # (keine echten Format-Änderungen wie Paste-Styles, Fonts, RichText),
-        # dann können wir den XML-Pfad nutzen → Slicers bleiben intakt.
-        if has_extra_changes and row_highlights and not has_highlight_changes:
-            # Prüfe ob echte Format-Änderungen vorliegen
-            if not cell_fonts and not imported_rich_text:
-                has_extra_changes = False
-                sys.stderr.write(f"[GATE] hasFormatChanges nur wegen Highlights → überschrieben für XML-Pfad\n")
-        
-        sys.stderr.write(f"[GATE] hasFormatChanges={has_format_flag}, has_extra_changes={has_extra_changes}, has_highlight_changes={has_highlight_changes}\n")
-        sys.stderr.write(f"[GATE] real_edits={len(real_edits)}, cellStyles={len(imported_cell_styles)}, mergedCells={len(imported_merged_cells)}\n")
+        sys.stderr.write(f"[GATE] hasFormatChanges={has_format_flag}, has_highlight_changes={has_highlight_changes}\n")
+        sys.stderr.write(f"[GATE] real_edits={len(real_edits)}, cellStyles={len(imported_cell_styles)}, cellFonts={len(cell_fonts)}\n")
+        sys.stderr.write(f"[GATE] richTextCells={len(imported_rich_text)}, mergedCells={len(imported_merged_cells)}\n")
         sys.stderr.write(f"[GATE] has_visibility_changes={has_visibility_changes} (hidden_rows={len(hidden_rows) if hidden_rows else 0}, hidden_cols={len(hidden_columns) if hidden_columns else 0})\n")
         
         # =====================================================================
-        # FALL 3a: Zell-Edits ODER Visibility-Änderungen ODER Row-Highlights
+        # FALL 3a: ALLE Zell-Edits, Format-Änderungen, Visibility, Highlights
         # → Direkte XML-Bearbeitung (kein openpyxl-Roundtrip)
-        # Dies vermeidet das Überschreiben von Rels, Namespaces, SharedStrings etc.
-        # Die Original-Datei bleibt zu 100% intakt, nur die Zellwerte,
-        # hidden-Attribute und Highlight-Fills werden geändert.
+        # Dies vermeidet:
+        # - PatternFill-Korruption (extLst-Verlust, Fill-Konflikte)
+        # - Relationship-Verlust (Drawings, Slicers, External Links)
+        # - Doppelte Style-Einträge in cellXfs
+        # - Langsamen openpyxl-Roundtrip
         #
-        # AUCH für reine Visibility-Änderungen (hideRow/hideColumn ohne Edits):
-        # openpyxl-Roundtrip verliert Drawings ohne Pillow → "Zeichnungsform entfernt".
-        # ZIP-to-ZIP preserviert ALLES aus dem Original.
+        # Die Original-Datei bleibt zu 100% intakt, nur gezielt modifizierte
+        # Bereiche werden geändert.
         #
-        # NEU: Row-Highlights werden direkt in styles.xml + Sheet-XML gesetzt.
-        # Dadurch bleiben SlicerCaches, Slicers, Drawings etc. 100% intakt.
+        # Auch Format-Änderungen (cellStyles, cellFonts, richTextCells, mergedCells)
+        # werden jetzt via XML angewendet → kein FALL 3b mehr nötig.
         # =====================================================================
         has_add_highlights = bool(row_highlights)
-        if (real_edits or has_visibility_changes or has_add_highlights) and not has_extra_changes and not has_highlight_changes:
+        has_clear_highlights = bool(cleared_row_highlights)
+        has_any_change = (real_edits or has_visibility_changes or has_add_highlights 
+                         or has_clear_highlights or has_format_flag
+                         or imported_cell_styles or cell_fonts 
+                         or imported_rich_text or imported_merged_cells)
+        
+        if has_any_change:
             wb.close()  # openpyxl Workbook nicht mehr benötigt
-            sys.stderr.write(f"[FALL 3a] Direkte XML-Bearbeitung für {len(real_edits)} Zell-Edits, visibility={has_visibility_changes}, highlights={has_add_highlights}\n")
+            sys.stderr.write(f"[FALL 3a] Direkte XML-Bearbeitung: {len(real_edits)} Edits, "
+                           f"visibility={has_visibility_changes}, highlights={has_add_highlights}, "
+                           f"clear_hl={has_clear_highlights}, formats={has_format_flag}, "
+                           f"styles={len(imported_cell_styles)}, fonts={len(cell_fonts)}, "
+                           f"richText={len(imported_rich_text)}, merges={len(imported_merged_cells)}\n")
             
             try:
+                # Format-Daten nur übergeben wenn echte Änderungen vorliegen
+                # RichText wird IMMER übergeben (ist Zell-Daten, nicht nur Formatierung)
+                fmt_styles = imported_cell_styles if has_format_flag else None
+                fmt_fonts = cell_fonts if has_format_flag else None
+                fmt_rich_text = imported_rich_text if imported_rich_text else None
+                fmt_merged = imported_merged_cells if has_format_flag else None
+                
                 result = _direct_xml_cell_edit(
                     file_path, output_path, sheet_name, real_edits,
                     hidden_columns, hidden_rows,
-                    row_highlights=row_highlights
+                    row_highlights=row_highlights,
+                    cleared_row_highlights=cleared_row_highlights,
+                    cell_styles=fmt_styles,
+                    cell_fonts=fmt_fonts,
+                    rich_text_cells=fmt_rich_text,
+                    merged_cells=fmt_merged
                 )
+                
+                # VM-Attribute für eingefügte Bild-Zellen (Copy&Paste) setzen
+                if vm_cell_map:
+                    _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map)
+                
                 return result
             except Exception as xml_err:
                 sys.stderr.write(f"[FALL 3a] Fehler bei direkter XML-Bearbeitung: {xml_err}\n")
-                sys.stderr.write(f"[FALL 3a] Fallback auf openpyxl-Pfad...\n")
+                import traceback
+                sys.stderr.write(f"[FALL 3a] {traceback.format_exc()}\n")
+                sys.stderr.write(f"[FALL 3a] Fallback auf openpyxl-Pfad (FALL 3b)...\n")
                 # Fallback: openpyxl-Pfad (FALL 3b)
                 wb = load_workbook(file_path, rich_text=True)
                 ws = wb[sheet_name]
         
         # =====================================================================
-        # FALL 3b: Zell-Edits MIT zusätzlichen Änderungen (Highlights, Styles, etc.)
-        # Hier muss openpyxl verwendet werden, da XML-Bearbeitung zu komplex wäre.
+        # FALL 3b: Fallback wenn FALL 3a fehlschlägt
+        # Verwendet openpyxl (kann Korruptionen verursachen)
         # =====================================================================
+        sys.stderr.write(f"[FALL 3b] openpyxl-Fallback aktiv\n")
         
         # Wenn NUR Highlights (keine echten Edits), lade von Original-Datei neu (falls verfügbar)
         # Das stellt sicher dass alte Highlights nicht erhalten bleiben
@@ -7539,34 +8948,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         _apply_hidden_columns(ws, hidden_columns)
         _apply_hidden_rows(ws, hidden_rows)
         
-        # Kopierte Zell-Hintergründe anwenden (aus Copy-Paste)
-        if imported_cell_styles:
-            _apply_imported_cell_styles(ws, imported_cell_styles)
+        # Kopierte Zell-Hintergründe, Schriftformatierungen, RichText, MergedCells
+        # werden NACH Save per XML angewendet (openpyxl PatternFill korrumpiert cellXfs)
         
-        # Kopierte Schriftformatierungen anwenden (aus Copy-Paste)
-        if cell_fonts:
-            _apply_cell_fonts(ws, cell_fonts)
-        
-        # Kopierte RichText-Formatierung anwenden (aus Copy-Paste)
-        if imported_rich_text:
-            _apply_imported_rich_text(ws, imported_rich_text)
-        
-        # Kopierte Merged Cells anwenden (aus Copy-Paste)
-        if imported_merged_cells:
-            _apply_imported_merged_cells(ws, imported_merged_cells)
-        
-        # Row Highlights
-        if row_highlights:
-            _apply_row_highlights(ws, row_highlights, ws.max_column)
-        
-        # Cleared Row Highlights (Markierungen entfernen)
-        if cleared_row_highlights:
-            sys.stderr.write(f"[FALL 3b] Entferne {len(cleared_row_highlights)} Row Highlights\n")
-            for row_idx in cleared_row_highlights:
-                excel_row = row_idx + 2  # 0-basiert nach 1-basiert + Header
-                for col_idx in range(1, ws.max_column + 1):
-                    cell = ws.cell(row=excel_row, column=col_idx)
-                    cell.fill = PatternFill()  # Keine Füllung
+        # Row Highlights und Cleared Highlights NICHT hier per openpyxl
+        # (korrumpiert Formatierung) - werden nach Save per XML angewendet
         
         wb.save(output_path)
         wb.close()
@@ -7583,6 +8969,29 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         # originalen vm-Zellen wiederherstellt. Hier werden die KOPIERTEN ergänzt.
         if vm_cell_map:
             _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map)
+        
+        # Cell Formats per XML (NACH Save, vor Highlights)
+        if imported_cell_styles or cell_fonts or imported_rich_text or imported_merged_cells:
+            try:
+                _apply_cell_formats_to_xlsx(output_path, sheet_name,
+                                            imported_cell_styles, cell_fonts,
+                                            imported_rich_text, imported_merged_cells)
+            except Exception as fmt_err:
+                sys.stderr.write(f"[FALL 3b] Cell-Format XML Fehler: {fmt_err}\n")
+        
+        # Row Highlights per XML (nach Save)
+        if row_highlights:
+            try:
+                _apply_highlights_to_xlsx(output_path, sheet_name, row_highlights)
+            except Exception as hl_err:
+                sys.stderr.write(f"[FALL 3b] Highlight-XML Fehler: {hl_err}\n")
+        
+        # Cleared Row Highlights per XML (nach Save)
+        if cleared_row_highlights:
+            try:
+                _clear_row_highlights_xml(output_path, sheet_name, cleared_row_highlights)
+            except Exception as cl_err:
+                sys.stderr.write(f"[FALL 3b] Clear-Highlight Fehler: {cl_err}\n")
         
         return {'success': True, 'outputPath': output_path}
         

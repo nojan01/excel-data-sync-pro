@@ -1944,7 +1944,7 @@
     
     <!-- Footer -->
     <footer style="background: var(--bg-medium); border-top: 1px solid var(--border); padding: 8px 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
-        © Norbert Jander 2026 · v1.5.0
+        © Norbert Jander 2026 · v1.8.0
     </footer>
     
     <!-- Mapping Modal -->
@@ -3839,7 +3839,7 @@
                 createAndLoad: '📅 Erstellen & Laden',
                 
                 // Footer
-                copyright: '© Norbert Jander 2026 · v1.5.0',
+                copyright: '© Norbert Jander 2026 · v1.8.0',
                 
                 // Extra Columns
                 extraColumns: 'Extra-Spalten',
@@ -4169,7 +4169,7 @@
                 createAndLoad: '📅 Create & Load',
                 
                 // Footer
-                copyright: '© Norbert Jander 2026 · v1.5.0',
+                copyright: '© Norbert Jander 2026 · v1.8.0',
                 
                 // Extra Columns
                 extraColumns: 'Extra Columns',
@@ -10049,20 +10049,9 @@
             const isCurrentlyHidden = explorerState.hiddenSheets && explorerState.hiddenSheets.has(selectedSheetForManagement);
             const newVisible = isCurrentlyHidden; // toggle: hidden → visible, visible → hidden
             
-            console.log('[toggleSheetVisibility] DEBUG:', {
-                selected: selectedSheetForManagement,
-                isCurrentlyHidden,
-                newVisible,
-                sheets: explorerState.sheets,
-                hiddenSheets: [...(explorerState.hiddenSheets || [])],
-                sheetsCount: explorerState.sheets.length,
-                hiddenCount: explorerState.hiddenSheets ? explorerState.hiddenSheets.size : 0
-            });
-            
             // Prüfe ob es das letzte sichtbare Sheet wäre
             if (!newVisible) {
                 const visibleCount = explorerState.sheets.filter(s => !explorerState.hiddenSheets.has(s)).length;
-                console.log('[toggleSheetVisibility] visibleCount:', visibleCount);
                 if (visibleCount <= 1) {
                     showNotification('Mindestens ein Arbeitsblatt muss sichtbar bleiben', 'warning');
                     return;
@@ -12515,6 +12504,14 @@
                     if (cell.vm) {
                         if (!explorerState.cellVmMap) explorerState.cellVmMap = {};
                         explorerState.cellVmMap[styleKey] = cell.vm;
+                        // Bild-Zellen brauchen center-Alignment (Excel zentriert Zellbilder)
+                        if (!explorerState.cellStyles[styleKey]) {
+                            explorerState.cellStyles[styleKey] = {};
+                        }
+                        if (!explorerState.cellStyles[styleKey].textAlign) {
+                            explorerState.cellStyles[styleKey].textAlign = 'center';
+                            explorerState.cellStyles[styleKey].verticalAlign = 'middle';
+                        }
                     }
                     
                     pastedCount++;
@@ -12522,8 +12519,6 @@
             });
             
             // Merged Cells am Ziel anlegen (GUI-seitig)
-            console.log(`[Paste] copiedCellsWithFormat.mergedCells:`, JSON.stringify(copiedCellsWithFormat.mergedCells));
-            console.log(`[Paste] explorerState.mergedCells VORHER:`, JSON.stringify(explorerState.mergedCells));
             // Alte Merges im Zielbereich entfernen
             const maxRelRow = Math.max(...copiedCellsWithFormat.cells.map(c => c.relRow));
             const maxRelCol = Math.max(...copiedCellsWithFormat.cells.map(c => c.relCol));
@@ -12547,8 +12542,6 @@
                     });
                 });
             }
-            
-            console.log(`[Paste] explorerState.mergedCells NACHHER:`, JSON.stringify(explorerState.mergedCells));
             
             // Formatierungsänderung markieren (Style/Merge/RichText von Paste)
             explorerState.editedCells.set('_hasFormatChanges', true);
@@ -18416,22 +18409,199 @@
                             }
                         }
                     } else if (cachedSheet) {
-                        // Gecachtes Sheet mit Änderungen - keine Styles senden (Backend behält Originale)
-                        sheetData = {
-                            sheetName: sheetName,
-                            headers: cachedSheet.headers || [],
-                            data: cachedSheet.data || [],
-                            visibleColumns: cachedSheet.visibleColumns || [],
-                            hiddenRows: cachedSheet.hiddenRows ? Array.from(cachedSheet.hiddenRows) : [],
-                            hasChanges: true,
-                            cellStyles: {},
-                            cellFormulas: {},
-                            cellHyperlinks: {},
-                            richTextCells: {},
-                            affectedRows: [],
-                            autoFilterRange: cachedSheet.autoFilterRange || null,
-                            mergedCells: cachedSheet.mergedCells || []
-                        };
+                        // Gecachtes Sheet — prüfe ob strukturelle Änderungen vorliegen
+                        const cachedEditedCells = cachedSheet.editedCells;
+                        const cachedHasStructuralChanges = 
+                            cachedEditedCells?.has('_columnDeleted') || 
+                            cachedEditedCells?.has('_columnInserted') ||
+                            cachedEditedCells?.has('_columnMoved') ||
+                            cachedEditedCells?.has('_rowsReordered') ||
+                            cachedEditedCells?.has('_rowInserted') ||
+                            cachedEditedCells?.has('_rowDeleted');
+                        
+                        if (cachedHasStructuralChanges) {
+                            // ===== Strukturelle Änderungen im gecachten Sheet — Full Rewrite =====
+                            console.log(`[Export] Gecachtes Sheet "${sheetName}" hat strukturelle Änderungen`);
+                            
+                            // Spalten-Parameter extrahieren (analog zum currentSheet-Pfad)
+                            const columnDeletedInfo = cachedEditedCells.get('_columnDeleted');
+                            let deletedColumnIndices = [];
+                            if (columnDeletedInfo && typeof columnDeletedInfo === 'object') {
+                                if ('originalIndices' in columnDeletedInfo && Array.isArray(columnDeletedInfo.originalIndices)) {
+                                    deletedColumnIndices = columnDeletedInfo.originalIndices;
+                                } else if ('indices' in columnDeletedInfo && Array.isArray(columnDeletedInfo.indices)) {
+                                    deletedColumnIndices = columnDeletedInfo.indices;
+                                } else if ('index' in columnDeletedInfo) {
+                                    deletedColumnIndices = [columnDeletedInfo.index];
+                                }
+                            } else if (typeof columnDeletedInfo === 'number') {
+                                deletedColumnIndices = [columnDeletedInfo];
+                            }
+                            
+                            const columnInsertedInfo = cachedEditedCells.get('_columnInserted');
+                            let insertedColumnInfo = null;
+                            if (columnInsertedInfo && typeof columnInsertedInfo === 'object') {
+                                if (columnInsertedInfo.operations) {
+                                    insertedColumnInfo = { operations: columnInsertedInfo.operations };
+                                } else if (columnInsertedInfo.position !== undefined) {
+                                    insertedColumnInfo = {
+                                        operations: [{
+                                            position: columnInsertedInfo.position,
+                                            count: columnInsertedInfo.count || 1,
+                                            headers: columnInsertedInfo.headers || []
+                                        }]
+                                    };
+                                } else if (columnInsertedInfo.index !== undefined) {
+                                    insertedColumnInfo = {
+                                        operations: [{
+                                            position: columnInsertedInfo.index,
+                                            count: 1,
+                                            headers: [columnInsertedInfo.name || 'New Column']
+                                        }]
+                                    };
+                                }
+                            }
+                            
+                            const hasColumnMoves = cachedEditedCells.has('_columnMoved');
+                            let columnOrder = hasColumnMoves && cachedSheet.columnOrder && cachedSheet.columnOrder.length > 0 
+                                ? [...cachedSheet.columnOrder]
+                                : null;
+                            
+                            // Zeilen-Parameter
+                            const rowDeletedInfo = cachedEditedCells.get('_deletedRowIndices');
+                            let deletedRowIndices = [];
+                            if (rowDeletedInfo && typeof rowDeletedInfo === 'object') {
+                                if ('originalIndices' in rowDeletedInfo && Array.isArray(rowDeletedInfo.originalIndices)) {
+                                    deletedRowIndices = rowDeletedInfo.originalIndices;
+                                }
+                            }
+                            
+                            const rowInsertedInfo = cachedEditedCells.get('_insertedRowInfo');
+                            let insertedRowInfo = null;
+                            if (rowInsertedInfo && typeof rowInsertedInfo === 'object') {
+                                if (rowInsertedInfo.operations) {
+                                    insertedRowInfo = { operations: rowInsertedInfo.operations };
+                                }
+                            }
+                            
+                            let rowOrder = null;
+                            
+                            // Daten und Headers vorbereiten
+                            let cachedExportHeaders = [...(cachedSheet.headers || [])];
+                            let cachedAllData = (cachedSheet.data || []).map(row => [...row]);
+                            
+                            // Bei columnOrder: Daten umordnen (analog zum currentSheet-Pfad)
+                            if (columnOrder) {
+                                console.log(`[Export] Gecachtes Sheet "${sheetName}": Ordne Daten gemäß columnOrder um...`);
+                                cachedExportHeaders = columnOrder.map(oldIdx => (cachedSheet.headers || [])[oldIdx]);
+                                cachedAllData = cachedAllData.map(row => columnOrder.map(oldIdx => row[oldIdx]));
+                            }
+                            
+                            // Versteckte Spalten berechnen
+                            const allColsCached = cachedExportHeaders.map((_, i) => i);
+                            const visibleSetCached = new Set(cachedSheet.visibleColumns || allColsCached);
+                            const hiddenColsCached = allColsCached.filter(i => !visibleSetCached.has(i));
+                            
+                            // changedCells für strukturelle Änderungen (ohne _ Prefix)
+                            const changedCellsForCachedStructural = {};
+                            if (cachedEditedCells) {
+                                for (const [cellKey, value] of cachedEditedCells) {
+                                    if (cellKey.startsWith('_')) continue;
+                                    const [rowStr, colStr] = cellKey.split('-');
+                                    const colIdx = parseInt(colStr);
+                                    const originalRowIdx = parseInt(rowStr);
+                                    if (originalRowIdx >= 0 && colIdx >= 0 && cachedSheet.data[originalRowIdx]) {
+                                        changedCellsForCachedStructural[cellKey] = cachedSheet.data[originalRowIdx][colIdx];
+                                    }
+                                }
+                            }
+                            
+                            // Row Highlights
+                            const cachedExportRowHighlights = {};
+                            if (cachedSheet.rowHighlights && cachedSheet.rowHighlights.size > 0) {
+                                cachedSheet.rowHighlights.forEach((color, originalIndex) => {
+                                    cachedExportRowHighlights[originalIndex] = color;
+                                });
+                            }
+                            
+                            sheetData = {
+                                sheetName: sheetName,
+                                headers: cachedExportHeaders,
+                                data: cachedAllData,
+                                changedCells: changedCellsForCachedStructural,
+                                visibleColumns: cachedSheet.visibleColumns || [],
+                                hiddenRows: cachedSheet.hiddenRows ? Array.from(cachedSheet.hiddenRows) : [],
+                                hiddenColumns: hiddenColsCached,
+                                cellStyles: cachedSheet.cellStyles || {},
+                                richTextCells: cachedSheet.richTextCells || {},
+                                cellFonts: {},
+                                rowHighlights: cachedExportRowHighlights,
+                                clearedRowHighlights: [],
+                                autoFilterRange: cachedSheet.autoFilterRange || null,
+                                fullRewrite: true,
+                                structuralChange: true,
+                                deletedColumnIndices: deletedColumnIndices,
+                                insertedColumnInfo: insertedColumnInfo,
+                                columnOrder: columnOrder,
+                                deletedRowIndices: deletedRowIndices,
+                                insertedRowInfo: insertedRowInfo,
+                                rowOrder: rowOrder,
+                                affectedRows: [],
+                                rowMapping: null,
+                                columnOperationsQueue: [],
+                                rowOperationsQueue: [],
+                                mergedCells: cachedSheet.mergedCells || [],
+                                vmCellMap: {}
+                            };
+                            console.log(`[Export] Gecachtes Sheet "${sheetName}" strukturell: deletedColumns=${JSON.stringify(deletedColumnIndices)}, insertedColumns=${insertedColumnInfo ? 'ja' : 'nein'}, columnOrder=${columnOrder ? 'ja' : 'nein'}, deletedRows=${JSON.stringify(deletedRowIndices)}`);
+                        } else {
+                            // Keine strukturellen Änderungen - einfacher Pfad (Zell-Edits only)
+                            const cachedChangedCells = {};
+                            if (cachedSheet.editedCells) {
+                                for (const [cellKey, value] of cachedSheet.editedCells) {
+                                    if (cellKey.startsWith('_')) continue;
+                                    const [rowStr, colStr] = cellKey.split('-');
+                                    const colIdx = parseInt(colStr);
+                                    const rowIdx = parseInt(rowStr);
+                                    if (rowIdx >= 0 && colIdx >= 0 && cachedSheet.data[rowIdx]) {
+                                        cachedChangedCells[cellKey] = cachedSheet.data[rowIdx][colIdx];
+                                    }
+                                }
+                            }
+                            
+                            // Versteckte Spalten berechnen
+                            const allColsCached2 = (cachedSheet.headers || []).map((_, i) => i);
+                            const visibleSetCached2 = new Set(cachedSheet.visibleColumns || allColsCached2);
+                            const hiddenColsCached2 = allColsCached2.filter(i => !visibleSetCached2.has(i));
+                            
+                            // Row Highlights
+                            const cachedRowHighlights = {};
+                            if (cachedSheet.rowHighlights && cachedSheet.rowHighlights.size > 0) {
+                                cachedSheet.rowHighlights.forEach((color, originalIndex) => {
+                                    cachedRowHighlights[originalIndex] = color;
+                                });
+                            }
+                            
+                            sheetData = {
+                                sheetName: sheetName,
+                                headers: cachedSheet.headers || [],
+                                data: cachedSheet.data || [],
+                                changedCells: cachedChangedCells,
+                                visibleColumns: cachedSheet.visibleColumns || [],
+                                hiddenRows: cachedSheet.hiddenRows ? Array.from(cachedSheet.hiddenRows) : [],
+                                hiddenColumns: hiddenColsCached2,
+                                hasChanges: true,
+                                cellStyles: cachedSheet.cellStyles || {},
+                                richTextCells: cachedSheet.richTextCells || {},
+                                cellFonts: {},
+                                rowHighlights: cachedRowHighlights,
+                                clearedRowHighlights: [],
+                                affectedRows: [],
+                                autoFilterRange: cachedSheet.autoFilterRange || null,
+                                mergedCells: cachedSheet.mergedCells || [],
+                                vmCellMap: {}
+                            };
+                        }
                     } else {
                         // Sheet nicht im Cache - Backend soll aus Datei lesen
                         // Hier sind keine cellStyles vorhanden, Backend muss sie selbst extrahieren
@@ -18467,6 +18637,18 @@
                     }
                 }
                 
+                // DIAGNOSTIC: Log export data summary
+                for (const s of sheetsToExport) {
+                    console.log(`[DIAG-FE] Sheet "${s.sheetName}": fromFile=${s.fromFile}, fullRewrite=${s.fullRewrite}, structuralChange=${s.structuralChange}, ` +
+                        `deletedColumnIndices=${JSON.stringify(s.deletedColumnIndices || [])}, ` +
+                        `insertedColumnInfo=${!!s.insertedColumnInfo}, columnOrder=${s.columnOrder ? s.columnOrder.length : 'null'}, ` +
+                        `colOpsQueue=${(s.columnOperationsQueue || []).length}, ` +
+                        `changedCells=${s.changedCells ? Object.keys(s.changedCells).length : 'undef'}, ` +
+                        `rowMapping=${s.rowMapping ? s.rowMapping.length : 'null'}, ` +
+                        `data=${s.data ? s.data.length : 0} rows`);
+                }
+                console.log(`[DIAG-FE] pendingSheetOperations: ${JSON.stringify(explorerState.pendingSheetOperations || [])}`);
+                
                 result = await window.electronAPI.pythonExportMultipleSheets({
                     sourcePath: explorerState.filePath,
                     originalSourcePath: explorerState.originalFilePath,
@@ -18484,11 +18666,6 @@
                     const pwInfo = exportPassword ? ' (passwortgeschützt)' : '';
                     const engineInfo = result.method ? ` [${result.method}]` : '';
                     elements.explorerStatus.textContent = `✓ ${selectedSheets.length} Arbeitsblatt/blätter exportiert${pwInfo}${engineInfo}: ${savePath}`;
-                    
-                    // Python Debug-Logs anzeigen (MergedCells, etc.)
-                    if (result.debugLog) {
-                        console.log('[Python Debug]', result.debugLog);
-                    }
                     
                     // Im Live-Modus: State bereinigen, aber Datei nicht neu laden
                     if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
@@ -18529,8 +18706,11 @@
                         // Prüfe ob strukturelle Änderungen vorlagen (Spalten eingefügt/gelöscht)
                         const exportedSheet = sheetsToExport ? sheetsToExport.find(s => s.sheetName === explorerState.selectedSheet) : null;
                         const hadStructuralChange = exportedSheet && exportedSheet.structuralChange;
+                        // XML-DIREKT (xml-col-ops) braucht keinen Reload: Styles bleiben intakt,
+                        // Frontend-Daten sind bereits korrekt umgeordnet
+                        const usedXmlDirekt = result.method && result.method.startsWith('xml-col-ops');
                     
-                        if (hadStructuralChange) {
+                        if (hadStructuralChange && !usedXmlDirekt) {
                             // Bei strukturellen Änderungen: Datei neu einlesen für korrekte Styles
                             console.log('[Export] Strukturelle Änderung - lade Datei neu für korrekte Styles...');
                             

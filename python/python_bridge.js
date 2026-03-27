@@ -428,8 +428,9 @@ async function writeExcel(config) {
             
             try {
                 const result = JSON.parse(stdout);
-                result.method = useXlwings ? 'xlwings' : 'openpyxl';
-                result.debugLog = stderr || '';  // Python stderr für Debugging
+                // Preserve Python's specific method (e.g. 'openpyxl-pipeline', 'openpyxl-column-order')
+                // Only set generic method if Python didn't return one
+                result.method = result.method || (useXlwings ? 'xlwings' : 'openpyxl');
                 resolve(result);
             } catch (parseError) {
                 safeError(`[Python] JSON parse error:`, parseError.message);
@@ -489,7 +490,6 @@ async function writeExcelOpenpyxl(config) {
             try {
                 const result = JSON.parse(stdout);
                 result.method = 'openpyxl';
-                result.debugLog = stderr || '';  // Python stderr für Debugging
                 resolve(result);
             } catch (parseError) {
                 reject(new Error(`Failed to parse Python output: ${parseError.message}`));
@@ -780,10 +780,9 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
     let hasError = false;
     let errorMessage = '';
     let actualMethod = null; // Track the ACTUAL method used, not what was planned
-    let debugLogs = null; // Collect Python stderr debug output
     
     // Original-Datei für Style-Wiederherstellung (falls Markierungen entfernt werden)
-    const originalSourcePath = options.originalSourcePath || sourcePath;
+    let originalSourcePath = options.originalSourcePath || sourcePath;
     
     // Prüfe ob Quelldatei existiert
     if (!fs.existsSync(sourcePath)) {
@@ -828,12 +827,151 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
         if (!opsResult.success) {
             return { success: false, error: `Fehler bei Sheet-Operationen: ${opsResult.error}` };
         }
+        // Nach Sheet-Ops muss originalSourcePath auf targetPath zeigen,
+        // damit nachfolgende writeExcel-Aufrufe (insb. XML-DIREKT-FAST Spalten-Ops)
+        // von der bereits modifizierten Datei lesen statt vom Original.
+        // Sonst überschreibt direct_xml_column_operations() die Sheet-Struktur.
+        originalSourcePath = targetPath;
+    }
+    
+    // Nicht-ausgewählte Sheets aus der Zieldatei entfernen
+    // (Die Kopie enthält ALLE Sheets der Quelldatei, aber nur ausgewählte sollen exportiert werden)
+    try {
+        const JSZip = require('jszip');
+        const targetData = fs.readFileSync(targetPath);
+        const zip = await JSZip.loadAsync(targetData);
+        let workbookXml = await zip.file('xl/workbook.xml').async('string');
+        
+        // Alle Sheet-Namen aus workbook.xml extrahieren
+        const allSheetMatches = [...workbookXml.matchAll(/<sheet[^>]*name="([^"]*)"[^>]*\/>/g)];
+        const allSheetNames = allSheetMatches.map(m => m[1]
+            .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"').replace(/&apos;/g, "'"));
+        
+        const selectedNames = new Set(sheets.map(s => s.sheetName));
+        const sheetsToRemove = allSheetNames.filter(name => !selectedNames.has(name));
+        
+        if (sheetsToRemove.length > 0) {
+            let relsXml = await zip.file('xl/_rels/workbook.xml.rels').async('string');
+            let contentTypesXml = await zip.file('[Content_Types].xml').async('string');
+            
+            function xmlEncode(name) {
+                return name.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+                    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+            }
+            function regexEscape(str) {
+                return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            }
+            
+            // Sheet-Indizes VOR dem Löschen ermitteln (für localSheetId-Bereinigung)
+            const sheetIndicesBeforeDelete = {};
+            allSheetNames.forEach((name, idx) => { sheetIndicesBeforeDelete[name] = idx; });
+            const removedLocalSheetIds = new Set(sheetsToRemove.map(n => sheetIndicesBeforeDelete[n]));
+            
+            for (const sheetName of sheetsToRemove) {
+                const enc = xmlEncode(sheetName);
+                const esc = regexEscape(enc);
+                
+                const sheetRe = new RegExp(`<sheet[^>]*name="${esc}"[^>]*r:id="(rId\\d+)"[^>]*/>`);
+                const sheetM = workbookXml.match(sheetRe);
+                if (!sheetM) continue;
+                const rId = sheetM[1];
+                
+                const relRe = new RegExp(`<Relationship[^>]*Id="${rId}"[^>]*Target="([^"]+)"[^>]*/>`);
+                const relM = relsXml.match(relRe);
+                const target = relM ? relM[1] : null;
+                
+                workbookXml = workbookXml.replace(new RegExp(`\\s*<sheet[^>]*name="${esc}"[^>]*/>`), '');
+                relsXml = relsXml.replace(new RegExp(`\\s*<Relationship[^>]*Id="${rId}"[^>]*/>`), '');
+                
+                if (target) {
+                    const partName = target.startsWith('/') ? target : `/xl/${target}`;
+                    contentTypesXml = contentTypesXml.replace(
+                        new RegExp(`\\s*<Override[^>]*PartName="${regexEscape(partName)}"[^>]*/>`), '');
+                    const zipPath = partName.startsWith('/') ? partName.slice(1) : `xl/${target}`;
+                    zip.remove(zipPath);
+                }
+                
+                safeLog(`[Export] Nicht-ausgewähltes Sheet "${sheetName}" aus Zieldatei entfernt`);
+            }
+            
+            // definedNames bereinigen: Einträge mit localSheetId auf entfernte Sheets entfernen,
+            // und localSheetId-Werte der verbleibenden Sheets neu nummerieren
+            const definedNamesMatch = workbookXml.match(/<definedNames>([\s\S]*?)<\/definedNames>/);
+            if (definedNamesMatch) {
+                let definedNamesContent = definedNamesMatch[1];
+                // Einzelne definedName-Einträge extrahieren
+                const nameEntries = [...definedNamesContent.matchAll(/<definedName[^>]*>[\s\S]*?<\/definedName>/g)];
+                const keptEntries = [];
+                for (const entry of nameEntries) {
+                    const localIdMatch = entry[0].match(/localSheetId="(\d+)"/);
+                    if (localIdMatch) {
+                        const localId = parseInt(localIdMatch[1]);
+                        if (removedLocalSheetIds.has(localId)) {
+                            // Dieser benannte Bereich gehört zu einem entfernten Sheet
+                            continue;
+                        }
+                        // localSheetId neu berechnen: zähle wie viele entfernte Sheets VOR diesem Index lagen
+                        let offset = 0;
+                        for (const removedId of removedLocalSheetIds) {
+                            if (removedId < localId) offset++;
+                        }
+                        const newLocalId = localId - offset;
+                        keptEntries.push(entry[0].replace(/localSheetId="\d+"/, `localSheetId="${newLocalId}"`));
+                    } else {
+                        // Globaler benannter Bereich (kein localSheetId) - behalten
+                        // Aber prüfen ob er auf entfernte Sheets verweist
+                        let refsRemovedSheet = false;
+                        for (const removedName of sheetsToRemove) {
+                            const escName = regexEscape(removedName).replace(/ /g, '[ ]');
+                            // Prüfe ob der Inhalt auf dieses Sheet verweist (z.B. 'Sheet2'!$A$1)
+                            if (new RegExp(`'?${escName}'?!`, 'i').test(entry[0])) {
+                                refsRemovedSheet = true;
+                                break;
+                            }
+                        }
+                        if (!refsRemovedSheet) {
+                            keptEntries.push(entry[0]);
+                        }
+                    }
+                }
+                if (keptEntries.length > 0) {
+                    workbookXml = workbookXml.replace(/<definedNames>[\s\S]*?<\/definedNames>/,
+                        `<definedNames>${keptEntries.join('')}</definedNames>`);
+                } else {
+                    workbookXml = workbookXml.replace(/\s*<definedNames>[\s\S]*?<\/definedNames>/, '');
+                }
+            }
+            
+            // bookViews bereinigen: activeTab auf 0 setzen falls es auf ein entferntes Sheet zeigt
+            const activeTabMatch = workbookXml.match(/activeTab="(\d+)"/);
+            if (activeTabMatch) {
+                const activeTab = parseInt(activeTabMatch[1]);
+                // Verbleibende Sheet-Anzahl ermitteln
+                const remainingSheetCount = allSheetNames.length - sheetsToRemove.length;
+                if (activeTab >= remainingSheetCount || removedLocalSheetIds.has(activeTab)) {
+                    workbookXml = workbookXml.replace(/activeTab="\d+"/, 'activeTab="0"');
+                }
+            }
+            
+            zip.file('xl/workbook.xml', workbookXml);
+            zip.file('xl/_rels/workbook.xml.rels', relsXml);
+            zip.file('[Content_Types].xml', contentTypesXml);
+            
+            const newData = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+            fs.writeFileSync(targetPath, newData);
+            safeLog(`[Export] ${sheetsToRemove.length} nicht-ausgewählte Sheet(s) entfernt`);
+        }
+    } catch (removeError) {
+        safeError(`[Export] Fehler beim Entfernen nicht-ausgewählter Sheets:`, removeError.message);
+        // Nicht-kritisch: weitermachen, Datei enthält dann alle Sheets
     }
     
     // Jetzt: Nur Sheets mit echten Änderungen modifizieren
     for (const sheet of sheets) {
         // Überspringe Sheets ohne Änderungen (fromFile: true und keine editedCells/data)
         if (sheet.fromFile && !sheet.changedCells && !sheet.data?.length && !sheet.fullRewrite) {
+            safeLog(`[DIAG] Sheet "${sheet.sheetName}" übersprungen (fromFile=${sheet.fromFile}, changedCells=${!!sheet.changedCells}, data=${sheet.data?.length || 0}, fullRewrite=${sheet.fullRewrite})`);
             results.push(sheet.sheetName);
             continue;
         }
@@ -847,9 +985,17 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                               (sheet.deletedColumnIndices && sheet.deletedColumnIndices.length > 0) ||
                               sheet.insertedColumnInfo || sheet.columnOrder;
             
+            safeLog(`[DIAG] Sheet "${sheet.sheetName}": hasRowOps=${!!hasRowOps}, hasColOps=${!!hasColOps}, ` +
+                `deletedCols=${JSON.stringify(sheet.deletedColumnIndices || [])}, ` +
+                `insertedCols=${!!sheet.insertedColumnInfo}, columnOrder=${!!(sheet.columnOrder && sheet.columnOrder.length)}, ` +
+                `colOpsQueue=${(sheet.columnOperationsQueue || []).length}, ` +
+                `fullRewrite=${sheet.fullRewrite}, structuralChange=${sheet.structuralChange}, ` +
+                `originalSourcePath=${originalSourcePath}, targetPath=${targetPath}`);
+            
             if (hasRowOps && hasColOps) {
                 // KOMBINIERTE OPERATIONEN: Erst Zeilen, dann Spalten (zwei separate Aufrufe)
                 safeLog(`[Python] Kombinierte Ops: Erst Zeilen, dann Spalten für "${sheet.sheetName}"`);
+                safeLog(`[DIAG] KOMBINIERT-Branch für "${sheet.sheetName}" — originalSourcePath=${originalSourcePath}`);
                 
                 // SCHRITT 1: Zeilen-Operationen (OHNE Spalten-Ops, OHNE fullRewrite)
                 const rowConfig = {
@@ -892,11 +1038,12 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                 if (rowResult.method) actualMethod = rowResult.method;
                 safeLog(`[Python] Zeilen-Ops für "${sheet.sheetName}" erfolgreich (${rowResult.method})`);
                 
-                // SCHRITT 2: Spalten-Operationen (mit allen Daten, fullRewrite=true)
+                // SCHRITT 2: Spalten-Operationen via XML-DIREKT (OHNE Daten-Rewrite)
                 // WICHTIG: originalPath = targetPath (NICHT originalSourcePath!)
-                // Pass 1 hat die Zeilen-Ops bereits in targetPath gespeichert.
-                // Wenn wir hier originalSourcePath verwenden, kopiert XML-DIREKT
-                // von der unveränderten Datei und überschreibt die Zeilen-Änderungen!
+                // Pass 1 hat die Zeilen-Ops + ALLE Daten bereits in targetPath geschrieben.
+                // SCHRITT 2 muss NUR Spalten umordnen/löschen/einfügen.
+                // editedCells={} und cellStyles={} etc. damit der FAST PATH (XML-DIREKT)
+                // garantiert genommen wird — sonst fällt es in die Pipeline (5+ Min)!
                 const colConfig = {
                     filePath: targetPath,
                     outputPath: targetPath,
@@ -905,12 +1052,12 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                     changes: {
                         headers: sheet.headers || [],
                         data: sheet.data || [],
-                        editedCells: sheet.changedCells || {},
-                        cellStyles: sheet.cellStyles || {},
-                        cellFonts: sheet.cellFonts || {},
-                        richTextCells: sheet.richTextCells || {},
+                        editedCells: {},  // LEER: Daten wurden bereits in SCHRITT 1 geschrieben
+                        cellStyles: {},   // LEER: Styles sind bereits im XML (SCHRITT 1 via ZIP preserviert)
+                        cellFonts: {},    // LEER: Fonts sind bereits im XML
+                        richTextCells: {}, // LEER: RichText ist bereits im XML
                         rowHighlights: sheet.rowHighlights || {},
-                        mergedCells: sheet.mergedCells || [],
+                        mergedCells: [],  // LEER: MergedCells sind bereits im XML
                         deletedColumns: sheet.deletedColumnIndices || [],
                         insertedColumns: sheet.insertedColumnInfo || null,
                         deletedRowIndices: [],  // Keine Zeilen-Ops mehr (schon erledigt)
@@ -920,8 +1067,8 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                         hiddenRows: [],  // Schon in Pass 1 angewendet
                         rowMapping: null,  // Kein rowMapping mehr (Zeilen schon gelöscht)
                         fromFile: false,
-                        fullRewrite: true,  // WICHTIG: Jetzt Daten schreiben
-                        structuralChange: sheet.structuralChange || false,
+                        fullRewrite: false,  // KEIN Daten-Rewrite nötig (SCHRITT 1 hat alles geschrieben)
+                        structuralChange: true,  // Nötig für FALL 1/2 Block (Fallback-Sicherheit)
                         clearedRowHighlights: sheet.clearedRowHighlights || [],
                         columnOrder: sheet.columnOrder || null,
                         affectedRows: [],
@@ -938,15 +1085,14 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                     results.push(sheet.sheetName);
                     // Track actual method used
                     if (colResult.method) actualMethod = colResult.method;
-                    // Collect debug logs from Python stderr
-                    if (colResult.debugLog) {
-                        if (!debugLogs) debugLogs = [];
-                        debugLogs.push(colResult.debugLog);
-                    }
                     safeLog(`[Python] Spalten-Ops für "${sheet.sheetName}" erfolgreich (${colResult.method})`);
                 }
                 
-            } else if (hasColOps && !hasRowOps) {
+            } else if (false && hasColOps && !hasRowOps) {
+                // DEAKTIVIERT: Spalten-Ops gehen jetzt durch den normalen else-Branch
+                // (gleicher Weg wie Zeilen-Ops), da XML-DIREKT Korruption verursacht.
+                // XML-DIREKT fehlt: fix_xlsx_relationships, restore_table_xml,
+                // restore_external_links → kaputte Dateien bei komplexen Excel-Files.
                 // SPALTEN-OPERATIONEN (evtl. mit Zell-Edits): Erst Spalten via XML-DIREKT, dann Zell-Edits
                 // WICHTIG: Auch bei reinen Spalten-Ops (ohne Zell-Edits) MUSS dieser Pfad genommen werden!
                 // Der "else"-Branch sendet cellStyles/cellFonts/mergedCells mit → blockiert XML-DIREKT.
@@ -983,7 +1129,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                         insertedRowInfo: null,
                         rowOrder: null,
                         hiddenColumns: sheet.hiddenColumns || [],  // XML-DIREKT kann hidden columns direkt setzen
-                        hiddenRows: [],
+                        hiddenRows: sheet.hiddenRows || [],  // Hidden Rows in SCHRITT 1 anwenden (statt SCHRITT 2)
                         rowMapping: null,
                         fromFile: false,
                         fullRewrite: false,
@@ -1008,9 +1154,12 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                 
                 // SCHRITT 2: Zell-Edits + Highlights + Visibility via FALL 3a (OHNE Spalten-Ops)
                 // originalPath = targetPath → Pass 1 hat Spalten-Ops bereits in targetPath
+                // WICHTIG: hiddenRows NICHT in hasCellWork prüfen!
+                // Hidden Rows werden bereits in SCHRITT 1 via XML-DIREKT angewendet.
+                // Wenn hiddenRows hier geprüft wird, erzwingt das SCHRITT 2 (unnötiger
+                // ZIP-Rewrite), selbst bei reinen Spaltenoperationen.
                 const hasCellWork = Object.keys(onlyCellEdits).length > 0 ||
                     (sheet.rowHighlights && Object.keys(sheet.rowHighlights).length > 0) ||
-                    (sheet.hiddenRows && sheet.hiddenRows.length > 0) ||
                     (sheet.clearedRowHighlights && sheet.clearedRowHighlights.length > 0) ||
                     sheet.hasFormatChanges;
                 
@@ -1035,7 +1184,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                             insertedRowInfo: null,
                             rowOrder: null,
                             hiddenColumns: [],  // Bereits in SCHRITT 1 via XML-DIREKT gesetzt
-                            hiddenRows: sheet.hiddenRows || [],
+                            hiddenRows: [],  // Bereits in SCHRITT 1 via XML-DIREKT gesetzt
                             rowMapping: null,
                             fromFile: false,
                             fullRewrite: false,  // KEIN Full-Rewrite → FALL 3
@@ -1057,10 +1206,6 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                     } else {
                         results.push(sheet.sheetName);
                         if (cellResult.method) actualMethod = cellResult.method;
-                        if (cellResult.debugLog) {
-                            if (!debugLogs) debugLogs = [];
-                            debugLogs.push(cellResult.debugLog);
-                        }
                         safeLog(`[Python] Zell-Edits für "${sheet.sheetName}" erfolgreich (${cellResult.method})`);
                     }
                 } else {
@@ -1071,6 +1216,11 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                 
             } else {
                 // EINZELNE OPERATIONEN: Normaler Aufruf (bestehender Code)
+                safeLog(`[DIAG] ELSE-Branch für "${sheet.sheetName}" — Einzelne Operation`);
+                safeLog(`[DIAG] originalPath=${originalSourcePath}, filePath=${targetPath}, outputPath=${targetPath}`);
+                safeLog(`[DIAG] deletedColumns=${JSON.stringify(sheet.deletedColumnIndices || [])}, insertedColumns=${JSON.stringify(sheet.insertedColumnInfo)}, columnOrder=${JSON.stringify(sheet.columnOrder ? sheet.columnOrder.slice(0, 10) : null)}`);
+                safeLog(`[DIAG] rowMapping=${sheet.rowMapping ? 'array[' + sheet.rowMapping.length + ']' : 'null'}, fullRewrite=${sheet.fullRewrite}, structuralChange=${sheet.structuralChange}`);
+                safeLog(`[DIAG] changedCells keys=${Object.keys(sheet.changedCells || {}).length}, fromFile=${sheet.fromFile}`);
                 const config = {
                     filePath: targetPath,
                     outputPath: targetPath,
@@ -1110,17 +1260,12 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
                 if (!result.success) {
                     hasError = true;
                     errorMessage = result.error;
-                    safeError(`[Python] Sheet "${sheet.sheetName}" failed:`, result.error);
+                    safeError(`[DIAG] ELSE-Branch FEHLER für "${sheet.sheetName}":`, result.error);
                 } else {
                     results.push(sheet.sheetName);
                     // Track actual method used
                     if (result.method) actualMethod = result.method;
-                    // Collect debug logs from Python stderr
-                    if (result.debugLog) {
-                        if (!debugLogs) debugLogs = [];
-                        debugLogs.push(result.debugLog);
-                    }
-                    safeLog(`[Python] Sheet "${sheet.sheetName}" erfolgreich (${result.method})`);
+                    safeLog(`[DIAG] ELSE-Branch ERFOLG für "${sheet.sheetName}" (method=${result.method})`);
                 }
             }
             
@@ -1162,8 +1307,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
         success: true,
         message: `${results.length} Sheet(s) exportiert`,
         sheetsExported: results,
-        method: finalMethod,
-        debugLog: debugLogs ? debugLogs.join('\n---\n') : ''
+        method: finalMethod
     };
 }
 
