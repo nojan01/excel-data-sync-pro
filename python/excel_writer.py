@@ -2858,13 +2858,13 @@ def shift_cell_reference(cell_ref, deleted_col_indices, inserted_cols=None):
     
     # Verschiebung durch gelöschte Spalten (die VOR dieser Spalte lagen)
     if deleted_col_indices:
-        for del_idx in sorted(deleted_col_indices):
+        for del_idx in sorted(idx for idx in deleted_col_indices if idx is not None):
             if del_idx < col_idx:
                 shift -= 1
     
     # Verschiebung durch eingefügte Spalten
     if inserted_cols:
-        for pos, count in inserted_cols.items():
+        for pos, count in sorted((k, v) for k, v in inserted_cols.items() if k is not None):
             if pos <= col_idx:
                 shift += count
     
@@ -2960,13 +2960,13 @@ def adjust_tables(ws, deleted_col_indices, inserted_cols=None, new_headers=None)
         # SCHRITT 1: Gelöschte Spalten aus tableColumns entfernen
         if deleted_col_indices:
             # Sortiere absteigend um Indexverschiebungen zu vermeiden
-            for del_idx in sorted(deleted_col_indices, reverse=True):
+            for del_idx in sorted((idx for idx in deleted_col_indices if idx is not None), reverse=True):
                 if del_idx < len(old_columns):
                     removed = old_columns.pop(del_idx)
         
         # SCHRITT 2: Neue Spalten einfügen
         if inserted_cols and new_headers:
-            for pos, count in sorted(inserted_cols.items()):
+            for pos, count in sorted((k, v) for k, v in inserted_cols.items() if k is not None):
                 insert_idx = pos
                 for i in range(count):
                     new_col_id = len(old_columns) + i + 1
@@ -5552,7 +5552,7 @@ def _apply_row_highlights_xml(sheet_content, styles_content, row_highlights):
         return sheet_content, styles_content
     
     # ---- Schritt 1: Fill-Einträge für Highlight-Farben ----
-    unique_colors = sorted(set(row_highlights.values()))
+    unique_colors = sorted(c for c in set(row_highlights.values()) if c is not None)
     
     # Farbnamen → ARGB Mapping (gleiche Zuordnung wie _apply_row_highlights)
     highlight_colors = {
@@ -6376,7 +6376,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             
             # ===== SCHRITT 5: Zeilen EINFÜGEN =====
             if inserted_rows:
-                operations = inserted_rows.get('operations', [])
+                operations = [op for op in inserted_rows.get('operations', []) if op.get('position') is not None]
                 operations.sort(key=lambda x: x['position'])
                 sys.stderr.write(f"[PIPELINE] Schritt 5: Füge Zeilen ein {[op['position'] for op in operations]}\n")
                 
@@ -6411,7 +6411,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             
             # ===== SCHRITT 7: Spalten LÖSCHEN (von hinten nach vorne) =====
             if deleted_columns:
-                sorted_deleted = sorted(deleted_columns, reverse=True)
+                sorted_deleted = sorted((d for d in deleted_columns if d is not None), reverse=True)
                 sys.stderr.write(f"[PIPELINE] Schritt 7: Lösche Spalten {sorted_deleted}\n")
                 
                 for col_idx in sorted_deleted:
@@ -6447,6 +6447,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         'sourceColumn': inserted_columns.get('sourceColumn')
                     }]
                 
+                operations = [op for op in operations if op.get('position') is not None]
                 operations.sort(key=lambda x: x['position'])
                 sys.stderr.write(f"[PIPELINE] Schritt 8: Füge Spalten ein\n")
                 
@@ -6746,6 +6747,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 }]
             
             # Sortiere aufsteigend - so kompensiert jede Einfügung die nächste automatisch
+            operations = [op for op in operations if op.get('position') is not None]
             operations.sort(key=lambda x: x['position'])
             
             from openpyxl.worksheet.table import TableColumn
@@ -6917,7 +6919,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             from openpyxl.utils.cell import range_boundaries
             
             # ===== SCHRITT 1: Erst alle Spalten LÖSCHEN (von hinten nach vorne) =====
-            sorted_deleted = sorted(deleted_columns, reverse=True)
+            sorted_deleted = sorted((d for d in deleted_columns if d is not None), reverse=True)
             
             for col_idx in sorted_deleted:
                 excel_col = col_idx + 1  # 0-basiert → 1-basiert
@@ -6952,6 +6954,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 }]
             
             # Sortiere aufsteigend
+            operations = [op for op in operations if op.get('position') is not None]
             operations.sort(key=lambda x: x['position'])
             
             for op_idx, op in enumerate(operations):
@@ -7111,7 +7114,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         if only_column_delete:
             
             # Sortiere absteigend (von hinten nach vorne löschen)
-            sorted_deleted = sorted(deleted_columns, reverse=True)
+            sorted_deleted = sorted((d for d in deleted_columns if d is not None), reverse=True)
             
             for col_idx in sorted_deleted:
                 excel_col = col_idx + 1  # 0-basiert → 1-basiert
@@ -8426,6 +8429,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     }]
                 
                 # Sortiere aufsteigend (von vorne nach hinten)
+                operations = [op for op in operations if op.get('position') is not None]
                 operations.sort(key=lambda x: x['position'])
                 
                 # Akkumulierter Offset für bereits eingefügte Spalten
@@ -8530,7 +8534,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             # ================================================================
             if deleted_columns:
                 # Sortiere absteigend (von hinten nach vorne löschen)
-                sorted_deleted = sorted(deleted_columns, reverse=True)
+                sorted_deleted = sorted((d for d in deleted_columns if d is not None), reverse=True)
                 for col_idx in sorted_deleted:
                     excel_col = col_idx + 1  # 0-basiert → 1-basiert
                     

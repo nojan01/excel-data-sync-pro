@@ -14023,6 +14023,8 @@
                 explorerState.hiddenRows = new Set(cachedSheet.hiddenRows || []);
                 explorerState.autoFilterRange = cachedSheet.autoFilterRange || null;
                 explorerState.mergedCells = [...(cachedSheet.mergedCells || [])];
+                explorerState.rowMapping = cachedSheet.rowMapping ? [...cachedSheet.rowMapping] : null;
+                explorerState.columnOperationsQueue = [...(cachedSheet.columnOperationsQueue || [])];
                 
                 // UI-State zurücksetzen
                 explorerState.filteredData = explorerState.data.map((row, index) => ({ originalIndex: index, row: row }));
@@ -14331,7 +14333,9 @@
                 richTextCells: { ...explorerState.richTextCells },
                 hiddenRows: new Set(explorerState.hiddenRows),
                 autoFilterRange: explorerState.autoFilterRange,
-                mergedCells: [...explorerState.mergedCells]
+                mergedCells: [...explorerState.mergedCells],
+                rowMapping: explorerState.rowMapping ? [...explorerState.rowMapping] : null,
+                columnOperationsQueue: [...explorerState.columnOperationsQueue]
             });
         }
         
@@ -17922,11 +17926,25 @@
                             let exportCellStyles = {};
                             if (columnInsertedInfoCheck && explorerState.cellStyles) {
                                 // Data Join - sende die Styles für die neuen Spalten
-                                exportCellStyles = { ...explorerState.cellStyles };
+                                // WICHTIG: cellStyles nutzen 1-basierte Row-Keys → 0-basiert konvertieren
+                                for (const [key, value] of Object.entries(explorerState.cellStyles)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    exportCellStyles[`${parseInt(rowStr) - 1}-${colStr}`] = value;
+                                }
                             }
                             let exportCellFormulas = { ...(explorerState.cellFormulas || {}) };
                             let exportCellHyperlinks = { ...(explorerState.cellHyperlinks || {}) };
-                            let exportRichTextCells = { ...(explorerState.richTextCells || {}) };
+                            
+                            // WICHTIG: explorerState.richTextCells nutzt 1-basierte Row-Keys (styleKey-Format: "(row+1)-col"),
+                            // aber der Python-Writer (_apply_rich_text_xml) erwartet 0-basierte Keys (row_idx + 2 = Excel-Zeile).
+                            // Konvertierung: "1-0" (1-basiert) → "0-0" (0-basiert) = erste Datenzeile
+                            let exportRichTextCells = {};
+                            if (explorerState.richTextCells) {
+                                for (const [key, value] of Object.entries(explorerState.richTextCells)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    exportRichTextCells[`${parseInt(rowStr) - 1}-${colStr}`] = value;
+                                }
+                            }
                             let exportVisibleColumns = [...(explorerState.visibleColumns || [])];
                             let exportHiddenCols = [...hiddenCols];
                             
@@ -18024,11 +18042,11 @@
                             if (columnDeletedInfo && typeof columnDeletedInfo === 'object') {
                                 if ('originalIndices' in columnDeletedInfo && Array.isArray(columnDeletedInfo.originalIndices)) {
                                     // Neues Format mit Original-Indices
-                                    deletedColumnIndices = columnDeletedInfo.originalIndices;
+                                    deletedColumnIndices = columnDeletedInfo.originalIndices.filter(v => v != null);
                                 } else if ('indices' in columnDeletedInfo && Array.isArray(columnDeletedInfo.indices)) {
                                     // Altes Array-Format
-                                    deletedColumnIndices = columnDeletedInfo.indices;
-                                } else if ('index' in columnDeletedInfo) {
+                                    deletedColumnIndices = columnDeletedInfo.indices.filter(v => v != null);
+                                } else if ('index' in columnDeletedInfo && columnDeletedInfo.index != null) {
                                     // Legacy single-index Format
                                     deletedColumnIndices = [columnDeletedInfo.index];
                                 }
@@ -18042,11 +18060,11 @@
                             if (columnInsertedInfo && typeof columnInsertedInfo === 'object') {
                                 // Unterstütze neues Format mit 'operations' und alte Formate
                                 if (columnInsertedInfo.operations) {
-                                    // Neues Format mit operations Array
+                                    // Neues Format mit operations Array — filtere ungültige Einträge
                                     insertedColumnInfo = {
-                                        operations: columnInsertedInfo.operations
+                                        operations: columnInsertedInfo.operations.filter(op => op && op.position != null)
                                     };
-                                } else if (columnInsertedInfo.position !== undefined) {
+                                } else if (columnInsertedInfo.position != null) {
                                     // Altes Format mit position
                                     insertedColumnInfo = {
                                         operations: [{
@@ -18079,7 +18097,7 @@
                             let deletedRowIndices = [];
                             if (rowDeletedInfo && typeof rowDeletedInfo === 'object') {
                                 if ('originalIndices' in rowDeletedInfo && Array.isArray(rowDeletedInfo.originalIndices)) {
-                                    deletedRowIndices = rowDeletedInfo.originalIndices;
+                                    deletedRowIndices = rowDeletedInfo.originalIndices.filter(v => v != null);
                                 }
                             }
                             
@@ -18089,7 +18107,7 @@
                             if (rowInsertedInfo && typeof rowInsertedInfo === 'object') {
                                 if (rowInsertedInfo.operations) {
                                     insertedRowInfo = {
-                                        operations: rowInsertedInfo.operations
+                                        operations: rowInsertedInfo.operations.filter(op => op && op.position != null)
                                     };
                                 }
                             }
@@ -18428,9 +18446,9 @@
                             let deletedColumnIndices = [];
                             if (columnDeletedInfo && typeof columnDeletedInfo === 'object') {
                                 if ('originalIndices' in columnDeletedInfo && Array.isArray(columnDeletedInfo.originalIndices)) {
-                                    deletedColumnIndices = columnDeletedInfo.originalIndices;
+                                    deletedColumnIndices = columnDeletedInfo.originalIndices.filter(v => v != null);
                                 } else if ('indices' in columnDeletedInfo && Array.isArray(columnDeletedInfo.indices)) {
-                                    deletedColumnIndices = columnDeletedInfo.indices;
+                                    deletedColumnIndices = columnDeletedInfo.indices.filter(v => v != null);
                                 } else if ('index' in columnDeletedInfo) {
                                     deletedColumnIndices = [columnDeletedInfo.index];
                                 }
@@ -18442,7 +18460,7 @@
                             let insertedColumnInfo = null;
                             if (columnInsertedInfo && typeof columnInsertedInfo === 'object') {
                                 if (columnInsertedInfo.operations) {
-                                    insertedColumnInfo = { operations: columnInsertedInfo.operations };
+                                    insertedColumnInfo = { operations: columnInsertedInfo.operations.filter(op => op && op.position != null) };
                                 } else if (columnInsertedInfo.position !== undefined) {
                                     insertedColumnInfo = {
                                         operations: [{
@@ -18472,7 +18490,7 @@
                             let deletedRowIndices = [];
                             if (rowDeletedInfo && typeof rowDeletedInfo === 'object') {
                                 if ('originalIndices' in rowDeletedInfo && Array.isArray(rowDeletedInfo.originalIndices)) {
-                                    deletedRowIndices = rowDeletedInfo.originalIndices;
+                                    deletedRowIndices = rowDeletedInfo.originalIndices.filter(v => v != null);
                                 }
                             }
                             
@@ -18480,7 +18498,7 @@
                             let insertedRowInfo = null;
                             if (rowInsertedInfo && typeof rowInsertedInfo === 'object') {
                                 if (rowInsertedInfo.operations) {
-                                    insertedRowInfo = { operations: rowInsertedInfo.operations };
+                                    insertedRowInfo = { operations: rowInsertedInfo.operations.filter(op => op && op.position != null) };
                                 }
                             }
                             
@@ -18524,6 +18542,22 @@
                                 });
                             }
                             
+                            // RichText/CellStyles: 1-basierte Keys zu 0-basiert konvertieren (analog zum currentSheet-Pfad)
+                            const cachedExportRichText = {};
+                            if (cachedSheet.richTextCells) {
+                                for (const [key, value] of Object.entries(cachedSheet.richTextCells)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    cachedExportRichText[`${parseInt(rowStr) - 1}-${colStr}`] = value;
+                                }
+                            }
+                            const cachedExportCellStyles = {};
+                            if (cachedSheet.cellStyles) {
+                                for (const [key, value] of Object.entries(cachedSheet.cellStyles)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    cachedExportCellStyles[`${parseInt(rowStr) - 1}-${colStr}`] = value;
+                                }
+                            }
+                            
                             sheetData = {
                                 sheetName: sheetName,
                                 headers: cachedExportHeaders,
@@ -18532,8 +18566,8 @@
                                 visibleColumns: cachedSheet.visibleColumns || [],
                                 hiddenRows: cachedSheet.hiddenRows ? Array.from(cachedSheet.hiddenRows) : [],
                                 hiddenColumns: hiddenColsCached,
-                                cellStyles: cachedSheet.cellStyles || {},
-                                richTextCells: cachedSheet.richTextCells || {},
+                                cellStyles: cachedExportCellStyles,
+                                richTextCells: cachedExportRichText,
                                 cellFonts: {},
                                 rowHighlights: cachedExportRowHighlights,
                                 clearedRowHighlights: [],
@@ -18582,6 +18616,22 @@
                                 });
                             }
                             
+                            // RichText/CellStyles: 1-basierte Keys zu 0-basiert konvertieren
+                            const cachedRichTextConverted = {};
+                            if (cachedSheet.richTextCells) {
+                                for (const [key, value] of Object.entries(cachedSheet.richTextCells)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    cachedRichTextConverted[`${parseInt(rowStr) - 1}-${colStr}`] = value;
+                                }
+                            }
+                            const cachedCellStylesConverted = {};
+                            if (cachedSheet.cellStyles) {
+                                for (const [key, value] of Object.entries(cachedSheet.cellStyles)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    cachedCellStylesConverted[`${parseInt(rowStr) - 1}-${colStr}`] = value;
+                                }
+                            }
+                            
                             sheetData = {
                                 sheetName: sheetName,
                                 headers: cachedSheet.headers || [],
@@ -18591,8 +18641,8 @@
                                 hiddenRows: cachedSheet.hiddenRows ? Array.from(cachedSheet.hiddenRows) : [],
                                 hiddenColumns: hiddenColsCached2,
                                 hasChanges: true,
-                                cellStyles: cachedSheet.cellStyles || {},
-                                richTextCells: cachedSheet.richTextCells || {},
+                                cellStyles: cachedCellStylesConverted,
+                                richTextCells: cachedRichTextConverted,
                                 cellFonts: {},
                                 rowHighlights: cachedRowHighlights,
                                 clearedRowHighlights: [],
