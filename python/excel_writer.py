@@ -83,6 +83,41 @@ from openpyxl.styles import PatternFill, Font, Alignment, Border
 from openpyxl.styles.colors import Color
 from openpyxl.formatting.formatting import ConditionalFormattingList
 
+# ============================================================================
+# FIX: Sichere __copy__ für Style-Klassen
+# Serialisable.__copy__ macht einen XML-Round-Trip (to_tree → from_tree),
+# der bei Nested-Deskriptoren mit "Nested.from_tree() missing 1 required
+# positional argument: 'node'" crasht.
+# Lösung: Direkt Attribute kopieren statt XML-Serialisierung.
+# ============================================================================
+from openpyxl.styles.fills import GradientFill
+from openpyxl.styles.borders import Side
+from openpyxl.styles.protection import Protection
+from openpyxl.descriptors.serialisable import Serialisable as _Serialisable
+
+def _safe_serialisable_copy(self):
+    """Sicherer __copy__ der direkt aus __dict__ kopiert statt XML-Round-Trip.
+    Verhindert 'Nested.from_tree() missing node' Fehler."""
+    kwargs = {}
+    for key, val in self.__dict__.items():
+        if isinstance(val, _Serialisable):
+            kwargs[key] = copy(val)
+        elif isinstance(val, list):
+            kwargs[key] = [copy(v) if isinstance(v, _Serialisable) else v for v in val]
+        else:
+            kwargs[key] = val
+    return self.__class__(**kwargs)
+
+Color.__copy__ = _safe_serialisable_copy
+Font.__copy__ = _safe_serialisable_copy
+PatternFill.__copy__ = _safe_serialisable_copy
+GradientFill.__copy__ = _safe_serialisable_copy
+Side.__copy__ = _safe_serialisable_copy
+Border.__copy__ = _safe_serialisable_copy
+Alignment.__copy__ = _safe_serialisable_copy
+Protection.__copy__ = _safe_serialisable_copy
+# ============================================================================
+
 # Standard Theme-Farben (Office Default Theme)
 # Diese werden verwendet wenn Theme-Farben nicht aufgelöst werden können
 # ACHTUNG: Die Reihenfolge ist wichtig! Excel speichert Theme-Index 0-9
