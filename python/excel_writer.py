@@ -6601,11 +6601,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 operations.sort(key=lambda x: x['position'])
                 sys.stderr.write(f"[PIPELINE] Schritt 8: Füge Spalten ein\n")
                 
+                insert_offset = 0  # Kumulativer Offset für vorherige Einfügungen
                 for op_idx, op in enumerate(operations):
                     position = op['position']
                     count = op.get('count', 1)
                     source_column = op.get('sourceColumn')
-                    excel_col = position + 1
+                    excel_col = position + 1 + insert_offset  # Offset für vorherige Inserts
                     
                     for i in range(count):
                         insert_at = excel_col + i
@@ -6678,12 +6679,14 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     # Daten schreiben
                     if data and headers:
                         for i in range(count):
-                            col_idx = position + i
+                            col_idx = position + i + insert_offset  # Offset für Frontend-Daten-Array
                             if col_idx < len(headers):
                                 for row_idx, row_data in enumerate(data):
                                     if col_idx < len(row_data):
                                         cell = ws.cell(row=row_idx + 2, column=excel_col + i)
                                         apply_cell_value(cell, row_data[col_idx])
+                    
+                    insert_offset += count  # Offset für nächste Operation aktualisieren
             
             # ===== SCHRITT 9: Spalten VERSCHIEBEN/REORDER =====
             sys.stderr.write(f"[PIPELINE] Schritt 9: Spalten verschieben\n")
@@ -6912,14 +6915,15 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             from openpyxl.utils.cell import range_boundaries
             
             # Alle Operationen im Speicher durchführen
-            # Die Positionen vom Frontend sind die FINALEN Positionen (nach allen Einfügungen)
-            # Wenn wir aufsteigend einfügen, brauchen wir keinen Offset!
+            # Die Positionen vom Frontend sind ORIGINAL-Positionen (vor Einfügungen)
+            # Bei mehreren Inserts muss der Offset kumuliert werden!
             
+            insert_offset = 0
             for op_idx, op in enumerate(operations):
                 position = op['position']
                 count = op.get('count', 1)
                 source_column = op.get('sourceColumn')
-                excel_col = position + 1  # 0-basiert → 1-basiert, KEIN Offset nötig!
+                excel_col = position + 1 + insert_offset  # Offset für vorherige Inserts
                 
                 
                 for i in range(count):
@@ -6996,12 +7000,14 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 # Daten für diese Spalten schreiben
                 if data and headers:
                     for i in range(count):
-                        col_idx = position + i
+                        col_idx = position + i + insert_offset
                         if col_idx < len(headers):
                             for row_idx, row_data in enumerate(data):
                                 if col_idx < len(row_data):
                                     cell = ws.cell(row=row_idx + 2, column=excel_col + i)
                                     apply_cell_value(cell, row_data[col_idx])
+                
+                insert_offset += count
             
             # Versteckte Spalten/Zeilen
             _apply_hidden_columns(ws, hidden_columns)
@@ -7115,11 +7121,12 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             operations = [op for op in operations if op.get('position') is not None]
             operations.sort(key=lambda x: x['position'])
             
+            insert_offset = 0
             for op_idx, op in enumerate(operations):
                 position = op['position']
                 count = op.get('count', 1)
                 source_column = op.get('sourceColumn')
-                excel_col = position + 1  # 0-basiert → 1-basiert
+                excel_col = position + 1 + insert_offset  # Offset für vorherige Inserts
                 
                 for i in range(count):
                     insert_at = excel_col + i
@@ -7193,12 +7200,14 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 # Daten für diese Spalten schreiben
                 if data and headers:
                     for i in range(count):
-                        col_idx = position + i
+                        col_idx = position + i + insert_offset
                         if col_idx < len(headers):
                             for row_idx, row_data in enumerate(data):
                                 if col_idx < len(row_data):
                                     cell = ws.cell(row=row_idx + 2, column=excel_col + i)
                                     apply_cell_value(cell, row_data[col_idx])
+                
+                insert_offset += count
             
             # Versteckte Spalten/Zeilen
             _apply_hidden_columns(ws, hidden_columns)

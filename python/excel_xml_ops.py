@@ -148,19 +148,10 @@ def _build_col_map_for_insert(insert_operations, max_col=500):
     insert_operations: Liste von {position: 0-basiert, count: Anzahl}.
     Gibt dict zurück: alte 1-basierte Spaltennummer → neue 1-basierte Spaltennummer.
     
-    WICHTIG: Die Frontend-Positionen sind kumulativ — jede Position bezieht sich
-    auf den Zustand NACH allen vorherigen Inserts. Daher müssen sie in
-    Original-Positionen konvertiert werden (Anzahl vorheriger Inserts abziehen).
+    Die Frontend-Positionen sind ORIGINAL-Positionen (vor allen Einfügungen).
+    Keine Konvertierung nötig — direkt als Insert-Punkte verwenden.
     """
     inserts = sorted([(op['position'] + 1, op.get('count', 1)) for op in insert_operations])
-    
-    # Kumulative Positionen → Original-Positionen konvertieren
-    total_inserted_before = 0
-    adjusted = []
-    for pos, count in inserts:
-        adjusted.append((pos - total_inserted_before, count))
-        total_inserted_before += count
-    inserts = adjusted
     
     col_map = {}
     shift = 0
@@ -976,6 +967,7 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                     # Sammle alle neuen Zellen pro Zeile (effizient)
                     new_cells_by_row = {}  # excel_row → list of cell XML strings
                     
+                    insert_offset = 0  # Kumulativer Offset für vorherige Inserts
                     for op in ops:
                         position = op['position']
                         count = op.get('count', 1)
@@ -983,7 +975,7 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                         
                         # Header-Zellen (Zeile 1)
                         for i, header in enumerate(op_headers):
-                            col_num = position + 1 + i
+                            col_num = position + 1 + i + insert_offset
                             col_letter = _num_to_col_letter(col_num)
                             cell_ref = f"{col_letter}1"
                             escaped = str(header).replace(
@@ -996,7 +988,7 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                         # Falls keine headers, trotzdem die Position merken
                         if not op_headers:
                             for i in range(count):
-                                col_num = position + 1 + i
+                                col_num = position + 1 + i + insert_offset
                                 inserted_col_info.append((col_num, f'Column{col_num}'))
                         
                         # Daten-Zellen
@@ -1004,9 +996,9 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                             for row_idx, row_data in enumerate(data):
                                 excel_row = row_idx + 2
                                 for ci in range(count):
-                                    col_idx = position + ci
+                                    col_idx = position + ci + insert_offset
                                     if col_idx < len(row_data) and row_data[col_idx] is not None:
-                                        col_num = position + 1 + ci
+                                        col_num = position + 1 + ci + insert_offset
                                         col_letter = _num_to_col_letter(col_num)
                                         cell_ref = f"{col_letter}{excel_row}"
                                         val = row_data[col_idx]
@@ -1019,6 +1011,8 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                                             new_cell = (f'<c r="{cell_ref}" t="inlineStr">'
                                                         f'<is><t>{escaped}</t></is></c>')
                                         new_cells_by_row.setdefault(excel_row, []).append(new_cell)
+                        
+                        insert_offset += count
                     
                     # Alle neuen Zellen in einem Durchgang einfügen
                     if new_cells_by_row:
