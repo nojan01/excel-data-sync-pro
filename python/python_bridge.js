@@ -13,6 +13,18 @@ const fs = require('fs');
 // Gemeinsames Python-Umgebungsmodul (gecachte Pfad-Ermittlung)
 const { getPythonPath, getPythonBasePath, getPythonEnv, safeLog } = require('./python_env');
 
+// Atomares Schreiben: temp + rename verhindert Korruption bei Absturz
+function atomicWriteFileSync(targetPath, data) {
+    const tmpPath = targetPath + '.tmp';
+    try {
+        fs.writeFileSync(tmpPath, data);
+        fs.renameSync(tmpPath, targetPath);
+    } catch (err) {
+        try { fs.unlinkSync(tmpPath); } catch (_) {}
+        throw err;
+    }
+}
+
 // Sichere Error-Log-Funktion
 function safeError(...args) {
     try {
@@ -765,7 +777,7 @@ async function applyPendingSheetOperations(filePath, operations) {
     zip.file('[Content_Types].xml', contentTypesXml);
 
     const outputBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-    fs.writeFileSync(filePath, outputBuffer);
+    atomicWriteFileSync(filePath, outputBuffer);
 
     safeLog(`[PendingOps] Applied ${operations.length} pending operations to ${path.basename(filePath)}`);
     return { success: true };
@@ -959,7 +971,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
             zip.file('[Content_Types].xml', contentTypesXml);
             
             const newData = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-            fs.writeFileSync(targetPath, newData);
+            atomicWriteFileSync(targetPath, newData);
             safeLog(`[Export] ${sheetsToRemove.length} nicht-ausgewählte Sheet(s) entfernt`);
         }
     } catch (removeError) {

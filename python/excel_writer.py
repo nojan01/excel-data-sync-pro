@@ -276,17 +276,18 @@ def _apply_vm_for_pasted_cells(output_path, sheet_name, vm_cell_map):
                     row_match = row_pattern.search(ws_content)
                     if row_match:
                         cell_el = f'<c r="{cell_ref}"{style_attr} t="e" vm="{vm_val}"><v>#VALUE!</v></c>'
-                        insert_pos = row_match.end()
+                        # Sortierte Einfügung: OOXML verlangt aufsteigende Spaltenreihenfolge
+                        col_letter = re.search(r'([A-Z]+)', cell_ref).group(1)
+                        insert_pos = _find_sorted_cell_insert_pos(ws_content, row_match.end(), col_letter)
                         ws_content = ws_content[:insert_pos] + cell_el + ws_content[insert_pos:]
                         vm_created += 1
                     else:
-                        # Zeile existiert auch nicht - Zeile + Zelle erstellen
-                        sheet_data_end = re.search(r'</sheetData>', ws_content)
-                        if sheet_data_end:
-                            row_el = f'<row r="{row_num}"><c r="{cell_ref}"{style_attr} t="e" vm="{vm_val}"><v>#VALUE!</v></c></row>\n'
-                            insert_pos = sheet_data_end.start()
-                            ws_content = ws_content[:insert_pos] + row_el + ws_content[insert_pos:]
-                            vm_created += 1
+                        # Zeile existiert auch nicht - sortiert einfügen
+                        row_el = f'<row r="{row_num}"><c r="{cell_ref}"{style_attr} t="e" vm="{vm_val}"><v>#VALUE!</v></c></row>\n'
+                        # Sortierte Einfügung: OOXML verlangt aufsteigende Zeilenreihenfolge
+                        insert_pos = _find_sorted_row_insert_pos(ws_content, int(row_num))
+                        ws_content = ws_content[:insert_pos] + row_el + ws_content[insert_pos:]
+                        vm_created += 1
         
         if vm_added > 0 or vm_created > 0:
             # ZIP aktualisieren
@@ -3672,8 +3673,14 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
             sheet_content = src_zip.read(sheet_zip_path).decode('utf-8')
             
             # 4. Konvertiere Edits zu Excel-Koordinaten
+            # Interior-Cells von Merged-Bereichen überspringen
+            _interior_keys_dx = _build_merged_interior_keys(merged_cells) if merged_cells else set()
             edits_by_ref = {}
+            skipped_dx = 0
             for key, value in real_edits.items():
+                if key in _interior_keys_dx:
+                    skipped_dx += 1
+                    continue
                 parts = key.split('-')
                 if len(parts) != 2:
                     continue
@@ -3685,6 +3692,8 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
                 cell_ref = f"{col_letter}{excel_row}"
                 edits_by_ref[cell_ref] = value
             
+            if skipped_dx:
+                sys.stderr.write(f"[DIRECT_XML] {skipped_dx} Interior-Merged-Cells übersprungen\n")
             sys.stderr.write(f"[DIRECT_XML] Zell-Referenzen: {len(edits_by_ref)} Zellen\n")
             
             # 5. BATCH: Alle Zellen in EINEM Durchlauf ersetzen (statt 1000x Einzel-Regex)
@@ -5346,6 +5355,28 @@ def _apply_rich_text_xml(sheet_content, ss_content, rich_text_cells, shared_stri
     return sheet_content, ss_content
 
 
+def _build_merged_interior_keys(merged_cells_list):
+    """
+    Baut ein Set von "rowIdx-colIdx" Keys (0-basiert) für alle Interior-Cells
+    von Merged-Bereichen. Interior = alle Zellen außer Top-Left.
+    Wird verwendet, um beim Schreiben von editedCells Interior-Cells zu überspringen.
+    """
+    interior = set()
+    if not merged_cells_list:
+        return interior
+    for merge in merged_cells_list:
+        sr = merge.get('startRow', 0)
+        sc = merge.get('startCol', 0)
+        er = merge.get('endRow', 0)
+        ec = merge.get('endCol', 0)
+        for r in range(sr, er + 1):
+            for c in range(sc, ec + 1):
+                if r == sr and c == sc:
+                    continue
+                interior.add(f"{r}-{c}")
+    return interior
+
+
 def _apply_merged_cells_xml(sheet_content, merged_cells_list):
     """
     Wendet Merged Cells direkt im Sheet-XML an (ohne openpyxl).
@@ -5408,8 +5439,87 @@ def _apply_merged_cells_xml(sheet_content, merged_cells_list):
                         merge_cells_xml +
                         sheet_content[merge_match.end():])
     else:
-        # Vor </worksheet> einfügen
-        sheet_content = sheet_content.replace('</worksheet>', merge_cells_xml + '</worksheet>')
+        # Schema-konform einfügen: <mergeCells> muss VOR diesen Elementen stehen
+        # (ECMA-376: mergeCells kommt vor conditionalFormatting, dataValidations, 
+        #  hyperlinks, printOptions, pageMargins, pageSetup, drawing, tableParts, extLst)
+        _merge_after_elements = [
+            'phoneticPr', 'conditionalFormatting', 'dataValidations',
+            'hyperlinks', 'printOptions', 'pageMargins', 'pageSetup',
+            'headerFooter', 'rowBreaks', 'colBreaks', 'customProperties',
+            'cellWatches', 'ignoredErrors', 'smartTags',
+            'drawing', 'legacyDrawing', 'legacyDrawingHF', 'drawingHF',
+            'picture', 'oleObjects', 'controls', 'webPublishItems',
+            'tableParts', 'extLst'
+        ]
+        # Suche nur im Bereich nach </sheetData>
+        tail_start = 0
+        sd_match = re.search(r'</sheetData>', sheet_content)
+        if sd_match:
+            tail_start = sd_match.end()
+        
+        insert_pos = None
+        for elem in _merge_after_elements:
+            pos_match = re.search(r'<' + re.escape(elem) + r'[\s>/]', sheet_content[tail_start:])
+            if pos_match:
+                insert_pos = tail_start + pos_match.start()
+                break
+        
+        if insert_pos is not None:
+            sheet_content = sheet_content[:insert_pos] + merge_cells_xml + '\n' + sheet_content[insert_pos:]
+        else:
+            sheet_content = sheet_content.replace('</worksheet>', merge_cells_xml + '\n</worksheet>')
+    
+    # KRITISCH: Interior-Cells bereinigen (OOXML: nur Top-Left darf <v>/<f>/<is> haben)
+    # Ohne diese Bereinigung meldet Excel: "Entfernte Datensätze: Zellinformationen"
+    interior_cleaned = 0
+    for merge in merged_cells_list:
+        start_row = merge.get('startRow', 0) + 1
+        start_col = merge.get('startCol', 0) + 1
+        end_row = merge.get('endRow', 0) + 1
+        end_col = merge.get('endCol', 0) + 1
+        for r in range(start_row, end_row + 1):
+            for c in range(start_col, end_col + 1):
+                if r == start_row and c == start_col:
+                    continue  # Top-Left behalten
+                col_l = get_column_letter(c)
+                cell_ref = f"{col_l}{r}"
+                cell_pat = re.compile(
+                    r'(<c\s[^>]*?r="' + re.escape(cell_ref) + r'"[^>]*?>)'
+                    r'(.*?)'
+                    r'(</c>)',
+                    re.DOTALL
+                )
+                def _strip_interior(m, _ref=cell_ref):
+                    open_tag = m.group(1)
+                    inner = m.group(2)
+                    close_tag = m.group(3)
+                    # Werte, Formeln und Inline-Strings entfernen
+                    inner = re.sub(r'<v>.*?</v>', '', inner)
+                    inner = re.sub(r'<v/>', '', inner)
+                    inner = re.sub(r'<f\b[^>]*>.*?</f>', '', inner, flags=re.DOTALL)
+                    inner = re.sub(r'<f\b[^>]*/>', '', inner)
+                    inner = re.sub(r'<is>.*?</is>', '', inner, flags=re.DOTALL)
+                    inner = re.sub(r'<is/>', '', inner)
+                    # KRITISCH: t-Attribut entfernen – ohne Wert ist t="s"/t="inlineStr"/etc. ungültig
+                    # und verursacht "Entfernte Datensätze: Zellinformationen" in Excel
+                    open_tag = re.sub(r'\s+t="[^"]*"', '', open_tag)
+                    return open_tag + inner + close_tag
+                new_content = cell_pat.sub(_strip_interior, sheet_content)
+                if new_content != sheet_content:
+                    sheet_content = new_content
+                    interior_cleaned += 1
+                # Auch self-closing Cells bereinigen: <c r="B2" t="s" s="3"/>
+                # t-Attribut ohne <v> ist ungültiges OOXML
+                selfclose_pat = re.compile(
+                    r'(<c\s[^>]*?r="' + re.escape(cell_ref) + r'"[^>]*?)\s+t="[^"]*"([^>]*/\s*>)'
+                )
+                new_content = selfclose_pat.sub(r'\1\2', sheet_content)
+                if new_content != sheet_content:
+                    sheet_content = new_content
+                    interior_cleaned += 1
+    
+    if interior_cleaned:
+        sys.stderr.write(f"[MERGE_XML] {interior_cleaned} Interior-Cells bereinigt (<v>/<f>/<is> entfernt)\n")
     
     sys.stderr.write(f"[MERGE_XML] Fertig: {len(target_ranges)} Merges gesetzt "
                      f"(war: {len(existing_set)})\n")
@@ -6174,10 +6284,23 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     ws2 = wb2[sheet_name]
                     
                     # Zell-Edits anwenden
+                    # Cell Styles, Fonts, RichText, MergedCells werden NACH Save per XML angewendet
+                    # (openpyxl PatternFill vor wb.save() korrumpiert cellXfs)
+                    imported_cell_styles_h = changes.get('cellStyles', {})
+                    cell_fonts_h = changes.get('cellFonts', {})
+                    imported_rich_text_h = changes.get('richTextCells', {})
+                    imported_merged_cells_h = changes.get('mergedCells', [])
+                    
                     real_edits = {k: v for k, v in edited_cells.items() if not k.startswith('_')} if edited_cells else {}
                     if real_edits:
+                        # Interior-Cells von Merged-Bereichen überspringen
+                        _interior_keys_h = _build_merged_interior_keys(imported_merged_cells_h)
+                        skipped_h = 0
                         sys.stderr.write(f"[XML-HYBRID] {len(real_edits)} Zell-Edits anwenden\n")
                         for key, value in real_edits.items():
+                            if key in _interior_keys_h:
+                                skipped_h += 1
+                                continue
                             parts = key.split('-')
                             if len(parts) != 2:
                                 continue
@@ -6185,13 +6308,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             col_idx = int(parts[1])
                             cell = ws2.cell(row=row_idx + 2, column=col_idx + 1)
                             apply_cell_value(cell, value)
-                    
-                    # Cell Styles, Fonts, RichText, MergedCells werden NACH Save per XML angewendet
-                    # (openpyxl PatternFill vor wb.save() korrumpiert cellXfs)
-                    imported_cell_styles_h = changes.get('cellStyles', {})
-                    cell_fonts_h = changes.get('cellFonts', {})
-                    imported_rich_text_h = changes.get('richTextCells', {})
-                    imported_merged_cells_h = changes.get('mergedCells', [])
+                        if skipped_h:
+                            sys.stderr.write(f"[XML-HYBRID] {skipped_h} Interior-Merged-Cells übersprungen\n")
                     
                     # Versteckte Zeilen anwenden (das ist sicher per openpyxl)
                     if hidden_rows:
@@ -6627,10 +6745,23 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             # Bei kombinierten Operationen (Zeilen+Spalten+Edits) werden editedCells,
             # cellStyles, cellFonts, richTextCells und mergedCells hier angewendet.
             # Der Pipeline-Pfad wurde bisher ohne Edits verlassen — sie gingen verloren.
+            # Cell Styles, Fonts, RichText, MergedCells werden NACH Save per XML angewendet
+            # (openpyxl PatternFill vor wb.save() korrumpiert cellXfs)
+            imported_cell_styles_p = changes.get('cellStyles', {})
+            cell_fonts_p = changes.get('cellFonts', {})
+            imported_rich_text_p = changes.get('richTextCells', {})
+            imported_merged_cells_p = changes.get('mergedCells', [])
+            
             real_edits = {k: v for k, v in edited_cells.items() if not k.startswith('_')} if edited_cells else {}
             if real_edits:
+                # Interior-Cells von Merged-Bereichen überspringen (OOXML: nur Top-Left darf Wert haben)
+                _interior_keys_p = _build_merged_interior_keys(imported_merged_cells_p)
+                skipped_p = 0
                 sys.stderr.write(f"[PIPELINE] Schritt 11b: {len(real_edits)} Zell-Edits anwenden\n")
                 for key, value in real_edits.items():
+                    if key in _interior_keys_p:
+                        skipped_p += 1
+                        continue
                     parts = key.split('-')
                     if len(parts) != 2:
                         continue
@@ -6638,13 +6769,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     col_idx = int(parts[1])
                     cell = ws.cell(row=row_idx + 2, column=col_idx + 1)
                     apply_cell_value(cell, value)
-            
-            # Cell Styles, Fonts, RichText, MergedCells werden NACH Save per XML angewendet
-            # (openpyxl PatternFill vor wb.save() korrumpiert cellXfs)
-            imported_cell_styles_p = changes.get('cellStyles', {})
-            cell_fonts_p = changes.get('cellFonts', {})
-            imported_rich_text_p = changes.get('richTextCells', {})
-            imported_merged_cells_p = changes.get('mergedCells', [])
+                if skipped_p:
+                    sys.stderr.write(f"[PIPELINE] Schritt 11b: {skipped_p} Interior-Merged-Cells übersprungen\n")
             
             # ===== SCHRITT 12: Tables reparieren =====
             sys.stderr.write(f"[PIPELINE] Schritt 12: Tables reparieren\n")
@@ -7491,6 +7617,15 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             # Zell-Edits direkt im String anwenden (via _batch_replace_cells_in_xml)
                             real_edits_zip = {k: v for k, v in edited_cells.items() if not k.startswith('_')} if edited_cells else {}
                             if real_edits_zip:
+                                # Interior-Cells von Merged-Bereichen überspringen
+                                _merged_cells_zip = changes.get('mergedCells', [])
+                                _interior_keys_zip = _build_merged_interior_keys(_merged_cells_zip)
+                                if _interior_keys_zip:
+                                    before_count = len(real_edits_zip)
+                                    real_edits_zip = {k: v for k, v in real_edits_zip.items() if k not in _interior_keys_zip}
+                                    skipped_z = before_count - len(real_edits_zip)
+                                    if skipped_z:
+                                        sys.stderr.write(f"[ZIP-ANSATZ] {skipped_z} Interior-Merged-Cells übersprungen\n")
                                 # SharedStrings lesen
                                 shared_strings = []
                                 has_shared_strings = False

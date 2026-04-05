@@ -31,6 +31,22 @@ function getPythonBridge() {
     return _pythonBridge;
 }
 
+/**
+ * Atomares Schreiben: Schreibt in Temp-Datei und benennt um.
+ * Verhindert Dateikorruption bei Absturz/Stromausfall während des Schreibens.
+ */
+function atomicWriteFileSync(targetPath, data) {
+    const tmpPath = targetPath + '.tmp';
+    try {
+        fs.writeFileSync(tmpPath, data);
+        fs.renameSync(tmpPath, targetPath);
+    } catch (err) {
+        // Temp-Datei aufräumen falls Rename fehlschlägt
+        try { fs.unlinkSync(tmpPath); } catch (_) {}
+        throw err;
+    }
+}
+
 // Erhöhe V8 Heap-Größe für große Dateien (muss vor app.ready gesetzt werden)
 // 4GB - ausreichend für große Excel-Dateien, schont den Arbeitsspeicher
 app.commandLine.appendSwitch('js-flags', '--max-old-space-size=4096');
@@ -173,12 +189,7 @@ async function savePartialCellChangesDirectly(filePath, cellChangesBySheet) {
         const sheetMatches = workbookXml.matchAll(/<sheet[^>]+name="([^"]+)"[^>]+r:id="(rId\d+)"/g);
         for (const match of sheetMatches) {
             // XML-Entities dekodieren (&amp; -> &, &lt; -> <, etc.)
-            const decodedName = match[1]
-                .replace(/&amp;/g, '&')
-                .replace(/&lt;/g, '<')
-                .replace(/&gt;/g, '>')
-                .replace(/&quot;/g, '"')
-                .replace(/&apos;/g, "'");
+            const decodedName = decodeXmlEntities(match[1]);
             sheetIdMap[decodedName] = match[2];
         }
         
@@ -241,13 +252,13 @@ async function savePartialCellChangesDirectly(filePath, cellChangesBySheet) {
             console.log(`[DirectSave] Sheet "${sheetName}": ${Object.keys(changedCells).length} Zellen aktualisiert`);
         }
         
-        // 7. ZIP zurückschreiben
+        // 7. ZIP zurückschreiben (atomar: temp + rename)
         const outputBuffer = await zip.generateAsync({
             type: 'nodebuffer',
             compression: 'DEFLATE'
         });
         
-        fs.writeFileSync(filePath, outputBuffer);
+        atomicWriteFileSync(filePath, outputBuffer);
         
         // Cache invalidieren da Datei geändert wurde
         clearWorkbookCache();
@@ -278,6 +289,17 @@ function numberToColumnLetter(num) {
         num = Math.floor((num - 1) / 26);
     }
     return letter;
+}
+
+/**
+ * Hilfsfunktion: Spalten-Buchstabe zu Nummer (A=1, B=2, AA=27, etc.)
+ */
+function columnLetterToNumber(letters) {
+    let result = 0;
+    for (let i = 0; i < letters.length; i++) {
+        result = result * 26 + (letters.charCodeAt(i) - 64);
+    }
+    return result;
 }
 
 /**
@@ -377,6 +399,18 @@ function escapeXml(str) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&apos;');
+}
+
+/**
+ * Hilfsfunktion: Dekodiert XML-Entities (z.B. &amp; -> &)
+ */
+function decodeXmlEntities(str) {
+    return str
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'");
 }
 
 
@@ -818,67 +852,54 @@ const networkLog = {
         try {
             const newDrives = new Set();
 
-            // Methode 1: PowerShell Get-CimInstance für DriveType=4 (klassische Netzlaufwerke)
-            try {
-                const psOutput = await execAsync(
+            // Alle 3 Methoden parallel ausführen (statt sequentiell ~25s → ~10s)
+            const [psOutput, netUseOutput, allDrivesOutput] = await Promise.all([
+                // Methode 1: PowerShell Get-CimInstance für DriveType=4 (klassische Netzlaufwerke)
+                execAsync(
                     'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=4\" | Select-Object -ExpandProperty DeviceID"',
                     { encoding: 'utf8', timeout: 10000, windowsHide: true }
-                );
-
-                const psLines = psOutput.split('\n');
-                for (const line of psLines) {
-                    const match = line.trim().match(/^([A-Z]):?$/i);
-                    if (match) {
-                        newDrives.add(match[1].toUpperCase());
-                    }
-                }
-            } catch (e) {
-                // PowerShell fehlgeschlagen, ignorieren
-            }
-
-            // Methode 2: net use für gemappte Netzlaufwerke (inkl. VMware Shared Folders)
-            try {
-                const netUseOutput = await execAsync('net use', {
+                ),
+                // Methode 2: net use für gemappte Netzlaufwerke (inkl. VMware Shared Folders)
+                execAsync('net use', {
                     encoding: 'utf8',
                     timeout: 5000,
                     windowsHide: true
-                });
+                }),
+                // Methode 3: Prüfe alle Laufwerke auf Remote-Eigenschaft (VMware, VirtualBox etc.)
+                execAsync(
+                    'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk | Format-Table DeviceID,DriveType,ProviderName -HideTableHeaders"',
+                    { encoding: 'utf8', timeout: 10000, windowsHide: true }
+                )
+            ]);
 
-                // Suche nach Zeilen mit Laufwerksbuchstaben (z.B. "OK           Y:        \\vmware-host\...")
-                const netUseLines = netUseOutput.split('\n');
-                for (const line of netUseLines) {
-                    const match = line.match(/\s+([A-Z]):\s+/i);
+            // Methode 1 auswerten
+            for (const line of psOutput.split('\n')) {
+                const match = line.trim().match(/^([A-Z]):?$/i);
+                if (match) {
+                    newDrives.add(match[1].toUpperCase());
+                }
+            }
+
+            // Methode 2 auswerten
+            for (const line of netUseOutput.split('\n')) {
+                const match = line.match(/\s+([A-Z]):\s+/i);
+                if (match) {
+                    newDrives.add(match[1].toUpperCase());
+                }
+            }
+
+            // Methode 3 auswerten
+            for (const line of allDrivesOutput.split('\n')) {
+                const lower = line.toLowerCase();
+                if (lower.includes('vmware') ||
+                    lower.includes('virtualbox') ||
+                    lower.includes('vboxsvr') ||
+                    lower.includes('\\\\')) {
+                    const match = line.match(/([A-Z]):/i);
                     if (match) {
                         newDrives.add(match[1].toUpperCase());
                     }
                 }
-            } catch (e) {
-                // net use fehlgeschlagen, ignorieren
-            }
-
-            // Methode 3: Prüfe alle Laufwerke auf Remote-Eigenschaft (VMware, VirtualBox etc.)
-            try {
-                const allDrivesOutput = await execAsync(
-                    'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk | Format-Table DeviceID,DriveType,ProviderName -HideTableHeaders"',
-                    { encoding: 'utf8', timeout: 10000, windowsHide: true }
-                );
-
-                const driveLines = allDrivesOutput.split('\n');
-                for (const line of driveLines) {
-                    const lower = line.toLowerCase();
-                    // Prüfe auf VMware, VirtualBox oder andere Netzwerk-Provider
-                    if (lower.includes('vmware') ||
-                        lower.includes('virtualbox') ||
-                        lower.includes('vboxsvr') ||
-                        lower.includes('\\\\')) {
-                        const match = line.match(/([A-Z]):/i);
-                        if (match) {
-                            newDrives.add(match[1].toUpperCase());
-                        }
-                    }
-                }
-            } catch (e) {
-                // Fallback fehlgeschlagen, ignorieren
             }
 
             // Ergebnis atomar übernehmen
@@ -2048,14 +2069,7 @@ function removeUnusedColumns(worksheet, usedColumnCount, originalColumnCount) {
     }
 }
 
-// Hilfsfunktion: Spalten-Buchstabe zu Nummer (A=1, B=2, AA=27, etc.)
-function columnLetterToNumber(letters) {
-    let result = 0;
-    for (let i = 0; i < letters.length; i++) {
-        result = result * 26 + (letters.charCodeAt(i) - 64);
-    }
-    return result;
-}
+// columnLetterToNumber — jetzt oben bei numberToColumnLetter definiert (Zeile ~302)
 
 // Hilfsfunktion: Entfernt nicht verwendete Zeilen aus dem Worksheet (Formatierung, Höhe etc.)
 function removeUnusedRows(worksheet, usedRowCount, originalRowCount) {
@@ -2766,9 +2780,9 @@ ipcMain.handle('excel:addSheet', async (event, { filePath, sheetName }) => {
         const modifiedContentTypes = contentTypesXml.replace('</Types>', `${newContentType}</Types>`);
         zip.file('[Content_Types].xml', modifiedContentTypes);
 
-        // 8. ZIP speichern
+        // 8. ZIP speichern (atomar: temp + rename)
         const outputBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-        fs.writeFileSync(filePath, outputBuffer);
+        atomicWriteFileSync(filePath, outputBuffer);
 
         // Cache invalidieren
         clearWorkbookCache();
@@ -2997,7 +3011,7 @@ ipcMain.handle('excel:setSheetVisibility', async (event, { filePath, sheetName, 
         zip.file('xl/workbook.xml', modifiedXml);
 
         const outputBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-        fs.writeFileSync(filePath, outputBuffer);
+        atomicWriteFileSync(filePath, outputBuffer);
 
         // Cache invalidieren
         clearWorkbookCache();
@@ -3592,7 +3606,7 @@ ipcMain.handle('config:save', async (event, { filePath, config, mergeMode = 'aut
             }
         }
 
-        fs.writeFileSync(filePath, JSON.stringify(finalConfig, null, 2), 'utf8');
+        atomicWriteFileSync(filePath, JSON.stringify(finalConfig, null, 2));
         
         securityLog.log('INFO', 'CONFIG_SAVED', { 
             path: path.basename(filePath),
@@ -3971,29 +3985,7 @@ function shiftColumnReference(ref, shiftBy) {
     });
 }
 
-/**
- * Hilfsfunktion: Dekodiert XML-Entities (z.B. &amp; -> &)
- */
-function decodeXmlEntities(str) {
-    return str
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&apos;/g, "'");
-}
-
-/**
- * Hilfsfunktion: Enkodiert XML-Entities (z.B. & -> &amp;)
- */
-function encodeXmlEntities(str) {
-    return str
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&apos;');
-}
+// decodeXmlEntities + escapeXml (= encodeXmlEntities) — oben bei Hilfsfunktionen definiert (~Zeile 400)
 
 /**
  * Erstellt ein leeres Template aus einer Quelldatei.
@@ -4068,7 +4060,7 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
         let modifiedWorkbookXml = workbookXml;
         for (const decodedName of sheetsToRemove) {
             // XML-encoded Name für Regex verwenden
-            const encodedName = encodeXmlEntities(decodedName);
+            const encodedName = escapeXml(decodedName);
             const sheetRegex = new RegExp(`<sheet[^>]*name="${encodedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*/>`, 'g');
             modifiedWorkbookXml = modifiedWorkbookXml.replace(sheetRegex, '');
         }
@@ -4190,14 +4182,14 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
             processedSheets++;
         }
 
-        // 9. Template speichern
+        // 9. Template speichern (atomar: temp + rename)
         const outputBuffer = await zip.generateAsync({
             type: 'nodebuffer',
             compression: 'DEFLATE',
             compressionOptions: { level: 6 }
         });
 
-        fs.writeFileSync(outputPath, outputBuffer);
+        atomicWriteFileSync(outputPath, outputBuffer);
 
         securityLog.log('INFO', 'TEMPLATE_CREATED', {
             sourceFile: path.basename(sourcePath),
