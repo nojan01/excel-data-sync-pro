@@ -84,38 +84,35 @@ from openpyxl.styles.colors import Color
 from openpyxl.formatting.formatting import ConditionalFormattingList
 
 # ============================================================================
-# FIX: Sichere __copy__ für Style-Klassen
+# FIX: Sichere __copy__ für ALLE Serialisable-Unterklassen
 # Serialisable.__copy__ macht einen XML-Round-Trip (to_tree → from_tree),
 # der bei Nested-Deskriptoren mit "Nested.from_tree() missing 1 required
 # positional argument: 'node'" crasht.
-# Lösung: Direkt Attribute kopieren statt XML-Serialisierung.
+# Lösung: Direkt aus __dict__ kopieren statt XML-Serialisierung.
+# Patch auf Serialisable selbst = schützt ALLE Unterklassen automatisch.
 # ============================================================================
-from openpyxl.styles.fills import GradientFill
-from openpyxl.styles.borders import Side
-from openpyxl.styles.protection import Protection
 from openpyxl.descriptors.serialisable import Serialisable as _Serialisable
+
+_original_serialisable_copy = _Serialisable.__copy__
 
 def _safe_serialisable_copy(self):
     """Sicherer __copy__ der direkt aus __dict__ kopiert statt XML-Round-Trip.
     Verhindert 'Nested.from_tree() missing node' Fehler."""
-    kwargs = {}
-    for key, val in self.__dict__.items():
-        if isinstance(val, _Serialisable):
-            kwargs[key] = copy(val)
-        elif isinstance(val, list):
-            kwargs[key] = [copy(v) if isinstance(v, _Serialisable) else v for v in val]
-        else:
-            kwargs[key] = val
-    return self.__class__(**kwargs)
+    try:
+        kwargs = {}
+        for key, val in self.__dict__.items():
+            if isinstance(val, _Serialisable):
+                kwargs[key] = copy(val)
+            elif isinstance(val, list):
+                kwargs[key] = [copy(v) if isinstance(v, _Serialisable) else v for v in val]
+            else:
+                kwargs[key] = val
+        return self.__class__(**kwargs)
+    except Exception:
+        # Fallback auf Original falls __dict__-Ansatz nicht funktioniert
+        return _original_serialisable_copy(self)
 
-Color.__copy__ = _safe_serialisable_copy
-Font.__copy__ = _safe_serialisable_copy
-PatternFill.__copy__ = _safe_serialisable_copy
-GradientFill.__copy__ = _safe_serialisable_copy
-Side.__copy__ = _safe_serialisable_copy
-Border.__copy__ = _safe_serialisable_copy
-Alignment.__copy__ = _safe_serialisable_copy
-Protection.__copy__ = _safe_serialisable_copy
+_Serialisable.__copy__ = _safe_serialisable_copy
 # ============================================================================
 
 # Standard Theme-Farben (Office Default Theme)
