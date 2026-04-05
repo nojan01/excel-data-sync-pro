@@ -5958,11 +5958,17 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     _fp_ins_ops = [{'position': _fp_inserted_cols['position'], 'count': _fp_inserted_cols.get('count', 1)}]
                 if _fp_ins_ops:
                     _fp_ins_col_set = set()
-                    for _fp_op in _fp_ins_ops:
+                    # Operationen aufsteigend sortieren und kumulativen Offset berechnen,
+                    # damit die FINALEN Spaltenpositionen (wie im Frontend editedCells)
+                    # korrekt erfasst werden. Ohne Offset: {2,4} statt {2,5} bei 2 Inserts.
+                    _fp_sorted_ops = sorted(_fp_ins_ops, key=lambda x: x['position'])
+                    _fp_offset = 0
+                    for _fp_op in _fp_sorted_ops:
                         _fp_pos = _fp_op['position']
                         _fp_cnt = _fp_op.get('count', 1)
                         for _fp_i in range(_fp_cnt):
-                            _fp_ins_col_set.add(_fp_pos + _fp_i)
+                            _fp_ins_col_set.add(_fp_pos + _fp_i + _fp_offset)
+                        _fp_offset += _fp_cnt
                     _fp_edits_in_inserted_only = True
                     for _fp_k in _fp_edited_cells:
                         if _fp_k.startswith('_'):
