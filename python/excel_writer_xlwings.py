@@ -773,14 +773,29 @@ def _apply_hidden_columns_xlwings(ws, hidden_columns, max_cols=None):
 def _apply_hidden_rows_xlwings(ws, hidden_rows, max_rows=None):
     """Setzt versteckte Zeilen mit xlwings
     
+    hidden_rows=None: keine Änderung
+    hidden_rows=[]: alle Zeilen sichtbar machen (hidden entfernen)
+    hidden_rows=[1,5]: nur diese Zeilen verstecken, alle anderen einblenden
+    
     Auf macOS funktioniert api.row_hidden nicht zuverlässig.
-    Stattdessen verwenden wir row_height = 0.
+    Stattdessen verwenden wir row_height = 0 zum Verstecken.
     """
-    if hidden_rows is None or not hidden_rows:
+    if hidden_rows is None:
         return
     
     hidden_set = set(hidden_rows)
     
+    # Zuerst ALLE Datenzeilen einblenden (damit vorher versteckte sichtbar werden)
+    try:
+        last_row = (max_rows + 1) if max_rows else ws.used_range.last_cell.row
+        if last_row >= 2:
+            # Windows COM API: alle Datenzeilen einblenden
+            ws.range(f'2:{last_row}').api.EntireRow.Hidden = False
+            print(f"[xlwings] Alle Zeilen 2-{last_row} eingeblendet", file=sys.stderr, flush=True)
+    except Exception as e:
+        print(f"[xlwings] Unhide all rows FEHLER: {e}", file=sys.stderr, flush=True)
+    
+    # Dann die spezifizierten Zeilen verstecken
     for row_idx in hidden_set:
         try:
             excel_row = row_idx + 2  # +2 für Header (1-basiert)

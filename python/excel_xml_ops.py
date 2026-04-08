@@ -11,6 +11,7 @@ Alles was nicht geändert wird, bleibt 1:1 erhalten.
 import re
 import os
 import sys
+import io
 import zipfile
 import shutil
 from xml.etree import ElementTree as ET
@@ -763,7 +764,7 @@ def _apply_col_map_to_workbook_xml(wb_xml, col_map, sheet_name):
 def direct_xml_column_operations(file_path, output_path, sheet_name,
                                  deleted_columns=None, inserted_columns=None,
                                  column_order=None, hidden_columns=None,
-                                 headers=None, data=None):
+                                 headers=None, data=None, return_bytes=False):
     """
     Führt Spaltenoperationen direkt auf dem XML durch (ZIP-to-ZIP).
     
@@ -793,7 +794,7 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
     RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
     R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
     
-    temp_output = output_path + '.tmp'
+    temp_output = output_path + '.tmp' if not return_bytes else None
     
     try:
         with zipfile.ZipFile(file_path, 'r') as src_zip:
@@ -1208,7 +1209,9 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
             sys.stderr.write(f"[XML_COL_OPS] Slicer erkannt: {has_slicers}\n")
             
             # 8. ZIP-to-ZIP: Original-Einträge 1:1 kopieren, nur modifizierte ersetzen
-            with zipfile.ZipFile(temp_output, 'w', zipfile.ZIP_DEFLATED) as dst_zip:
+            # Bei return_bytes: In BytesIO schreiben statt auf Disk
+            dst_target = io.BytesIO() if return_bytes else temp_output
+            with zipfile.ZipFile(dst_target, 'w', zipfile.ZIP_DEFLATED) as dst_zip:
                 for item in src_zip.infolist():
                     if item.filename.endswith('/'):
                         continue
@@ -1226,6 +1229,12 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                         data_bytes = src_zip.read(item.filename)
                         dst_zip.writestr(item, data_bytes)
         
+        if return_bytes:
+            dst_target.seek(0)
+            sys.stderr.write(f"[XML_COL_OPS] Erfolgreich (in-memory, {dst_target.getbuffer().nbytes} bytes)\n")
+            return {'success': True, 'outputPath': output_path, 'method': 'xml-col-ops',
+                    'has_slicers': has_slicers, 'zip_bytes': dst_target}
+        
         # An Zielort verschieben
         if os.path.exists(output_path):
             os.remove(output_path)
@@ -1236,7 +1245,7 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                 'has_slicers': has_slicers}
     
     except Exception as e:
-        if os.path.exists(temp_output):
+        if temp_output and os.path.exists(temp_output):
             os.remove(temp_output)
         sys.stderr.write(f"[XML_COL_OPS] Fehler: {e}\n")
         import traceback

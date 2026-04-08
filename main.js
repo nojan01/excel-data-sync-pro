@@ -4273,10 +4273,6 @@ ipcMain.handle('liveSession:saveFile', async (event, outputPath, password, selec
     try {
         const session = getLiveSession();
         
-        // Hole aktuelles Passwort der Session
-        const currentPasswordStatus = await session.getPasswordStatus();
-        const currentPassword = currentPasswordStatus.hasPassword ? 'HAS_PASSWORD' : null;
-        
         // Python speichert die Datei
         // Wenn password === undefined, soll Python das Original-Passwort beibehalten (keine Entschlüsselung)
         // Wenn password === null, soll Python das Passwort entfernen (Datei entschlüsseln)
@@ -4309,7 +4305,7 @@ ipcMain.handle('liveSession:saveFile', async (event, outputPath, password, selec
             result.hasPassword = false;
         } else {
             // password === undefined: altes Passwort beibehalten
-            result.hasPassword = currentPassword ? true : false;
+            // result.hasPassword kommt bereits von Python (save_file Rückgabe)
         }
         
         return result;
@@ -4437,6 +4433,16 @@ ipcMain.handle('liveSession:highlightRow', async (event, rowIndex, color) => {
     }
 });
 
+ipcMain.handle('liveSession:highlightRowsBatch', async (event, rows, color) => {
+    console.log('[LiveSession] IPC: highlightRowsBatch', rows.length, 'rows', color);
+    try {
+        const session = getLiveSession();
+        return await session.highlightRowsBatch(rows, color);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 // === SPALTEN-OPERATIONEN ===
 
 ipcMain.handle('liveSession:deleteColumn', async (event, colIndex) => {
@@ -4454,6 +4460,16 @@ ipcMain.handle('liveSession:insertColumn', async (event, colIndex, count = 1, he
     try {
         const session = getLiveSession();
         return await session.insertColumn(colIndex, count, headers);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:dataJoinSync', async (event, operations) => {
+    console.log('[LiveSession] IPC: dataJoinSync', operations.length, 'operations');
+    try {
+        const session = getLiveSession();
+        return await session.dataJoinSync(operations);
     } catch (error) {
         return { success: false, error: error.message };
     }
@@ -4522,6 +4538,16 @@ ipcMain.handle('liveSession:switchSheet', async (event, sheetName, includeData =
     try {
         const session = getLiveSession();
         return await session.switchSheet(sheetName, includeData);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:activateSheet', async (event, sheetName) => {
+    console.log('[LiveSession] IPC: activateSheet', sheetName);
+    try {
+        const session = getLiveSession();
+        return await session.activateSheet(sheetName);
     } catch (error) {
         return { success: false, error: error.message };
     }

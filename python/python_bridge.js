@@ -491,6 +491,13 @@ async function writeExcelOpenpyxl(config) {
         
         pythonProcess.stderr.on('data', (data) => {
             stderr += data.toString();
+            // Wichtige Diagnose-Logs direkt in die Konsole weiterleiten
+            const lines = data.toString().split('\n');
+            for (const line of lines) {
+                if (line.includes('[FALL ') || line.includes('[HL_XML]') || line.includes('[XML-DIREKT-FAST]') || line.includes('[DIAG-PY]')) {
+                    safeLog(`[Python] ${line.trim()}`);
+                }
+            }
         });
         
         pythonProcess.on('close', (code) => {

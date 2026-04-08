@@ -3347,6 +3347,10 @@
                 
                 <!-- Table Container -->
                 <div id="explorerTableContainer" style="flex: 1; min-height: 200px; overflow: auto; background: var(--bg-dark); border-radius: 6px; border: 1px solid var(--border); position: relative;">
+                    <!-- Sheet-Switch Overlay (sperrt alle Interaktionen während des Wechsels) -->
+                    <div id="explorerSheetSwitchOverlay" class="hidden" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.25); z-index: 50; display: flex; align-items: center; justify-content: center;">
+                        <span style="color: white; font-size: 14px; background: rgba(0,0,0,0.6); padding: 8px 16px; border-radius: 6px;">⏳ Arbeitsblatt wird geladen...</span>
+                    </div>
                     <!-- Large Drop Zone (visible when no file loaded) -->
                     <div id="explorerDropZone" style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; cursor: pointer; transition: all 0.2s ease; z-index: 10;">
                         <div style="font-size: 48px; opacity: 0.5;">📥</div>
@@ -8818,7 +8822,9 @@
             virtualRowHeight: 30,     // Geschätzte Zeilenhöhe in px
             virtualBufferRows: 50,    // Puffer-Zeilen ober-/unterhalb des Viewports
             virtualVisibleStart: -1,  // Erster gerenderter Index in filteredData
-            virtualVisibleEnd: -1     // Letzter gerenderter Index in filteredData
+            virtualVisibleEnd: -1,    // Letzter gerenderter Index in filteredData
+            isLoadingSheet: false,      // true während loadExplorerSheet() läuft → verhindert doppelten Wechsel
+            pendingSheetSwitch: null    // Wenn während eines Sheet-Wechsels ein neuer Wechsel kommt → merken
         };
         
         // ==================== Data Join State & Functions ====================
@@ -9612,41 +9618,59 @@
          */
         async function _syncDataJoinToLiveSession(insertOperations, state, sourceMap, currentKeyIndex, markNotFound) {
             const sortedOps = insertOperations.sort((a, b) => a.position - b.position);
-            let insertOffset = 0;
             
-            showFloatingStatus('🔄 Synchronisiere mit Excel...', 'info');
+            const totalCols = insertOperations.reduce((sum, op) => sum + op.count, 0);
+            showFloatingStatus(`🔄 Synchronisiere ${totalCols} Spalte${totalCols > 1 ? 'n' : ''} mit Excel...`, 'info');
+            
+            // Batch-Operationen vorbereiten: Spalten + Daten in EINEM Aufruf
+            const batchOps = [];
+            let insertOffset = 0;
             
             for (const op of sortedOps) {
                 const actualInsertPos = op.position + insertOffset;
                 
-                const insertResult = await window.electronAPI.liveSessionInsertColumn(
-                    actualInsertPos, 
-                    op.count, 
-                    op.headers
-                );
-                
-                if (!insertResult || !insertResult.success) {
-                    console.error('[LiveSession] DataJoin insertColumn failed:', insertResult);
-                    continue;
-                }
-                
+                // Spaltendaten sammeln
+                const columnData = [];
                 for (let i = 0; i < op.count; i++) {
-                    const targetColIndex = actualInsertPos + i;
-                    const columnValues = state.data.map(row => row[targetColIndex] || '');
-                    
-                    if (columnValues.length > 0) {
-                        await window.electronAPI.liveSessionSetColumnValues(
-                            targetColIndex,
-                            columnValues,
-                            0
-                        );
-                    }
+                    // Daten aus state.data extrahieren (UI wurde bereits aktualisiert)
+                    const colValues = state.data.map(row => {
+                        const val = row[actualInsertPos + i];
+                        return val !== undefined && val !== null ? val : '';
+                    });
+                    columnData.push(colValues);
                 }
+                
+                // WICHTIG: Original-Position senden, Python verwaltet insert_offset selbst
+                batchOps.push({
+                    position: op.position,
+                    count: op.count,
+                    headers: op.headers,
+                    columnData: columnData
+                });
                 
                 insertOffset += op.count;
             }
             
-            // Nicht gefundene Zeilen markieren
+            // Alles in EINEM Aufruf an Python/Excel senden
+            console.log('[LiveSession] DataJoin batchOps:', batchOps.length, 'ops,',
+                'columnData lengths:', batchOps.map(o => (o.columnData || []).map(cd => cd.length)),
+                'headers:', batchOps.map(o => o.headers),
+                'positions:', batchOps.map(o => o.position));
+            if (batchOps.length > 0 && batchOps[0].columnData && batchOps[0].columnData[0]) {
+                const sample = batchOps[0].columnData[0].filter(v => v !== '').slice(0, 5);
+                console.log('[LiveSession] Sample non-empty values:', sample);
+            }
+            const result = await window.electronAPI.liveSessionDataJoinSync(batchOps);
+            console.log('[LiveSession] DataJoin result:', JSON.stringify(result));
+            
+            if (!result || !result.success) {
+                const errMsg = result ? (result.error || JSON.stringify(result)) : 'Kein Ergebnis';
+                console.error('[LiveSession] DataJoin sync failed:', errMsg, result);
+                showFloatingStatus('⚠️ Excel-Sync fehlgeschlagen: ' + errMsg, 'warning');
+                return;
+            }
+            
+            // Nicht gefundene Zeilen markieren (Batch)
             if (markNotFound) {
                 const notFoundRows = [];
                 state.data.forEach((row, rowIndex) => {
@@ -9656,12 +9680,15 @@
                     }
                 });
                 
-                for (const rowIndex of notFoundRows) {
-                    await window.electronAPI.liveSessionHighlightRow(getExcelRowPosition(rowIndex), 'yellow');
+                if (notFoundRows.length > 0) {
+                    showFloatingStatus(`🔄 Markiere ${notFoundRows.length} nicht gefundene Zeilen...`, 'info');
+                    const excelRows = notFoundRows.map(r => getExcelRowPosition(r));
+                    await window.electronAPI.liveSessionHighlightRowsBatch(excelRows, 'yellow');
+                    console.log('[LiveSession] Batch-Highlight:', notFoundRows.length, 'Zeilen gelb markiert');
                 }
             }
             
-            showFloatingStatus('✓ Excel synchronisiert', 'success');
+            showFloatingStatus(`✓ Excel synchronisiert — ${totalCols} Spalte${totalCols > 1 ? 'n' : ''} übertragen`, 'success');
         }
         
         // ==================== Sheet Management Functions ====================
@@ -13242,10 +13269,27 @@
         // ============ ENDE SUCHEN & ERSETZEN ============
         
         // Floating Status Nachricht anzeigen
-        function showFloatingStatus(message, isError = false) {
+        function showFloatingStatus(message, type = false) {
             // Alte Nachricht entfernen
             const oldStatus = document.querySelector('.floating-status');
             if (oldStatus) oldStatus.remove();
+            
+            // Typ-Mapping: boolean backward-compat + string-Typen
+            const colors = {
+                error: '#F44336',
+                warning: '#FF9800',
+                success: '#4CAF50',
+                info: '#2196F3'
+            };
+            let bg, duration;
+            if (type === true) {
+                bg = colors.error; duration = 4000;
+            } else if (typeof type === 'string' && colors[type]) {
+                bg = colors[type];
+                duration = type === 'success' ? 3500 : type === 'info' ? 0 : 4000;
+            } else {
+                bg = 'var(--primary)'; duration = 2000;
+            }
             
             const status = document.createElement('div');
             status.className = 'floating-status';
@@ -13254,7 +13298,7 @@
                 bottom: 80px;
                 left: 50%;
                 transform: translateX(-50%);
-                background: ${isError ? '#F44336' : 'var(--primary)'};
+                background: ${bg};
                 color: white;
                 padding: 10px 20px;
                 border-radius: 6px;
@@ -13266,10 +13310,13 @@
             status.textContent = message;
             document.body.appendChild(status);
             
-            setTimeout(() => {
-                status.style.animation = 'fadeOut 0.3s ease';
-                setTimeout(() => status.remove(), 300);
-            }, 2000);
+            // duration=0 → bleibt stehen (für info/progress), wird vom nächsten Aufruf entfernt
+            if (duration > 0) {
+                setTimeout(() => {
+                    status.style.animation = 'fadeOut 0.3s ease';
+                    setTimeout(() => status.remove(), 300);
+                }, duration);
+            }
         }
 
         async function openDataExplorer() {
@@ -13907,6 +13954,52 @@
         async function loadExplorerSheet(sheetName) {
             if (!explorerState.filePath || !sheetName) return;
             
+            // Guard: Verhindert parallele Sheet-Wechsel — Excel muss erst synchronisiert werden
+            // Bei schnellem Klicken: Letztes gewünschtes Sheet merken → wird nach Abschluss automatisch geladen
+            if (explorerState.isLoadingSheet) {
+                console.log(`[loadExplorerSheet] Pending: Sheet "${sheetName}" vorgemerkt (vorheriger Ladevorgang läuft)`);
+                explorerState.pendingSheetSwitch = sheetName;
+                elements.explorerSheetSelect.value = sheetName; // Dropdown zeigt bereits das Ziel-Sheet
+                return;
+            }
+            
+            explorerState.isLoadingSheet = true;
+            elements.explorerSheetSelect.disabled = true;
+            
+            // === UI KOMPLETT SPERREN während Sheet-Wechsel ===
+            // Overlay über die Tabelle legen
+            const switchOverlay = document.getElementById('explorerSheetSwitchOverlay');
+            if (switchOverlay) switchOverlay.classList.remove('hidden');
+            // Alle Buttons in der Explorer-Toolbar deaktivieren
+            const _disabledExplorerButtons = [];
+            document.querySelectorAll('#dataExplorerModal .btn').forEach(btn => {
+                if (!btn.disabled) {
+                    btn.disabled = true;
+                    _disabledExplorerButtons.push(btn);
+                }
+            });
+            // Suche deaktivieren
+            if (elements.explorerSearch) elements.explorerSearch.disabled = true;
+            
+            // === ALLE ausstehenden Sync-Operationen ABBRECHEN (nicht flushen!) ===
+            // Cell-Batch-Timer stoppen und Queue leeren (NICHT an Excel senden!)
+            if (_cellSyncBatchTimer) {
+                clearTimeout(_cellSyncBatchTimer);
+                _cellSyncBatchTimer = null;
+            }
+            _pendingCellSyncs.clear();
+            // Per-Cell Debounce-Timer abbrechen
+            for (const [key, timer] of _syncCellTimers) {
+                clearTimeout(timer);
+            }
+            _syncCellTimers.clear();
+            // Alle laufenden Row-Sync-Timer abbrechen
+            for (const [rowIdx, timer] of _syncRowTimers) {
+                clearTimeout(timer);
+            }
+            _syncRowTimers.clear();
+            
+            try {
             // Prüfe ob das Sheet ausgeblendet ist
             if (explorerState.hiddenSheets && explorerState.hiddenSheets.has(sheetName)) {
                 // Nur im Live-Modus kann man einblenden
@@ -13976,26 +14069,10 @@
                     return { ok: false };
                 })();
             } else if (explorerState.engineMode === 'live') {
-                // Live-Modus aktiv aber Session nicht bereit → Session neu starten
-                console.warn('[loadExplorerSheet] engineMode=live aber Session nicht aktiv → starte Session neu');
-                switchSheetPromise = (async () => {
-                    try {
-                        const liveOk = await startLiveSession();
-                        if (liveOk) {
-                            const switchResult = await window.electronAPI.liveSessionSwitchSheet(sheetName);
-                            if (switchResult.success) {
-                                console.log('[LiveSession] Sheet gewechselt zu:', sheetName, '(nach Session-Neustart)');
-                                if (switchResult.hasConditionalFormatting !== undefined) {
-                                    explorerState.hasConditionalFormatting = !!switchResult.hasConditionalFormatting;
-                                }
-                                return { ok: true };
-                            }
-                        }
-                    } catch (err) {
-                        console.error('[LiveSession] Session-Neustart fehlgeschlagen:', err);
-                    }
-                    return { ok: false };
-                })();
+                // Live-Modus aktiv aber Session nicht bereit
+                // KEIN Session-Neustart hier — loadExplorerFileByPath startet die Session
+                // nach dem ersten loadExplorerSheet. Doppeltes Starten vermeiden!
+                console.log('[loadExplorerSheet] engineMode=live aber Session nicht aktiv → warte auf loadExplorerFileByPath');
             }
             
             // Loading-Status anzeigen
@@ -14041,22 +14118,47 @@
                     elements.explorerStatus.textContent = '';
                 }
                 
-                renderExplorerTable();
+                // WICHTIG: filterExplorerData() statt renderExplorerTable() verwenden,
+                // damit versteckte Zeilen (hiddenRows) korrekt ausgefiltert werden!
+                filterExplorerData();
                 updateColumnToggles();
                 updateExplorerEditStatus();
                 updateHiddenRowsIndicator();
                 updateHiddenColumnsIndicator();
                 updateAutoFilterIndicator();
-                // switchSheet im Hintergrund abwarten (Cache-Fall: UI ist schon fertig)
-                // Lazy Factory erst jetzt aufrufen (nicht schon oben)
+                // SCHRITT 1: switchSheet ohne Daten (nur Python-Referenz setzen)
+                // SCHRITT 2: activateSheet (visueller Wechsel in Excel NACH dem GUI-Rendern)
+                // AWAIT — Buttons bleiben gesperrt bis COM-Operationen fertig!
                 if (switchSheetFactory) {
-                    switchSheetFactory().then(res => {
-                        if (!res.ok) showFloatingStatus(`⚠️ Excel Sheet-Wechsel fehlgeschlagen`, 'error');
-                    });
+                    try {
+                        const res = await switchSheetFactory();
+                        if (!res.ok) {
+                            showFloatingStatus('⚠️ Excel Sheet-Wechsel fehlgeschlagen', 'error');
+                        } else {
+                            try {
+                                await window.electronAPI.liveSessionActivateSheet(sheetName);
+                            } catch (e) {
+                                console.error('[LiveSession] activateSheet Fehler:', e);
+                            }
+                        }
+                    } catch (err) {
+                        console.error('[LiveSession] Cache-Sync Switch Fehler:', err);
+                    }
                 } else if (switchSheetPromise) {
-                    switchSheetPromise.then(res => {
-                        if (!res.ok) showFloatingStatus(`⚠️ Excel Sheet-Wechsel fehlgeschlagen`, 'error');
-                    });
+                    try {
+                        const res = await switchSheetPromise;
+                        if (!res.ok) {
+                            showFloatingStatus('⚠️ Excel Sheet-Wechsel fehlgeschlagen', 'error');
+                        } else {
+                            try {
+                                await window.electronAPI.liveSessionActivateSheet(sheetName);
+                            } catch (e) {
+                                console.error('[LiveSession] activateSheet Fehler:', e);
+                            }
+                        }
+                    } catch (err) {
+                        console.error('[LiveSession] Switch Fehler:', err);
+                    }
                 }
                 return;
             }
@@ -14147,14 +14249,25 @@
                     }
                     
                     // xlwings liefert headers und data getrennt (nicht data[0]=headers wie ExcelJS)
+                    // Hidden Rows/Cols: Bevorzuge COM-Daten aus switchResult (funktioniert auch bei Passwort-Dateien!)
+                    // Fallback auf ZIP-Metadaten wenn COM keine Daten liefert
+                    const comHiddenRows = switchResult.hiddenRows;
+                    const comHiddenCols = switchResult.hiddenColumns;
+                    const useComVisibility = Array.isArray(comHiddenRows); // COM hat Daten geliefert
+                    
+                    if (useComVisibility) {
+                        console.log(`[loadExplorerSheet] Versteckte Zeilen/Spalten von COM: ${comHiddenRows.length} Zeilen, ${comHiddenCols.length} Spalten`);
+                    }
+                    
                     result = {
                         success: true,
                         headers: switchResult.headers,
                         data: switchResult.data, // Bereits ohne Header-Zeile
                         _fromLiveSession: true,  // Marker für unterschiedliche data-Behandlung
-                        // ZIP-Metadaten anhängen (bestmöglich)
-                        hiddenColumns: metadataResult?.success ? (metadataResult.hiddenColumns || []) : [],
-                        hiddenRows: metadataResult?.success ? (metadataResult.hiddenRows || []) : [],
+                        // Versteckte Zeilen/Spalten: COM-Daten bevorzugen, ZIP als Fallback
+                        hiddenColumns: useComVisibility ? comHiddenCols : (metadataResult?.success ? (metadataResult.hiddenColumns || []) : []),
+                        hiddenRows: useComVisibility ? comHiddenRows : (metadataResult?.success ? (metadataResult.hiddenRows || []) : []),
+                        // Restliche Metadaten weiterhin aus ZIP
                         mergedCells: metadataResult?.success ? (metadataResult.mergedCells || []) : [],
                         autoFilterRange: metadataResult?.success ? (metadataResult.autoFilterRange || null) : null,
                         imageCells: metadataResult?.success ? (metadataResult.imageCells || []) : [],
@@ -14312,6 +14425,41 @@
             updateHiddenRowsIndicator();
             updateHiddenColumnsIndicator();
             updateAutoFilterIndicator();
+            
+            // GUI ist gerendert → jetzt Excel visuell wechseln (separater Befehl)
+            // AWAIT — Buttons bleiben gesperrt bis activate() fertig (hat 3s Timeout in Python)
+            if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                try {
+                    await window.electronAPI.liveSessionActivateSheet(sheetName);
+                } catch (err) {
+                    console.error('[LiveSession] activateSheet Fehler:', err);
+                }
+            }
+            } finally {
+                // === UI ENTSPERREN ===
+                const switchOverlayEnd = document.getElementById('explorerSheetSwitchOverlay');
+                if (switchOverlayEnd) switchOverlayEnd.classList.add('hidden');
+                // Alle vorher gesperrten Buttons wieder aktivieren
+                if (typeof _disabledExplorerButtons !== 'undefined') {
+                    _disabledExplorerButtons.forEach(btn => { btn.disabled = false; });
+                }
+                if (elements.explorerSearch) elements.explorerSearch.disabled = false;
+                
+                // Guard aufheben — Sheet-Wechsel wieder erlauben
+                explorerState.isLoadingSheet = false;
+                elements.explorerSheetSelect.disabled = false;
+                
+                // Wurde während des Ladevorgangs ein neues Sheet angefordert?
+                // → Automatisch zum letzten gewünschten Sheet wechseln
+                if (explorerState.pendingSheetSwitch && explorerState.pendingSheetSwitch !== explorerState.selectedSheet) {
+                    const pendingSheet = explorerState.pendingSheetSwitch;
+                    explorerState.pendingSheetSwitch = null;
+                    console.log(`[loadExplorerSheet] Pending Sheet-Wechsel ausführen: "${pendingSheet}"`);
+                    loadExplorerSheet(pendingSheet); // Nicht await — wird async gestartet
+                } else {
+                    explorerState.pendingSheetSwitch = null;
+                }
+            }
         }
         
         // Speichert das aktuelle Sheet im Cache
@@ -14787,6 +14935,14 @@
                 return;
             }
             
+            // Concurrency Guard: Nur ein COM-Call gleichzeitig
+            if (syncFiltersToExcel._running) {
+                syncFiltersToExcel._pending = true;
+                return;
+            }
+            syncFiltersToExcel._running = true;
+            syncFiltersToExcel._pending = false;
+            
             try {
                 const noValueOps = ['isEmpty', 'isNotEmpty', 'dateToday', 'datePast', 'dateFuture', 'dateThisWeek', 'dateThisMonth'];
                 const dateOps = ['dateInDays', 'dateOverdueDays', 'dateBetween', 'dateToday', 'datePast', 'dateFuture', 'dateThisWeek', 'dateThisMonth'];
@@ -14901,8 +15057,17 @@
                 if (result && !result.success) {
                     console.error('[LiveSession] Filter fehlgeschlagen:', result);
                 }
+                return result;
             } catch (error) {
                 console.error('[LiveSession] Filter-Sync Fehler:', error);
+                return { success: false, error: error.message };
+            } finally {
+                syncFiltersToExcel._running = false;
+                // Falls während des Laufs ein neuer Call reinkam, jetzt nachholen
+                if (syncFiltersToExcel._pending) {
+                    syncFiltersToExcel._pending = false;
+                    syncFiltersToExcel();
+                }
             }
         }
         
@@ -15296,8 +15461,13 @@
             // LIVE SESSION: Verschiebe Spalte sofort in Excel
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 // fromPos/toPos sind bereits die physischen Excel-Positionen (positions in columnOrder)
+                showFloatingStatus('🔄 Excel wird synchronisiert...', 'info');
                 liveSessionExecute('moveColumn', fromPos, toPos).then(() => {
                     console.log(`[LiveSession] Spalte ${fromColIndex} (Excel-Pos ${fromPos}) nach ${toColIndex} (Excel-Pos ${toPos}) verschoben`);
+                    showFloatingStatus('✓ Spalte verschoben', 'success');
+                }).catch((err) => {
+                    console.error('[LiveSession] moveColumn error:', err);
+                    showFloatingStatus('⚠️ Spaltenverschiebung fehlgeschlagen', 'warning');
                 });
             }
             
@@ -17030,25 +17200,12 @@
             // Auswahl zurücksetzen
             explorerState.selectedRows.clear();
             
-            // FilteredData neu erstellen
-            explorerState.filteredData = explorerState.data.map((row, idx) => ({
-                row: row,
-                originalIndex: idx
-            }));
-            
-            // Suchfilter erneut anwenden wenn aktiv
-            const searchTerm = elements.explorerSearch?.value?.trim().toLowerCase();
-            if (searchTerm) {
-                explorerState.filteredData = explorerState.filteredData.filter(item => 
-                    item.row.some(cell => String(cell ?? '').toLowerCase().includes(searchTerm))
-                );
-            }
-            
             // Markiere als geändert
             explorerState.hasUnsavedChanges = true;
             
-            // Tabelle neu rendern
-            renderExplorerTable();
+            // FilteredData neu erstellen (inkl. hiddenRows, Suchfilter, Spaltenfilter, Sortierung)
+            filterExplorerData();
+            updateHiddenRowsIndicator();
             
             const successMsg = currentLanguage === 'en'
                 ? `${selectedCount} row(s) deleted`
@@ -17570,7 +17727,7 @@
                     // move_column: explorerState.data/headers unverändert, nur columnOrder reset
                     console.log('[Undo] move_column → Fast-Path (kein readExcelSheet)');
                     renderExplorerTable();
-                } else if (undoResult.action === 'restore_cell_value' || undoResult.action === 'restore_cells_batch') {
+                } else if (undoResult.action === 'restore_cell_value' || undoResult.action === 'restore_cells_batch' || undoResult.action === 'find_replace') {
                     // Zellwert-Undo: Python hat Excel via COM bereits aktualisiert.
                     // Frontend-Daten lokal aus dem Frontend-Undo-Stack aktualisieren.
                     // KEIN readExcelSheet! (verursacht Hang auf Windows wegen Excel-Datei-Lock)
@@ -17609,6 +17766,74 @@
                         }
                     }
                     renderExplorerTable();
+                } else if (undoResult.action === 'hide_column') {
+                    // Spalten-Sichtbarkeit Undo: Python hat Excel-Spalte bereits ein-/ausgeblendet
+                    // Frontend visibleColumns + UI aktualisieren
+                    const params = undoResult.params || {};
+                    const excelColIndex = params.col_index;
+                    const wasShown = params.hidden === false;  // hidden=false → Spalte wurde eingeblendet
+                    
+                    // Excel-Index → Frontend-Index übersetzen
+                    let frontendColIndex = excelColIndex;
+                    if (explorerState.columnOrder.length > 0 && excelColIndex < explorerState.columnOrder.length) {
+                        frontendColIndex = explorerState.columnOrder[excelColIndex];
+                    }
+                    
+                    console.log(`[Undo] hide_column → Fast-Path: col=${frontendColIndex} (excel=${excelColIndex}), shown=${wasShown}`);
+                    
+                    if (wasShown) {
+                        // Spalte wurde eingeblendet → zu visibleColumns hinzufügen
+                        if (!explorerState.visibleColumns.includes(frontendColIndex)) {
+                            explorerState.visibleColumns.push(frontendColIndex);
+                            explorerState.visibleColumns.sort((a, b) => a - b);
+                        }
+                    } else {
+                        // Spalte wurde ausgeblendet → aus visibleColumns entfernen
+                        explorerState.visibleColumns = explorerState.visibleColumns.filter(i => i !== frontendColIndex);
+                    }
+                    
+                    renderExplorerTable();
+                    updateColumnToggles();
+                    updateHiddenColumnsIndicator();
+                } else if (undoResult.action === 'hide_row' || undoResult.action === 'hide_rows_batch') {
+                    // Zeilen-Sichtbarkeit Undo: Python hat Excel-Zeile(n) bereits ein-/ausgeblendet
+                    const params = undoResult.params || {};
+                    const wasShown = params.hidden === false;
+                    
+                    if (undoResult.action === 'hide_row') {
+                        const rowIndex = params.row_index;
+                        console.log(`[Undo] hide_row → Fast-Path: row=${rowIndex}, shown=${wasShown}`);
+                        if (wasShown) {
+                            explorerState.hiddenRows.delete(rowIndex);
+                        } else {
+                            explorerState.hiddenRows.add(rowIndex);
+                        }
+                    } else {
+                        // hide_rows_batch
+                        const rowIndices = params.row_indices || [];
+                        console.log(`[Undo] hide_rows_batch → Fast-Path: ${rowIndices.length} rows, shown=${wasShown}`);
+                        for (const rowIndex of rowIndices) {
+                            if (wasShown) {
+                                explorerState.hiddenRows.delete(rowIndex);
+                            } else {
+                                explorerState.hiddenRows.add(rowIndex);
+                            }
+                        }
+                    }
+                    
+                    // filteredData neu berechnen
+                    explorerState.filteredData = explorerState.data.map((row, idx) => ({
+                        row: row,
+                        originalIndex: idx
+                    }));
+                    if (explorerState.hiddenRows.size > 0) {
+                        explorerState.filteredData = explorerState.filteredData.filter(
+                            item => !explorerState.hiddenRows.has(item.originalIndex)
+                        );
+                    }
+                    
+                    renderExplorerTable();
+                    updateHiddenRowsIndicator();
                 } else {
                     // Andere Undo-Typen (delete_column, insert_column, delete_row etc.):
                     // Daten über COM (Live-Session) lesen — NICHT von Disk (readExcelSheet)!
@@ -17746,10 +17971,35 @@
                     console.log('[Export] Live-Session aktiv - nur Save-Befehl nötig...');
                     
                     try {
-                        // Filter vor dem Speichern an Excel senden
-                        if (explorerState.filters.some(f => f.column && f.value)) {
-                            console.log('[Export] Synchronisiere Filter zu Excel vor dem Speichern...');
-                            await syncFiltersToExcel();
+                        // Ausstehende Zell-Syncs flushen bevor gespeichert wird
+                        if (_cellSyncBatchTimer) {
+                            clearTimeout(_cellSyncBatchTimer);
+                            _cellSyncBatchTimer = null;
+                        }
+                        if (_pendingCellSyncs.size > 0) {
+                            console.log('[Export] Flushe', _pendingCellSyncs.size, 'ausstehende Zell-Syncs...');
+                            const flushCells = Array.from(_pendingCellSyncs.values());
+                            _pendingCellSyncs.clear();
+                            await window.electronAPI.liveSessionSetCellsBatch(_mapCellsBatchCols(flushCells));
+                        }
+                        
+                        // Filter-Debounce-Timer flushen (sonst können gerade getippte
+                        // Filter noch ausstehen und werden nicht mitgespeichert)
+                        let filterSyncNeeded = false;
+                        if (updateFiltersFromDOM._syncTimer) {
+                            clearTimeout(updateFiltersFromDOM._syncTimer);
+                            updateFiltersFromDOM._syncTimer = null;
+                            filterSyncNeeded = true; // Debounce war ausstehend → muss noch gesynct werden
+                        }
+                        
+                        // Filter NUR synchronisieren wenn Debounce ausstehend war
+                        // (sonst wurden Filter bereits per Debounce an Excel gesendet
+                        // und ein redundanter AutoFilter-COM-Call kann bei großen
+                        // Dateien mit Pivot-Tabellen Excel zum Hängen bringen)
+                        if (filterSyncNeeded && explorerState.filters.some(f => f.column)) {
+                            console.log('[Export] Flushe ausstehenden Filter-Sync vor dem Speichern...');
+                            const syncResult = await syncFiltersToExcel();
+                            console.log('[Export] Filter-Sync abgeschlossen');
                         }
                         
                         // Passwort-Logik
@@ -18199,14 +18449,13 @@
                             }
                             
                             // RowHighlights für Export vorbereiten
-                            // ALLE aktiven Markierungen senden (weil wir von der Original-Datei ausgehen)
+                            // ALLE aktiven Markierungen senden (Original-Daten-Indizes verwenden)
+                            // WICHTIG: Original-Index = Daten-Array-Index = Excel-Zeile minus 2
+                            // filteredData-Indizes wären FALSCH wenn versteckte Zeilen existieren,
+                            // weil die Excel-Zeilen ihre Originalpositionen behalten
                             const exportRowHighlights = {};
                             explorerState.rowHighlights.forEach((color, originalIndex) => {
-                                // Finde den neuen Index in filteredData
-                                const newIdx = explorerState.filteredData.findIndex(item => item.originalIndex === originalIndex);
-                                if (newIdx !== -1) {
-                                    exportRowHighlights[newIdx] = color;
-                                }
+                                exportRowHighlights[originalIndex] = color;
                             });
                             
                             if (Object.keys(exportRowHighlights).length > 0) {
@@ -18216,13 +18465,8 @@
                             // ClearedRowHighlights: Zeilen die ursprünglich markiert waren, aber jetzt nicht mehr
                             const clearedRowHighlights = [];
                             explorerState.originalRowHighlights.forEach((color, originalIndex) => {
-                                // Wenn die Zeile nicht mehr in rowHighlights ist, wurde sie entfernt
                                 if (!explorerState.rowHighlights.has(originalIndex)) {
-                                    // Finde den neuen Index in filteredData
-                                    const newIdx = explorerState.filteredData.findIndex(item => item.originalIndex === originalIndex);
-                                    if (newIdx !== -1) {
-                                        clearedRowHighlights.push(newIdx);
-                                    }
+                                    clearedRowHighlights.push(originalIndex);
                                 }
                             });
                             
@@ -18689,13 +18933,27 @@
                 
                 // DIAGNOSTIC: Log export data summary
                 for (const s of sheetsToExport) {
+                    // rowMapping Analyse
+                    let rmInfo = 'null';
+                    if (s.rowMapping) {
+                        let isIdentity = true;
+                        let firstDiff = -1;
+                        for (let i = 0; i < s.rowMapping.length; i++) {
+                            if (s.rowMapping[i] !== i) { isIdentity = false; firstDiff = i; break; }
+                        }
+                        rmInfo = `len=${s.rowMapping.length}, identity=${isIdentity}${!isIdentity ? `, firstDiff@${firstDiff}: val=${s.rowMapping[firstDiff]}` : ''}`;
+                    }
+                    // rowHighlights Analyse
+                    const hlKeys = s.rowHighlights ? Object.keys(s.rowHighlights) : [];
+                    const hlInfo = hlKeys.length > 0 ? `${hlKeys.length} highlights, first5Keys=[${hlKeys.slice(0,5).join(',')}]` : '0 highlights';
                     console.log(`[DIAG-FE] Sheet "${s.sheetName}": fromFile=${s.fromFile}, fullRewrite=${s.fullRewrite}, structuralChange=${s.structuralChange}, ` +
                         `deletedColumnIndices=${JSON.stringify(s.deletedColumnIndices || [])}, ` +
                         `insertedColumnInfo=${!!s.insertedColumnInfo}, columnOrder=${s.columnOrder ? s.columnOrder.length : 'null'}, ` +
                         `colOpsQueue=${(s.columnOperationsQueue || []).length}, ` +
                         `changedCells=${s.changedCells ? Object.keys(s.changedCells).length : 'undef'}, ` +
-                        `rowMapping=${s.rowMapping ? s.rowMapping.length : 'null'}, ` +
-                        `data=${s.data ? s.data.length : 0} rows`);
+                        `rowMapping=(${rmInfo}), ` +
+                        `data=${s.data ? s.data.length : 0} rows, ` +
+                        `${hlInfo}`);
                 }
                 console.log(`[DIAG-FE] pendingSheetOperations: ${JSON.stringify(explorerState.pendingSheetOperations || [])}`);
                 
@@ -18836,6 +19094,16 @@
                             
                             // Cache aktualisieren
                             saveCurrentSheetToCache();
+                            
+                            // Dateipfad aktualisieren falls "Speichern unter"
+                            // WICHTIG: Ohne dieses Update liest der nächste Export von der
+                            // Original-Datei statt von der exportierten Datei!
+                            const isFilteredExport2 = selectedSheets.length < explorerState.sheets.length;
+                            if (savePath !== explorerState.filePath && !isFilteredExport2) {
+                                explorerState.filePath = savePath;
+                                explorerState.fileName = savePath.split('/').pop();
+                                document.getElementById('explorerFileName').textContent = explorerState.fileName;
+                            }
                             
                             // UI aktualisieren
                             filterExplorerData();

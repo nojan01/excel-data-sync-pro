@@ -364,20 +364,44 @@ class ExcelLiveSession:
             if not self.app:
                 return
             
-            # Screen-Updating sicherstellen
-            self.app.screen_updating = True
+            is_visible = False
+            try:
+                is_visible = self.app.visible
+            except Exception:
+                pass
             
-            # Windows: Aggressiveres Refresh
+            app = self.app.api
+            
+            # Alle Blocker temporär aufheben
+            try:
+                if is_visible:
+                    app.Interactive = True
+                app.EnableEvents = True
+                app.ScreenUpdating = True
+            except Exception:
+                pass
+            
             try:
                 if self.workbook:
                     self.workbook.activate()
                 if self.worksheet:
-                    self.worksheet.activate()
-                self.app.screen_updating = False
-                self.app.screen_updating = True
+                    try:
+                        app.Goto(self.worksheet.api.Range("A1"))
+                    except Exception:
+                        self.worksheet.activate()
+                app.ScreenUpdating = False
+                app.ScreenUpdating = True
                 self.app.calculate()
             except Exception as win_err:
-                self._log(f"_force_screen_refresh Windows-Fehler: {win_err}")
+                self._log(f"_force_screen_refresh Fehler: {win_err}")
+            
+            # Blocker wiederherstellen
+            try:
+                app.EnableEvents = False
+                if is_visible:
+                    app.Interactive = False
+            except Exception:
+                pass
                 
         except Exception as e:
             self._log(f"Fehler bei screen refresh: {e}")
@@ -602,15 +626,11 @@ class ExcelLiveSession:
             else:
                 effective_password = None
             
-            # Vor dem Speichern: Berechnung einmalig triggern, damit Formeln aktuell sind
-            if platform.system() == 'Windows':
-                try:
-                    self.app.calculation = 'automatic'  # triggert 1× Recalc
-                    self.app.enable_events = True
-                    if self.worksheet:
-                        self.worksheet.api.EnableFormatConditionsCalculation = True
-                except Exception as recalc_err:
-                    self._log(f"Pre-Save Recalc fehlgeschlagen: {recalc_err}")
+            # Vor dem Speichern: KEIN calculation='automatic' setzen!
+            # Das triggert sofort eine Komplett-Neuberechnung aller Sheets/PivotTables
+            # und blockiert den COM-Kanal für Minuten.
+            # Excel speichert die Daten so wie sie sind — Formeln werden beim
+            # nächsten manuellen Öffnen der Datei automatisch neuberechnet.
             
             # Sheet-Filterung: Nur ausgewählte Sheets exportieren
             all_sheet_names = [s.name for s in self.workbook.sheets]
@@ -955,7 +975,7 @@ class ExcelLiveSession:
         
         if result.get('success'):
             self._log(f"Undo erfolgreich: {label} (noch {len(self.undo_stack)} Undo-Schritte)")
-            return {'success': True, 'undone': label, 'action': action, 'undoCount': len(self.undo_stack)}
+            return {'success': True, 'undone': label, 'action': action, 'params': params, 'undoCount': len(self.undo_stack)}
         else:
             return {'success': False, 'error': f'Undo fehlgeschlagen: {result.get("error")}'}
     
@@ -1305,6 +1325,14 @@ class ExcelLiveSession:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
             
             excel_row = row_index + 2
+            
+            # Undo: Inverse Operation = Sichtbarkeit umkehren
+            self._push_undo_command(
+                f'Zeile {excel_row} {"ausgeblendet" if hidden else "eingeblendet"}',
+                'hide_row',
+                {'row_index': row_index, 'hidden': not hidden}
+            )
+            
             # Nutze eine Zelle der Zeile und dann entire_row (analog zu hide_column)
             row_range = self.worksheet.range(f'A{excel_row}')
             
@@ -1329,6 +1357,13 @@ class ExcelLiveSession:
             
             if not row_indices:
                 return {'success': True, 'count': 0}
+            
+            # Undo: Inverse Operation = gleiche Zeilen mit umgekehrter Sichtbarkeit
+            self._push_undo_command(
+                f'{len(row_indices)} Zeilen {"ausgeblendet" if hidden else "eingeblendet"}',
+                'hide_rows_batch',
+                {'row_indices': list(row_indices), 'hidden': not hidden}
+            )
             
             # Konvertiere zu Excel-Zeilen (0-basiert -> 1-basiert + Header)
             excel_rows = [idx + 2 for idx in row_indices]
@@ -1420,6 +1455,54 @@ class ExcelLiveSession:
             self._log(f"Fehler beim Markieren der Zeile: {e}")
             return {'success': False, 'error': str(e)}
     
+    def highlight_rows_batch(self, rows: list, color: Optional[str] = None) -> Dict[str, Any]:
+        """Markiert mehrere Zeilen mit Farbe in einem Aufruf"""
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            if not rows:
+                return {'success': True, 'count': 0}
+            
+            last_col = self.worksheet.used_range.last_cell.column if self.worksheet.used_range else 10
+            last_col_letter = self._get_column_letter(last_col)
+            
+            colors_map = {
+                'green': (144, 238, 144),
+                'yellow': (255, 255, 0),
+                'orange': (255, 165, 0),
+                'red': (255, 107, 107),
+                'blue': (135, 206, 235),
+                'purple': (221, 160, 221)
+            }
+            rgb = colors_map.get(color, (255, 255, 0))
+            
+            self.app.screen_updating = False
+            try:
+                for row_index in rows:
+                    excel_row = row_index + 2
+                    row_range = self.worksheet.range(f'A{excel_row}:{last_col_letter}{excel_row}')
+                    if color is None:
+                        row_range.color = None
+                    else:
+                        row_range.color = rgb
+            finally:
+                self.app.screen_updating = True
+            
+            try:
+                if platform.system() == 'Windows':
+                    self.workbook.api.Saved = True
+                else:
+                    self.workbook.api.saved.set(True)
+            except Exception:
+                pass
+            
+            self._log(f"{len(rows)} Zeilen markiert mit {color}")
+            return {'success': True, 'count': len(rows)}
+            
+        except Exception as e:
+            self._log(f"Fehler beim Batch-Markieren: {e}")
+            return {'success': False, 'error': str(e)}
+
     # =========================================================================
     # SPALTEN-OPERATIONEN
     # =========================================================================
@@ -1497,15 +1580,39 @@ class ExcelLiveSession:
                 {'col_index': col_index, 'count': count}
             )
             
-            for i in range(count):
-                insert_letter = self._get_column_letter(excel_col + i)
-                self._log(f"Füge Spalte {insert_letter} ein")
-                self.worksheet.range(f'{insert_letter}:{insert_letter}').insert(shift='right')
-            
-            # Header setzen falls vorhanden
-            if headers:
-                for i, header in enumerate(headers):
-                    self.worksheet.range((1, excel_col + i)).value = header
+            # Performance: Screen-Updates + Berechnung deaktivieren während Spalten-Einfügung
+            self.app.screen_updating = False
+            old_calculation = self.app.calculation
+            old_events = self.app.enable_events
+            try:
+                self.app.calculation = 'manual'
+                self.app.enable_events = False
+                if self.worksheet and platform.system() == 'Windows':
+                    try:
+                        self.worksheet.api.EnableFormatConditionsCalculation = False
+                    except:
+                        pass
+                
+                # 1) Spalten einfügen via COM API (PivotTable-sicher)
+                start_letter = self._get_column_letter(excel_col)
+                end_letter = self._get_column_letter(excel_col + count - 1)
+                self._log(f"Füge {count} Spalte(n) {start_letter}:{end_letter} ein (COM API)")
+                self.worksheet.api.Columns(f'{start_letter}:{end_letter}').Insert()
+                
+                # 2) Worksheet-Referenz refreshen nach COM Insert
+                ws_name = self.worksheet.name
+                self.worksheet = self.workbook.sheets[ws_name]
+                
+                # 3) Header setzen via xlwings (frische Referenz)
+                if headers:
+                    for i, header in enumerate(headers):
+                        self.worksheet.range((1, excel_col + i)).value = header
+            finally:
+                # Session-Performance-Modus beibehalten:
+                # EnableFormatConditionsCalculation=False, enable_events=False
+                self.app.calculation = old_calculation
+                self.app.enable_events = old_events
+                self.app.screen_updating = True
             
             # Journal-Eintrag
             self._journal_add('insertColumn', {'colIndex': col_index, 'count': count, 'headers': headers})
@@ -1515,6 +1622,178 @@ class ExcelLiveSession:
             
         except Exception as e:
             self._log(f"Fehler beim Einfügen der Spalte: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def data_join_sync(self, operations: list) -> Dict[str, Any]:
+        """Batch-Operation für Data Join: Spalten einfügen + Werte setzen in EINEM Aufruf.
+        
+        Args:
+            operations: Liste von Operationen, jede mit:
+                - position: 0-basierter Spaltenindex für Einfügung
+                - count: Anzahl der einzufügenden Spalten
+                - headers: Liste der Header-Namen
+                - columnData: Liste von Listen (pro Spalte eine Werteliste)
+        """
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            sorted_ops = sorted(operations, key=lambda x: x.get('position', 0))
+            insert_offset = 0
+            total_inserted = 0
+            total_values = 0
+            
+            self.app.screen_updating = False
+            original_calculation = self.app.calculation
+            self.app.calculation = 'manual'
+            self.app.enable_events = False
+            # Bedingte Formatierung deaktivieren (nur Windows)
+            if platform.system() == 'Windows':
+                try:
+                    self.worksheet.api.EnableFormatConditionsCalculation = False
+                except Exception:
+                    pass
+            try:
+                for op in sorted_ops:
+                    pos = op.get('position', 0) + insert_offset
+                    count = op.get('count', 1)
+                    headers = op.get('headers', [])
+                    column_data = op.get('columnData', [])
+                    
+                    self._log(f"DataJoin op: pos={pos}, count={count}, headers={headers}, columnData={len(column_data)} arrays")
+                    if column_data:
+                        for ci, cd in enumerate(column_data):
+                            non_empty = [v for v in cd if v != '' and v is not None][:5]
+                            self._log(f"  columnData[{ci}]: {len(cd)} values, {len([v for v in cd if v != '' and v is not None])} non-empty, sample: {non_empty}")
+                    
+                    excel_col = pos + 1
+                    
+                    # Undo: Inverse Operation = eingefügte Spalten wieder löschen
+                    self._push_undo_command(
+                        f'DataJoin: {count} Spalte(n) eingefügt',
+                        'delete_columns_range',
+                        {'col_index': pos, 'count': count}
+                    )
+                    
+                    # 1) Spalten einfügen via COM API (PivotTable-sicher)
+                    if count > 0:
+                        start_letter = self._get_column_letter(excel_col)
+                        end_letter = self._get_column_letter(excel_col + count - 1)
+                        self._log(f"DataJoin: Füge {count} Spalte(n) {start_letter}:{end_letter} ein (COM API)")
+                        self.worksheet.api.Columns(f'{start_letter}:{end_letter}').Insert()
+                    
+                    # 2) Worksheet-Referenz refreshen nach COM Insert
+                    # xlwings cached intern den Worksheet-Zustand; nach Columns.Insert()
+                    # muss die Referenz erneuert werden, damit range().value korrekt schreibt
+                    ws_name = self.worksheet.name
+                    self.worksheet = self.workbook.sheets[ws_name]
+                    
+                    # 3) Header + Daten via xlwings schreiben (frische Referenz)
+                    if headers:
+                        for i, header in enumerate(headers):
+                            self.worksheet.range((1, excel_col + i)).value = header
+                    
+                    # 4) Spaltendaten setzen — Zelle für Zelle (wie openpyxl)
+                    #    Bulk range().value versagt auf PivotTable-Sheets,
+                    #    deshalb: nur non-empty Werte einzeln schreiben
+                    for i, col_values in enumerate(column_data):
+                        if col_values and len(col_values) > 0:
+                            target_col = excel_col + i
+                            written = 0
+                            for idx, val in enumerate(col_values):
+                                if val is not None and val != '':
+                                    self.worksheet.range((2 + idx, target_col)).value = val
+                                    written += 1
+                            self._log(f"  Spalte {target_col}: {written}/{len(col_values)} Werte geschrieben")
+                            total_values += written
+                    
+                    total_inserted += count
+                    insert_offset += count
+                    
+                    # Journal-Eintrag pro Operation
+                    self._journal_add('insertColumn', {'colIndex': pos, 'count': count, 'headers': headers})
+                
+            finally:
+                # Session-Performance-Modus beibehalten:
+                # EnableFormatConditionsCalculation=False, enable_events=False
+                self.app.enable_events = False
+                self.app.calculation = original_calculation
+                self.app.screen_updating = True
+            
+            # Verification: Gezielt non-empty Zellen zurücklesen
+            debug_info = {}
+            try:
+                for op in sorted_ops:
+                    pos = op.get('position', 0)
+                    count = op.get('count', 1)
+                    column_data = op.get('columnData', [])
+                    for i in range(count):
+                        if i < len(column_data) and column_data[i]:
+                            # Finde die tatsächliche Excel-Spalte (mit Offset)
+                            offset = 0
+                            for prev_op in sorted_ops:
+                                if prev_op.get('position', 0) < pos:
+                                    offset += prev_op.get('count', 1)
+                            actual_col = pos + offset + 1 + i
+                            col_letter = self._get_column_letter(actual_col)
+                            
+                            # Finde Index des ersten non-empty Werts
+                            first_ne_idx = None
+                            first_ne_val = None
+                            for idx, v in enumerate(column_data[i]):
+                                if v != '' and v is not None:
+                                    first_ne_idx = idx
+                                    first_ne_val = v
+                                    break
+                            
+                            # Lese Header (Zeile 1) zurück
+                            header_read = self.worksheet.range((1, actual_col)).value
+                            
+                            verify_data = {
+                                'header_readBack': str(header_read) if header_read else 'None',
+                                'sentNonEmptyCount': len([v for v in column_data[i] if v != '' and v is not None]),
+                                'sentTotal': len(column_data[i]),
+                                'col_letter': col_letter,
+                                'actual_col': actual_col,
+                                'worksheet': self.worksheet.name
+                            }
+                            
+                            # Gezielt die Zelle mit dem ersten non-empty Wert zurücklesen
+                            if first_ne_idx is not None:
+                                target_row = 2 + first_ne_idx  # +2 weil Zeile 1=Header, Daten ab Zeile 2
+                                cell_read = self.worksheet.range((target_row, actual_col)).value
+                                verify_data['firstNonEmpty'] = {
+                                    'dataIndex': first_ne_idx,
+                                    'excelRow': target_row,
+                                    'wrote': str(first_ne_val),
+                                    'readBack': str(cell_read) if cell_read is not None else 'None',
+                                    'match': str(cell_read) == str(first_ne_val) if cell_read is not None else False
+                                }
+                                # Auch 2. und 3. non-empty Wert prüfen
+                                ne_count = 0
+                                for idx2, v2 in enumerate(column_data[i]):
+                                    if v2 != '' and v2 is not None:
+                                        ne_count += 1
+                                        if ne_count in (2, 3):
+                                            r = 2 + idx2
+                                            rv = self.worksheet.range((r, actual_col)).value
+                                            verify_data[f'nonEmpty_{ne_count}'] = {
+                                                'excelRow': r, 'wrote': str(v2),
+                                                'readBack': str(rv) if rv is not None else 'None'
+                                            }
+                                        if ne_count >= 3:
+                                            break
+                            
+                            debug_info[f'{col_letter} (pos={pos})'] = verify_data
+            except Exception as ve:
+                debug_info['verifyError'] = str(ve)
+            
+            self._log(f"DataJoin sync: {total_inserted} Spalten, {total_values} Werte geschrieben")
+            return {'success': True, 'insertedColumns': total_inserted, 'valuesWritten': total_values, 'debug': debug_info}
+            
+        except Exception as e:
+            self.app.screen_updating = True
+            self._log(f"Fehler beim DataJoin-Sync: {e}")
             return {'success': False, 'error': str(e)}
     
     def move_column(self, from_index: int, to_index: int) -> Dict[str, Any]:
@@ -1552,29 +1831,45 @@ class ExcelLiveSession:
                 pass
             
             try:
-                # Verwende Cut → Insert (atomar, keine temporäre Header-Duplikation)
-                # Bei Insert+Copy+Delete gab es bei Tables/ListObjects doppelte Header
-                # → Excel hängt automatisch eine Nummer an (z.B. "Name2")
+                # 1. Hidden-Rows merken und ALLE einblenden (wie Excel es erwartet)
+                hidden_rows = []
+                try:
+                    for row_idx in range(1, last_row + 1):
+                        if self.worksheet.api.Rows(row_idx).Hidden:
+                            hidden_rows.append(row_idx)
+                    if hidden_rows:
+                        self._log(f"Blende {len(hidden_rows)} versteckte Zeilen ein vor Spaltenverschiebung")
+                        # Alle Zeilen auf einmal einblenden
+                        self.worksheet.api.Rows.Hidden = False
+                except Exception as e:
+                    self._log(f"Hidden-Row-State konnte nicht gesichert werden: {e}")
                 
+                # 2. Spalte verschieben via Cut + Insert (jetzt ohne Hidden-Row-Konflikt)
                 source_col = self.worksheet.range(f'{source_letter}:{source_letter}')
                 
                 if from_index > to_index:
-                    # Nach LINKS verschieben: Cut Quelle, Insert vor Ziel
                     target_col = self.worksheet.range(f'{target_letter}:{target_letter}')
                     source_col.api.Cut()
-                    target_col.api.Insert()
+                    target_col.api.Insert(Shift=-4161)  # xlShiftToRight
                 else:
-                    # Nach RECHTS verschieben: Cut Quelle, Insert vor Ziel+1
                     after_target_letter = self._get_column_letter(excel_to + 1)
                     after_target_col = self.worksheet.range(f'{after_target_letter}:{after_target_letter}')
                     source_col.api.Cut()
-                    after_target_col.api.Insert()
+                    after_target_col.api.Insert(Shift=-4161)  # xlShiftToRight
                 
-                # CutCopyMode zurücksetzen
                 try:
                     app.api.CutCopyMode = False
                 except Exception:
                     pass
+                
+                # 3. Hidden-Rows wiederherstellen
+                if hidden_rows:
+                    try:
+                        for row_idx in hidden_rows:
+                            self.worksheet.api.Rows(row_idx).Hidden = True
+                        self._log(f"{len(hidden_rows)} versteckte Zeilen wiederhergestellt")
+                    except Exception as e:
+                        self._log(f"Hidden-Row-State konnte nicht wiederhergestellt werden: {e}")
             finally:
                 # Events + Screen-Updates immer wieder aktivieren
                 try:
@@ -1601,6 +1896,13 @@ class ExcelLiveSession:
             
             excel_col = col_index + 1
             col_letter = self._get_column_letter(excel_col)
+            
+            # Undo: Inverse Operation = Sichtbarkeit umkehren
+            self._push_undo_command(
+                f'Spalte {col_letter} {"ausgeblendet" if hidden else "eingeblendet"}',
+                'hide_column',
+                {'col_index': col_index, 'hidden': not hidden}
+            )
             
             # Nutze eine Zelle der Spalte und dann entire_column
             col_range = self.worksheet.range(f'{col_letter}1')
@@ -1715,8 +2017,10 @@ class ExcelLiveSession:
             else:
                 # Windows: screen_updating False→True für zuverlässigen Redraw
                 self.app.screen_updating = False
-                self.worksheet.range((excel_row, excel_col)).value = value
-                self.app.screen_updating = True
+                try:
+                    self.worksheet.range((excel_row, excel_col)).value = value
+                finally:
+                    self.app.screen_updating = True
             
             # Änderung im Journal protokollieren
             self._journal_add('setCellValue', {
@@ -1759,7 +2063,13 @@ class ExcelLiveSession:
             vertical_values = [[v] for v in values]
             
             self._log(f"Setze {len(values)} Werte in Spalte {col_letter} (Zeilen {excel_start_row}-{end_row})")
-            self.worksheet.range(range_addr).value = vertical_values
+            
+            # Performance: Screen-Updates deaktivieren für Bulk-Write
+            self.app.screen_updating = False
+            try:
+                self.worksheet.range(range_addr).value = vertical_values
+            finally:
+                self.app.screen_updating = True
             
             return {'success': True, 'colIndex': col_index, 'count': len(values)}
             
@@ -1799,8 +2109,10 @@ class ExcelLiveSession:
                 # Der Übergang False→True erzwingt einen kompletten Redraw
                 self._log(f"set_row_values: Schreibe in Range {range_addr}...")
                 self.app.screen_updating = False
-                self.worksheet.range(range_addr).value = values
-                self.app.screen_updating = True
+                try:
+                    self.worksheet.range(range_addr).value = values
+                finally:
+                    self.app.screen_updating = True
                 self._log(f"set_row_values: Range-Write + Refresh abgeschlossen")
             
             self._log(f"set_row_values: Erfolgreich (row={row_index}, cols={num_cols})")
@@ -2141,6 +2453,19 @@ end tell'''
             
             self._log(f"find_replace: '{search_text}' -> '{replace_text}' (case={match_case}, whole={whole_word})")
             
+            # Undo-Eintrag: Umgekehrtes Suchen & Ersetzen
+            if replace_text:
+                self._push_undo_command(
+                    f'Suchen/Ersetzen: "{search_text}" → "{replace_text}"',
+                    'find_replace',
+                    {
+                        'search_text': replace_text,
+                        'replace_text': search_text,
+                        'match_case': match_case,
+                        'whole_word': whole_word
+                    }
+                )
+            
             import platform
             
             app = self.app
@@ -2251,6 +2576,19 @@ end tell'''
             
             self._log(f"set_autofilter: {len(filters) if filters else 0} Filter")
             
+            # === Performance-Guard: COM-Calls blockieren Excel bei großen Dateien ===
+            # calculation und enable_events MÜSSEN deaktiviert sein,
+            # sonst triggert jeder AutoFilter()-Call eine Neuberechnung.
+            # NICHT screen_updating togglen — das kann eine zweite Excel-Instanz öffnen!
+            app = self.app
+            try:
+                app.enable_events = False
+                if app.calculation != 'manual':
+                    app.calculation = 'manual'
+                    self._log("  calculation → 'manual' gesetzt")
+            except Exception as perf_err:
+                self._log(f"  Performance-Guard Setup Fehler: {perf_err}")
+            
             try:
                 if filters and len(filters) > 0:
                     # AutoFilter aktivieren falls noch nicht aktiv
@@ -2264,6 +2602,24 @@ end tell'''
                         except:
                             pass
                     
+                    # === Nur APP-EIGENE Filter-Felder zurücksetzen ===
+                    # NICHT ShowAllData() — das blendet auch manuell versteckte Zeilen
+                    # und vorhandene Excel-Filter ein!
+                    # Stattdessen: Nur die Spalten resetten, die WIR zuvor gesetzt haben.
+                    if not hasattr(self, '_active_filter_fields_per_sheet'):
+                        self._active_filter_fields_per_sheet = {}
+                    current_sheet = self.sheet_name or ''
+                    old_fields = self._active_filter_fields_per_sheet.get(current_sheet, [])
+                    if old_fields:
+                        self._log(f"  Resette {len(old_fields)} App-eigene Filter-Felder: {old_fields}")
+                        for col_idx in old_fields:
+                            try:
+                                af = self.worksheet.api.AutoFilter
+                                if af:
+                                    af.Range.AutoFilter(Field=col_idx)
+                            except Exception as e:
+                                self._log(f"  Reset Feld {col_idx} Fehler: {e}")
+                    
                     # Filter nach Spalte gruppieren (gleiche Spalte = OR-Verknüpfung)
                     from collections import defaultdict
                     filters_by_col = defaultdict(list)
@@ -2271,39 +2627,8 @@ end tell'''
                         col_idx = f.get('colIndex', 0) + 1  # 1-basiert
                         filters_by_col[col_idx].append(f)
                     
-                    # Zuvor von der App gesetzte Filter-Felder ermitteln, die NICHT mehr in der neuen Liste sind
-                    # NUR App-eigene Felder zurücksetzen — vorhandene Excel-Filter NICHT antasten!
-                    new_col_set = set(filters_by_col.keys())
-                    old_fields = getattr(self, '_active_filter_fields', [])
-                    stale_fields = [f for f in old_fields if f not in new_col_set]
-                    
-                    if stale_fields:
-                        self._log(f"Entferne veraltete Filter-Felder: {stale_fields}")
-                        for col_idx in stale_fields:
-                            try:
-                                # AutoFilter.Range statt used_range → funktioniert auch
-                                # wenn alle Zeilen ausgeblendet sind (0 Treffer)
-                                af = self.worksheet.api.AutoFilter
-                                if af:
-                                    af.Range.AutoFilter(Field=col_idx)
-                                else:
-                                    used_range.api.AutoFilter(Field=col_idx)
-                                self._log(f"  Filter Feld {col_idx} zurückgesetzt")
-                            except Exception as e:
-                                self._log(f"  Filter Feld {col_idx} Reset-Fehler: {e}")
-                        # Fallback: Falls nach Reset immer noch alles ausgeblendet
-                        try:
-                            af = self.worksheet.api.AutoFilter
-                            if af and af.Range.Columns.Count > 0:
-                                visible = self.worksheet.api.Rows.SpecialCells(12).Count  # xlCellTypeVisible=12
-                                total = self.worksheet.api.UsedRange.Rows.Count
-                                if visible <= 1 and total > 1:  # nur Header sichtbar
-                                    self._log("  ShowAllData Fallback (0 sichtbare Zeilen nach Reset)")
-                                    self.worksheet.api.ShowAllData()
-                        except Exception:
-                            pass
-                    
-                    self._active_filter_fields = []  # Merken für Clear
+                    self._active_filter_fields_per_sheet[current_sheet] = []  # Merken für Clear
+                    self._active_filter_fields = []  # Legacy-Kompatibilität
                     for col_idx, col_filters in filters_by_col.items():
                         criteria_list = []
                         is_date = False
@@ -2364,6 +2689,7 @@ end tell'''
                                             self._log(f"  xlDynamic: Operator=11, Criteria1={dyn_const}")
                                             used_range.api.AutoFilter(Field=col_idx, Operator=11, Criteria1=dyn_const)
                                             self._active_filter_fields.append(col_idx)
+                                            self._active_filter_fields_per_sheet[current_sheet].append(col_idx)
                                             self._log(f"  Datums-Filter Spalte {col_idx} per xlDynamic gesetzt")
                                         else:
                                             # Strategie 2: Locale-formatierte Datums-Strings
@@ -2412,6 +2738,7 @@ end tell'''
                                                 self._log(f"  Datums-Filter Spalte {col_idx} übersprungen (kein from/to)")
                                                 continue
                                             self._active_filter_fields.append(col_idx)
+                                            self._active_filter_fields_per_sheet[current_sheet].append(col_idx)
                                             self._log(f"  Datums-Filter Spalte {col_idx} gesetzt")
                                     else:
                                         # ===== Text-Datumsspalte =====
@@ -2458,6 +2785,7 @@ end tell'''
                                         else:
                                             used_range.api.AutoFilter(Field=col_idx, Criteria1=c1)
                                         self._active_filter_fields.append(col_idx)
+                                        self._active_filter_fields_per_sheet[current_sheet].append(col_idx)
                                         self._log(f"  Text-Datums-Filter Spalte {col_idx} gesetzt: c1={c1}, c2={c2}")
                                 except Exception as e:
                                     self._log(f"FEHLER bei Datums-Filter Spalte {col_idx}: {e}")
@@ -2483,13 +2811,19 @@ end tell'''
                                     self._log(f"Filter Spalte {col_idx}: {len(criteria_list)} Criteria — verwende erste 2 mit {op_name}")
                                     used_range.api.AutoFilter(Field=col_idx, Criteria1=criteria_list[0], Operator=xl_operator, Criteria2=criteria_list[1])
                                 self._active_filter_fields.append(col_idx)
+                                self._active_filter_fields_per_sheet[current_sheet].append(col_idx)
                             except Exception as e:
                                 self._log(f"Fehler bei Filter Spalte {col_idx}: {e}")
                 else:
                     # ===== Keine App-Filter mehr aktiv =====
                     # NUR die von der App gesetzten Filter-Felder zurücksetzen
                     # Vorhandene Excel-AutoFilter (z.B. beim Dateiöffnen) NICHT antasten!
-                    old_fields = getattr(self, '_active_filter_fields', [])
+                    if not hasattr(self, '_active_filter_fields_per_sheet'):
+                        self._active_filter_fields_per_sheet = {}
+                    current_sheet = self.sheet_name or ''
+                    old_fields = self._active_filter_fields_per_sheet.get(current_sheet, [])
+                    if not old_fields:
+                        old_fields = getattr(self, '_active_filter_fields', [])
                     if old_fields:
                         self._log(f"Entferne {len(old_fields)} App-Filter-Felder: {old_fields}")
                         for col_idx in old_fields:
@@ -2504,24 +2838,20 @@ end tell'''
                                 self._log(f"  App-Filter Feld {col_idx} zurückgesetzt")
                             except Exception as e:
                                 self._log(f"  App-Filter Feld {col_idx} Reset-Fehler: {e}")
-                        # Fallback: Falls nach Reset immer noch alles ausgeblendet
-                        try:
-                            af = self.worksheet.api.AutoFilter
-                            if af and af.Range.Columns.Count > 0:
-                                visible = self.worksheet.api.Rows.SpecialCells(12).Count  # xlCellTypeVisible=12
-                                total = self.worksheet.api.UsedRange.Rows.Count
-                                if visible <= 1 and total > 1:  # nur Header sichtbar
-                                    self._log("  ShowAllData Fallback (0 sichtbare Zeilen nach Reset)")
-                                    self.worksheet.api.ShowAllData()
-                        except Exception:
-                            pass
                         self._active_filter_fields = []
+                        self._active_filter_fields_per_sheet[current_sheet] = []
                     else:
                         self._log("Keine App-Filter zum Zurücksetzen")
                         
             except Exception as api_error:
                 self._log(f"AutoFilter API Fehler: {api_error}")
                 return {'success': False, 'error': str(api_error)}
+            finally:
+                # === Performance-Guard Restore ===
+                try:
+                    app.enable_events = False  # Session hält events immer aus
+                except Exception as restore_err:
+                    self._log(f"  Performance-Guard Restore Fehler: {restore_err}")
             
             self._log(f"AutoFilter abgeschlossen: {len(filters) if filters else 0} Filter, aktive Felder: {self._active_filter_fields}")
             return {'success': True, 'filterCount': len(filters) if filters else 0, 'activeFields': list(self._active_filter_fields)}
@@ -2729,10 +3059,14 @@ end tell'''
             sheet_name: Name des Zielblatts
             include_data: Wenn True, werden die Sheet-Daten direkt mitgeliefert
                           (spart einen separaten getData-Roundtrip)
+        
+        WICHTIG: Der visuelle Excel-Wechsel (activate/Goto) passiert ZULETZT,
+        NACH dem Datenlesen. So blockieren die langen COM-Leseoperationen
+        nicht das Neuzeichnen von Excels Fenster.
         """
         try:
             if not self.workbook:
-                return {'success': False, 'error': 'Keine Datei ge\u00f6ffnet'}
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
             
             sheet_names = [s.name for s in self.workbook.sheets]
             if sheet_name not in sheet_names:
@@ -2741,27 +3075,28 @@ end tell'''
             target_sheet = self.workbook.sheets[sheet_name]
             app = self.workbook.app.api
             
-            # Pr\u00fcfe ob Sheet ausgeblendet ist
+            # Prüfe ob Sheet ausgeblendet ist
             was_hidden = not target_sheet.visible
             if was_hidden:
-                # Sheet muss zuerst eingeblendet werden, sonst schl\u00e4gt activate() fehl
                 try:
                     app.ScreenUpdating = False
                     app.EnableEvents = False
                     target_sheet.visible = True
                 finally:
                     try:
-                        app.EnableEvents = True
-                        app.ScreenUpdating = True
+                        app.EnableEvents = False
+                        app.ScreenUpdating = False
                     except Exception:
                         pass
-                self._log(f"Sheet '{sheet_name}' war ausgeblendet \u2192 automatisch eingeblendet")
+                self._log(f"Sheet '{sheet_name}' war ausgeblendet → automatisch eingeblendet")
             
+            # Python-Referenz auf Ziel-Sheet setzen (KEIN visueller Wechsel!)
+            # get_data() und hidden-rows lesen verwenden self.worksheet als Referenz,
+            # brauchen kein aktives Sheet → können VOR dem visuellen Wechsel laufen.
             self.worksheet = target_sheet
             self.sheet_name = sheet_name
-            self.worksheet.activate()
             
-            # CF-Erkennung für neues Sheet
+            # CF-Erkennung (liest nur von der Worksheet-Referenz)
             has_cf = False
             try:
                 cf_count = self.worksheet.api.Cells.FormatConditions.Count
@@ -2775,10 +3110,11 @@ end tell'''
             except Exception:
                 pass
             
-            self._log(f"Sheet gewechselt zu: {sheet_name}")
             result = {'success': True, 'sheetName': sheet_name, 'wasHidden': was_hidden, 'hasConditionalFormatting': has_cf}
             
-            # Daten direkt mitliefern (kombinierter switch+getData in einem Roundtrip)
+            # === PHASE 1: Daten lesen (VOR dem visuellen Wechsel) ===
+            # Alle Lese-Operationen verwenden self.worksheet als Referenz.
+            # Excel zeigt noch das alte Sheet → kein Flackern, kein blockierter Repaint.
             if include_data:
                 try:
                     data_result = self.get_data()
@@ -2787,11 +3123,114 @@ end tell'''
                 except Exception as data_err:
                     self._log(f"Daten nach Sheet-Wechsel konnten nicht gelesen werden: {data_err}")
                     result['dataError'] = str(data_err)
+                
+                # Versteckte Zeilen/Spalten direkt von Excel lesen (COM)
+                try:
+                    hidden_rows = []
+                    hidden_cols = []
+                    used = self.worksheet.used_range
+                    if used:
+                        last_row = used.last_cell.row
+                        last_col = used.last_cell.column
+                        
+                        for c in range(1, last_col + 1):
+                            try:
+                                if self.worksheet.api.Columns(c).Hidden:
+                                    hidden_cols.append(c - 1)
+                            except Exception:
+                                pass
+                        
+                        if last_row >= 2:
+                            try:
+                                data_range = self.worksheet.api.Range(
+                                    self.worksheet.api.Rows(2),
+                                    self.worksheet.api.Rows(last_row)
+                                )
+                                row_height = data_range.RowHeight
+                                if row_height is None or data_range.Hidden is None:
+                                    for r in range(2, last_row + 1):
+                                        try:
+                                            if self.worksheet.api.Rows(r).Hidden:
+                                                hidden_rows.append(r - 2)
+                                        except Exception:
+                                            pass
+                                elif data_range.Hidden:
+                                    hidden_rows = list(range(0, last_row - 1))
+                            except Exception:
+                                for r in range(2, last_row + 1):
+                                    try:
+                                        if self.worksheet.api.Rows(r).Hidden:
+                                            hidden_rows.append(r - 2)
+                                    except Exception:
+                                        pass
+                    
+                    result['hiddenRows'] = hidden_rows
+                    result['hiddenColumns'] = hidden_cols
+                    if hidden_rows or hidden_cols:
+                        self._log(f"Versteckt: {len(hidden_rows)} Zeilen, {len(hidden_cols)} Spalten (COM)")
+                except Exception as vis_err:
+                    self._log(f"Versteckte Zeilen/Spalten konnten nicht gelesen werden: {vis_err}")
+                    result['hiddenRows'] = []
+                    result['hiddenColumns'] = []
             
+            # KEIN visueller Wechsel hier! Das macht activate_sheet() NACH dem Laden.
+            # Grund: Interactive=False (Read-Only-Schutz) blockiert jedes visuelle Update.
+            # activate_sheet() hebt Interactive kurz auf, macht activate(), wartet, setzt zurück.
+            self._log(f"Sheet gewechselt zu: {sheet_name} (nur Daten)")
             return result
             
         except Exception as e:
             self._log(f"Fehler beim Sheet-Wechsel: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def activate_sheet(self, sheet_name: str) -> Dict[str, Any]:
+        """Visueller Sheet-Wechsel in Excel — SEPARATER Befehl nach dem Datenladen.
+        
+        Wird vom Frontend aufgerufen NACHDEM die GUI gerendert wurde.
+        Interactive=True ist ZWINGEND nötig — ohne das zeichnet Excel nichts.
+        Das Frontend cancelt VOR dem Aufruf alle Batch-Syncs, sodass keine
+        parallelen COM-Operationen (setCellsBatch) laufen können.
+        """
+        import time as _time
+        try:
+            if not self.workbook:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            
+            app = self.workbook.app.api
+            
+            is_visible = False
+            try:
+                is_visible = self.app.visible
+            except Exception:
+                pass
+            
+            target_sheet = self.workbook.sheets[sheet_name]
+            
+            if is_visible:
+                # Sichtbar → Interactive=True nötig damit Excel den Tab-Wechsel zeichnet
+                try:
+                    app.Interactive = True
+                    target_sheet.activate()
+                    _time.sleep(0.3)
+                except Exception as act_err:
+                    self._log(f"activate_sheet Fehler: {act_err}")
+                finally:
+                    try:
+                        app.Interactive = False
+                    except Exception:
+                        pass
+            else:
+                # Versteckt → activate() setzt COM-State, kein Interactive nötig
+                try:
+                    target_sheet.activate()
+                except Exception as act_err:
+                    self._log(f"activate_sheet (hidden) Fehler: {act_err}")
+            
+            self._log(f"activate_sheet: {sheet_name} visuell aktiviert")
+            return {'success': True}
+            
+        except Exception as e:
+            self._log(f"Fehler bei activate_sheet: {e}")
             return {'success': False, 'error': str(e)}
     
     def set_sheet_visibility(self, sheet_name: str, visible: bool) -> Dict[str, Any]:
@@ -3261,6 +3700,7 @@ end tell'''
             'close': lambda: self.close_session(save=cmd.get('save', False)),
             'getData': lambda: self.get_data(),
             'switchSheet': lambda: self.switch_sheet(cmd.get('sheetName'), cmd.get('includeData', False)),
+            'activateSheet': lambda: self.activate_sheet(cmd.get('sheetName')),
             'setSheetVisibility': lambda: self.set_sheet_visibility(cmd.get('sheetName'), cmd.get('visible', True)),
             'addSheet': lambda: self.add_sheet(cmd.get('sheetName')),
             'deleteSheet': lambda: self.delete_sheet(cmd.get('sheetName')),
@@ -3279,10 +3719,12 @@ end tell'''
             'hideRow': lambda: self.hide_row(cmd.get('rowIndex'), cmd.get('hidden', True)),
             'hideRowsBatch': lambda: self.hide_rows_batch(cmd.get('rowIndices', []), cmd.get('hidden', True)),
             'highlightRow': lambda: self.highlight_row(cmd.get('rowIndex'), cmd.get('color')),
+            'highlightRowsBatch': lambda: self.highlight_rows_batch(cmd.get('rows', []), cmd.get('color')),
             
             # Spalten
             'deleteColumn': lambda: self.delete_column(cmd.get('colIndex')),
             'insertColumn': lambda: self.insert_column(cmd.get('colIndex'), cmd.get('count', 1), cmd.get('headers')),
+            'dataJoinSync': lambda: self.data_join_sync(cmd.get('operations', [])),
             'moveColumn': lambda: self.move_column(cmd.get('fromIndex'), cmd.get('toIndex')),
             'hideColumn': lambda: self.hide_column(cmd.get('colIndex'), cmd.get('hidden', True)),
             

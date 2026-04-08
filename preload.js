@@ -101,10 +101,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     liveSessionHideRow: (rowIndex, hidden) => ipcRenderer.invoke('liveSession:hideRow', rowIndex, hidden !== false),
     liveSessionHideRowsBatch: (rowIndices, hidden) => ipcRenderer.invoke('liveSession:hideRowsBatch', rowIndices, hidden !== false),
     liveSessionHighlightRow: (rowIndex, color) => ipcRenderer.invoke('liveSession:highlightRow', rowIndex, color),
+    liveSessionHighlightRowsBatch: (rows, color) => ipcRenderer.invoke('liveSession:highlightRowsBatch', rows, color),
 
     // Spalten-Operationen (werden SOFORT in Excel ausgeführt!)
     liveSessionDeleteColumn: (colIndex) => ipcRenderer.invoke('liveSession:deleteColumn', colIndex),
     liveSessionInsertColumn: (colIndex, count, headers) => ipcRenderer.invoke('liveSession:insertColumn', colIndex, count || 1, headers),
+    liveSessionDataJoinSync: (operations) => ipcRenderer.invoke('liveSession:dataJoinSync', operations),
     liveSessionMoveColumn: (fromIndex, toIndex) => ipcRenderer.invoke('liveSession:moveColumn', fromIndex, toIndex),
     liveSessionHideColumn: (colIndex, hidden) => ipcRenderer.invoke('liveSession:hideColumn', colIndex, hidden !== false),
 
@@ -114,6 +116,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     liveSessionSetCellsBatch: (cells) => ipcRenderer.invoke('liveSession:setCellsBatch', cells),
     liveSessionCopyCells: (sourceCells, targetRow, targetCol) => ipcRenderer.invoke('liveSession:copyCells', sourceCells, targetRow, targetCol),
     liveSessionSwitchSheet: (sheetName, includeData) => ipcRenderer.invoke('liveSession:switchSheet', sheetName, includeData || false),
+    liveSessionActivateSheet: (sheetName) => ipcRenderer.invoke('liveSession:activateSheet', sheetName),
     liveSessionSetSheetVisibility: (sheetName, visible) => ipcRenderer.invoke('liveSession:setSheetVisibility', sheetName, visible),
     liveSessionSetRowValues: (rowIndex, values) => ipcRenderer.invoke('liveSession:setRowValues', rowIndex, values),
     liveSessionFindReplace: (searchText, replaceText, matchCase, wholeWord) =>
