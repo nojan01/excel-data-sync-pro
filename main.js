@@ -3288,6 +3288,10 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             if (enableFlag && row.flag) {
                 const flagCell = worksheet.cell(newRowNum, flagColumn);
                 copyStyleFromTemplate(flagCell, flagColumn);
+                if (row.isManual) {
+                    flagCell.style('horizontalAlignment', 'center');
+                    flagCell.style('verticalAlignment', 'center');
+                }
                 flagCell.value(row.flag);
             }
 
@@ -3295,6 +3299,10 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             if (enableComment && row.comment) {
                 const commentCell = worksheet.cell(newRowNum, commentColumn);
                 copyStyleFromTemplate(commentCell, commentColumn);
+                if (row.isManual) {
+                    commentCell.style('horizontalAlignment', 'center');
+                    commentCell.style('verticalAlignment', 'center');
+                }
                 commentCell.value(row.comment);
             }
 
@@ -3324,6 +3332,10 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                             } catch (e) {
                                 // Ignoriere Fehler bei einzelnen Zellen
                             }
+                        } else if (row.isManual) {
+                            // Manuelle Zeilen: zentrale Ausrichtung setzen
+                            targetCell.style('horizontalAlignment', 'center');
+                            targetCell.style('verticalAlignment', 'center');
                         }
 
                         const converted = convertValue(value, targetCell);
