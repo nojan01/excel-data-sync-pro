@@ -9566,8 +9566,20 @@
             
             // Strukturelle Änderung markieren für korrekten Export (mit allen Operationen)
             // Sortiere aufsteigend nach Position für den Export
+            insertOperations.sort((a, b) => a.position - b.position);
+            
+            // Original-Positionen → FINALE Positionen umrechnen (kumulativer Offset)
+            // Backend (_build_col_map_for_insert) erwartet FINALE Positionen.
+            // Bei 2+ Spalten an verschiedenen Positionen verschiebt jede Einfügung
+            // alle nachfolgenden Positionen nach rechts.
+            let cumulativeInsertOffset = 0;
+            for (const op of insertOperations) {
+                op.position += cumulativeInsertOffset;
+                cumulativeInsertOffset += op.count;
+            }
+            
             explorerState.editedCells.set('_columnInserted', {
-                operations: insertOperations.sort((a, b) => a.position - b.position),
+                operations: insertOperations,
                 totalCount: totalInsertCount
             });
             
