@@ -1651,17 +1651,35 @@ class ExcelLiveSession:
             
             self._log(f"Lösche Spalte {col_letter} (Index {col_index})")
             
-            # Verwende die native Excel API zum Löschen der gesamten Spalte
-            # Dies stellt sicher, dass auch Tabellen-Bereiche korrekt angepasst werden
-            if platform.system() == 'Darwin':
-                # macOS: Verwende xlwings api direkt für ganze Spalte
-                self.worksheet.range(f'{col_letter}:{col_letter}').api.entire_column.delete()
-            else:
-                # Windows: Verwende api.Delete() mit Shift-Parameter
-                self.worksheet.range(f'{col_letter}:{col_letter}').api.Delete()
-            
-            # Screen refresh erzwingen
-            self._force_screen_refresh()
+            # Performance-Modus (analog insert_column)
+            self.app.screen_updating = False
+            old_calculation = self.app.calculation
+            old_events = True
+            try:
+                old_events = bool(self.app.enable_events)
+            except Exception:
+                pass
+            try:
+                self.app.calculation = 'manual'
+                self.app.enable_events = False
+                if platform.system() == 'Windows':
+                    try:
+                        self.worksheet.api.EnableFormatConditionsCalculation = False
+                    except Exception:
+                        pass
+                
+                # Native Excel API zum Löschen der gesamten Spalte
+                if platform.system() == 'Darwin':
+                    self.worksheet.range(f'{col_letter}:{col_letter}').api.entire_column.delete()
+                else:
+                    self.worksheet.range(f'{col_letter}:{col_letter}').api.Delete()
+            finally:
+                try:
+                    self.app.calculation = old_calculation
+                except Exception:
+                    pass
+                # enable_events bleibt im Session-Performance-Modus aus
+                self.app.screen_updating = True
             
             # Journal-Eintrag
             self._journal_add('deleteColumn', {'colIndex': col_index})
@@ -1679,15 +1697,39 @@ class ExcelLiveSession:
         try:
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
+            if count <= 0:
+                return {'success': True, 'deletedAt': col_index, 'count': 0}
             
-            for i in range(count - 1, -1, -1):  # Rückwärts löschen damit Indizes stimmen
-                excel_col = col_index + 1 + i
-                col_letter = self._get_column_letter(excel_col)
-                self._log(f"delete_columns_range: Lösche Spalte {col_letter}")
+            excel_col_start = col_index + 1
+            excel_col_end = col_index + count
+            start_letter = self._get_column_letter(excel_col_start)
+            end_letter = self._get_column_letter(excel_col_end)
+            
+            # Performance-Modus
+            self.app.screen_updating = False
+            old_calculation = self.app.calculation
+            try:
+                self.app.calculation = 'manual'
+                self.app.enable_events = False
+                if platform.system() == 'Windows':
+                    try:
+                        self.worksheet.api.EnableFormatConditionsCalculation = False
+                    except Exception:
+                        pass
+                
+                self._log(f"delete_columns_range: Lösche Spalten {start_letter}:{end_letter} ({count} Spalten)")
+                # In EINEM COM-Call mehrere Spalten löschen statt pro Spalte
+                rng = self.worksheet.range(f'{start_letter}:{end_letter}')
                 if platform.system() == 'Darwin':
-                    self.worksheet.range(f'{col_letter}:{col_letter}').api.entire_column.delete()
+                    rng.api.entire_column.delete()
                 else:
-                    self.worksheet.range(f'{col_letter}:{col_letter}').api.Delete()
+                    rng.api.Delete()
+            finally:
+                try:
+                    self.app.calculation = old_calculation
+                except Exception:
+                    pass
+                self.app.screen_updating = True
             
             return {'success': True, 'deletedAt': col_index, 'count': count}
             
