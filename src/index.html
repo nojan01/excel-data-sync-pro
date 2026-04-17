@@ -18061,6 +18061,23 @@
                         console.log(`[Export] Filter aktiv für Sheet "${sheetName}": ${explorerState.filteredData.length} von ${explorerState.data.length} Zeilen werden exportiert`);
                     }
                     
+                    // AutoFilter-Range berechnen: Wenn GUI-Filter aktiv sind,
+                    // MUSS ein autoFilter in der Export-Datei gesetzt werden.
+                    // Range = A1:{lastCol}{lastRow} (gesamter Datenbereich inkl. Header)
+                    let effectiveAutoFilterRange = isCurrentSheet
+                        ? explorerState.autoFilterRange
+                        : (cachedSheet?.autoFilterRange || null);
+                    
+                    if (isCurrentSheet && hasActiveFilters && !effectiveAutoFilterRange) {
+                        const numCols = explorerState.headers.length;
+                        const numRows = explorerState.data.length + 1; // +1 für Header
+                        if (numCols > 0 && numRows > 1) {
+                            const lastColLetter = getColumnLetter(numCols);
+                            effectiveAutoFilterRange = `A1:${lastColLetter}${numRows}`;
+                            console.log(`[Export] AutoFilter aus GUI-Filtern berechnet: ${effectiveAutoFilterRange}`);
+                        }
+                    }
+                    
                     if (!hasChanges) {
                         // Keine Änderungen - Backend soll direkt aus Datei lesen (spart Speicher!)
                         // OPTIMIERUNG: Bei großen Dateien (>50k Styles) keine Styles senden
@@ -18075,11 +18092,6 @@
                         if (styleCount > 50000) {
                             console.log(`[Export] Sheet "${sheetName}": ${styleCount} Styles übersprungen (Performance)`);
                         }
-                        
-                        // AutoFilter für dieses Sheet ermitteln
-                        const autoFilterForSheet = isCurrentSheet 
-                            ? explorerState.autoFilterRange 
-                            : (cachedSheet?.autoFilterRange || null);
                         
                         // Versteckte Spalten berechnen
                         const visibleColsForSheet = isCurrentSheet 
@@ -18097,9 +18109,9 @@
                             fromFile: true,
                             cellStyles: finalStyles,
                             hiddenColumns: hiddenColsForSheet,
-                            autoFilterRange: autoFilterForSheet
+                            autoFilterRange: effectiveAutoFilterRange
                         };
-                        console.log(`[Export] fromFile Sheet "${sheetName}": ${hiddenColsForSheet.length} versteckte Spalten, AutoFilter: ${autoFilterForSheet || 'none'}`);
+                        console.log(`[Export] fromFile Sheet "${sheetName}": ${hiddenColsForSheet.length} versteckte Spalten, AutoFilter: ${effectiveAutoFilterRange || 'none'}`);
                     } else if (isCurrentSheet) {
                         // Aktuelles Sheet mit Änderungen
                         const affectedRowsArray = explorerState.affectedRows ? Array.from(explorerState.affectedRows) : [];
@@ -18111,20 +18123,22 @@
                         const rowsFiltered = explorerState.filteredData.length < explorerState.data.length;
                         const isFiltered = (hasActiveFilters || hasSearchFilter) && rowsFiltered;
                         
-                        // Strukturelle Änderungen erkennen (Spalte/Zeile gelöscht/eingefügt/verschoben, Filter aktiv)
+                        // Strukturelle Änderungen erkennen (Spalte/Zeile gelöscht/eingefügt/verschoben)
                         // HINWEIS: _rowVisibilityChanged ist KEINE strukturelle Änderung!
                         // Versteckte Zeilen bleiben im Excel, nur das hidden-Flag wird gesetzt.
                         // Die Styles bleiben dadurch an Ort und Stelle.
                         // HINWEIS: _rowHighlightChanged ist auch KEINE strukturelle Änderung!
                         // Zeilen-Highlights ändern nur die Zellfarben, nicht die Struktur.
+                        // HINWEIS: isFiltered ist KEINE strukturelle Änderung!
+                        // Filter werden über hiddenRows (hidden-Attribut) + autoFilterRange (Dropdown-Pfeile)
+                        // abgebildet. Alle Zeilen bleiben in der Datei, nur nicht-passende werden versteckt.
                         const hasStructuralChanges = hasRowMoves || 
                             explorerState.editedCells.has('_columnDeleted') || 
                             explorerState.editedCells.has('_columnInserted') ||
                             explorerState.editedCells.has('_columnMoved') ||
                             explorerState.editedCells.has('_rowsReordered') ||
                             explorerState.editedCells.has('_rowInserted') ||  // Zeile eingefügt
-                            explorerState.editedCells.has('_rowDeleted') ||   // Zeile gelöscht
-                            isFiltered;  // Filter = strukturelle Änderung (nur gefilterte Zeilen exportieren)
+                            explorerState.editedCells.has('_rowDeleted');     // Zeile gelöscht
                         
                         // HiddenRows aus dem aktuellen State ermitteln
                         // WICHTIG: hiddenRows enthält Indizes relativ zu explorerState.data (nicht filteredData!)
@@ -18150,6 +18164,22 @@
                                 // Bei Zell-Edits: Direkt die originalIndex-Werte verwenden
                                 currentHiddenRows = Array.from(explorerState.hiddenRows);
                             }
+                        }
+                        
+                        // Filter als versteckte Zeilen abbilden (KEINE strukturelle Änderung!)
+                        // Alle Zeilen bleiben in der Datei, nur nicht-passende bekommen hidden="1".
+                        // Zusammen mit autoFilterRange ergibt das korrekte Excel-Filter.
+                        if (isFiltered && !hasStructuralChanges) {
+                            const filteredOriginalIndices = new Set(
+                                explorerState.filteredData.map(item => item.originalIndex)
+                            );
+                            const existingHidden = new Set(currentHiddenRows);
+                            for (let i = 0; i < explorerState.data.length; i++) {
+                                if (!filteredOriginalIndices.has(i) && !existingHidden.has(i)) {
+                                    currentHiddenRows.push(i);
+                                }
+                            }
+                            console.log(`[Export] Filter: ${currentHiddenRows.length} Zeilen versteckt (${explorerState.filteredData.length} von ${explorerState.data.length} sichtbar)`);
                         }
                         
                         // Versteckte Spalten berechnen
@@ -18541,7 +18571,7 @@
                                 // ALLE aktiven Markierungen senden (Original-Datei hat keine)
                                 rowHighlights: exportRowHighlights,
                                 clearedRowHighlights: clearedRowHighlights,
-                                autoFilterRange: explorerState.autoFilterRange,
+                                autoFilterRange: effectiveAutoFilterRange,
                                 fullRewrite: false,  // Python Fast-Path entscheidet selbst
                                 structuralChange: true,  // Signalisiert dass Styles komplett zurückgesetzt werden müssen
                                 // Spalten-Operationen
@@ -18565,7 +18595,7 @@
                             };
                             // Prüfe ob rowMapping gesendet wird
                             const hasRowMapping = !!(filterRowMapping || (explorerState.rowMapping && explorerState.rowMapping.length > 0));
-                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, insertedColumnInfo: ${JSON.stringify(insertedColumnInfo)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, deletedRowIndices: ${JSON.stringify(deletedRowIndices)}, insertedRowInfo: ${JSON.stringify(insertedRowInfo)}, rowOrder: ${rowOrder ? 'angepasst' : 'nein'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${hasRowMapping ? 'ja' : 'nein'}, AutoFilter: ${explorerState.autoFilterRange || 'none'})`);
+                            console.log(`[Export] Strukturelle Änderung: Full Rewrite (${allData.length} Zeilen, ${exportHeaders.length} Spalten, ${exportHiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, deletedColumnIndices: ${JSON.stringify(deletedColumnIndices)}, insertedColumnInfo: ${JSON.stringify(insertedColumnInfo)}, columnOrder: ${columnOrder ? 'angepasst' : 'original/angewendet'}, deletedRowIndices: ${JSON.stringify(deletedRowIndices)}, insertedRowInfo: ${JSON.stringify(insertedRowInfo)}, rowOrder: ${rowOrder ? 'angepasst' : 'nein'}, affectedRows: ${affectedRowsArray.length}, rowMapping: ${hasRowMapping ? 'ja' : 'nein'}, AutoFilter: ${effectiveAutoFilterRange || 'none'})`);
                         } else {
                             // Nur Zell-Edits: changedCells
                             const changedCells = {};
@@ -18665,13 +18695,13 @@
                                     hiddenRows: currentHiddenRows,
                                     rowHighlights: exportRowHighlights,
                                     clearedRowHighlights: clearedRowHighlights,
-                                    autoFilterRange: explorerState.autoFilterRange,
+                                    autoFilterRange: effectiveAutoFilterRange,
                                     fullRewrite: false,
                                     mergedCells: explorerState.mergedCells || [],
                                     hasFormatChanges: explorerState.editedCells.has('_hasFormatChanges'),
                                     vmCellMap: explorerState.cellVmMap || {}
                                 };
-                                console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${Object.keys(cellStylesForChanged).length} CellStyles, ${Object.keys(cellFontsForChanged).length} CellFonts, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, ${clearedRowHighlights.length} entfernte Highlights, AutoFilter: ${explorerState.autoFilterRange || 'none'}`);
+                                console.log(`[Export] Zell-Edits: ${Object.keys(changedCells).length} geänderte Zellen, ${Object.keys(richTextForChanged).length} RichText, ${Object.keys(cellStylesForChanged).length} CellStyles, ${Object.keys(cellFontsForChanged).length} CellFonts, ${hiddenCols.length} versteckte Spalten, ${currentHiddenRows.length} versteckte Zeilen, ${Object.keys(exportRowHighlights).length} Zeilen-Highlights, ${clearedRowHighlights.length} entfernte Highlights, AutoFilter: ${effectiveAutoFilterRange || 'none'}`);
                             console.log(`[Export] mergedCells für Zell-Edits: ${(explorerState.mergedCells || []).length} Einträge`, JSON.stringify(explorerState.mergedCells || []));
                             }
                         }

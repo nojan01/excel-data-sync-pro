@@ -3835,6 +3835,104 @@ def _filter_table_xml_regex(table_content, new_max_row):
     return table_content
 
 
+def _apply_auto_filter_xml(xlsx_path, sheet_name, auto_filter_range):
+    """Setzt oder entfernt den autoFilter in einer XLSX-Datei per ZIP/XML.
+    
+    auto_filter_range: z.B. "A1:F100" oder None/leer zum Entfernen.
+    Arbeitet direkt auf der fertigen ZIP-Datei — unabhängig vom Export-Pfad.
+    """
+    import zipfile, io, re
+    
+    if not auto_filter_range and auto_filter_range is not None:
+        # Leerer String → entfernen
+        auto_filter_range = None
+    
+    # Sheet-XML-Pfad ermitteln
+    with zipfile.ZipFile(xlsx_path, 'r') as zin:
+        # workbook.xml lesen um Sheet-Index zu finden
+        wb_xml = zin.read('xl/workbook.xml').decode('utf-8')
+        
+        # Sheet-Name zu rId mapping
+        sheet_pattern = re.compile(
+            r'<sheet\s[^>]*name="' + re.escape(sheet_name) + r'"[^>]*r:id="(rId\d+)"',
+            re.IGNORECASE
+        )
+        m = sheet_pattern.search(wb_xml)
+        if not m:
+            sys.stderr.write(f"[AUTO_FILTER] Sheet '{sheet_name}' nicht in workbook.xml gefunden\n")
+            return
+        
+        r_id = m.group(1)
+        
+        # rId → Dateiname aus workbook.xml.rels
+        rels_xml = zin.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+        rel_pattern = re.compile(
+            r'<Relationship\s[^>]*Id="' + re.escape(r_id) + r'"[^>]*Target="([^"]+)"',
+            re.IGNORECASE
+        )
+        m2 = rel_pattern.search(rels_xml)
+        if not m2:
+            sys.stderr.write(f"[AUTO_FILTER] rId '{r_id}' nicht in rels gefunden\n")
+            return
+        
+        sheet_target = m2.group(1)
+        # Relativer Pfad: worksheets/sheet1.xml → xl/worksheets/sheet1.xml
+        if not sheet_target.startswith('xl/'):
+            sheet_xml_path = 'xl/' + sheet_target
+        else:
+            sheet_xml_path = sheet_target
+        
+        sheet_xml = zin.read(sheet_xml_path).decode('utf-8')
+    
+    # Bestehenden autoFilter prüfen
+    existing_af = re.search(r'<autoFilter\s[^>]*ref="([^"]*)"[^/]*/>', sheet_xml) or \
+                  re.search(r'<autoFilter\s[^>]*ref="([^"]*)"[^>]*>.*?</autoFilter>', sheet_xml, re.DOTALL) or \
+                  re.search(r'<autoFilter\s[^>]*ref="([^"]*)"[^>]*/>', sheet_xml)
+    
+    if auto_filter_range is None:
+        # Kein autoFilter gewünscht — nichts tun (Original beibehalten)
+        # Nur entfernen wenn explizit "" gesendet wurde (was oben abgefangen wird)
+        return
+    
+    if existing_af and existing_af.group(1) == auto_filter_range:
+        # Bereits korrekt — nichts ändern
+        sys.stderr.write(f"[AUTO_FILTER] Bereits korrekt: {auto_filter_range}\n")
+        return
+    
+    new_af_element = f'<autoFilter ref="{auto_filter_range}"/>'
+    
+    if existing_af:
+        # Ersetze bestehenden autoFilter (komplett, inkl. filterColumn-Kinder)
+        full_af = re.search(r'<autoFilter\s[^>]*>.*?</autoFilter>', sheet_xml, re.DOTALL)
+        if full_af:
+            sheet_xml = sheet_xml[:full_af.start()] + new_af_element + sheet_xml[full_af.end():]
+        else:
+            # Self-closing tag
+            af_self = re.search(r'<autoFilter\s[^/]*/>', sheet_xml)
+            if af_self:
+                sheet_xml = sheet_xml[:af_self.start()] + new_af_element + sheet_xml[af_self.end():]
+    else:
+        # Kein autoFilter vorhanden — einfügen nach <sheetData>...</sheetData>
+        sd_end = re.search(r'</sheetData>', sheet_xml)
+        if sd_end:
+            sheet_xml = sheet_xml[:sd_end.end()] + new_af_element + sheet_xml[sd_end.end():]
+    
+    # ZIP neu schreiben mit geändertem Sheet-XML
+    buf = io.BytesIO()
+    with zipfile.ZipFile(xlsx_path, 'r') as zin:
+        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                if item.filename == sheet_xml_path:
+                    zout.writestr(item, sheet_xml.encode('utf-8'))
+                else:
+                    zout.writestr(item, zin.read(item.filename))
+    
+    with open(xlsx_path, 'wb') as f:
+        f.write(buf.getvalue())
+    
+    sys.stderr.write(f"[AUTO_FILTER] autoFilter gesetzt: {auto_filter_range} in {sheet_name}\n")
+
+
 def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
                           hidden_columns=None, hidden_rows=None,
                           row_highlights=None, source_bytes=None,
@@ -5202,6 +5300,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
     _fp_has_format = changes.get('hasFormatChanges', False)
     _fp_cell_fonts = changes.get('cellFonts', {})
     _fp_rich_text = changes.get('richTextCells', {})
+    _fp_auto_filter = changes.get('autoFilterRange')  # AutoFilter für Fast-Path
     
     # Keine strukturellen Operationen?
     # rowMapping (Filter) und affectedRows blockieren NICHT:
@@ -5268,6 +5367,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 sys.stderr.write(f"[FAST-PATH] FALL 3a Erfolgreich (in-memory pipeline)\n")
             else:
                 sys.stderr.write(f"[FAST-PATH] FALL 3a Erfolgreich (keine Änderungen)\n")
+            # AutoFilter vom Frontend anwenden (z.B. bei GUI-Filter → hiddenRows + Dropdown-Pfeile)
+            if _fp_auto_filter:
+                _apply_auto_filter_xml(output_path, sheet_name, _fp_auto_filter)
             # Backup aufräumen (wurde oben erstellt, wird für FALL 3a nicht gebraucht)
             if _backup_file is not None:
                 try:
@@ -5400,6 +5502,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     _fp_out_f.write(_fp_zip_bytes.getvalue())
                 
                 sys.stderr.write(f"[XML-DIREKT-COMBINED] Erfolgreich (in-memory pipeline)\n")
+                # AutoFilter vom Frontend anwenden
+                if frontend_auto_filter:
+                    _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
                 # Backup aufräumen (wird für XML-DIREKT nicht gebraucht)
                 if _backup_file is not None:
                     try:
@@ -5578,6 +5683,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     _fp_out_f.write(_fp_zip_bytes.getvalue())
                 
                 sys.stderr.write(f"[XML-DIREKT-FAST] Erfolgreich (in-memory pipeline): {_fp_result.get('method', 'unknown')}\n")
+                # AutoFilter vom Frontend anwenden
+                if frontend_auto_filter:
+                    _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
                 # Backup aufräumen (wird für XML-DIREKT nicht gebraucht)
                 if _backup_file is not None:
                     try:
@@ -5688,6 +5796,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         _fp_out_f.write(_fp_zip_bytes.getvalue())
                     
                     sys.stderr.write(f"[XML-DIREKT-ROW] Erfolgreich (in-memory pipeline): {_fp_row_result.get('method', 'unknown')}\n")
+                    # AutoFilter vom Frontend anwenden
+                    if frontend_auto_filter:
+                        _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
                     # Backup aufräumen (wird für XML-DIREKT nicht gebraucht)
                     if _backup_file is not None:
                         try:
@@ -5797,6 +5908,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             # openpyxl verliert beim Speichern richData, metadata, vm-Attribute etc.
             restore_table_xml_from_original(output_path, original_path, table_changes=None)
             restore_external_links_from_original(output_path, original_path)
+            # AutoFilter vom Frontend anwenden
+            if frontend_auto_filter:
+                _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
             return {'success': True, 'outputPath': output_path}
         
         # =====================================================================
@@ -6438,6 +6552,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 except Exception as cl_err:
                     sys.stderr.write(f"[PIPELINE] WARNUNG: cleared_row_highlights Fehler: {cl_err}\n")
             
+            # AutoFilter vom Frontend anwenden
+            if frontend_auto_filter:
+                _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
+            
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-pipeline'}
         
         # =====================================================================
@@ -6617,6 +6735,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 _strip_pivot_tables_for_sheet(output_path, sheet_name)
             except Exception as pivot_err:
                 sys.stderr.write(f"[FALL 1.5] WARNUNG: PivotTable-Strip Fehler: {pivot_err}\n")
+            
+            # AutoFilter vom Frontend anwenden
+            if frontend_auto_filter:
+                _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-insert-only'}
         
@@ -6815,6 +6937,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             except Exception as pivot_err:
                 sys.stderr.write(f"[FALL 1.9] WARNUNG: PivotTable-Strip Fehler: {pivot_err}\n")
             
+            # AutoFilter vom Frontend anwenden
+            if frontend_auto_filter:
+                _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
+            
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-delete-and-insert'}
         
         # =====================================================================
@@ -6896,6 +7022,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 _strip_pivot_tables_for_sheet(output_path, sheet_name)
             except Exception as pivot_err:
                 sys.stderr.write(f"[FALL 1.6] WARNUNG: PivotTable-Strip Fehler: {pivot_err}\n")
+            
+            # AutoFilter vom Frontend anwenden
+            if frontend_auto_filter:
+                _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
             
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-delete-only'}
         
@@ -7021,6 +7151,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             except Exception as pivot_err:
                 sys.stderr.write(f"[FALL 1.7] WARNUNG: PivotTable-Strip Fehler: {pivot_err}\n")
             
+            # AutoFilter vom Frontend anwenden
+            if frontend_auto_filter:
+                _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
+            
             return {'success': True, 'outputPath': output_path, 'method': 'openpyxl-column-order'}
         
         # =====================================================================
@@ -7096,6 +7230,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     hidden_columns, hidden_rows,
                     row_highlights=row_highlights
                 )
+                # AutoFilter vom Frontend anwenden
+                if frontend_auto_filter and result.get('success'):
+                    _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
                 return result
             except Exception as xml_err:
                 sys.stderr.write(f"[FALL 3a] Fehler bei direkter XML-Bearbeitung: {xml_err}\n")
@@ -7175,6 +7312,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         
         # WICHTIG: Auch workbook.xml, slicerCaches, etc. vom Original wiederherstellen!
         restore_external_links_from_original(output_path, original_path)
+        
+        # AutoFilter vom Frontend anwenden
+        if frontend_auto_filter:
+            _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
         
         return {'success': True, 'outputPath': output_path}
         
