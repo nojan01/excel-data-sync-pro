@@ -215,6 +215,11 @@ def _check_zip_drawings(zip_path, label):
         sys.stderr.write(f"[CHECKPOINT {label}] Fehler: {e}\n")
 
 
+class _SkipDiagnose(Exception):
+    """Signal zum Überspringen des DIAGNOSE-Blocks (EDSP_DIAGNOSE nicht gesetzt)."""
+    pass
+
+
 def fix_xlsx_relationships(xlsx_path):
     """
     Repariert openpyxl-gespeicherte XLSX-Dateien.
@@ -419,6 +424,22 @@ def restore_table_xml_from_original(output_path, original_path, table_changes=No
     # Bei table_changes=None: Leeres Dict verwenden (alle Tables werden kopiert)
     if table_changes is None:
         table_changes = {}
+    
+    # PERF: Early-Exit ohne Full-Extract — wenn WEDER das Output-ZIP NOCH das
+    # Original-ZIP xl/tables/ Einträge enthält, ist nichts zu tun. Spart bei
+    # großen Dateien ohne Tabellen bis zu hunderte MB Extract-I/O.
+    try:
+        with zipfile.ZipFile(output_path, 'r') as zf:
+            has_out_tables = any(n.startswith('xl/tables/') and n.endswith('.xml')
+                                 for n in zf.namelist())
+        with zipfile.ZipFile(original_path, 'r') as zf:
+            has_orig_tables = any(n.startswith('xl/tables/') and n.endswith('.xml')
+                                  for n in zf.namelist())
+        if not has_out_tables and not has_orig_tables:
+            sys.stderr.write("[restore_table_xml] Early-Exit: keine Tabellen in Output UND Original\n")
+            return
+    except Exception as _peek_err:
+        sys.stderr.write(f"[restore_table_xml] Peek fehlgeschlagen ({_peek_err}), fahre mit Full-Extract fort\n")
     
     temp_dir = tempfile.mkdtemp()
     temp_xlsx = os.path.join(temp_dir, 'restored.xlsx')
@@ -1603,37 +1624,39 @@ def restore_external_links_from_original(output_path, original_path, structural_
         with zipfile.ZipFile(output_path, 'r') as zf:
             zf.extractall(temp_dir)
         with zipfile.ZipFile(original_path, 'r') as zf:
-            # DEBUG: Zeige alle Dateien im Original-ZIP die mit Bildern/Drawings zu tun haben
             all_names = zf.namelist()
-            drawing_related = [n for n in all_names if any(k in n.lower() for k in ['draw', 'media', 'image', 'picture', 'vml', 'richdata', 'rdrichvalue'])]
-            sys.stderr.write(f"[restore_ext] Original-ZIP Dateien (drawing/media-related): {drawing_related}\n")
-            sys.stderr.write(f"[restore_ext] Original-ZIP alle xl/ Dateien: {[n for n in all_names if n.startswith('xl/')]}\n")
+            if os.environ.get('EDSP_DIAGNOSE') == '1':
+                # DEBUG: Zeige alle Dateien im Original-ZIP die mit Bildern/Drawings zu tun haben
+                drawing_related = [n for n in all_names if any(k in n.lower() for k in ['draw', 'media', 'image', 'picture', 'vml', 'richdata', 'rdrichvalue'])]
+                sys.stderr.write(f"[restore_ext] Original-ZIP Dateien (drawing/media-related): {drawing_related}\n")
+                sys.stderr.write(f"[restore_ext] Original-ZIP alle xl/ Dateien: {[n for n in all_names if n.startswith('xl/')]}\n")
             zf.extractall(orig_temp_dir)
         
-        # DEBUG: Inhalt von sheet1.xml.rels anzeigen
-        orig_rels_file = os.path.join(orig_temp_dir, 'xl', 'worksheets', '_rels', 'sheet1.xml.rels')
-        if os.path.exists(orig_rels_file):
-            with open(orig_rels_file, 'r', encoding='utf-8') as f:
-                rels_content = f.read()
-            sys.stderr.write(f"[restore_ext] sheet1.xml.rels Inhalt: {rels_content[:500]}\n")
-        
-        # DEBUG: Prüfe ob <drawing> Element in original sheet1.xml vorhanden
-        orig_sheet1 = os.path.join(orig_temp_dir, 'xl', 'worksheets', 'sheet1.xml')
-        if os.path.exists(orig_sheet1):
-            with open(orig_sheet1, 'r', encoding='utf-8') as f:
-                sheet1_content = f.read()
-            has_drawing = '<drawing ' in sheet1_content or '<drawing>' in sheet1_content
-            has_legacy = '<legacyDrawing ' in sheet1_content
-            has_picture = '<picture ' in sheet1_content
-            sys.stderr.write(f"[restore_ext] Original sheet1.xml: <drawing>={has_drawing}, <legacyDrawing>={has_legacy}, <picture>={has_picture}\n")
-        
-        # DEBUG: Prüfe ob <drawing> Element in output sheet1.xml vorhanden
-        dest_sheet1 = os.path.join(temp_dir, 'xl', 'worksheets', 'sheet1.xml')
-        if os.path.exists(dest_sheet1):
-            with open(dest_sheet1, 'r', encoding='utf-8') as f:
-                dest_sheet1_content = f.read()
-            has_drawing_dest = '<drawing ' in dest_sheet1_content or '<drawing>' in dest_sheet1_content
-            sys.stderr.write(f"[restore_ext] Output sheet1.xml: <drawing>={has_drawing_dest}\n")
+        if os.environ.get('EDSP_DIAGNOSE') == '1':
+            # DEBUG: Inhalt von sheet1.xml.rels anzeigen
+            orig_rels_file = os.path.join(orig_temp_dir, 'xl', 'worksheets', '_rels', 'sheet1.xml.rels')
+            if os.path.exists(orig_rels_file):
+                with open(orig_rels_file, 'r', encoding='utf-8') as f:
+                    rels_content = f.read()
+                sys.stderr.write(f"[restore_ext] sheet1.xml.rels Inhalt: {rels_content[:500]}\n")
+            
+            # DEBUG: Prüfe ob <drawing> Element in original sheet1.xml vorhanden
+            orig_sheet1 = os.path.join(orig_temp_dir, 'xl', 'worksheets', 'sheet1.xml')
+            if os.path.exists(orig_sheet1):
+                with open(orig_sheet1, 'r', encoding='utf-8') as f:
+                    sheet1_content = f.read()
+                has_drawing = '<drawing ' in sheet1_content or '<drawing>' in sheet1_content
+                has_legacy = '<legacyDrawing ' in sheet1_content
+                has_picture = '<picture ' in sheet1_content
+                sys.stderr.write(f"[restore_ext] Original sheet1.xml: <drawing>={has_drawing}, <legacyDrawing>={has_legacy}, <picture>={has_picture}\n")
+            
+            # DEBUG: Prüfe ob <drawing> Element in output sheet1.xml vorhanden
+            dest_sheet1 = os.path.join(temp_dir, 'xl', 'worksheets', 'sheet1.xml')
+            if os.path.exists(dest_sheet1):
+                with open(dest_sheet1, 'r', encoding='utf-8') as f:
+                    dest_sheet1_content = f.read()
+                has_drawing_dest = '<drawing ' in dest_sheet1_content or '<drawing>' in dest_sheet1_content
+                sys.stderr.write(f"[restore_ext] Output sheet1.xml: <drawing>={has_drawing_dest}\n")
         
         ext_links_dir = os.path.join(temp_dir, 'xl', 'externalLinks')
         orig_ext_links_dir = os.path.join(orig_temp_dir, 'xl', 'externalLinks')
@@ -2819,9 +2842,13 @@ def restore_external_links_from_original(output_path, original_path, structural_
         shutil.copy2(temp_xlsx, output_path)
         sys.stderr.write(f"[restore_ext] XLSX wiederhergestellt (ZIP-to-ZIP, {len(written)} Einträge)\n")
         
-        # DIAGNOSE: Dump des endgültigen ZIP-Inhalts für Image-Debugging
-        # Läuft IMMER (auch wenn fixed_count == 0), um den Endzustand zu zeigen
+        # DIAGNOSE: Dump des endgültigen ZIP-Inhalts für Image-Debugging.
+        # Bei großen Dateien teuer (liest alle drawing*.xml/sheet*.xml erneut),
+        # daher standardmäßig AUS. Aktivieren mit Umgebungsvariable EDSP_DIAGNOSE=1.
+        _run_diagnose = os.environ.get('EDSP_DIAGNOSE') == '1'
         try:
+            if not _run_diagnose:
+                raise _SkipDiagnose()
             with zipfile.ZipFile(output_path, 'r') as zf:
                 all_names = zf.namelist()
                 img_related = [n for n in all_names if any(k in n.lower() for k in 
@@ -2936,6 +2963,8 @@ def restore_external_links_from_original(output_path, original_path, structural_
                         sys.stderr.write(f"[DIAGNOSE] workbook.xml.rels: KEINE Slicer-Rels\n")
                 
                 sys.stderr.write(f"[DIAGNOSE] === END ===\n")
+        except _SkipDiagnose:
+            pass
         except Exception as diag_err:
             sys.stderr.write(f"[DIAGNOSE] Fehler: {diag_err}\n")
     
@@ -6537,8 +6566,13 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             if col_letter in ws.column_dimensions:
                                 source_width = ws.column_dimensions[col_letter].width
                             
+                            # PERF (#2): Nur Zellen mit Styling ODER Wert sichern.
+                            # Leere Zellen ohne Styling brauchen kein Format-Backup →
+                            # bei sparsen Daten (50k max_row, 1k befüllt) 50x schneller.
                             for row in range(1, ws.max_row + 1):
                                 cell = ws.cell(row=row, column=source_excel_col)
+                                if not cell.has_style and cell.value is None:
+                                    continue
                                 source_format[row] = {
                                     'fill': copy(cell.fill) if cell.fill else None,
                                     'font': copy(cell.font) if cell.font else None,
@@ -6864,8 +6898,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         if col_letter in ws.column_dimensions:
                             source_width = ws.column_dimensions[col_letter].width
                         
+                        # PERF (#2): Nur Zellen mit Styling ODER Wert sichern.
                         for row in range(1, ws.max_row + 1):
                             cell = ws.cell(row=row, column=source_excel_col)
+                            if not cell.has_style and cell.value is None:
+                                continue
                             source_format[row] = {
                                 'fill': copy(cell.fill) if cell.fill else None,
                                 'font': copy(cell.font) if cell.font else None,
@@ -7068,8 +7105,11 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         if col_letter in ws.column_dimensions:
                             source_width = ws.column_dimensions[col_letter].width
                         
+                        # PERF (#2): Nur Zellen mit Styling ODER Wert sichern.
                         for row in range(1, ws.max_row + 1):
                             cell = ws.cell(row=row, column=source_excel_col)
+                            if not cell.has_style and cell.value is None:
+                                continue
                             source_format[row] = {
                                 'fill': copy(cell.fill) if cell.fill else None,
                                 'font': copy(cell.font) if cell.font else None,
