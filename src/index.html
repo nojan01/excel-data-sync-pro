@@ -8638,6 +8638,13 @@
                 showFloatingStatus('Keine Live-Session aktiv', true);
                 return;
             }
+            // Guard: verhindere parallele Toggle-Aufrufe (Excel COM verträgt
+            // rasche Folge-Calls für visible/Interactive schlecht → Deadlock)
+            if (explorerState._visibilityTogglePending) {
+                showFloatingStatus('⏳ Umschalten läuft bereits…');
+                return;
+            }
+            explorerState._visibilityTogglePending = true;
             
             try {
                 const newVisible = !explorerState.excelVisible;
@@ -8657,6 +8664,8 @@
             } catch (error) {
                 console.error('[LiveSession] Fehler bei toggleExcelVisibility:', error);
                 showFloatingStatus('Fehler: ' + error.message, true);
+            } finally {
+                explorerState._visibilityTogglePending = false;
             }
         }
         
@@ -8673,6 +8682,11 @@
                 showFloatingStatus('Excel muss eingeblendet sein', true);
                 return;
             }
+            if (explorerState._interactiveTogglePending) {
+                showFloatingStatus('⏳ Umschalten läuft bereits…');
+                return;
+            }
+            explorerState._interactiveTogglePending = true;
             
             try {
                 const newInteractive = !explorerState.excelInteractive;
@@ -8692,6 +8706,8 @@
             } catch (error) {
                 console.error('[LiveSession] Fehler bei toggleExcelInteractive:', error);
                 showFloatingStatus('Fehler: ' + error.message, true);
+            } finally {
+                explorerState._interactiveTogglePending = false;
             }
         }
         

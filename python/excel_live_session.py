@@ -338,16 +338,37 @@ class ExcelLiveSession:
                 self._log("Keine Excel-App aktiv")
                 return {'success': False, 'error': 'Keine Excel-App aktiv'}
             
-            # xlwings visible-Eigenschaft verwenden
-            self.app.visible = visible
+            # Schneller Toggle zwischen visible/hidden kann mit Interactive=False
+            # + aktivem modalen Fokus deadlocken. Vor dem Umschalten
+            # Interactive vorsorglich freigeben (mit Retry), danach setzen.
+            try:
+                def _pre_unlock():
+                    if platform.system() == 'Windows':
+                        self.app.api.Interactive = True
+                    else:
+                        self.app.api.interactive.set(True)
+                self._com_retry(_pre_unlock, desc='set_visible.pre_unlock')
+            except Exception as pre_err:
+                self._log(f"pre-unlock übersprungen: {pre_err}")
+            
+            # xlwings visible-Eigenschaft setzen (mit Retry)
+            def _do_visible():
+                self.app.visible = visible
+            try:
+                self._com_retry(_do_visible, desc=f'set_visible.visible={visible}')
+            except Exception as vis_err:
+                self._log(f"visible-Setzen fehlgeschlagen: {vis_err}")
+                return {'success': False, 'error': str(vis_err)}
             
             # Interactive-Schutz: Wenn sichtbar → Benutzerinteraktion sperren
             # Verhindert versehentliches Schließen/Bearbeiten von Excel
             try:
-                if platform.system() == 'Windows':
-                    self.app.api.Interactive = not visible
-                else:
-                    self.app.api.interactive.set(not visible)
+                def _do_interactive():
+                    if platform.system() == 'Windows':
+                        self.app.api.Interactive = not visible
+                    else:
+                        self.app.api.interactive.set(not visible)
+                self._com_retry(_do_interactive, desc=f'set_visible.interactive={not visible}')
             except Exception as int_err:
                 self._log(f"Interactive-Flag Fehler (ignoriert): {int_err}")
             
@@ -370,10 +391,23 @@ class ExcelLiveSession:
             if not self.app:
                 return {'success': False, 'error': 'Keine Excel-App aktiv'}
             
-            if platform.system() == 'Windows':
-                self.app.api.Interactive = bool(interactive)
-            else:
-                self.app.api.interactive.set(bool(interactive))
+            def _do_interactive():
+                if platform.system() == 'Windows':
+                    self.app.api.Interactive = bool(interactive)
+                else:
+                    self.app.api.interactive.set(bool(interactive))
+            try:
+                self._com_retry(_do_interactive, desc=f'set_interactive={interactive}')
+            except Exception as e:
+                # Wenn Setzen wiederholt fehlschlägt, einmal freigeben versuchen,
+                # damit Excel nicht in gesperrtem Zustand verbleibt
+                if not interactive:
+                    try:
+                        if platform.system() == 'Windows':
+                            self.app.api.Interactive = True
+                    except Exception:
+                        pass
+                raise e
             
             self._log(f"Excel Interactive gesetzt: {interactive}")
             return {'success': True, 'interactive': bool(interactive)}
