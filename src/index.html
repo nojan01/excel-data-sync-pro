@@ -14392,9 +14392,9 @@
             if (result.imageCells && result.imageCells.length > 0) {
                 for (const ic of result.imageCells) {
                     if (ic.vmValue) {
-                        // styleKey ist 1-basiert für row (wie cellStyles/cellFormulas)
-                        // ic.row ist 0-basiert (Excel rowNum - 1), daher +1
-                        const vmKey = `${ic.row + 1}-${ic.col}`;
+                        // ic.row = rowNum - 1 = dataRowIndex + 1 (bei Standard-Dateien ohne Lücken)
+                        // Das entspricht exakt styleKey-Format: "${dataRowIndex + 1}-${col}"
+                        const vmKey = `${ic.row}-${ic.col}`;
                         explorerState.cellVmMap[vmKey] = ic.vmValue;
                     }
                 }
