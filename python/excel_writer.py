@@ -5571,8 +5571,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 
                 sys.stderr.write(f"[XML-DIREKT-COMBINED] Erfolgreich (in-memory pipeline)\n")
                 # AutoFilter vom Frontend anwenden
-                if frontend_auto_filter:
-                    _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
+                if _fp_auto_filter:
+                    _apply_auto_filter_xml(output_path, sheet_name, _fp_auto_filter)
                 # Backup aufräumen (wird für XML-DIREKT nicht gebraucht)
                 if _backup_file is not None:
                     try:
@@ -5752,8 +5752,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 
                 sys.stderr.write(f"[XML-DIREKT-FAST] Erfolgreich (in-memory pipeline): {_fp_result.get('method', 'unknown')}\n")
                 # AutoFilter vom Frontend anwenden
-                if frontend_auto_filter:
-                    _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
+                if _fp_auto_filter:
+                    _apply_auto_filter_xml(output_path, sheet_name, _fp_auto_filter)
                 # Backup aufräumen (wird für XML-DIREKT nicht gebraucht)
                 if _backup_file is not None:
                     try:
@@ -5865,8 +5865,8 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     
                     sys.stderr.write(f"[XML-DIREKT-ROW] Erfolgreich (in-memory pipeline): {_fp_row_result.get('method', 'unknown')}\n")
                     # AutoFilter vom Frontend anwenden
-                    if frontend_auto_filter:
-                        _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
+                    if _fp_auto_filter:
+                        _apply_auto_filter_xml(output_path, sheet_name, _fp_auto_filter)
                     # Backup aufräumen (wird für XML-DIREKT nicht gebraucht)
                     if _backup_file is not None:
                         try:
