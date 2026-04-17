@@ -1243,7 +1243,25 @@ class ExcelLiveSession:
             self._push_undo_snapshot(f'Zeile {row_index + 1} gelöscht')
             
             self._log(f"Lösche Zeile {excel_row}")
-            self.worksheet.range(f'{excel_row}:{excel_row}').delete()
+            
+            # Performance-Modus (analog Spalten-Ops)
+            self.app.screen_updating = False
+            old_calculation = self.app.calculation
+            try:
+                self.app.calculation = 'manual'
+                self.app.enable_events = False
+                if platform.system() == 'Windows':
+                    try:
+                        self.worksheet.api.EnableFormatConditionsCalculation = False
+                    except Exception:
+                        pass
+                self.worksheet.range(f'{excel_row}:{excel_row}').delete()
+            finally:
+                try:
+                    self.app.calculation = old_calculation
+                except Exception:
+                    pass
+                self.app.screen_updating = True
             
             # Journal-Eintrag
             self._journal_add('deleteRow', {'rowIndex': row_index})
@@ -1261,12 +1279,33 @@ class ExcelLiveSession:
         try:
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
+            if count <= 0:
+                return {'success': True, 'deletedAt': row_index, 'count': 0}
             
             excel_row_start = row_index + 2
             excel_row_end = excel_row_start + count - 1
             
             self._log(f"delete_rows_range: Lösche {count} Zeile(n) ab {excel_row_start}")
-            self.worksheet.range(f'{excel_row_start}:{excel_row_end}').delete()
+            
+            # Performance-Modus
+            self.app.screen_updating = False
+            old_calculation = self.app.calculation
+            try:
+                self.app.calculation = 'manual'
+                self.app.enable_events = False
+                if platform.system() == 'Windows':
+                    try:
+                        self.worksheet.api.EnableFormatConditionsCalculation = False
+                    except Exception:
+                        pass
+                # EIN COM-Call für den gesamten Bereich
+                self.worksheet.range(f'{excel_row_start}:{excel_row_end}').delete()
+            finally:
+                try:
+                    self.app.calculation = old_calculation
+                except Exception:
+                    pass
+                self.app.screen_updating = True
             
             return {'success': True, 'deletedAt': row_index, 'count': count}
             
@@ -1291,17 +1330,36 @@ class ExcelLiveSession:
             )
             
             self._log(f"Füge {count} Zeile(n) bei {excel_row_start} ein")
-            self.worksheet.range(f'{excel_row_start}:{excel_row_end}').insert(shift='down')
             
-            # Formatierung der neuen Zeile(n) löschen
-            # Excel übernimmt bei Insert die Formatierung der darüberliegenden Zeile
-            # (inkl. Hintergrundfarbe), was zu doppelten Farbmarkierungen führt.
+            # Performance-Modus
+            self.app.screen_updating = False
+            old_calculation = self.app.calculation
             try:
-                new_rows = self.worksheet.range(f'{excel_row_start}:{excel_row_end}')
-                new_rows.color = None  # Hintergrundfarbe entfernen
-                self._log(f"Formatierung der neuen Zeile(n) {excel_row_start}:{excel_row_end} bereinigt")
-            except Exception as fmt_err:
-                self._log(f"Formatierung-Bereinigung Fehler (ignoriert): {fmt_err}")
+                self.app.calculation = 'manual'
+                self.app.enable_events = False
+                if platform.system() == 'Windows':
+                    try:
+                        self.worksheet.api.EnableFormatConditionsCalculation = False
+                    except Exception:
+                        pass
+                
+                self.worksheet.range(f'{excel_row_start}:{excel_row_end}').insert(shift='down')
+                
+                # Formatierung der neuen Zeile(n) löschen
+                # Excel übernimmt bei Insert die Formatierung der darüberliegenden Zeile
+                # (inkl. Hintergrundfarbe), was zu doppelten Farbmarkierungen führt.
+                try:
+                    new_rows = self.worksheet.range(f'{excel_row_start}:{excel_row_end}')
+                    new_rows.color = None  # Hintergrundfarbe entfernen
+                    self._log(f"Formatierung der neuen Zeile(n) {excel_row_start}:{excel_row_end} bereinigt")
+                except Exception as fmt_err:
+                    self._log(f"Formatierung-Bereinigung Fehler (ignoriert): {fmt_err}")
+            finally:
+                try:
+                    self.app.calculation = old_calculation
+                except Exception:
+                    pass
+                self.app.screen_updating = True
             
             # Journal-Eintrag
             self._journal_add('insertRow', {'rowIndex': row_index, 'count': count})
@@ -1319,6 +1377,9 @@ class ExcelLiveSession:
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
             
+            if from_index == to_index:
+                return {'success': True, 'movedFrom': from_index, 'movedTo': to_index}
+            
             # Excel-Zeilen sind 1-basiert, Header ist Zeile 1, Daten beginnen bei Zeile 2
             excel_from = from_index + 2
             excel_to = to_index + 2
@@ -1332,45 +1393,62 @@ class ExcelLiveSession:
             
             self._log(f"Verschiebe Zeile {excel_from} nach {excel_to}")
             
-            if from_index > to_index:
-                # Nach oben verschieben
-                source_row = self.worksheet.range(f'{excel_from}:{excel_from}')
-                target_row = self.worksheet.range(f'{excel_to}:{excel_to}')
-                
+            # Performance-Modus
+            self.app.screen_updating = False
+            old_calculation = self.app.calculation
+            try:
+                self.app.calculation = 'manual'
+                self.app.enable_events = False
                 if platform.system() == 'Windows':
-                    source_row.api.Cut()
-                    target_row.api.Insert(Shift=-4121)  # xlShiftDown
-                else:
-                    # macOS: Verwende xlwings copy() mit destination
-                    # 1. Insert leere Zeile bei Ziel
-                    target_row.insert(shift='down')
-                    # 2. Quellzeile ist jetzt +1 gerutscht
-                    new_from = excel_from + 1
-                    source_row_new = self.worksheet.range(f'{new_from}:{new_from}')
-                    target_row_new = self.worksheet.range(f'{excel_to}:{excel_to}')
-                    # 3. Kopiere ganze Zeile mit xlwings copy()
-                    source_row_new.copy(destination=target_row_new)
-                    # 4. Lösche alte Zeile
-                    source_row_new.delete(shift='up')
-            else:
-                # Nach unten verschieben
-                insert_at = excel_to + 1
-                source_row = self.worksheet.range(f'{excel_from}:{excel_from}')
-                insert_row = self.worksheet.range(f'{insert_at}:{insert_at}')
+                    try:
+                        self.worksheet.api.EnableFormatConditionsCalculation = False
+                    except Exception:
+                        pass
                 
-                if platform.system() == 'Windows':
-                    source_row.api.Cut()
-                    insert_row.api.Insert(Shift=-4121)  # xlShiftDown
+                if from_index > to_index:
+                    # Nach oben verschieben
+                    source_row = self.worksheet.range(f'{excel_from}:{excel_from}')
+                    target_row = self.worksheet.range(f'{excel_to}:{excel_to}')
+                    
+                    if platform.system() == 'Windows':
+                        source_row.api.Cut()
+                        target_row.api.Insert(Shift=-4121)  # xlShiftDown
+                        try:
+                            self.app.api.CutCopyMode = False
+                        except Exception:
+                            pass
+                    else:
+                        target_row.insert(shift='down')
+                        new_from = excel_from + 1
+                        source_row_new = self.worksheet.range(f'{new_from}:{new_from}')
+                        target_row_new = self.worksheet.range(f'{excel_to}:{excel_to}')
+                        source_row_new.copy(destination=target_row_new)
+                        source_row_new.delete(shift='up')
                 else:
-                    # macOS: Verwende xlwings copy() mit destination
-                    # 1. Insert leere Zeile nach Ziel
-                    insert_row.insert(shift='down')
-                    # 2. Kopiere Quellzeile zur neuen Position
-                    source_row_copy = self.worksheet.range(f'{excel_from}:{excel_from}')
-                    dest_row = self.worksheet.range(f'{insert_at}:{insert_at}')
-                    source_row_copy.copy(destination=dest_row)
-                    # 3. Lösche alte Zeile
-                    self.worksheet.range(f'{excel_from}:{excel_from}').delete(shift='up')
+                    # Nach unten verschieben
+                    insert_at = excel_to + 1
+                    source_row = self.worksheet.range(f'{excel_from}:{excel_from}')
+                    insert_row = self.worksheet.range(f'{insert_at}:{insert_at}')
+                    
+                    if platform.system() == 'Windows':
+                        source_row.api.Cut()
+                        insert_row.api.Insert(Shift=-4121)  # xlShiftDown
+                        try:
+                            self.app.api.CutCopyMode = False
+                        except Exception:
+                            pass
+                    else:
+                        insert_row.insert(shift='down')
+                        source_row_copy = self.worksheet.range(f'{excel_from}:{excel_from}')
+                        dest_row = self.worksheet.range(f'{insert_at}:{insert_at}')
+                        source_row_copy.copy(destination=dest_row)
+                        self.worksheet.range(f'{excel_from}:{excel_from}').delete(shift='up')
+            finally:
+                try:
+                    self.app.calculation = old_calculation
+                except Exception:
+                    pass
+                self.app.screen_updating = True
             
             return {'success': True, 'movedFrom': from_index, 'movedTo': to_index}
             
