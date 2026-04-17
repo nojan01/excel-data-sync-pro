@@ -3850,16 +3850,18 @@ def _apply_vm_cell_map_to_xlsx(xlsx_path, sheet_name, vm_cell_map):
     if not vm_cell_map:
         return
     
-    # Frontend-Keys "row-col" (0-basiert) → Excel-Zellreferenzen "G20"
+    # Frontend-Keys "row-col" (row ist 1-basiert wie styleKey, col ist 0-basiert) → Excel-Zellreferenzen "G20"
     vm_by_ref = {}
     for key, vm_val in vm_cell_map.items():
         parts = str(key).split('-')
         if len(parts) != 2:
             continue
         try:
-            row_0 = int(parts[0])
-            col_0 = int(parts[1])
-            cell_ref = f"{get_column_letter(col_0 + 1)}{row_0 + 1}"
+            row_1based = int(parts[0])  # 1-basiert (styleKey-Format)
+            col_0based = int(parts[1])  # 0-basiert
+            # Excel row = row_1based + 1 (Header-Zeile berücksichtigen)
+            # Excel col = col_0based + 1 (get_column_letter ist 1-basiert)
+            cell_ref = f"{get_column_letter(col_0based + 1)}{row_1based + 1}"
             vm_by_ref[cell_ref] = str(vm_val)
         except (ValueError, TypeError):
             continue

@@ -14392,8 +14392,9 @@
             if (result.imageCells && result.imageCells.length > 0) {
                 for (const ic of result.imageCells) {
                     if (ic.vmValue) {
-                        // imageCells.row ist 0-basiert (Excel rowNum - 1) = styleKey row
-                        const vmKey = `${ic.row}-${ic.col}`;
+                        // styleKey ist 1-basiert für row (wie cellStyles/cellFormulas)
+                        // ic.row ist 0-basiert (Excel rowNum - 1), daher +1
+                        const vmKey = `${ic.row + 1}-${ic.col}`;
                         explorerState.cellVmMap[vmKey] = ic.vmValue;
                     }
                 }
