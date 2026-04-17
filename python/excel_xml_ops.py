@@ -267,20 +267,25 @@ def _build_col_map_for_reorder(column_order):
 # ZEILEN-MAPPING BUILDER
 # =============================================================================
 
-def _build_row_maps(deleted_rows_0based, row_order, max_excel_row):
+def _build_row_maps(deleted_rows_0based, row_order, max_excel_row, inserted_rows=None):
     """
-    Baut Zeilen-Mappings für Zeilen-Löschung und -Verschiebung.
+    Baut Zeilen-Mappings für Zeilen-Löschung, -Verschiebung und -Einfügung.
     
     Args:
         deleted_rows_0based: Liste von 0-basierten Daten-Indizes (0 = Excel-Zeile 2).
-        row_order: Liste wo row_order[new_pos] = after_delete_idx (0-basiert).
+        row_order: Liste wo row_order[new_pos] = original_data_idx (0-basiert).
+                   -1 = eingefügte Zeile (wird in Schritt 3 behandelt).
+                   Gelöschte Indizes werden automatisch ignoriert.
                    Kann None/leer sein bei reiner Löschung.
         max_excel_row: Maximale Excel-Zeilennummer im Sheet.
+        inserted_rows: Dict mit 'operations': [{position: int, count: int}]
+                       Position ist 0-basierter Daten-Index im FINALEN Grid.
     
     Returns:
-        (data_row_map, meta_row_map)
-        - data_row_map: {old_excel_row: final_excel_row} — für sheetData (delete + reorder)
+        (data_row_map, meta_row_map, insert_positions)
+        - data_row_map: {old_excel_row: final_excel_row} — für sheetData (delete + reorder + insert-shift)
         - meta_row_map: {old_excel_row: after_delete_excel_row} — für Metadaten (nur delete)
+        - insert_positions: set of final Excel-Zeilennummern für eingefügte leere Zeilen
     """
     deleted_set = set(deleted_rows_0based) if deleted_rows_0based else set()
     
@@ -298,16 +303,76 @@ def _build_row_maps(deleted_rows_0based, row_order, max_excel_row):
     # Schritt 2: Reorder auf Delete anwenden
     if row_order and len(row_order) > 0:
         data_row_map = {1: 1}
-        for new_pos, after_delete_idx in enumerate(row_order):
-            if after_delete_idx < len(remaining):
-                orig_idx, _ = remaining[after_delete_idx]
-                old_excel = orig_idx + 2
-                final_excel = new_pos + 2
+        # row_order enthält ORIGINAL 0-basierte Daten-Indizes (aus Frontend rowMapping)
+        # -1 = eingefügte Zeilen (werden in Schritt 3 per insert-shift behandelt)
+        # Lookup: original_data_idx → old_excel_row (nur für überlebende Zeilen)
+        orig_to_old_excel = {orig_idx: orig_idx + 2 for orig_idx, _ in remaining}
+        
+        final_pos = 0  # Konsekutiver Positions-Zähler (ohne -1 Einträge)
+        for entry in row_order:
+            if entry == -1:
+                continue  # Eingefügte Zeile, wird in Schritt 3 behandelt
+            if entry in orig_to_old_excel:
+                old_excel = orig_to_old_excel[entry]
+                final_excel = final_pos + 2
                 data_row_map[old_excel] = final_excel
-        return data_row_map, meta_row_map
+                final_pos += 1
     else:
-        # Nur Löschen, kein Reorder → beide Maps identisch
-        return meta_row_map, meta_row_map
+        # Nur Löschen, kein Reorder → data_row_map = meta_row_map (Kopie)
+        data_row_map = dict(meta_row_map)
+    
+    # Schritt 3: Inserts — existierende Zeilen nach unten verschieben
+    insert_positions = set()  # Finale Excel-Zeilennummern der eingefügten Zeilen
+    if inserted_rows:
+        ops = inserted_rows.get('operations', [])
+        if not ops and inserted_rows.get('position') is not None:
+            ops = [{'position': inserted_rows['position'], 'count': inserted_rows.get('count', 1)}]
+        
+        if ops:
+            # Sammle alle Insert-Positionen (0-basierte Daten-Indizes im finalen Grid)
+            insert_data_indices = set()
+            for op in ops:
+                pos = op['position']
+                cnt = op.get('count', 1)
+                for i in range(cnt):
+                    insert_data_indices.add(pos + i)
+            
+            # Berechne finale Excel-Zeilen für alle existierenden Zeilen (Shift durch Inserts)
+            # Sortiere die aktuellen finalen Positionen
+            existing_final = sorted(set(data_row_map.values()) - {1})  # Ohne Header
+            
+            # Baue finale Positionen: gehe durch 0-basierte finale Indizes
+            # und verteile existierende + eingefügte Zeilen
+            new_data_row_map = {1: 1}
+            existing_iter = iter(existing_final)
+            # Reverse-Map: final_excel → old_excel
+            rev_map = {v: k for k, v in data_row_map.items() if k != 1}
+            
+            final_row = 2  # Excel-Zeile startet bei 2 (Header = 1)
+            existing_idx = 0  # Zähler für existierende Zeilen
+            total_existing = len(existing_final)
+            data_idx = 0  # 0-basierter Daten-Index im finalen Grid
+            
+            while existing_idx < total_existing or data_idx in insert_data_indices:
+                if data_idx in insert_data_indices:
+                    insert_positions.add(final_row)
+                    final_row += 1
+                    data_idx += 1
+                elif existing_idx < total_existing:
+                    old_final = existing_final[existing_idx]
+                    old_excel = rev_map[old_final]
+                    new_data_row_map[old_excel] = final_row
+                    final_row += 1
+                    data_idx += 1
+                    existing_idx += 1
+                else:
+                    break
+            
+            data_row_map = new_data_row_map
+            sys.stderr.write(f"[BUILD_ROW_MAPS] {len(insert_positions)} Insert-Positionen: "
+                             f"{sorted(insert_positions)[:10]}...\n")
+    
+    return data_row_map, meta_row_map, insert_positions
 
 
 # =============================================================================
@@ -807,7 +872,7 @@ def _sort_cells_in_rows(sheet_xml):
         return f'{row_tag}{sorted_content}</row>'
     
     return re.sub(
-        r'(<row\s[^>]*>)(.*?)</row>',
+        r'(<row\s[^>]*(?<!/)>)(.*?)</row>',
         _sort_cells_in_row,
         sheet_xml,
         flags=re.DOTALL
@@ -818,7 +883,7 @@ def _sort_cells_in_rows(sheet_xml):
 # ZEILEN-XML-TRANSFORMATION
 # =============================================================================
 
-def _apply_row_map_to_sheet_xml(sheet_xml, data_row_map, meta_row_map):
+def _apply_row_map_to_sheet_xml(sheet_xml, data_row_map, meta_row_map, insert_positions=None):
     """
     Wendet Zeilen-Mappings auf alle relevanten Elemente im Worksheet-XML an.
     
@@ -830,6 +895,7 @@ def _apply_row_map_to_sheet_xml(sheet_xml, data_row_map, meta_row_map):
     Args:
         data_row_map: {old_excel_row: final_excel_row}
         meta_row_map: {old_excel_row: after_delete_excel_row}
+        insert_positions: set of final Excel-Zeilennummern für eingefügte leere Zeilen
     """
     
     # ---- 0. <dimension ref="A1:J100"> aktualisieren ----
@@ -871,13 +937,20 @@ def _apply_row_map_to_sheet_xml(sheet_xml, data_row_map, meta_row_map):
             # Alle <c r="AX"> Zell-Referenzen auf neue Zeilennummer
             row_xml = re.sub(
                 r'(<c\s[^>]*?r="[A-Z]+)\d+"',
-                f'\\1{new_row}"',
+                f'\\g<1>{new_row}"',
                 row_xml)
             
             new_rows.append((new_row, row_xml))
         
         # Sortieren nach neuer Zeilennummer
         new_rows.sort(key=lambda x: x[0])
+        
+        # Leere Zeilen für Insert-Positionen einfügen
+        if insert_positions:
+            for ins_row in sorted(insert_positions):
+                new_rows.append((ins_row, f'<row r="{ins_row}"></row>'))
+            new_rows.sort(key=lambda x: x[0])
+        
         new_sd = sd_open + ''.join(xml for _, xml in new_rows) + sd_close
         sheet_xml = sheet_xml[:sd_match.start()] + new_sd + sheet_xml[sd_match.end():]
     
@@ -1332,7 +1405,8 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                                  deleted_columns=None, inserted_columns=None,
                                  column_order=None, hidden_columns=None,
                                  headers=None, data=None, return_bytes=False,
-                                 strip_row_hidden=False, hidden_rows=None):
+                                 strip_row_hidden=False, hidden_rows=None,
+                                 source_bytes=None):
     """
     Führt Spaltenoperationen direkt auf dem XML durch (ZIP-to-ZIP).
     
@@ -1370,7 +1444,8 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
     temp_output = output_path + '.tmp' if not return_bytes else None
     
     try:
-        with zipfile.ZipFile(file_path, 'r') as src_zip:
+        src_stream = source_bytes if source_bytes is not None else file_path
+        with zipfile.ZipFile(src_stream, 'r') as src_zip:
             # 1. Finde Sheet-XML Pfad
             wb_xml_raw = src_zip.read('xl/workbook.xml').decode('utf-8')
             wb_root = ET.fromstring(wb_xml_raw)
@@ -1610,7 +1685,7 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                             return f'{row_tag}{row_content}</row>'
                         
                         sheet_content = re.sub(
-                            r'(<row\s[^>]*>)(.*?)</row>',
+                            r'(<row\s[^>]*(?<!/)>)(.*?)</row>',
                             _insert_cells_into_row,
                             sheet_content, flags=re.DOTALL)
                     
@@ -1649,7 +1724,7 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                             return f'{row_tag}{sorted_content}</row>'
                         
                         sheet_content = re.sub(
-                            r'(<row\s[^>]*>)(.*?)</row>',
+                            r'(<row\s[^>]*(?<!/)>)(.*?)</row>',
                             _sort_cells_in_target_row,
                             sheet_content, flags=re.DOTALL)
                     
@@ -1963,7 +2038,8 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
 
 def direct_xml_row_operations(file_path, output_path, sheet_name,
                               deleted_rows=None, row_order=None,
-                              hidden_rows=None):
+                              hidden_rows=None, inserted_rows=None,
+                              source_bytes=None, return_bytes=False):
     """
     Führt Zeilenoperationen direkt auf dem XML durch (ZIP-to-ZIP).
     
@@ -1980,9 +2056,12 @@ def direct_xml_row_operations(file_path, output_path, sheet_name,
         deleted_rows: Liste von 0-basierten Daten-Indizes zum Löschen
         row_order: Liste wo row_order[new_pos] = old_pos_after_delete (0-basiert)
         hidden_rows: Liste von 0-basierten Daten-Indizes zum Verstecken
+        inserted_rows: Dict mit 'operations': [{position: int, count: int}]
+        source_bytes: BytesIO mit ZIP-Daten (wenn None, wird file_path gelesen)
+        return_bytes: Wenn True, wird BytesIO statt Datei zurückgegeben
     
     Returns:
-        Dict mit success, outputPath, method, has_slicers
+        Dict mit success, outputPath, method, has_slicers (und zip_bytes bei return_bytes)
     """
     sys.stderr.write(f"[XML_ROW_OPS] Start für Sheet '{sheet_name}'\n")
     sys.stderr.write(f"[XML_ROW_OPS] deleted={len(deleted_rows) if deleted_rows else 0}, "
@@ -1993,10 +2072,11 @@ def direct_xml_row_operations(file_path, output_path, sheet_name,
     RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
     R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
     
-    temp_output = output_path + '.row_tmp'
+    temp_output = output_path + '.row_tmp' if not return_bytes else None
     
     try:
-        with zipfile.ZipFile(file_path, 'r') as src_zip:
+        src_stream = source_bytes if source_bytes is not None else file_path
+        with zipfile.ZipFile(src_stream, 'r') as src_zip:
             # 1. Finde Sheet-XML Pfad
             wb_xml_raw = src_zip.read('xl/workbook.xml').decode('utf-8')
             wb_root = ET.fromstring(wb_xml_raw)
@@ -2083,10 +2163,12 @@ def direct_xml_row_operations(file_path, output_path, sheet_name,
             sys.stderr.write(f"[XML_ROW_OPS] Tables: {list(table_files.values())}\n")
             
             # 5. Zeilen-Mappings bauen
-            data_row_map, meta_row_map = _build_row_maps(
-                deleted_rows, row_order, max_row_in_sheet)
+            data_row_map, meta_row_map, insert_positions = _build_row_maps(
+                deleted_rows, row_order, max_row_in_sheet, inserted_rows)
             
             surviving_count = len([v for k, v in data_row_map.items() if k != 1])
+            if insert_positions:
+                sys.stderr.write(f"[XML_ROW_OPS] {len(insert_positions)} Zeilen werden eingefügt\n")
             sys.stderr.write(f"[XML_ROW_OPS] {surviving_count} Zeilen überleben "
                              f"(von {max_row_in_sheet - 1} Datenzeilen)\n")
             
@@ -2094,7 +2176,7 @@ def direct_xml_row_operations(file_path, output_path, sheet_name,
             modified_files = {}
             
             sheet_content = _apply_row_map_to_sheet_xml(
-                sheet_content, data_row_map, meta_row_map)
+                sheet_content, data_row_map, meta_row_map, insert_positions)
             sys.stderr.write(f"[XML_ROW_OPS] Sheet-XML angepasst\n")
             
             # 7. Hidden Rows anwenden (auf die neuen Zeilennummern)
@@ -2243,7 +2325,9 @@ def direct_xml_row_operations(file_path, output_path, sheet_name,
                 has_slicers = True
             
             # 13. ZIP-to-ZIP: Original-Einträge 1:1 kopieren, nur modifizierte ersetzen
-            with zipfile.ZipFile(temp_output, 'w', zipfile.ZIP_DEFLATED) as dst_zip:
+            # Bei return_bytes: In BytesIO schreiben statt auf Disk
+            dst_target = io.BytesIO() if return_bytes else temp_output
+            with zipfile.ZipFile(dst_target, 'w', zipfile.ZIP_DEFLATED) as dst_zip:
                 for item in src_zip.infolist():
                     if item.filename.endswith('/'):
                         continue
@@ -2261,6 +2345,12 @@ def direct_xml_row_operations(file_path, output_path, sheet_name,
                         data_bytes = src_zip.read(item.filename)
                         dst_zip.writestr(item, data_bytes)
         
+        if return_bytes:
+            dst_target.seek(0)
+            sys.stderr.write(f"[XML_ROW_OPS] Erfolgreich (in-memory, {dst_target.getbuffer().nbytes} bytes)\n")
+            return {'success': True, 'outputPath': output_path, 'method': 'xml-row-ops',
+                    'has_slicers': has_slicers, 'zip_bytes': dst_target}
+        
         # An Zielort verschieben
         if os.path.exists(output_path):
             os.remove(output_path)
@@ -2271,7 +2361,7 @@ def direct_xml_row_operations(file_path, output_path, sheet_name,
                 'has_slicers': has_slicers}
     
     except Exception as e:
-        if os.path.exists(temp_output):
+        if temp_output and os.path.exists(temp_output):
             os.remove(temp_output)
         sys.stderr.write(f"[XML_ROW_OPS] Fehler: {e}\n")
         import traceback

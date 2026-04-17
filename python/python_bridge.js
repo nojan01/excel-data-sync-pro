@@ -670,12 +670,12 @@ async function _processSheetOpenpyxl(sheet, targetPath, originalSourcePath) {
     
     if (hasRowOps && hasColOps) {
         // =====================================================================
-        // KOMBINIERTE OPERATIONEN: Erst Zeilen, dann Spalten (zwei separate Aufrufe)
+        // KOMBINIERTE OPERATIONEN: EIN Python-Aufruf mit Allen Ops
+        // Python FAST-PATH-COMBINED verarbeitet: Row-Ops → Col-Ops → Cell-Edits
         // =====================================================================
-        safeLog(`[openpyxl] KOMBINIERT-Branch: Erst Zeilen, dann Spalten für "${sheet.sheetName}"`);
+        safeLog(`[openpyxl] KOMBINIERT-Branch: Ein Aufruf für Row+Col Ops "${sheet.sheetName}"`);
         
-        // SCHRITT 1: Zeilen-Operationen (OHNE Spalten-Ops, OHNE fullRewrite)
-        const rowConfig = {
+        const config = {
             filePath: targetPath,
             outputPath: targetPath,
             originalPath: originalSourcePath,
@@ -683,78 +683,39 @@ async function _processSheetOpenpyxl(sheet, targetPath, originalSourcePath) {
             changes: {
                 headers: sheet.headers || [],
                 data: sheet.data || [],
-                editedCells: sheet.changedCells || {},  // WICHTIG: editedCells mitsenden für Zeilen-Verschiebung ohne Block-Write
-                cellStyles: {},
-                rowHighlights: {},
-                deletedColumns: [],  // Keine Spalten-Ops im ersten Durchlauf
-                insertedColumns: null,
+                editedCells: sheet.changedCells || {},
+                cellStyles: sheet.cellStyles || {},
+                cellFonts: sheet.cellFonts || {},
+                richTextCells: sheet.richTextCells || {},
+                rowHighlights: sheet.rowHighlights || {},
+                mergedCells: sheet.mergedCells || [],
+                deletedColumns: sheet.deletedColumnIndices || [],
+                insertedColumns: sheet.insertedColumnInfo || null,
                 deletedRowIndices: sheet.deletedRowIndices || [],
                 insertedRowInfo: sheet.insertedRowInfo || null,
                 rowOrder: sheet.rowOrder || null,
-                hiddenColumns: [],
-                hiddenRows: sheet.hiddenRows || [],  // Hidden Rows im Zeilen-Pass anwenden (ZIP-ANSATZ unterstützt sie)
+                hiddenColumns: sheet.hiddenColumns || [],
+                hiddenRows: sheet.hiddenRows || [],
                 rowMapping: sheet.rowMapping || null,
                 fromFile: false,
-                fullRewrite: false,  // WICHTIG: Keine Daten schreiben, nur Zeilen-Ops
+                fullRewrite: false,
                 structuralChange: true,
-                clearedRowHighlights: [],
-                columnOrder: null,  // Keine Spalten-Reorder im ersten Durchlauf
-                affectedRows: sheet.affectedRows || [],
-                autoFilterRange: null
-            }
-        };
-        
-        const rowResult = await writeExcelOpenpyxl(rowConfig);
-        if (!rowResult.success) {
-            safeError(`[openpyxl] Zeilen-Ops für "${sheet.sheetName}" fehlgeschlagen:`, rowResult.error);
-            return rowResult;
-        }
-        safeLog(`[openpyxl] Zeilen-Ops für "${sheet.sheetName}" erfolgreich`);
-        
-        // SCHRITT 2: Spalten-Operationen via XML-DIREKT (OHNE Daten-Rewrite)
-        // WICHTIG: originalPath = targetPath (NICHT originalSourcePath!)
-        // Pass 1 hat die Zeilen-Ops + ALLE Daten bereits in targetPath geschrieben.
-        // editedCells={} und cellStyles={} etc. damit der FAST PATH (XML-DIREKT)
-        // garantiert genommen wird.
-        const colConfig = {
-            filePath: targetPath,
-            outputPath: targetPath,
-            originalPath: targetPath,
-            sheetName: sheet.sheetName,
-            changes: {
-                headers: sheet.headers || [],
-                data: sheet.data || [],
-                editedCells: {},  // LEER: Daten wurden bereits in SCHRITT 1 geschrieben
-                cellStyles: {},   // LEER: Styles sind bereits im XML
-                cellFonts: {},    // LEER: Fonts sind bereits im XML
-                richTextCells: {}, // LEER: RichText ist bereits im XML
-                rowHighlights: sheet.rowHighlights || {},
-                mergedCells: [],  // LEER: MergedCells sind bereits im XML
-                deletedColumns: sheet.deletedColumnIndices || [],
-                insertedColumns: sheet.insertedColumnInfo || null,
-                deletedRowIndices: [],  // Keine Zeilen-Ops mehr (schon erledigt)
-                insertedRowInfo: null,
-                rowOrder: null,
-                hiddenColumns: sheet.hiddenColumns || [],
-                hiddenRows: [],  // Schon in Pass 1 angewendet
-                rowMapping: null,  // Kein rowMapping mehr (Zeilen schon gelöscht)
-                fromFile: false,
-                fullRewrite: false,  // KEIN Daten-Rewrite nötig
-                structuralChange: true,  // Nötig für FALL 1/2 Block
                 clearedRowHighlights: sheet.clearedRowHighlights || [],
                 columnOrder: sheet.columnOrder || null,
-                affectedRows: [],
-                autoFilterRange: sheet.autoFilterRange || null
+                affectedRows: sheet.affectedRows || [],
+                autoFilterRange: sheet.autoFilterRange || null,
+                hasFormatChanges: sheet.hasFormatChanges || false,
+                vmCellMap: sheet.vmCellMap || {}
             }
         };
         
-        const colResult = await writeExcelOpenpyxl(colConfig);
-        if (!colResult.success) {
-            safeError(`[openpyxl] Spalten-Ops für "${sheet.sheetName}" fehlgeschlagen:`, colResult.error);
+        const result = await writeExcelOpenpyxl(config);
+        if (!result.success) {
+            safeError(`[openpyxl] KOMBINIERT-Branch FEHLER für "${sheet.sheetName}":`, result.error);
         } else {
-            safeLog(`[openpyxl] Spalten-Ops für "${sheet.sheetName}" erfolgreich`);
+            safeLog(`[openpyxl] KOMBINIERT-Branch ERFOLG für "${sheet.sheetName}" (method: ${result.method || '?'})`);
         }
-        return colResult;
+        return result;
         
     } else {
         // =====================================================================
@@ -785,7 +746,7 @@ async function _processSheetOpenpyxl(sheet, targetPath, originalSourcePath) {
                 hiddenRows: sheet.hiddenRows || [],
                 rowMapping: sheet.rowMapping || null,
                 fromFile: sheet.fromFile || false,
-                fullRewrite: sheet.fullRewrite || false,
+                fullRewrite: false,  // IMMER false → Python versucht erst FAST-PATH, Fallback auf FALL 2 bei Exception
                 structuralChange: sheet.structuralChange || false,
                 clearedRowHighlights: sheet.clearedRowHighlights || [],
                 columnOrder: sheet.columnOrder || null,

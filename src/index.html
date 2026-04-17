@@ -3313,7 +3313,7 @@
                             <option value="after">Nach</option>
                         </select>
                         <span style="color: white;">Zeile</span>
-                        <input type="number" id="moveTargetRow" class="config-input" style="width: 80px; padding: 4px 8px;" min="1" placeholder="Nr.">
+                        <input type="number" id="moveTargetRow" class="config-input" style="width: 80px; padding: 4px 8px;" min="2" placeholder="Nr.">
                         <button class="btn btn-sm" id="btnExecuteMove" style="background: white; color: #217346; font-weight: 600;">✓ Verschieben</button>
                         <button class="btn btn-sm" id="btnHideSelectedRows" style="background: #FF9800; color: white; font-weight: 600; margin-left: 15px;">👁️‍🗨️ Ausblenden</button>
                         <button class="btn btn-sm" id="btnDeleteSelectedRows" style="background: #F44336; color: white; font-weight: 600;">🗑️ Löschen</button>
@@ -10868,7 +10868,7 @@
             const rowLabel = currentLanguage === 'en' ? 'Row' : 'Zeile';
             const confirmed = await showConfirmDialog(
                 t('deleteRowTitle'),
-                `${t('deleteRowConfirm')}\n\n${rowLabel} ${rowIndex + 1}: ${rowPreview}...`,
+                `${t('deleteRowConfirm')}\n\n${rowLabel} ${rowIndex + 2}: ${rowPreview}...`,
                 currentLanguage === 'en' ? 'Delete' : 'Löschen',
                 t('cancel')
             );
@@ -11174,7 +11174,7 @@
             hiddenArray.forEach(rowIndex => {
                 const rowPreview = explorerState.data[rowIndex]?.slice(0, 2).join(', ').substring(0, 30) || '...';
                 menuHtml += `<div class="context-menu-item" data-action="show-row" data-row="${rowIndex}">
-                    👁️ ${currentLanguage === 'en' ? 'Row' : 'Zeile'} ${rowIndex + 1}: ${escapeHtml(rowPreview)}...
+                    👁️ ${currentLanguage === 'en' ? 'Row' : 'Zeile'} ${rowIndex + 2}: ${escapeHtml(rowPreview)}...
                 </div>`;
             });
             
@@ -16125,8 +16125,8 @@
             
             // Zweite Zeile: Spaltenüberschriften mit Sortierung
             headerHtml += '<tr>';
-            // Zeilennummer-Spalte (fest, nicht verschiebbar)
-            headerHtml += `<th style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 4px; background: var(--bg-lighter); color: var(--text-muted); font-size: 11px; position: sticky; left: 0; z-index: 2;" title="Zeilennummer">#</th>`;
+            // Zeilennummer-Spalte (fest, nicht verschiebbar) — zeigt Excel-Zeilennummern
+            headerHtml += `<th style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 2px 4px; background: var(--bg-lighter); color: var(--text-muted); font-size: 10px; font-weight: normal; position: sticky; left: 0; z-index: 2; border-bottom: none;" title="Excel-Zeilennummer">1</th>`;
             // Checkbox-Spalte für Zeilenauswahl
             headerHtml += `<th style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 4px; position: sticky; left: 40px; z-index: 2; background: var(--bg-lighter);">
                 <input type="checkbox" id="selectAllRows" ${allVisibleSelected ? 'checked' : ''} 
@@ -16321,11 +16321,11 @@
                 if (isSelected) trClasses.push('row-selected');
                 if (highlightColor) trClasses.push(`row-highlight-${highlightColor}`);
                 const trClassAttr = trClasses.length > 0 ? ` class="${trClasses.join(' ')}"` : '';
-                // Datenzeilen-Nummer = originalIndex + 1 (1-basiert, passend zur Verschiebe-Funktion)
-                const dataRowNumber = originalIndex + 1;
+                // Excel-Zeilennummer = originalIndex + 2 (Header = Zeile 1, Daten ab Zeile 2)
+                const dataRowNumber = originalIndex + 2;
                 bodyHtml += `<tr data-original-index="${originalIndex}"${trClassAttr}>`;
                 // Zeilennummer-Zelle (fest, sticky)
-                bodyHtml += `<td class="row-number-cell" style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 4px; background: var(--bg-lighter); color: var(--text-muted); font-size: 11px; font-family: monospace; position: sticky; left: 0; z-index: 1; user-select: none;" title="Datenzeile ${dataRowNumber}">${dataRowNumber}</td>`;
+                bodyHtml += `<td class="row-number-cell" style="width: 40px; min-width: 40px; max-width: 40px; text-align: center; padding: 4px; background: var(--bg-lighter); color: var(--text-muted); font-size: 11px; font-family: monospace; position: sticky; left: 0; z-index: 1; user-select: none;" title="Excel-Zeile ${dataRowNumber}">${dataRowNumber}</td>`;
                 // Checkbox-Zelle für Zeilenauswahl
                 bodyHtml += `<td class="row-checkbox-cell ${isSelected ? 'selected' : ''}" style="width: 40px; min-width: 40px; max-width: 40px; position: sticky; left: 40px; z-index: 1; background: var(--bg-secondary);">
                     <input type="checkbox" class="row-select-checkbox" data-row-index="${originalIndex}" 
@@ -16613,13 +16613,14 @@
             const targetRowInput = document.getElementById('moveTargetRow');
             const targetRow = parseInt(targetRowInput.value);
             
-            if (isNaN(targetRow) || targetRow < 1 || targetRow > explorerState.data.length) {
-                showNotification(`Ungültige Zielzeile. Bitte eine Zahl zwischen 1 und ${explorerState.data.length} eingeben.`, 'warning');
+            const maxExcelRow = explorerState.data.length + 1;
+            if (isNaN(targetRow) || targetRow < 2 || targetRow > maxExcelRow) {
+                showNotification(`Ungültige Zielzeile. Bitte eine Zahl zwischen 2 und ${maxExcelRow} eingeben.`, 'warning');
                 return;
             }
             
-            // Zielindex (0-basiert)
-            let targetIndex = targetRow - 1;
+            // Zielindex (0-basiert): Excel-Zeile 2 = Index 0
+            let targetIndex = targetRow - 2;
             
             // Sortiere die ausgewählten Indizes
             const selectedIndices = Array.from(explorerState.selectedRows).sort((a, b) => a - b);
@@ -16869,7 +16870,7 @@
             // Markiere als geändert
             explorerState.hasUnsavedChanges = true;
             
-            showNotification(`${selectedCount} Zeile(n) ${movePosition === 'before' ? 'vor' : 'nach'} Zeile ${targetRow} verschoben`, 'success');
+            showNotification(`${selectedCount} Zeile(n) ${movePosition === 'before' ? 'vor' : 'nach'} Excel-Zeile ${targetRow} verschoben`, 'success');
             
             // Eingabefeld leeren
             targetRowInput.value = '';
@@ -18541,7 +18542,7 @@
                                 rowHighlights: exportRowHighlights,
                                 clearedRowHighlights: clearedRowHighlights,
                                 autoFilterRange: explorerState.autoFilterRange,
-                                fullRewrite: true,
+                                fullRewrite: false,  // Python Fast-Path entscheidet selbst
                                 structuralChange: true,  // Signalisiert dass Styles komplett zurückgesetzt werden müssen
                                 // Spalten-Operationen
                                 deletedColumnIndices: deletedColumnIndices,  // Array der gelöschten Spalten für spliceColumns
@@ -18820,7 +18821,7 @@
                                 rowHighlights: cachedExportRowHighlights,
                                 clearedRowHighlights: [],
                                 autoFilterRange: cachedSheet.autoFilterRange || null,
-                                fullRewrite: true,
+                                fullRewrite: false,  // Python Fast-Path entscheidet selbst
                                 structuralChange: true,
                                 deletedColumnIndices: deletedColumnIndices,
                                 insertedColumnInfo: insertedColumnInfo,
@@ -19031,8 +19032,21 @@
                             const currentPage = explorerState.currentPage;
                             const currentSort = { column: explorerState.sortColumn, direction: explorerState.sortDirection, type: explorerState.sortType };
                             
+                            // Row-Highlights VOR Reload sichern — reloadExplorerFile() löscht sie,
+                            // und detectRowHighlights() im Reader erkennt sie nicht immer zuverlässig
+                            const savedRowHighlights = new Map(explorerState.rowHighlights);
+                            
                             // Datei neu laden (lädt auch das aktuelle Sheet automatisch)
                             await reloadExplorerFile(savePath, explorerState.filePassword);
+                            
+                            // Row-Highlights wiederherstellen (Indizes stimmen bereits,
+                            // da insert/delete/move sie im Frontend laufend anpasst)
+                            if (savedRowHighlights.size > 0) {
+                                explorerState.rowHighlights = savedRowHighlights;
+                                explorerState.originalRowHighlights = new Map(savedRowHighlights);
+                                // Re-Render damit die Highlights sichtbar werden
+                                filterExplorerData();
+                            }
                             
                             // WICHTIG: Nach Reload nochmal sicherstellen dass alles sauber ist
                             explorerState.editedCells.clear();
