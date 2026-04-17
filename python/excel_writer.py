@@ -5199,23 +5199,19 @@ def _apply_row_highlights_xml(sheet_content, styles_content, row_highlights):
         highlighted_excel_rows.add(excel_row)
         row_color_map[excel_row] = color
     
-    # Sammle alle (alter_style, farbe) Kombinationen die vorkommen
+    # Sammle alle (alter_style, farbe) Kombinationen in EINEM Durchlauf
     styles_needed = set()
-    for excel_row in highlighted_excel_rows:
+    _row_re = re.compile(r'<row\s[^>]*?\br="(\d+)"[^>]*?>(.*?)</row>', re.DOTALL)
+    for rm in _row_re.finditer(sheet_content):
+        excel_row = int(rm.group(1))
+        if excel_row not in highlighted_excel_rows:
+            continue
         color = row_color_map[excel_row]
-        # Finde Zellen in dieser Zeile
-        row_pattern = re.compile(
-            r'<row\s[^>]*?\br="' + str(excel_row) + r'"[^>]*?>(.*?)</row>',
-            re.DOTALL
-        )
-        row_match = row_pattern.search(sheet_content)
-        if row_match:
-            row_inner = row_match.group(1)
-            for cell_m in re.finditer(r'<c\s[^>]*?(?:/?>)', row_inner):
-                cell_el = cell_m.group(0)
-                s_m = re.search(r'\bs="(\d+)"', cell_el)
-                current_s = int(s_m.group(1)) if s_m else 0
-                styles_needed.add((current_s, color))
+        for cell_m in re.finditer(r'<c\s[^>]*?(?:/?>)', rm.group(2)):
+            cell_el = cell_m.group(0)
+            s_m = re.search(r'\bs="(\d+)"', cell_el)
+            current_s = int(s_m.group(1)) if s_m else 0
+            styles_needed.add((current_s, color))
     
     sys.stderr.write(f"[HL_XML] {len(styles_needed)} einzigartige (style, farbe) Kombinationen\n")
     
@@ -5256,40 +5252,33 @@ def _apply_row_highlights_xml(sheet_content, styles_content, row_highlights):
     
     sys.stderr.write(f"[HL_XML] {len(style_map)} neue XF-Einträge erstellt, cellXfs count={cellxfs_count}\n")
     
-    # ---- Schritt 3: Zell-Styles im Sheet-XML aktualisieren ----
-    for excel_row in sorted(highlighted_excel_rows):
+    # ---- Schritt 3: Zell-Styles im Sheet-XML aktualisieren (EINZELDURCHLAUF) ----
+    def _process_row_highlight(row_match):
+        """Verarbeitet eine <row>...</row> und setzt ggf. Highlight-Styles."""
+        row_tag = row_match.group(0)
+        r_m = re.search(r'\br="(\d+)"', row_tag)
+        if not r_m:
+            return row_tag
+        excel_row = int(r_m.group(1))
+        if excel_row not in highlighted_excel_rows:
+            return row_tag
         color = row_color_map[excel_row]
         
-        row_pattern = re.compile(
-            r'(<row\s[^>]*?\br="' + str(excel_row) + r'"[^>]*?>)(.*?)(</row>)',
-            re.DOTALL
-        )
-        row_match = row_pattern.search(sheet_content)
-        if row_match:
-            row_open = row_match.group(1)
-            row_inner = row_match.group(2)
-            row_close = row_match.group(3)
-            
-            # Jede Zelle in der Zeile aktualisieren
-            def _update_cell_style(cell_m, _color=color):
-                cell_el = cell_m.group(0)
-                s_m = re.search(r'\bs="(\d+)"', cell_el)
-                current_s = int(s_m.group(1)) if s_m else 0
-                new_s = style_map.get((current_s, _color))
-                
-                if new_s is None:
-                    return cell_el  # Keine Änderung
-                
-                if s_m:
-                    return re.sub(r'\bs="\d+"', f's="{new_s}"', cell_el)
-                else:
-                    # s-Attribut hinzufügen
-                    return cell_el.replace('<c ', f'<c s="{new_s}" ', 1)
-            
-            new_inner = re.sub(r'<c\s[^>]*?(?:/?>)', _update_cell_style, row_inner)
-            sheet_content = (sheet_content[:row_match.start()] + 
-                           row_open + new_inner + row_close + 
-                           sheet_content[row_match.end():])
+        def _update_cell_style(cell_m):
+            cell_el = cell_m.group(0)
+            s_m_inner = re.search(r'\bs="(\d+)"', cell_el)
+            current_s = int(s_m_inner.group(1)) if s_m_inner else 0
+            new_s = style_map.get((current_s, color))
+            if new_s is None:
+                return cell_el
+            if s_m_inner:
+                return re.sub(r'\bs="\d+"', f's="{new_s}"', cell_el)
+            else:
+                return cell_el.replace('<c ', f'<c s="{new_s}" ', 1)
+        
+        return re.sub(r'<c\s[^>]*?(?:/?>)', _update_cell_style, row_tag)
+    
+    sheet_content = re.sub(r'<row\s[^>]*?>.*?</row>', _process_row_highlight, sheet_content, flags=re.DOTALL)
     
     sys.stderr.write(f"[HL_XML] {len(highlighted_excel_rows)} Zeilen markiert\n")
     return sheet_content, styles_content
