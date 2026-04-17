@@ -1498,7 +1498,12 @@ class ExcelLiveSession:
             return {'success': False, 'error': str(e)}
     
     def highlight_rows_batch(self, rows: list, color: Optional[str] = None) -> Dict[str, Any]:
-        """Markiert mehrere Zeilen mit Farbe in einem Aufruf"""
+        """Markiert mehrere Zeilen mit Farbe in einem Aufruf.
+        
+        Optimierung: aufeinanderfolgende Zeilen zu Blöcken zusammenfassen
+        und pro Block EINEN COM-Call absetzen (statt ein Call pro Zeile).
+        Bei vielen Zeilen verhindert das Excel-Hänger durch COM-Overload.
+        """
         try:
             if not self.worksheet:
                 return {'success': False, 'error': 'Keine Datei geöffnet'}
@@ -1518,18 +1523,63 @@ class ExcelLiveSession:
             }
             rgb = colors_map.get(color, (255, 255, 0))
             
+            # Excel-Zeilennummern (1-basiert) sortiert und deduped
+            excel_rows_sorted = sorted({int(r) + 2 for r in rows})
+            
+            # Aufeinanderfolgende Zeilen zu Ranges zusammenfassen
+            # [2,3,4,7,8,10] -> [(2,4),(7,8),(10,10)]
+            blocks = []
+            start = excel_rows_sorted[0]
+            prev = start
+            for r in excel_rows_sorted[1:]:
+                if r == prev + 1:
+                    prev = r
+                    continue
+                blocks.append((start, prev))
+                start = r
+                prev = r
+            blocks.append((start, prev))
+            
+            # Performance-Modus aktivieren
             self.app.screen_updating = False
+            original_calculation = self.app.calculation
+            self.app.calculation = 'manual'
+            prev_events = True
             try:
-                for row_index in rows:
-                    excel_row = row_index + 2
-                    row_range = self.worksheet.range(f'A{excel_row}:{last_col_letter}{excel_row}')
-                    if color is None:
-                        row_range.color = None
-                    else:
-                        row_range.color = rgb
+                prev_events = bool(self.app.enable_events)
+            except Exception:
+                pass
+            self.app.enable_events = False
+            if platform.system() == 'Windows':
+                try:
+                    self.worksheet.api.EnableFormatConditionsCalculation = False
+                except Exception:
+                    pass
+            
+            blocks_written = 0
+            try:
+                for r_from, r_to in blocks:
+                    addr = f'A{r_from}:{last_col_letter}{r_to}'
+                    def _do_color(a=addr):
+                        rng = self.worksheet.range(a)
+                        if color is None:
+                            rng.color = None
+                        else:
+                            rng.color = rgb
+                    try:
+                        self._com_retry(_do_color, desc=f'highlight_batch {addr}')
+                        blocks_written += 1
+                    except Exception as be:
+                        self._log(f"Block {addr} Fehler (übersprungen): {be}")
             finally:
+                try:
+                    self.app.enable_events = prev_events
+                except Exception:
+                    pass
+                self.app.calculation = original_calculation
                 self.app.screen_updating = True
             
+            # Workbook NICHT als geändert markieren (visuelle Markierung)
             try:
                 if platform.system() == 'Windows':
                     self.workbook.api.Saved = True
@@ -1538,10 +1588,14 @@ class ExcelLiveSession:
             except Exception:
                 pass
             
-            self._log(f"{len(rows)} Zeilen markiert mit {color}")
-            return {'success': True, 'count': len(rows)}
+            self._log(f"{len(excel_rows_sorted)} Zeilen ({blocks_written}/{len(blocks)} Blöcke) markiert mit {color}")
+            return {'success': True, 'count': len(excel_rows_sorted), 'blocks': blocks_written}
             
         except Exception as e:
+            try:
+                self.app.screen_updating = True
+            except Exception:
+                pass
             self._log(f"Fehler beim Batch-Markieren: {e}")
             return {'success': False, 'error': str(e)}
 
