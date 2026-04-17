@@ -10069,7 +10069,10 @@
                 
                 // Wenn das aktive Sheet gelöscht wurde, das erste laden
                 if (wasActive && explorerState.sheets.length > 0) {
-                    explorerState.selectedSheet = explorerState.sheets[0];
+                    // selectedSheet auf null setzen, damit loadExplorerSheet
+                    // die alten Daten des gelöschten Sheets NICHT im Cache unter
+                    // dem Namen des Ziel-Sheets speichert (saveCurrentSheetToCache-Guard)
+                    explorerState.selectedSheet = null;
                     await loadExplorerSheet(explorerState.sheets[0]);
                 }
                 

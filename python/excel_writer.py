@@ -3835,6 +3835,123 @@ def _filter_table_xml_regex(table_content, new_max_row):
     return table_content
 
 
+def _apply_vm_cell_map_to_xlsx(xlsx_path, sheet_name, vm_cell_map):
+    """Setzt vm-Attribute für kopierte Bild-Zellen im Output-XLSX.
+    
+    Beim Copy&Paste von Zellen mit eingebetteten Bildern (vm-Attribut) wird
+    das Bild an der neuen Position nur angezeigt, wenn das vm-Attribut vorhanden ist.
+    restore_external_links_from_original stellt nur ORIGINAL-Positionen wieder her.
+    Diese Funktion ergänzt vm-Attribute für NEUE Positionen aus dem Frontend vmCellMap.
+    
+    vm_cell_map: Dict mit Keys "row-col" (0-basiert) und Values vm-String, z.B. {"19-6": "1"}
+    """
+    import zipfile, io, re
+    
+    if not vm_cell_map:
+        return
+    
+    # Frontend-Keys "row-col" (0-basiert) → Excel-Zellreferenzen "G20"
+    vm_by_ref = {}
+    for key, vm_val in vm_cell_map.items():
+        parts = str(key).split('-')
+        if len(parts) != 2:
+            continue
+        try:
+            row_0 = int(parts[0])
+            col_0 = int(parts[1])
+            cell_ref = f"{get_column_letter(col_0 + 1)}{row_0 + 1}"
+            vm_by_ref[cell_ref] = str(vm_val)
+        except (ValueError, TypeError):
+            continue
+    
+    if not vm_by_ref:
+        return
+    
+    # Sheet-XML-Pfad ermitteln (analog zu _apply_auto_filter_xml)
+    with zipfile.ZipFile(xlsx_path, 'r') as zin:
+        wb_xml = zin.read('xl/workbook.xml').decode('utf-8')
+        
+        sheet_pattern = re.compile(
+            r'<sheet\s[^>]*name="' + re.escape(sheet_name) + r'"[^>]*r:id="(rId\d+)"',
+            re.IGNORECASE
+        )
+        m = sheet_pattern.search(wb_xml)
+        if not m:
+            # Versuche alternative Attribut-Reihenfolge
+            sheet_pattern2 = re.compile(
+                r'<sheet\s[^>]*r:id="(rId\d+)"[^>]*name="' + re.escape(sheet_name) + r'"',
+                re.IGNORECASE
+            )
+            m = sheet_pattern2.search(wb_xml)
+        if not m:
+            sys.stderr.write(f"[VM_CELL_MAP] Sheet '{sheet_name}' nicht in workbook.xml gefunden\n")
+            return
+        
+        r_id = m.group(1)
+        
+        rels_xml = zin.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+        rel_pattern = re.compile(
+            r'<Relationship\s[^>]*Id="' + re.escape(r_id) + r'"[^>]*Target="([^"]+)"',
+            re.IGNORECASE
+        )
+        m2 = rel_pattern.search(rels_xml)
+        if not m2:
+            return
+        
+        sheet_target = m2.group(1)
+        sheet_xml_path = 'xl/' + sheet_target if not sheet_target.startswith('xl/') else sheet_target
+        
+        sheet_xml = zin.read(sheet_xml_path).decode('utf-8')
+    
+    # vm-Attribute setzen für Zellen die noch kein vm haben
+    vm_applied = 0
+    for cell_ref, vm_val in vm_by_ref.items():
+        cell_pattern = re.compile(r'(<c\s[^>]*?r="' + re.escape(cell_ref) + r'"[^>]*?)(/?>)')
+        match = cell_pattern.search(sheet_xml)
+        if match:
+            if 'vm=' in match.group(0):
+                continue  # Bereits vom Original-Restore vorhanden
+            new_attr = match.group(1) + f' vm="{vm_val}"' + match.group(2)
+            sheet_xml = sheet_xml[:match.start()] + new_attr + sheet_xml[match.end():]
+            vm_applied += 1
+        else:
+            # Zelle existiert nicht → in passender Zeile erstellen
+            row_num_match = re.search(r'(\d+)$', cell_ref)
+            if row_num_match:
+                row_num = row_num_match.group(1)
+                row_pattern = re.compile(r'(<row\s[^>]*?\br="' + re.escape(row_num) + r'"[^>]*?>)')
+                row_match = row_pattern.search(sheet_xml)
+                if row_match:
+                    cell_el = f'<c r="{cell_ref}" vm="{vm_val}"/>'
+                    insert_pos = row_match.end()
+                    sheet_xml = sheet_xml[:insert_pos] + cell_el + sheet_xml[insert_pos:]
+                    vm_applied += 1
+                else:
+                    # Zeile existiert auch nicht → vor </sheetData> erstellen
+                    sheet_data_end = re.search(r'</sheetData>', sheet_xml)
+                    if sheet_data_end:
+                        row_el = f'<row r="{row_num}"><c r="{cell_ref}" vm="{vm_val}"/></row>'
+                        insert_pos = sheet_data_end.start()
+                        sheet_xml = sheet_xml[:insert_pos] + row_el + '\n' + sheet_xml[insert_pos:]
+                        vm_applied += 1
+    
+    if vm_applied > 0:
+        # ZIP neu schreiben mit geändertem Sheet-XML
+        buf = io.BytesIO()
+        with zipfile.ZipFile(xlsx_path, 'r') as zin:
+            with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zout:
+                for item in zin.infolist():
+                    if item.filename == sheet_xml_path:
+                        zout.writestr(item, sheet_xml.encode('utf-8'))
+                    else:
+                        zout.writestr(item, zin.read(item.filename))
+        
+        with open(xlsx_path, 'wb') as f:
+            f.write(buf.getvalue())
+        
+        sys.stderr.write(f"[VM_CELL_MAP] {vm_applied} neue vm-Attribute für Copy&Paste-Bilder in '{sheet_name}' gesetzt\n")
+
+
 def _apply_auto_filter_xml(xlsx_path, sheet_name, auto_filter_range):
     """Setzt oder entfernt den autoFilter in einer XLSX-Datei per ZIP/XML.
     
@@ -5358,6 +5475,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
     _fp_cell_fonts = changes.get('cellFonts', {})
     _fp_rich_text = changes.get('richTextCells', {})
     _fp_auto_filter = changes.get('autoFilterRange')  # AutoFilter für Fast-Path
+    _fp_vm_cell_map = changes.get('vmCellMap', {})  # vm-Attribute für kopierte Bild-Zellen
     
     # Keine strukturellen Operationen?
     # rowMapping (Filter) und affectedRows blockieren NICHT:
@@ -5965,6 +6083,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             # openpyxl verliert beim Speichern richData, metadata, vm-Attribute etc.
             restore_table_xml_from_original(output_path, original_path, table_changes=None)
             restore_external_links_from_original(output_path, original_path)
+            # vm-Attribute für kopierte Bild-Zellen setzen
+            if _fp_vm_cell_map:
+                _apply_vm_cell_map_to_xlsx(output_path, sheet_name, _fp_vm_cell_map)
             # AutoFilter vom Frontend anwenden
             if frontend_auto_filter:
                 _apply_auto_filter_xml(output_path, sheet_name, frontend_auto_filter)
@@ -6584,6 +6705,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 _check_zip_drawings(output_path, "nach restore_table_xml()")
             
             restore_external_links_from_original(output_path, original_path, structural_change=True)
+            # vm-Attribute für kopierte Bild-Zellen setzen
+            if _fp_vm_cell_map:
+                _apply_vm_cell_map_to_xlsx(output_path, sheet_name, _fp_vm_cell_map)
             _check_zip_drawings(output_path, "nach restore_external_links()")
             
             # Sicherheitsnetz: Slicer-Infrastruktur entfernen falls restore_external_links
@@ -6780,6 +6904,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 restore_table_xml_from_original(output_path, original_path, table_changes)
             
             restore_external_links_from_original(output_path, original_path, structural_change=True)
+            # vm-Attribute für kopierte Bild-Zellen setzen
+            if _fp_vm_cell_map:
+                _apply_vm_cell_map_to_xlsx(output_path, sheet_name, _fp_vm_cell_map)
             
             # Sicherheitsnetz: Slicer-Artefakte entfernen
             try:
@@ -6981,6 +7108,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 restore_table_xml_from_original(output_path, original_path, table_changes)
             
             restore_external_links_from_original(output_path, original_path, structural_change=True)
+            # vm-Attribute für kopierte Bild-Zellen setzen
+            if _fp_vm_cell_map:
+                _apply_vm_cell_map_to_xlsx(output_path, sheet_name, _fp_vm_cell_map)
             
             # Sicherheitsnetz: Slicer-Artefakte entfernen
             try:
@@ -7067,6 +7197,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             
             # Stelle externalLinks aus Original wieder her (openpyxl verliert Namespaces)
             restore_external_links_from_original(output_path, original_path, structural_change=True)
+            # vm-Attribute für kopierte Bild-Zellen setzen
+            if _fp_vm_cell_map:
+                _apply_vm_cell_map_to_xlsx(output_path, sheet_name, _fp_vm_cell_map)
             
             # Sicherheitsnetz: Slicer-Artefakte entfernen
             try:
@@ -7195,6 +7328,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             
             # Stelle externalLinks aus Original wieder her
             restore_external_links_from_original(output_path, original_path, structural_change=True)
+            # vm-Attribute für kopierte Bild-Zellen setzen
+            if _fp_vm_cell_map:
+                _apply_vm_cell_map_to_xlsx(output_path, sheet_name, _fp_vm_cell_map)
             
             # Sicherheitsnetz: Slicer-Artefakte entfernen
             try:
@@ -7369,6 +7505,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
         
         # WICHTIG: Auch workbook.xml, slicerCaches, etc. vom Original wiederherstellen!
         restore_external_links_from_original(output_path, original_path)
+        # vm-Attribute für kopierte Bild-Zellen setzen
+        if _fp_vm_cell_map:
+            _apply_vm_cell_map_to_xlsx(output_path, sheet_name, _fp_vm_cell_map)
         
         # AutoFilter vom Frontend anwenden
         if frontend_auto_filter:
