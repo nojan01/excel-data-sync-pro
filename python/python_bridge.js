@@ -494,7 +494,7 @@ async function writeExcelOpenpyxl(config) {
             // Wichtige Diagnose-Logs direkt in die Konsole weiterleiten
             const lines = data.toString().split('\n');
             for (const line of lines) {
-                if (line.includes('[FALL ') || line.includes('[HL_XML]') || line.includes('[XML-DIREKT-FAST]') || line.includes('[DIAG-PY]')) {
+                if (line.includes('[FALL ') || line.includes('[HL_XML]') || line.includes('[XML-DIREKT-FAST]') || line.includes('[DIAG-PY]') || line.includes('[FAST-PATH-COL]') || line.includes('[PIVOT_STRIP]') || line.includes('[SLICER_STRIP]') || line.includes('[HIDDEN_ROWS]')) {
                     safeLog(`[Python] ${line.trim()}`);
                 }
             }
@@ -508,6 +508,7 @@ async function writeExcelOpenpyxl(config) {
             
             try {
                 const result = JSON.parse(stdout);
+                result.pythonMethod = result.method || 'unknown';
                 result.method = 'openpyxl';
                 resolve(result);
             } catch (parseError) {
@@ -520,6 +521,289 @@ async function writeExcelOpenpyxl(config) {
         pythonProcess.stdin.write(JSON.stringify(config));
         pythonProcess.stdin.end();
     });
+}
+
+// =========================================================================
+// STRIKTE MODUS-TRENNUNG: Separate Config-Builder und Prozess-Funktionen
+// für xlwings und openpyxl. Änderungen an einem Modus können den anderen
+// NICHT mehr beeinflussen.
+// =========================================================================
+
+/**
+ * Ruft NUR excel_writer_xlwings.py auf — KEIN openpyxl-Fallback.
+ * Falls xlwings scheitert, wird der Fehler zurückgegeben (nicht automatisch
+ * auf openpyxl gewechselt). Der Caller entscheidet über Fallback.
+ */
+async function _writeXlwingsOnly(config) {
+    const pythonPath = getPythonPath();
+    const scriptPath = path.join(getPythonBasePath(), 'excel_writer_xlwings.py');
+    
+    if (!fs.existsSync(scriptPath)) {
+        return { success: false, error: `xlwings Script nicht gefunden: ${scriptPath}`, method: 'xlwings' };
+    }
+    
+    const env = getPythonEnv();
+    env.PYTHONUTF8 = '1';
+    env.PYTHONIOENCODING = 'utf-8';
+    
+    return new Promise((resolve, reject) => {
+        const startTime = Date.now();
+        safeLog(`[xlwings-only] Starte: ${pythonPath} ${scriptPath} write_sheet`);
+        const pythonProcess = spawn(pythonPath, [scriptPath, 'write_sheet'], { env });
+        
+        let stdout = '';
+        let stderr = '';
+        
+        pythonProcess.stdout.on('data', (data) => {
+            stdout += data.toString();
+        });
+        
+        pythonProcess.stderr.on('data', (data) => {
+            const chunk = data.toString();
+            stderr += chunk;
+            process.stdout.write(chunk);
+        });
+        
+        pythonProcess.on('close', (code) => {
+            const duration = Date.now() - startTime;
+            
+            if (code !== 0) {
+                safeError(`[xlwings-only] Error (code ${code}, ${duration}ms):`, stderr);
+                // KEIN Fallback — Fehler direkt zurückgeben
+                resolve({ success: false, error: stderr || `xlwings exited with code ${code}`, method: 'xlwings' });
+                return;
+            }
+            
+            try {
+                const result = JSON.parse(stdout);
+                result.method = result.method || 'xlwings';
+                safeLog(`[xlwings-only] Erfolgreich (${duration}ms)`);
+                resolve(result);
+            } catch (parseError) {
+                safeError(`[xlwings-only] JSON parse error:`, parseError.message);
+                resolve({ success: false, error: `JSON parse error: ${parseError.message}`, method: 'xlwings' });
+            }
+        });
+        
+        pythonProcess.on('error', (error) => {
+            safeError(`[xlwings-only] Spawn error:`, error.message);
+            resolve({ success: false, error: error.message, method: 'xlwings' });
+        });
+        
+        pythonProcess.stdin.on('error', (error) => {
+            safeError(`[xlwings-only] stdin error:`, error.message);
+        });
+        
+        const jsonData = JSON.stringify(config);
+        pythonProcess.stdin.write(jsonData);
+        pythonProcess.stdin.end();
+    });
+}
+
+/**
+ * XLWINGS-PFAD: Baut Config und ruft excel_writer_xlwings.py auf.
+ * xlwings/Excel macht ALLES in einem Durchgang — keine 2-Pass-Logik nötig.
+ * Excel handhabt Zeilen+Spalten-Operationen, CF-Anpassung, Formel-Updates nativ.
+ */
+async function _processSheetXlwings(sheet, targetPath, originalSourcePath) {
+    safeLog(`[xlwings] Sheet "${sheet.sheetName}": Baue xlwings-Config...`);
+    safeLog(`[xlwings] fromFile=${sheet.fromFile}, fullRewrite=${sheet.fullRewrite}, structuralChange=${sheet.structuralChange}`);
+    safeLog(`[xlwings] deletedRows=${(sheet.deletedRowIndices || []).length}, insertedRows=${!!sheet.insertedRowInfo}, rowOrder=${!!(sheet.rowOrder && sheet.rowOrder.length)}`);
+    safeLog(`[xlwings] deletedCols=${(sheet.deletedColumnIndices || []).length}, insertedCols=${!!sheet.insertedColumnInfo}, columnOrder=${!!(sheet.columnOrder && sheet.columnOrder.length)}`);
+    safeLog(`[xlwings] changedCells=${Object.keys(sheet.changedCells || {}).length}, rowMapping=${sheet.rowMapping ? 'array[' + sheet.rowMapping.length + ']' : 'null'}`);
+    
+    // xlwings bekommt ALLES in einem Config-Objekt.
+    // Excel macht Zeilen+Spalten+Daten in einem Durchgang.
+    const config = {
+        filePath: targetPath,
+        outputPath: targetPath,
+        originalPath: originalSourcePath,
+        sheetName: sheet.sheetName,
+        changes: {
+            headers: sheet.headers || [],
+            data: sheet.data || [],
+            editedCells: sheet.changedCells || {},
+            rowHighlights: sheet.rowHighlights || {},
+            deletedColumns: sheet.deletedColumnIndices || [],
+            insertedColumns: sheet.insertedColumnInfo || null,
+            deletedRowIndices: sheet.deletedRowIndices || [],
+            insertedRowInfo: sheet.insertedRowInfo || null,
+            rowOrder: sheet.rowOrder || null,
+            hiddenColumns: sheet.hiddenColumns || [],
+            hiddenRows: sheet.hiddenRows || [],
+            rowMapping: sheet.rowMapping || null,
+            fromFile: sheet.fromFile || false,
+            fullRewrite: sheet.fullRewrite || false,
+            structuralChange: sheet.structuralChange || false,
+            clearedRowHighlights: sheet.clearedRowHighlights || [],
+            columnOrder: sheet.columnOrder || null,
+            affectedRows: sheet.affectedRows || [],
+            autoFilterRange: sheet.autoFilterRange || null
+        }
+    };
+    
+    // Ruft NUR xlwings auf — KEIN interner openpyxl-Fallback
+    return await _writeXlwingsOnly(config);
+}
+
+/**
+ * OPENPYXL-PFAD: Baut Config und ruft excel_writer.py auf.
+ * Bei kombinierten Zeilen+Spalten-Ops: 2-Pass-Strategie
+ *   SCHRITT 1: Zeilen-Ops (Löschen, Einfügen, Verschieben, Daten)
+ *   SCHRITT 2: Spalten-Ops via XML-DIREKT (Löschen, Einfügen, Verschieben)
+ * Bei einfachen Ops: Ein einzelner Aufruf.
+ */
+async function _processSheetOpenpyxl(sheet, targetPath, originalSourcePath) {
+    // Prüfe ob kombinierte Operationen (Zeilen UND Spalten)
+    const hasRowOps = (sheet.rowOperationsQueue && sheet.rowOperationsQueue.length > 0) ||
+                      (sheet.deletedRowIndices && sheet.deletedRowIndices.length > 0) ||
+                      sheet.insertedRowInfo || sheet.rowOrder;
+    const hasColOps = (sheet.columnOperationsQueue && sheet.columnOperationsQueue.length > 0) ||
+                      (sheet.deletedColumnIndices && sheet.deletedColumnIndices.length > 0) ||
+                      sheet.insertedColumnInfo || sheet.columnOrder;
+    
+    safeLog(`[openpyxl] Sheet "${sheet.sheetName}": hasRowOps=${!!hasRowOps}, hasColOps=${!!hasColOps}`);
+    safeLog(`[openpyxl] deletedCols=${JSON.stringify(sheet.deletedColumnIndices || [])}, insertedCols=${!!sheet.insertedColumnInfo}, columnOrder=${!!(sheet.columnOrder && sheet.columnOrder.length)}`);
+    safeLog(`[openpyxl] fullRewrite=${sheet.fullRewrite}, structuralChange=${sheet.structuralChange}, fromFile=${sheet.fromFile}`);
+    safeLog(`[openpyxl] changedCells keys=${Object.keys(sheet.changedCells || {}).length}`);
+    safeLog(`[openpyxl] originalSourcePath=${originalSourcePath}, targetPath=${targetPath}`);
+    
+    if (hasRowOps && hasColOps) {
+        // =====================================================================
+        // KOMBINIERTE OPERATIONEN: Erst Zeilen, dann Spalten (zwei separate Aufrufe)
+        // =====================================================================
+        safeLog(`[openpyxl] KOMBINIERT-Branch: Erst Zeilen, dann Spalten für "${sheet.sheetName}"`);
+        
+        // SCHRITT 1: Zeilen-Operationen (OHNE Spalten-Ops, OHNE fullRewrite)
+        const rowConfig = {
+            filePath: targetPath,
+            outputPath: targetPath,
+            originalPath: originalSourcePath,
+            sheetName: sheet.sheetName,
+            changes: {
+                headers: sheet.headers || [],
+                data: sheet.data || [],
+                editedCells: sheet.changedCells || {},  // WICHTIG: editedCells mitsenden für Zeilen-Verschiebung ohne Block-Write
+                cellStyles: {},
+                rowHighlights: {},
+                deletedColumns: [],  // Keine Spalten-Ops im ersten Durchlauf
+                insertedColumns: null,
+                deletedRowIndices: sheet.deletedRowIndices || [],
+                insertedRowInfo: sheet.insertedRowInfo || null,
+                rowOrder: sheet.rowOrder || null,
+                hiddenColumns: [],
+                hiddenRows: sheet.hiddenRows || [],  // Hidden Rows im Zeilen-Pass anwenden (ZIP-ANSATZ unterstützt sie)
+                rowMapping: sheet.rowMapping || null,
+                fromFile: false,
+                fullRewrite: false,  // WICHTIG: Keine Daten schreiben, nur Zeilen-Ops
+                structuralChange: true,
+                clearedRowHighlights: [],
+                columnOrder: null,  // Keine Spalten-Reorder im ersten Durchlauf
+                affectedRows: sheet.affectedRows || [],
+                autoFilterRange: null
+            }
+        };
+        
+        const rowResult = await writeExcelOpenpyxl(rowConfig);
+        if (!rowResult.success) {
+            safeError(`[openpyxl] Zeilen-Ops für "${sheet.sheetName}" fehlgeschlagen:`, rowResult.error);
+            return rowResult;
+        }
+        safeLog(`[openpyxl] Zeilen-Ops für "${sheet.sheetName}" erfolgreich`);
+        
+        // SCHRITT 2: Spalten-Operationen via XML-DIREKT (OHNE Daten-Rewrite)
+        // WICHTIG: originalPath = targetPath (NICHT originalSourcePath!)
+        // Pass 1 hat die Zeilen-Ops + ALLE Daten bereits in targetPath geschrieben.
+        // editedCells={} und cellStyles={} etc. damit der FAST PATH (XML-DIREKT)
+        // garantiert genommen wird.
+        const colConfig = {
+            filePath: targetPath,
+            outputPath: targetPath,
+            originalPath: targetPath,
+            sheetName: sheet.sheetName,
+            changes: {
+                headers: sheet.headers || [],
+                data: sheet.data || [],
+                editedCells: {},  // LEER: Daten wurden bereits in SCHRITT 1 geschrieben
+                cellStyles: {},   // LEER: Styles sind bereits im XML
+                cellFonts: {},    // LEER: Fonts sind bereits im XML
+                richTextCells: {}, // LEER: RichText ist bereits im XML
+                rowHighlights: sheet.rowHighlights || {},
+                mergedCells: [],  // LEER: MergedCells sind bereits im XML
+                deletedColumns: sheet.deletedColumnIndices || [],
+                insertedColumns: sheet.insertedColumnInfo || null,
+                deletedRowIndices: [],  // Keine Zeilen-Ops mehr (schon erledigt)
+                insertedRowInfo: null,
+                rowOrder: null,
+                hiddenColumns: sheet.hiddenColumns || [],
+                hiddenRows: [],  // Schon in Pass 1 angewendet
+                rowMapping: null,  // Kein rowMapping mehr (Zeilen schon gelöscht)
+                fromFile: false,
+                fullRewrite: false,  // KEIN Daten-Rewrite nötig
+                structuralChange: true,  // Nötig für FALL 1/2 Block
+                clearedRowHighlights: sheet.clearedRowHighlights || [],
+                columnOrder: sheet.columnOrder || null,
+                affectedRows: [],
+                autoFilterRange: sheet.autoFilterRange || null
+            }
+        };
+        
+        const colResult = await writeExcelOpenpyxl(colConfig);
+        if (!colResult.success) {
+            safeError(`[openpyxl] Spalten-Ops für "${sheet.sheetName}" fehlgeschlagen:`, colResult.error);
+        } else {
+            safeLog(`[openpyxl] Spalten-Ops für "${sheet.sheetName}" erfolgreich`);
+        }
+        return colResult;
+        
+    } else {
+        // =====================================================================
+        // EINZELNE OPERATIONEN: Normaler Aufruf
+        // =====================================================================
+        safeLog(`[openpyxl] STANDARD-Branch für "${sheet.sheetName}"`);
+        
+        const config = {
+            filePath: targetPath,
+            outputPath: targetPath,
+            originalPath: originalSourcePath,
+            sheetName: sheet.sheetName,
+            changes: {
+                headers: sheet.headers || [],
+                data: sheet.data || [],
+                editedCells: sheet.changedCells || {},
+                cellStyles: sheet.cellStyles || {},
+                cellFonts: sheet.cellFonts || {},
+                richTextCells: sheet.richTextCells || {},
+                rowHighlights: sheet.rowHighlights || {},
+                mergedCells: sheet.mergedCells || [],
+                deletedColumns: sheet.deletedColumnIndices || [],
+                insertedColumns: sheet.insertedColumnInfo || null,
+                deletedRowIndices: sheet.deletedRowIndices || [],
+                insertedRowInfo: sheet.insertedRowInfo || null,
+                rowOrder: sheet.rowOrder || null,
+                hiddenColumns: sheet.hiddenColumns || [],
+                hiddenRows: sheet.hiddenRows || [],
+                rowMapping: sheet.rowMapping || null,
+                fromFile: sheet.fromFile || false,
+                fullRewrite: sheet.fullRewrite || false,
+                structuralChange: sheet.structuralChange || false,
+                clearedRowHighlights: sheet.clearedRowHighlights || [],
+                columnOrder: sheet.columnOrder || null,
+                affectedRows: sheet.affectedRows || [],
+                autoFilterRange: sheet.autoFilterRange || null,
+                hasFormatChanges: sheet.hasFormatChanges || false,
+                vmCellMap: sheet.vmCellMap || {}
+            }
+        };
+        
+        const result = await writeExcelOpenpyxl(config);
+        if (!result.success) {
+            safeError(`[openpyxl] STANDARD-Branch FEHLER für "${sheet.sheetName}":`, result.error);
+        } else {
+            safeLog(`[openpyxl] STANDARD-Branch ERFOLG für "${sheet.sheetName}" (pythonMethod: ${result.pythonMethod || '?'})`);
+        }
+        return result;
+    }
 }
 
 /**
@@ -549,6 +833,15 @@ async function applyPendingSheetOperations(filePath, operations) {
     function regexEscape(str) {
         return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     }
+
+    // Sheet-Namen und Indizes VOR allen Operationen erfassen (für definedNames-Bereinigung)
+    const allSheetMatchesBefore = [...workbookXml.matchAll(/<sheet[^>]*name="([^"]*)"[^>]*\/>/g)];
+    const allSheetNamesBefore = allSheetMatchesBefore.map(m => m[1]
+        .replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"').replace(/&apos;/g, "'"));
+    const sheetIndexBefore = {};
+    allSheetNamesBefore.forEach((name, idx) => { sheetIndexBefore[name] = idx; });
+    const deletedSheetNames = [];
 
     for (const op of operations) {
         try {
@@ -617,6 +910,7 @@ async function applyPendingSheetOperations(filePath, operations) {
                     }
 
                     safeLog(`[PendingOps] Deleted sheet "${op.sheetName}"`);
+                    deletedSheetNames.push(op.sheetName);
                     break;
                 }
 
@@ -775,6 +1069,62 @@ async function applyPendingSheetOperations(filePath, operations) {
             }
         } catch (opError) {
             safeError(`[PendingOps] Error processing ${op.type} "${op.sheetName}":`, opError.message);
+        }
+    }
+
+    // definedNames bereinigen: Einträge für gelöschte Sheets entfernen,
+    // localSheetId-Werte der verbleibenden Sheets neu nummerieren
+    if (deletedSheetNames.length > 0) {
+        const removedLocalSheetIds = new Set(deletedSheetNames
+            .map(n => sheetIndexBefore[n])
+            .filter(id => id !== undefined));
+
+        const definedNamesMatch = workbookXml.match(/<definedNames>([\s\S]*?)<\/definedNames>/);
+        if (definedNamesMatch) {
+            const nameEntries = [...definedNamesMatch[1].matchAll(/<definedName[^>]*>[\s\S]*?<\/definedName>/g)];
+            const keptEntries = [];
+            for (const entry of nameEntries) {
+                const localIdMatch = entry[0].match(/localSheetId="(\d+)"/);
+                if (localIdMatch) {
+                    const localId = parseInt(localIdMatch[1]);
+                    if (removedLocalSheetIds.has(localId)) continue; // gehört zu gelöschtem Sheet
+                    // localSheetId neu berechnen
+                    let offset = 0;
+                    for (const removedId of removedLocalSheetIds) {
+                        if (removedId < localId) offset++;
+                    }
+                    const newLocalId = localId - offset;
+                    keptEntries.push(entry[0].replace(/localSheetId="\d+"/, `localSheetId="${newLocalId}"`));
+                } else {
+                    // Globaler benannter Bereich — prüfen ob er auf gelöschte Sheets verweist
+                    let refsDeleted = false;
+                    for (const delName of deletedSheetNames) {
+                        const escName = regexEscape(delName).replace(/ /g, '[ ]');
+                        if (new RegExp(`'?${escName}'?!`, 'i').test(entry[0])) {
+                            refsDeleted = true;
+                            break;
+                        }
+                    }
+                    if (!refsDeleted) keptEntries.push(entry[0]);
+                }
+            }
+            if (keptEntries.length > 0) {
+                workbookXml = workbookXml.replace(/<definedNames>[\s\S]*?<\/definedNames>/,
+                    `<definedNames>${keptEntries.join('')}</definedNames>`);
+            } else {
+                workbookXml = workbookXml.replace(/\s*<definedNames>[\s\S]*?<\/definedNames>/, '');
+            }
+            safeLog(`[PendingOps] definedNames bereinigt: ${nameEntries.length - keptEntries.length} entfernt, ${keptEntries.length} behalten`);
+        }
+
+        // bookViews: activeTab zurücksetzen falls nötig
+        const activeTabMatch = workbookXml.match(/activeTab="(\d+)"/);
+        if (activeTabMatch) {
+            const activeTab = parseInt(activeTabMatch[1]);
+            const remainingCount = allSheetNamesBefore.length - deletedSheetNames.length;
+            if (activeTab >= remainingCount || removedLocalSheetIds.has(activeTab)) {
+                workbookXml = workbookXml.replace(/activeTab="\d+"/, 'activeTab="0"');
+            }
         }
     }
 
@@ -986,6 +1336,13 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
         // Nicht-kritisch: weitermachen, Datei enthält dann alle Sheets
     }
     
+    // =========================================================================
+    // STRIKTE MODUS-TRENNUNG: openpyxl und xlwings haben GETRENNTE Pfade.
+    // Änderungen an einem Modus können den anderen NICHT mehr beeinflussen.
+    // =========================================================================
+    const excelAvailable = await isExcelAvailable();
+    safeLog(`[Export] Modus: ${excelAvailable ? 'xlwings' : 'openpyxl'}`);
+    
     // Jetzt: Nur Sheets mit echten Änderungen modifizieren
     for (const sheet of sheets) {
         // Überspringe Sheets ohne Änderungen (fromFile: true und keine editedCells/data)
@@ -996,296 +1353,41 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
         }
         
         try {
-            // Prüfe ob kombinierte Operationen (Zeilen UND Spalten)
-            const hasRowOps = (sheet.rowOperationsQueue && sheet.rowOperationsQueue.length > 0) ||
-                              (sheet.deletedRowIndices && sheet.deletedRowIndices.length > 0) ||
-                              sheet.insertedRowInfo || sheet.rowOrder;
-            const hasColOps = (sheet.columnOperationsQueue && sheet.columnOperationsQueue.length > 0) ||
-                              (sheet.deletedColumnIndices && sheet.deletedColumnIndices.length > 0) ||
-                              sheet.insertedColumnInfo || sheet.columnOrder;
+            let sheetResult;
             
-            safeLog(`[DIAG] Sheet "${sheet.sheetName}": hasRowOps=${!!hasRowOps}, hasColOps=${!!hasColOps}, ` +
-                `deletedCols=${JSON.stringify(sheet.deletedColumnIndices || [])}, ` +
-                `insertedCols=${!!sheet.insertedColumnInfo}, columnOrder=${!!(sheet.columnOrder && sheet.columnOrder.length)}, ` +
-                `colOpsQueue=${(sheet.columnOperationsQueue || []).length}, ` +
-                `fullRewrite=${sheet.fullRewrite}, structuralChange=${sheet.structuralChange}, ` +
-                `originalSourcePath=${originalSourcePath}, targetPath=${targetPath}`);
-            
-            if (hasRowOps && hasColOps) {
-                // KOMBINIERTE OPERATIONEN: Erst Zeilen, dann Spalten (zwei separate Aufrufe)
-                safeLog(`[Python] Kombinierte Ops: Erst Zeilen, dann Spalten für "${sheet.sheetName}"`);
-                safeLog(`[DIAG] KOMBINIERT-Branch für "${sheet.sheetName}" — originalSourcePath=${originalSourcePath}`);
-                
-                // SCHRITT 1: Zeilen-Operationen (OHNE Spalten-Ops, OHNE fullRewrite)
-                const rowConfig = {
-                    filePath: targetPath,
-                    outputPath: targetPath,
-                    originalPath: originalSourcePath,
-                    sheetName: sheet.sheetName,
-                    changes: {
-                        headers: sheet.headers || [],
-                        data: sheet.data || [],
-                        editedCells: sheet.changedCells || {},  // WICHTIG: editedCells mitsenden für Zeilen-Verschiebung ohne Block-Write
-                        cellStyles: {},
-                        rowHighlights: {},
-                        deletedColumns: [],  // Keine Spalten-Ops im ersten Durchlauf
-                        insertedColumns: null,
-                        deletedRowIndices: sheet.deletedRowIndices || [],
-                        insertedRowInfo: sheet.insertedRowInfo || null,
-                        rowOrder: sheet.rowOrder || null,
-                        hiddenColumns: [],
-                        hiddenRows: sheet.hiddenRows || [],  // Hidden Rows im Zeilen-Pass anwenden (ZIP-ANSATZ unterstützt sie)
-                        rowMapping: sheet.rowMapping || null,
-                        fromFile: false,
-                        fullRewrite: false,  // WICHTIG: Keine Daten schreiben, nur Zeilen-Ops
-                        structuralChange: true,
-                        clearedRowHighlights: [],
-                        columnOrder: null,  // Keine Spalten-Reorder im ersten Durchlauf
-                        affectedRows: sheet.affectedRows || [],
-                        autoFilterRange: null
-                    }
-                };
-                
-                const rowResult = await writeExcel(rowConfig);
-                if (!rowResult.success) {
-                    hasError = true;
-                    errorMessage = rowResult.error;
-                    safeError(`[Python] Zeilen-Ops für "${sheet.sheetName}" fehlgeschlagen:`, rowResult.error);
-                    continue;
-                }
-                // Track actual method used (might be fallback)
-                if (rowResult.method) actualMethod = rowResult.method;
-                safeLog(`[Python] Zeilen-Ops für "${sheet.sheetName}" erfolgreich (${rowResult.method})`);
-                
-                // SCHRITT 2: Spalten-Operationen via XML-DIREKT (OHNE Daten-Rewrite)
-                // WICHTIG: originalPath = targetPath (NICHT originalSourcePath!)
-                // Pass 1 hat die Zeilen-Ops + ALLE Daten bereits in targetPath geschrieben.
-                // SCHRITT 2 muss NUR Spalten umordnen/löschen/einfügen.
-                // editedCells={} und cellStyles={} etc. damit der FAST PATH (XML-DIREKT)
-                // garantiert genommen wird — sonst fällt es in die Pipeline (5+ Min)!
-                const colConfig = {
-                    filePath: targetPath,
-                    outputPath: targetPath,
-                    originalPath: targetPath,
-                    sheetName: sheet.sheetName,
-                    changes: {
-                        headers: sheet.headers || [],
-                        data: sheet.data || [],
-                        editedCells: {},  // LEER: Daten wurden bereits in SCHRITT 1 geschrieben
-                        cellStyles: {},   // LEER: Styles sind bereits im XML (SCHRITT 1 via ZIP preserviert)
-                        cellFonts: {},    // LEER: Fonts sind bereits im XML
-                        richTextCells: {}, // LEER: RichText ist bereits im XML
-                        rowHighlights: sheet.rowHighlights || {},
-                        mergedCells: [],  // LEER: MergedCells sind bereits im XML
-                        deletedColumns: sheet.deletedColumnIndices || [],
-                        insertedColumns: sheet.insertedColumnInfo || null,
-                        deletedRowIndices: [],  // Keine Zeilen-Ops mehr (schon erledigt)
-                        insertedRowInfo: null,
-                        rowOrder: null,
-                        hiddenColumns: sheet.hiddenColumns || [],
-                        hiddenRows: [],  // Schon in Pass 1 angewendet
-                        rowMapping: null,  // Kein rowMapping mehr (Zeilen schon gelöscht)
-                        fromFile: false,
-                        fullRewrite: false,  // KEIN Daten-Rewrite nötig (SCHRITT 1 hat alles geschrieben)
-                        structuralChange: true,  // Nötig für FALL 1/2 Block (Fallback-Sicherheit)
-                        clearedRowHighlights: sheet.clearedRowHighlights || [],
-                        columnOrder: sheet.columnOrder || null,
-                        affectedRows: [],
-                        autoFilterRange: sheet.autoFilterRange || null
-                    }
-                };
-                
-                const colResult = await writeExcel(colConfig);
-                if (!colResult.success) {
-                    hasError = true;
-                    errorMessage = colResult.error;
-                    safeError(`[Python] Spalten-Ops für "${sheet.sheetName}" fehlgeschlagen:`, colResult.error);
-                } else {
-                    results.push(sheet.sheetName);
-                    // Track actual method used
-                    if (colResult.method) actualMethod = colResult.method;
-                    safeLog(`[Python] Spalten-Ops für "${sheet.sheetName}" erfolgreich (${colResult.method})`);
-                }
-                
-            } else if (false && hasColOps && !hasRowOps) {
-                // DEAKTIVIERT: Spalten-Ops gehen jetzt durch den normalen else-Branch
-                // (gleicher Weg wie Zeilen-Ops), da XML-DIREKT Korruption verursacht.
-                // XML-DIREKT fehlt: fix_xlsx_relationships, restore_table_xml,
-                // restore_external_links → kaputte Dateien bei komplexen Excel-Files.
-                // SPALTEN-OPERATIONEN (evtl. mit Zell-Edits): Erst Spalten via XML-DIREKT, dann Zell-Edits
-                // WICHTIG: Auch bei reinen Spalten-Ops (ohne Zell-Edits) MUSS dieser Pfad genommen werden!
-                // Der "else"-Branch sendet cellStyles/cellFonts/mergedCells mit → blockiert XML-DIREKT.
-                safeLog(`[Python] Spalten-Ops (+ evtl. Zell-Edits): Erst Spalten, dann Rest für "${sheet.sheetName}"`);
-                
-                // Separiere echte Zell-Edits von Marker-Einträgen (_columnDeleted etc.)
-                const onlyCellEdits = {};
-                if (sheet.changedCells) {
-                    for (const [key, value] of Object.entries(sheet.changedCells)) {
-                        if (!key.startsWith('_')) {
-                            onlyCellEdits[key] = value;
-                        }
-                    }
-                }
-                
-                // SCHRITT 1: Spalten-Operationen via XML-DIREKT (OHNE Zell-Edits)
-                const colOnlyConfig = {
-                    filePath: targetPath,
-                    outputPath: targetPath,
-                    originalPath: originalSourcePath,
-                    sheetName: sheet.sheetName,
-                    changes: {
-                        headers: sheet.headers || [],
-                        data: sheet.data || [],
-                        editedCells: {},  // KEINE Zell-Edits → only_column_ops = True → XML-DIREKT
-                        cellStyles: {},
-                        cellFonts: {},
-                        richTextCells: {},
-                        rowHighlights: {},
-                        mergedCells: [],
-                        deletedColumns: sheet.deletedColumnIndices || [],
-                        insertedColumns: sheet.insertedColumnInfo || null,
-                        deletedRowIndices: [],
-                        insertedRowInfo: null,
-                        rowOrder: null,
-                        hiddenColumns: sheet.hiddenColumns || [],  // XML-DIREKT kann hidden columns direkt setzen
-                        hiddenRows: sheet.hiddenRows || [],  // Hidden Rows in SCHRITT 1 anwenden (statt SCHRITT 2)
-                        rowMapping: null,
-                        fromFile: false,
-                        fullRewrite: false,
-                        structuralChange: true,  // Nötig um in FALL 1/2 Block zu kommen
-                        clearedRowHighlights: [],
-                        columnOrder: sheet.columnOrder || null,
-                        affectedRows: [],
-                        autoFilterRange: null,
-                        hasFormatChanges: false
-                    }
-                };
-                
-                const colOnlyResult = await writeExcel(colOnlyConfig);
-                if (!colOnlyResult.success) {
-                    hasError = true;
-                    errorMessage = colOnlyResult.error;
-                    safeError(`[Python] Spalten-Ops für "${sheet.sheetName}" fehlgeschlagen:`, colOnlyResult.error);
-                    continue;
-                }
-                if (colOnlyResult.method) actualMethod = colOnlyResult.method;
-                safeLog(`[Python] Spalten-Ops für "${sheet.sheetName}" erfolgreich (${colOnlyResult.method})`);
-                
-                // SCHRITT 2: Zell-Edits + Highlights + Visibility via FALL 3a (OHNE Spalten-Ops)
-                // originalPath = targetPath → Pass 1 hat Spalten-Ops bereits in targetPath
-                // WICHTIG: hiddenRows NICHT in hasCellWork prüfen!
-                // Hidden Rows werden bereits in SCHRITT 1 via XML-DIREKT angewendet.
-                // Wenn hiddenRows hier geprüft wird, erzwingt das SCHRITT 2 (unnötiger
-                // ZIP-Rewrite), selbst bei reinen Spaltenoperationen.
-                const hasCellWork = Object.keys(onlyCellEdits).length > 0 ||
-                    (sheet.rowHighlights && Object.keys(sheet.rowHighlights).length > 0) ||
-                    (sheet.clearedRowHighlights && sheet.clearedRowHighlights.length > 0) ||
-                    sheet.hasFormatChanges;
-                
-                if (hasCellWork) {
-                    const cellConfig = {
-                        filePath: targetPath,
-                        outputPath: targetPath,
-                        originalPath: targetPath,  // WICHTIG: Von der bereits modifizierten Datei lesen
-                        sheetName: sheet.sheetName,
-                        changes: {
-                            headers: sheet.headers || [],
-                            data: [],
-                            editedCells: onlyCellEdits,
-                            cellStyles: sheet.cellStyles || {},
-                            cellFonts: sheet.cellFonts || {},
-                            richTextCells: sheet.richTextCells || {},
-                            rowHighlights: sheet.rowHighlights || {},
-                            mergedCells: sheet.mergedCells || [],
-                            deletedColumns: [],
-                            insertedColumns: null,
-                            deletedRowIndices: [],
-                            insertedRowInfo: null,
-                            rowOrder: null,
-                            hiddenColumns: [],  // Bereits in SCHRITT 1 via XML-DIREKT gesetzt
-                            hiddenRows: [],  // Bereits in SCHRITT 1 via XML-DIREKT gesetzt
-                            rowMapping: null,
-                            fromFile: false,
-                            fullRewrite: false,  // KEIN Full-Rewrite → FALL 3
-                            structuralChange: false,  // KEIN Structural Change → FALL 3
-                            clearedRowHighlights: sheet.clearedRowHighlights || [],
-                            columnOrder: null,
-                            affectedRows: [],
-                            autoFilterRange: null,
-                            hasFormatChanges: sheet.hasFormatChanges || false,
-                            vmCellMap: sheet.vmCellMap || {}
-                        }
-                    };
-                    
-                    const cellResult = await writeExcel(cellConfig);
-                    if (!cellResult.success) {
-                        hasError = true;
-                        errorMessage = cellResult.error;
-                        safeError(`[Python] Zell-Edits für "${sheet.sheetName}" fehlgeschlagen:`, cellResult.error);
-                    } else {
-                        results.push(sheet.sheetName);
-                        if (cellResult.method) actualMethod = cellResult.method;
-                        safeLog(`[Python] Zell-Edits für "${sheet.sheetName}" erfolgreich (${cellResult.method})`);
-                    }
-                } else {
-                    // Nur Spalten-Ops, keine Zell-Edits → schon fertig
-                    results.push(sheet.sheetName);
-                    safeLog(`[Python] Nur Spalten-Ops für "${sheet.sheetName}" (keine Zell-Edits)`);
-                }
-                
+            if (excelAvailable) {
+                // =====================================================================
+                // XLWINGS-PFAD: Alles in EINEM Aufruf — Excel macht Zeilen+Spalten+Daten
+                // Keine 2-Pass-Logik nötig, Excel handhabt alles nativ.
+                // =====================================================================
+                sheetResult = await _processSheetXlwings(sheet, targetPath, originalSourcePath);
             } else {
-                // EINZELNE OPERATIONEN: Normaler Aufruf (bestehender Code)
-                safeLog(`[DIAG] ELSE-Branch für "${sheet.sheetName}" — Einzelne Operation`);
-                safeLog(`[DIAG] originalPath=${originalSourcePath}, filePath=${targetPath}, outputPath=${targetPath}`);
-                safeLog(`[DIAG] deletedColumns=${JSON.stringify(sheet.deletedColumnIndices || [])}, insertedColumns=${JSON.stringify(sheet.insertedColumnInfo)}, columnOrder=${JSON.stringify(sheet.columnOrder ? sheet.columnOrder.slice(0, 10) : null)}`);
-                safeLog(`[DIAG] rowMapping=${sheet.rowMapping ? 'array[' + sheet.rowMapping.length + ']' : 'null'}, fullRewrite=${sheet.fullRewrite}, structuralChange=${sheet.structuralChange}`);
-                safeLog(`[DIAG] changedCells keys=${Object.keys(sheet.changedCells || {}).length}, fromFile=${sheet.fromFile}`);
-                const config = {
-                    filePath: targetPath,
-                    outputPath: targetPath,
-                    originalPath: originalSourcePath,
-                    sheetName: sheet.sheetName,
-                    changes: {
-                        headers: sheet.headers || [],
-                        data: sheet.data || [],
-                        editedCells: sheet.changedCells || {},
-                        cellStyles: sheet.cellStyles || {},
-                        cellFonts: sheet.cellFonts || {},
-                        richTextCells: sheet.richTextCells || {},
-                        rowHighlights: sheet.rowHighlights || {},
-                        mergedCells: sheet.mergedCells || [],
-                        deletedColumns: sheet.deletedColumnIndices || [],
-                        insertedColumns: sheet.insertedColumnInfo || null,
-                        deletedRowIndices: sheet.deletedRowIndices || [],
-                        insertedRowInfo: sheet.insertedRowInfo || null,
-                        rowOrder: sheet.rowOrder || null,
-                        hiddenColumns: sheet.hiddenColumns || [],
-                        hiddenRows: sheet.hiddenRows || [],
-                        rowMapping: sheet.rowMapping || null,
-                        fromFile: sheet.fromFile || false,
-                        fullRewrite: sheet.fullRewrite || false,
-                        structuralChange: sheet.structuralChange || false,
-                        clearedRowHighlights: sheet.clearedRowHighlights || [],
-                        columnOrder: sheet.columnOrder || null,
-                        affectedRows: sheet.affectedRows || [],
-                        autoFilterRange: sheet.autoFilterRange || null,
-                        hasFormatChanges: sheet.hasFormatChanges || false,
-                        vmCellMap: sheet.vmCellMap || {}
-                    }
-                };
-                
-                const result = await writeExcel(config);
+                // =====================================================================
+                // OPENPYXL-PFAD: Komplexe FALL-Logik mit optionaler 2-Pass-Strategie
+                // für kombinierte Zeilen+Spalten-Operationen.
+                // =====================================================================
+                sheetResult = await _processSheetOpenpyxl(sheet, targetPath, originalSourcePath);
+            }
             
-                if (!result.success) {
-                    hasError = true;
-                    errorMessage = result.error;
-                    safeError(`[DIAG] ELSE-Branch FEHLER für "${sheet.sheetName}":`, result.error);
-                } else {
-                    results.push(sheet.sheetName);
-                    // Track actual method used
-                    if (result.method) actualMethod = result.method;
-                    safeLog(`[DIAG] ELSE-Branch ERFOLG für "${sheet.sheetName}" (method=${result.method})`);
+            if (!sheetResult.success) {
+                // Bei xlwings-Fehler: Fallback auf openpyxl
+                if (excelAvailable) {
+                    safeLog(`[Python] xlwings fehlgeschlagen für "${sheet.sheetName}", Fallback auf openpyxl...`);
+                    sheetResult = await _processSheetOpenpyxl(sheet, targetPath, originalSourcePath);
+                    if (sheetResult.success) {
+                        sheetResult.method = 'openpyxl (fallback)';
+                    }
                 }
+            }
+            
+            if (!sheetResult.success) {
+                hasError = true;
+                errorMessage = sheetResult.error;
+                safeError(`[Python] Sheet "${sheet.sheetName}" fehlgeschlagen:`, sheetResult.error);
+            } else {
+                results.push(sheet.sheetName);
+                if (sheetResult.method) actualMethod = sheetResult.method;
+                safeLog(`[Python] Sheet "${sheet.sheetName}" erfolgreich (${sheetResult.method})`);
             }
             
         } catch (error) {

@@ -14316,6 +14316,10 @@
             explorerState.selectedSheet = sheetName;
             elements.explorerSheetSelect.value = sheetName;
             explorerState.headers = result.headers;
+            // CF-Flag auch im Fallback-/openpyxl-Modus setzen (ExcelJS liefert es aus Sheet-XML)
+            if (result.hasConditionalFormatting !== undefined) {
+                explorerState.hasConditionalFormatting = !!result.hasConditionalFormatting;
+            }
             // xlwings liefert data bereits ohne Header-Zeile, ExcelJS hat Header in data[0]
             explorerState.data = result._fromLiveSession ? result.data : result.data.slice(1);
             // Kopie der Originaldaten speichern (deep copy)

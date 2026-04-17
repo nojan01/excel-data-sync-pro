@@ -122,6 +122,76 @@ def _remap_sqref(sqref, col_map):
 
 
 # =============================================================================
+# ZEILEN-HILFSFUNKTIONEN
+# =============================================================================
+
+def _remap_row_in_ref(ref, row_map):
+    """
+    Wendet ein Zeilen-Mapping auf eine Zellreferenz an.
+    row_map: dict von alter Excel-Zeilennummer → neuer Excel-Zeilennummer.
+    Zeilen die nicht im Mapping sind → ref wird entfernt (None zurückgegeben).
+    """
+    dollar1, col_letter, dollar2, row_num = _parse_cell_ref(ref)
+    if col_letter is None:
+        return ref  # Kein gültiger Cell-Ref
+    new_row = row_map.get(row_num)
+    if new_row is None:
+        return None  # Zeile wurde gelöscht
+    return f"{dollar1}{col_letter}{dollar2}{new_row}"
+
+
+def _remap_row_range_ref(range_ref, row_map):
+    """
+    Wendet ein Zeilen-Mapping auf eine Range-Referenz an (z.B. 'A2:J100').
+    Bei gelöschten Randzeilen wird der Bereich auf die verbleibenden Zeilen geschrumpft.
+    Gibt None zurück nur wenn ALLE Zeilen im Bereich gelöscht wurden.
+    """
+    if ':' not in range_ref:
+        return _remap_row_in_ref(range_ref, row_map)
+    parts = range_ref.split(':')
+    new_start = _remap_row_in_ref(parts[0], row_map)
+    new_end = _remap_row_in_ref(parts[1], row_map)
+    if new_start is not None and new_end is not None:
+        return f"{new_start}:{new_end}"
+
+    # Mindestens eine Randzeile wurde gelöscht →
+    # tatsächlichen Bereich aller verbleibenden Zeilen ermitteln
+    d1s, col_s, d2s, row_s = _parse_cell_ref(parts[0])
+    d1e, col_e, d2e, row_e = _parse_cell_ref(parts[1])
+    if col_s is None or col_e is None:
+        return None
+
+    mapped_rows = []
+    for r in range(row_s, row_e + 1):
+        nr = row_map.get(r)
+        if nr is not None:
+            mapped_rows.append(nr)
+
+    if not mapped_rows:
+        return None  # Alle Zeilen im Bereich gelöscht
+
+    new_min_row = min(mapped_rows)
+    new_max_row = max(mapped_rows)
+    new_start_ref = f"{d1s}{col_s}{d2s}{new_min_row}"
+    new_end_ref = f"{d1e}{col_e}{d2e}{new_max_row}"
+    return f"{new_start_ref}:{new_end_ref}"
+
+
+def _remap_row_sqref(sqref, row_map):
+    """
+    Wendet ein Zeilen-Mapping auf sqref an (Space-separated Ranges).
+    Entfernt Ranges deren Zeilen alle gelöscht wurden.
+    """
+    ranges = sqref.split()
+    new_ranges = []
+    for r in ranges:
+        new_r = _remap_row_range_ref(r, row_map)
+        if new_r is not None:
+            new_ranges.append(new_r)
+    return ' '.join(new_ranges) if new_ranges else None
+
+
+# =============================================================================
 # SPALTEN-MAPPING BUILDER
 # =============================================================================
 
@@ -149,19 +219,31 @@ def _build_col_map_for_insert(insert_operations, max_col=500):
     insert_operations: Liste von {position: 0-basiert, count: Anzahl}.
     Gibt dict zurück: alte 1-basierte Spaltennummer → neue 1-basierte Spaltennummer.
     
-    Die Frontend-Positionen sind ORIGINAL-Positionen (vor allen Einfügungen).
-    Keine Konvertierung nötig — direkt als Insert-Punkte verwenden.
+    Die Frontend-Positionen sind FINALE Positionen (nach allen Einfügungen).
+    Algorithmus: Durchlaufe FINALE Positionen 1..N, überspringe Insert-Positionen,
+    weise alten Spalten die verbleibenden Positionen zu.
     """
-    inserts = sorted([(op['position'] + 1, op.get('count', 1)) for op in insert_operations])
+    # Sammle alle FINALEN Insert-Positionen (1-basiert)
+    insert_positions = set()
+    for op in insert_operations:
+        pos_1based = op['position'] + 1  # 0-basiert → 1-basiert
+        count = op.get('count', 1)
+        for i in range(count):
+            insert_positions.add(pos_1based + i)
+    
+    total_inserts = len(insert_positions)
+    max_final = max_col + total_inserts
     
     col_map = {}
-    shift = 0
-    insert_idx = 0
-    for old_col in range(1, max_col + 1):
-        while insert_idx < len(inserts) and inserts[insert_idx][0] == old_col:
-            shift += inserts[insert_idx][1]
-            insert_idx += 1
-        col_map[old_col] = old_col + shift
+    old_col = 1
+    for final_pos in range(1, max_final + 1):
+        if final_pos in insert_positions:
+            continue  # Position gehört einer neuen Spalte
+        if old_col > max_col:
+            break
+        col_map[old_col] = final_pos
+        old_col += 1
+    
     return col_map
 
 
@@ -182,8 +264,117 @@ def _build_col_map_for_reorder(column_order):
 
 
 # =============================================================================
+# ZEILEN-MAPPING BUILDER
+# =============================================================================
+
+def _build_row_maps(deleted_rows_0based, row_order, max_excel_row):
+    """
+    Baut Zeilen-Mappings für Zeilen-Löschung und -Verschiebung.
+    
+    Args:
+        deleted_rows_0based: Liste von 0-basierten Daten-Indizes (0 = Excel-Zeile 2).
+        row_order: Liste wo row_order[new_pos] = after_delete_idx (0-basiert).
+                   Kann None/leer sein bei reiner Löschung.
+        max_excel_row: Maximale Excel-Zeilennummer im Sheet.
+    
+    Returns:
+        (data_row_map, meta_row_map)
+        - data_row_map: {old_excel_row: final_excel_row} — für sheetData (delete + reorder)
+        - meta_row_map: {old_excel_row: after_delete_excel_row} — für Metadaten (nur delete)
+    """
+    deleted_set = set(deleted_rows_0based) if deleted_rows_0based else set()
+    
+    # Schritt 1: Delete-Map (alte Zeile → Zeile nach Löschung, ohne Reorder)
+    meta_row_map = {1: 1}  # Header bleibt immer Zeile 1
+    remaining = []  # (original_data_idx, intermediate_excel_row)
+    new_row = 2
+    for orig_idx in range(max_excel_row - 1):  # Datenzeilen (ohne Header)
+        if orig_idx not in deleted_set:
+            old_excel = orig_idx + 2
+            meta_row_map[old_excel] = new_row
+            remaining.append((orig_idx, new_row))
+            new_row += 1
+    
+    # Schritt 2: Reorder auf Delete anwenden
+    if row_order and len(row_order) > 0:
+        data_row_map = {1: 1}
+        for new_pos, after_delete_idx in enumerate(row_order):
+            if after_delete_idx < len(remaining):
+                orig_idx, _ = remaining[after_delete_idx]
+                old_excel = orig_idx + 2
+                final_excel = new_pos + 2
+                data_row_map[old_excel] = final_excel
+        return data_row_map, meta_row_map
+    else:
+        # Nur Löschen, kein Reorder → beide Maps identisch
+        return meta_row_map, meta_row_map
+
+
+# =============================================================================
 # XML-TRANSFORMATIONEN
 # =============================================================================
+
+def _cleanup_orphaned_shared_formulas(sheet_xml):
+    """
+    Entfernt verwaiste Shared-Formula-Slaves und -Masters mit ungültigem ref.
+    
+    Wenn der Master einer shared formula gelöscht wurde (z.B. Spalte/Zeile gelöscht),
+    bleiben Slave-Zellen mit <f t="shared" si="X"/> oder <f t="shared" si="X"></f>
+    ohne Master-Definition.
+    Excel erkennt das als inkonsistent → "Zellinformationen" Reparatur.
+    
+    Lösung: Orphaned slaves → <f> Element entfernen (cached <v> bleibt erhalten).
+    Ebenfalls: Masters deren ref-Range nicht mehr die eigene Zelle enthält → entfernen.
+    """
+    # Sammle alle si-Werte die einen Master haben (haben ref= UND si= Attribut)
+    defined_si = set()
+    for m in re.finditer(r'<f\s[^>]*?\bsi="(\d+)"[^>]*?\bref="', sheet_xml):
+        defined_si.add(m.group(1))
+    for m in re.finditer(r'<f\s[^>]*?\bref="[^"]*"[^>]*?\bsi="(\d+)"', sheet_xml):
+        defined_si.add(m.group(1))
+    
+    def _check_orphan(m):
+        f_tag = m.group(0)
+        si_match = re.search(r'\bsi="(\d+)"', f_tag)
+        if si_match and si_match.group(1) not in defined_si:
+            return ''  # Verwaister Slave → entfernen
+        return f_tag
+    
+    # 1. Selbstschließende Slaves: <f t="shared" si="X"/>
+    sheet_xml = re.sub(r'<f\s[^>]*?\bt="shared"[^>]*?/>', _check_orphan, sheet_xml)
+    
+    # 2. Nicht-selbstschließende Slaves: <f t="shared" si="X"></f> oder <f t="shared" si="X"> </f>
+    #    (Manche Excel-Writer erzeugen leere <f>...</f> statt <f/>)
+    sheet_xml = re.sub(r'<f\s[^>]*?\bt="shared"[^>]*?>\s*</f>', _check_orphan, sheet_xml)
+    
+    # 3. Shared-Formula Masters ohne gültige Slaves prüfen:
+    #    Wenn nach dem Cleanup ein Master-si existiert aber KEINE Slaves mehr
+    #    dafür vorhanden sind UND der ref-Bereich nur eine einzige Zelle ist,
+    #    konvertiere den Master in eine normale Formel (ref + si + t entfernen).
+    #    → Das verhindert, dass Excel die Shared-Formel als inkonsistent erkennt.
+    for si_val in list(defined_si):
+        # Zähle verbleibende Nutzungen dieses si (Master + Slaves)
+        si_uses = len(re.findall(rf'\bsi="{re.escape(si_val)}"', sheet_xml))
+        if si_uses == 1:
+            # Nur der Master selbst übrig — shared formula hat keine Slaves mehr
+            # → Konvertiere Master in normale Formel: entferne t="shared", si="X", ref="..."
+            def _demote_lonely_master(m):
+                f_tag = m.group(0)
+                si_m = re.search(rf'\bsi="{re.escape(si_val)}"', f_tag)
+                if not si_m:
+                    return f_tag
+                # Entferne t="shared", si="X", ref="..." Attribute
+                f_tag = re.sub(r'\s*\bt="shared"', '', f_tag)
+                f_tag = re.sub(r'\s*\bsi="\d+"', '', f_tag)
+                f_tag = re.sub(r'\s*\bref="[^"]*"', '', f_tag)
+                return f_tag
+            # Matche Master-<f> (hat Formeltext, also nicht selbstschließend)
+            sheet_xml = re.sub(
+                r'<f\s[^>]*?\bt="shared"[^>]*?>.*?</f>',
+                _demote_lonely_master, sheet_xml, flags=re.DOTALL)
+    
+    return sheet_xml
+
 
 def _apply_col_map_to_sheet_xml(sheet_xml, col_map, skip_sort=False):
     """
@@ -233,8 +424,8 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map, skip_sort=False):
             return m.group(0)
         # Selbstschließende <c .../> 
         sheet_xml = re.sub(r'<c\s[^>]*?r="([A-Z]+)\d+"[^>]*/>', _remove_deleted_cell, sheet_xml)
-        # <c ...>...</c>
-        sheet_xml = re.sub(r'<c\s[^>]*?r="([A-Z]+)\d+"[^>]*>.*?</c>', _remove_deleted_cell, sheet_xml, flags=re.DOTALL)
+        # <c ...>...</c> — (?<!/) verhindert dass /> einer self-closing Zelle als > gematcht wird
+        sheet_xml = re.sub(r'<c\s[^>]*?r="([A-Z]+)\d+"[^>]*(?<!/)>.*?</c>', _remove_deleted_cell, sheet_xml, flags=re.DOTALL)
     
     # Jetzt alle verbleibenden Zell-Referenzen remappen
     def _remap_cell(m):
@@ -250,6 +441,31 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map, skip_sort=False):
         return f'{prefix}{new_ref}"'
     
     sheet_xml = re.sub(r'(<c\s[^>]*?r=")([A-Z]+\d+)"', _remap_cell, sheet_xml)
+    
+    # ---- 1b. <f ref="..."> Shared/Array-Formel-Refs remappen ----
+    # Shared formulas: <f t="shared" ref="B2:B100" si="0">formula</f>
+    # Array formulas:  <f t="array" ref="A1:C3">{formula}</f>
+    # Die ref-Attribute definieren den Gültigkeitsbereich der Formel.
+    # Nach Spalten-Ops müssen die Spalten-Referenzen angepasst werden,
+    # sonst sieht Excel eine Inkonsistenz zwischen ref-Range und tatsächlichen
+    # Zell-Positionen → "Zellinformationen" Reparatur.
+    def _remap_f_ref(m):
+        prefix = m.group(1)   # z.B. '<f t="shared" ref="'
+        ref_val = m.group(2)  # z.B. 'B2:B8450'
+        new_ref = _remap_range_ref(ref_val, col_map)
+        if new_ref is None:
+            # Kompletter Formel-Range gelöscht — ganzes <f> Element wird
+            # durch _cleanup_orphaned_shared_formulas bereinigt
+            return f'{prefix}{ref_val}"'  # Unverändert lassen, Cleanup kommt
+        return f'{prefix}{new_ref}"'
+    
+    sheet_xml = re.sub(r'(<f\s[^>]*?\bref=")([^"]+)"', _remap_f_ref, sheet_xml)
+    
+    # ---- 1c. Verwaiste Shared-Formula-Slaves bereinigen ----
+    # Wenn der Master einer shared formula in einer gelöschten Spalte lag,
+    # bleiben Slave-Zellen mit <f t="shared" si="X"/> ohne Master-Definition.
+    # Excel erkennt das als inkonsistent → "Zellinformationen" Reparatur.
+    sheet_xml = _cleanup_orphaned_shared_formulas(sheet_xml)
     
     # ---- 2. <row spans="1:10"> — entfernen, Excel berechnet sie neu ----
     sheet_xml = re.sub(r' spans="[^"]*"', '', sheet_xml)
@@ -331,12 +547,16 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map, skip_sort=False):
         rest = m.group(2)
         new_sqref = _remap_sqref(sqref, col_map)
         if new_sqref is None:
-            return ''
+            # NICHT '' zurückgeben! Das entfernt nur den öffnenden Tag,
+            # lässt aber ">...rules...</conditionalFormatting>" als invalides XML.
+            # Stattdessen leeres sqref setzen → Cleanup-Regex entfernt das GANZE Element.
+            return '<conditionalFormatting sqref=""'
         return f'<conditionalFormatting sqref="{new_sqref}"{rest}'
     
     sheet_xml = re.sub(r'<conditionalFormatting\s+sqref="([^"]+)"([^>]*)', _remap_cf, sheet_xml)
+    # Entferne CF-Elemente mit leerem sqref (inkl. ggf. weiterer Attribute wie pivot="0")
     sheet_xml = re.sub(
-        r'<conditionalFormatting\s+sqref=""\s*>.*?</conditionalFormatting>',
+        r'<conditionalFormatting\s+sqref=""[^>]*>.*?</conditionalFormatting>',
         '', sheet_xml, flags=re.DOTALL)
     
     # ---- 6. <autoFilter ref="A1:J100"> ----
@@ -383,17 +603,44 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map, skip_sort=False):
             r'<filterColumn\s[^>]*colId="(\d+)"[^>]*>.*?</filterColumn>\s*',
             _remap_sheet_filter_column, sheet_xml, flags=re.DOTALL)
         
-        # sortState/sortCondition ref-Bereiche anpassen
-        def _remap_sort_ref_sheet(m):
-            prefix = m.group(1)
-            ref = m.group(2)
+        # sortCondition/sortState ref-Bereiche anpassen
+        # WICHTIG: Ganze Elemente matchen um orphaned XML-Fragmente zu vermeiden!
+        # Vorher: Regex matchte nur bis ref="..." und return '' ließ '/>' orphaned zurück.
+        
+        # Schritt 1: sortCondition — ganzes self-closing Element matchen
+        def _remap_sort_condition(m):
+            full = m.group(0)
+            ref = m.group(1)
             new_ref = _remap_range_ref(ref, col_map)
             if new_ref is None:
-                return ''
-            return f'{prefix}ref="{new_ref}"'
+                return ''  # Ganzes Element sauber entfernen
+            return full.replace(f'ref="{ref}"', f'ref="{new_ref}"')
         
-        sheet_xml = re.sub(r'(<sortState\s[^>]*?)ref="([^"]+)"', _remap_sort_ref_sheet, sheet_xml)
-        sheet_xml = re.sub(r'(<sortCondition\s[^>]*?)ref="([^"]+)"', _remap_sort_ref_sheet, sheet_xml)
+        sheet_xml = re.sub(
+            r'<sortCondition\s[^>]*?ref="([^"]+)"[^>]*/>\s*',
+            _remap_sort_condition, sheet_xml)
+        
+        # Schritt 2: sortState — ganzen Block matchen + leeren sortState entfernen
+        def _remap_sort_state_block(m):
+            full = m.group(0)
+            ref = m.group(1)
+            new_ref = _remap_range_ref(ref, col_map)
+            if new_ref is None:
+                return ''  # Ganzes Element sauber entfernen
+            result = full.replace(f'ref="{ref}"', f'ref="{new_ref}"')
+            # Keine sortConditions mehr → leeren sortState entfernen
+            if '<sortCondition' not in result:
+                return ''
+            return result
+        
+        # sortState mit Content
+        sheet_xml = re.sub(
+            r'<sortState\s[^>]*?ref="([^"]+)"[^>]*>.*?</sortState>\s*',
+            _remap_sort_state_block, sheet_xml, flags=re.DOTALL)
+        # sortState self-closing (defensiv)
+        sheet_xml = re.sub(
+            r'<sortState\s[^>]*?ref="([^"]+)"[^>]*/>\s*',
+            _remap_sort_state_block, sheet_xml)
         
         # Leere autoFilter bereinigen
         sheet_xml = re.sub(r'(<autoFilter\s[^>]*?)>\s*</autoFilter>', r'\1/>', sheet_xml)
@@ -418,7 +665,18 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map, skip_sort=False):
             return ''
         return full.replace(f'sqref="{sqref}"', f'sqref="{new_sqref}"')
     
-    sheet_xml = re.sub(r'<dataValidation\s[^>]*sqref="([^"]+)"[^>]*/?>', _remap_dv, sheet_xml)
+    # Non-self-closing: <dataValidation ...>..children..</dataValidation>
+    sheet_xml = re.sub(
+        r'<dataValidation\s[^>]*sqref="([^"]+)"[^>]*>.*?</dataValidation>',
+        _remap_dv, sheet_xml, flags=re.DOTALL)
+    # Self-closing: <dataValidation .../>
+    sheet_xml = re.sub(
+        r'<dataValidation\s[^>]*sqref="([^"]+)"[^>]*/\s*>',
+        _remap_dv, sheet_xml)
+    # dataValidations count aktualisieren (analog zu mergeCells)
+    dv_count = len(re.findall(r'<dataValidation\s', sheet_xml))
+    sheet_xml = re.sub(r'<dataValidations\s+count="\d+"', f'<dataValidations count="{dv_count}"', sheet_xml)
+    sheet_xml = re.sub(r'<dataValidations\s+count="0"\s*>\s*</dataValidations>', '', sheet_xml)
     
     # ---- 9. Definierte Namen mit Sheet-Referenzen ----
     # definedName-Werte wie "Sheet1!$A$1:$J$100" in workbook.xml
@@ -461,6 +719,60 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map, skip_sort=False):
     
     sheet_xml = re.sub(r'<xm:f>([^<]+)</xm:f>', _remap_xm_f, sheet_xml)
     
+    # ---- DIAGNOSTIK: XML-Validierung nach Col-Ops ----
+    try:
+        import sys as _sys
+        # 1. AutoFilter Block dumpen
+        _af_block = re.search(r'<autoFilter[\s>].*?(?:</autoFilter>|/>)', sheet_xml, re.DOTALL)
+        if _af_block:
+            _text = _af_block.group(0)
+            if len(_text) > 3000:
+                _text = _text[:1500] + "\n... TRUNCATED ...\n" + _text[-500:]
+            _sys.stderr.write(f"[COL_DIAG] autoFilter block ({len(_af_block.group(0))} chars):\n{_text}\n")
+        else:
+            _sys.stderr.write("[COL_DIAG] Kein <autoFilter> gefunden\n")
+        
+        # 2. Check: orphaned sortState/sortCondition Fragmente
+        for _orphan_pat, _name in [
+            (r'(?<![<\w])/>',  'orphaned />'),
+            (r'</sortState>', 'closing </sortState> without opening'),
+            (r'</sortCondition>', 'closing </sortCondition> without opening'),
+        ]:
+            for _om in re.finditer(_orphan_pat, sheet_xml):
+                _ctx_start = max(0, _om.start() - 80)
+                _ctx_end = min(len(sheet_xml), _om.end() + 30)
+                _ctx = sheet_xml[_ctx_start:_ctx_end].replace('\n', '\\n')
+                _sys.stderr.write(f"[COL_DIAG] WARNUNG: {_name} at pos {_om.start()}: ...{_ctx}...\n")
+        
+        # 3. Check: Shared-Formula-Konsistenz
+        _sf_masters = set()
+        for _sfm in re.finditer(r'<f\s[^>]*?t="shared"[^>]*?si="(\d+)"[^>]*?ref="', sheet_xml):
+            _sf_masters.add(_sfm.group(1))
+        _orphan_slaves = 0
+        for _sfs in re.finditer(r'<f\s+t="shared"\s+si="(\d+)"\s*/>', sheet_xml):
+            if _sfs.group(1) not in _sf_masters:
+                _orphan_slaves += 1
+        if _orphan_slaves > 0:
+            _sys.stderr.write(f"[COL_DIAG] WARNUNG: {_orphan_slaves} orphaned shared formula slaves!\n")
+        else:
+            _sys.stderr.write(f"[COL_DIAG] Shared formulas OK (masters: {len(_sf_masters)})\n")
+        
+        # 4. Erste 3 Zeilen dumpen zur Zell-Prüfung
+        _row_count = 0
+        for _rm in re.finditer(r'<row\s[^>]*>.*?</row>', sheet_xml, re.DOTALL):
+            _row_count += 1
+            if _row_count <= 3:
+                _row_text = _rm.group(0)
+                if len(_row_text) > 500:
+                    _row_text = _row_text[:500] + "..."
+                _sys.stderr.write(f"[COL_DIAG] Row {_row_count}: {_row_text}\n")
+            if _row_count > 3:
+                break
+        _sys.stderr.write(f"[COL_DIAG] Diagnostik abgeschlossen\n")
+    except Exception as _diag_err:
+        import sys as _sys
+        _sys.stderr.write(f"[COL_DIAG] Diagnostik-Fehler: {_diag_err}\n")
+    
     # ---- 10. Zellen innerhalb jeder <row> nach Spalte sortieren ----
     if not skip_sort:
         sheet_xml = _sort_cells_in_rows(sheet_xml)
@@ -500,6 +812,211 @@ def _sort_cells_in_rows(sheet_xml):
         sheet_xml,
         flags=re.DOTALL
     )
+
+
+# =============================================================================
+# ZEILEN-XML-TRANSFORMATION
+# =============================================================================
+
+def _apply_row_map_to_sheet_xml(sheet_xml, data_row_map, meta_row_map):
+    """
+    Wendet Zeilen-Mappings auf alle relevanten Elemente im Worksheet-XML an.
+    
+    Zwei separate Maps:
+    - data_row_map: für <sheetData> Zeilen (delete + reorder)
+    - meta_row_map: für Metadaten wie mergeCells, CF, autoFilter (nur delete, kein reorder)
+      → Parity mit openpyxl-Pfad, der Merges/CF nicht für Reorder anpasst.
+    
+    Args:
+        data_row_map: {old_excel_row: final_excel_row}
+        meta_row_map: {old_excel_row: after_delete_excel_row}
+    """
+    
+    # ---- 0. <dimension ref="A1:J100"> aktualisieren ----
+    def _remap_dim(m):
+        ref = m.group(1)
+        new_ref = _remap_row_range_ref(ref, meta_row_map)
+        if new_ref is None:
+            return ''
+        return f'<dimension ref="{new_ref}"/>'
+    sheet_xml = re.sub(r'<dimension\s+ref="([^"]+)"\s*/>', _remap_dim, sheet_xml)
+    
+    # ---- 1. <sheetData> Zeilen verarbeiten ----
+    sd_match = re.search(r'(<sheetData[^>]*>)(.*?)(</sheetData>)', sheet_xml, re.DOTALL)
+    if sd_match:
+        sd_open = sd_match.group(1)
+        sd_content = sd_match.group(2)
+        sd_close = sd_match.group(3)
+        
+        new_rows = []
+        for row_m in re.finditer(
+                r'<row\s[^>]*?r="(\d+)"[^>]*(?:/>|>.*?</row>)',
+                sd_content, re.DOTALL):
+            old_row = int(row_m.group(1))
+            new_row = data_row_map.get(old_row)
+            if new_row is None:
+                continue  # Zeile gelöscht
+            
+            row_xml = row_m.group(0)
+            
+            # r="X" in <row> Tag aktualisieren (nur in der <row>-Eröffnung)
+            row_xml = re.sub(
+                r'(<row\s[^>]*?)r="\d+"',
+                f'\\1r="{new_row}"',
+                row_xml, count=1)
+            
+            # spans entfernen (Excel berechnet neu)
+            row_xml = re.sub(r'\s*spans="[^"]*"', '', row_xml)
+            
+            # Alle <c r="AX"> Zell-Referenzen auf neue Zeilennummer
+            row_xml = re.sub(
+                r'(<c\s[^>]*?r="[A-Z]+)\d+"',
+                f'\\1{new_row}"',
+                row_xml)
+            
+            new_rows.append((new_row, row_xml))
+        
+        # Sortieren nach neuer Zeilennummer
+        new_rows.sort(key=lambda x: x[0])
+        new_sd = sd_open + ''.join(xml for _, xml in new_rows) + sd_close
+        sheet_xml = sheet_xml[:sd_match.start()] + new_sd + sheet_xml[sd_match.end():]
+    
+    # ---- 1b. Verwaiste Shared-Formula-Slaves bereinigen ----
+    sheet_xml = _cleanup_orphaned_shared_formulas(sheet_xml)
+    
+    # ---- 2. <mergeCell ref="A1:C5"> ----
+    def _remap_row_merge(m):
+        ref = m.group(1)
+        new_ref = _remap_row_range_ref(ref, meta_row_map)
+        if new_ref is None:
+            return ''
+        return f'<mergeCell ref="{new_ref}"/>'
+    sheet_xml = re.sub(r'<mergeCell\s+ref="([^"]+)"\s*/>', _remap_row_merge, sheet_xml)
+    merge_count = len(re.findall(r'<mergeCell\s', sheet_xml))
+    sheet_xml = re.sub(r'<mergeCells\s+count="\d+"', f'<mergeCells count="{merge_count}"', sheet_xml)
+    sheet_xml = re.sub(r'<mergeCells\s+count="0"\s*>\s*</mergeCells>', '', sheet_xml)
+    
+    # ---- 3. <conditionalFormatting sqref="A2:J100"> ----
+    def _remap_row_cf(m):
+        sqref = m.group(1)
+        rest = m.group(2)
+        new_sqref = _remap_row_sqref(sqref, meta_row_map)
+        if new_sqref is None:
+            return '<conditionalFormatting sqref=""'
+        return f'<conditionalFormatting sqref="{new_sqref}"{rest}'
+    sheet_xml = re.sub(r'<conditionalFormatting\s+sqref="([^"]+)"([^>]*)', _remap_row_cf, sheet_xml)
+    sheet_xml = re.sub(
+        r'<conditionalFormatting\s+sqref=""[^>]*>.*?</conditionalFormatting>',
+        '', sheet_xml, flags=re.DOTALL)
+    
+    # ---- 4. <autoFilter ref="A1:J100"> ----
+    def _remap_row_af(m):
+        ref = m.group(1)
+        new_ref = _remap_row_range_ref(ref, meta_row_map)
+        if new_ref is None:
+            return ''
+        return f'<autoFilter ref="{new_ref}"'
+    sheet_xml = re.sub(r'<autoFilter\s+ref="([^"]+)"', _remap_row_af, sheet_xml)
+    
+    # ---- 5. <hyperlink ref="A2"> ----
+    def _remap_row_hl(m):
+        full = m.group(0)
+        ref = m.group(1)
+        new_ref = _remap_row_in_ref(ref, meta_row_map)
+        if new_ref is None:
+            return ''
+        return full.replace(f'ref="{ref}"', f'ref="{new_ref}"')
+    sheet_xml = re.sub(r'<hyperlink\s[^>]*ref="([^"]+)"[^>]*/>', _remap_row_hl, sheet_xml)
+    
+    # ---- 6. <dataValidation sqref="B2:B100"> ----
+    def _remap_row_dv(m):
+        full = m.group(0)
+        sqref = m.group(1)
+        new_sqref = _remap_row_sqref(sqref, meta_row_map)
+        if new_sqref is None:
+            return ''
+        return full.replace(f'sqref="{sqref}"', f'sqref="{new_sqref}"')
+    sheet_xml = re.sub(
+        r'<dataValidation\s[^>]*sqref="([^"]+)"[^>]*>.*?</dataValidation>',
+        _remap_row_dv, sheet_xml, flags=re.DOTALL)
+    sheet_xml = re.sub(
+        r'<dataValidation\s[^>]*sqref="([^"]+)"[^>]*/\s*>',
+        _remap_row_dv, sheet_xml)
+    dv_count = len(re.findall(r'<dataValidation\s', sheet_xml))
+    sheet_xml = re.sub(r'<dataValidations\s+count="\d+"', f'<dataValidations count="{dv_count}"', sheet_xml)
+    sheet_xml = re.sub(r'<dataValidations\s+count="0"\s*>\s*</dataValidations>', '', sheet_xml)
+    
+    # ---- 7. <xm:sqref> in <extLst> (x14 CF, Sparklines etc.) ----
+    def _remap_row_xm_sqref(m):
+        sqref = m.group(1)
+        new_sqref = _remap_row_sqref(sqref, meta_row_map)
+        if new_sqref is None:
+            return ''
+        return f'<xm:sqref>{new_sqref}</xm:sqref>'
+    sheet_xml = re.sub(r'<xm:sqref>([^<]+)</xm:sqref>', _remap_row_xm_sqref, sheet_xml)
+    
+    # ---- 7b. <xm:f> Formeln ----
+    def _remap_row_xm_f(m):
+        formula = m.group(1)
+        if re.match(r'^[^(]+!?\$?[A-Z]+\$?\d+(:\$?[A-Z]+\$?\d+)?$', formula):
+            if '!' in formula:
+                sheet_prefix, ref_part = formula.rsplit('!', 1)
+                new_ref = (_remap_row_range_ref(ref_part, meta_row_map) if ':' in ref_part
+                           else _remap_row_in_ref(ref_part, meta_row_map))
+                if new_ref is None:
+                    return ''
+                return f'<xm:f>{sheet_prefix}!{new_ref}</xm:f>'
+            else:
+                new_ref = (_remap_row_range_ref(formula, meta_row_map) if ':' in formula
+                           else _remap_row_in_ref(formula, meta_row_map))
+                if new_ref is None:
+                    return ''
+                return f'<xm:f>{new_ref}</xm:f>'
+        return m.group(0)
+    sheet_xml = re.sub(r'<xm:f>([^<]+)</xm:f>', _remap_row_xm_f, sheet_xml)
+    
+    # ---- 8. <f ref="A2:A100"> (Shared/Array Formula Ranges) ----
+    # Diese verwenden meta_row_map weil Formel-Ranges Metadaten sind
+    def _remap_f_ref(m):
+        prefix = m.group(1)
+        ref = m.group(2)
+        new_ref = _remap_row_range_ref(ref, meta_row_map)
+        if new_ref is None:
+            return m.group(0)
+        return f'{prefix}ref="{new_ref}"'
+    sheet_xml = re.sub(r'(<f\s[^>]*?)ref="([^"]+)"', _remap_f_ref, sheet_xml)
+    
+    # ---- 9. <sortState> / <sortCondition> ----
+    def _remap_row_sort(m):
+        prefix = m.group(1)
+        ref = m.group(2)
+        new_ref = _remap_row_range_ref(ref, meta_row_map)
+        if new_ref is None:
+            return ''
+        return f'{prefix}ref="{new_ref}"'
+    sheet_xml = re.sub(r'(<sortState\s[^>]*?)ref="([^"]+)"', _remap_row_sort, sheet_xml)
+    sheet_xml = re.sub(r'(<sortCondition\s[^>]*?)ref="([^"]+)"', _remap_row_sort, sheet_xml)
+    
+    return sheet_xml
+
+
+def _apply_row_map_to_table_xml(table_xml, meta_row_map):
+    """
+    Wendet ein Zeilen-Mapping auf eine Table-XML an.
+    Aktualisiert ref/autoFilter Ranges (max row).
+    tableColumns bleiben unverändert (Spalten-Level).
+    """
+    def _remap_table_row_range(m):
+        prefix = m.group(1)
+        ref = m.group(2)
+        new_ref = _remap_row_range_ref(ref, meta_row_map)
+        if new_ref is None:
+            return m.group(0)
+        return f'{prefix}ref="{new_ref}"'
+    
+    table_xml = re.sub(r'(<table\s[^>]*?)ref="([^"]+)"', _remap_table_row_range, table_xml)
+    table_xml = re.sub(r'(<autoFilter\s[^>]*?)ref="([^"]+)"', _remap_table_row_range, table_xml)
+    return table_xml
 
 
 def _apply_col_map_to_table_xml(table_xml, col_map, new_headers=None,
@@ -621,42 +1138,92 @@ def _apply_col_map_to_table_xml(table_xml, col_map, new_headers=None,
         r'<filterColumn\s[^>]*colId="(\d+)"[^>]*>.*?</filterColumn>\s*',
         _remap_filter_column, table_xml, flags=re.DOTALL)
     
-    # sortState/sortCondition ref-Bereiche anpassen
-    # Diese enthalten Zellbereiche die remapped werden müssen
-    def _remap_sort_ref(m):
-        prefix = m.group(1)
-        ref = m.group(2)
+    # sortCondition/sortState ref-Bereiche anpassen
+    # WICHTIG: Ganze Elemente matchen um orphaned XML zu vermeiden
+    
+    # Schritt 1: sortCondition — ganzes self-closing Element
+    def _remap_sort_condition_tbl(m):
+        full = m.group(0)
+        ref_in_el = re.search(r'ref="([^"]+)"', full)
+        if not ref_in_el:
+            return full
+        ref = ref_in_el.group(1)
         if ':' not in ref:
-            return m.group(0)
+            return full
         start, end = ref.split(':')
         d1s, col_s, d2s, row_s = _parse_cell_ref(start)
         d1e, col_e, d2e, row_e = _parse_cell_ref(end)
         if col_s is None or col_e is None:
-            return m.group(0)
+            return full
         sc = _col_letter_to_num(col_s)
         ec = _col_letter_to_num(col_e)
         nc_s = col_map.get(sc)
         nc_e = col_map.get(ec)
         if nc_s is None:
-            # Start-Spalte gelöscht → nimm erste verfügbare
             for c in range(sc, ec + 1):
                 nc_s = col_map.get(c)
                 if nc_s:
                     break
         if nc_e is None:
-            # End-Spalte gelöscht → nimm letzte verfügbare
             for c in range(ec, sc - 1, -1):
                 nc_e = col_map.get(c)
                 if nc_e:
                     break
         if nc_s is None or nc_e is None:
-            return ''  # Alle Spalten gelöscht → Element entfernen
+            return ''  # Ganzes Element sauber entfernen
         new_start = f"{d1s}{_num_to_col_letter(nc_s)}{d2s}{row_s}"
         new_end = f"{d1e}{_num_to_col_letter(nc_e)}{d2e}{row_e}"
-        return f'{prefix}ref="{new_start}:{new_end}"'
+        return full.replace(f'ref="{ref}"', f'ref="{new_start}:{new_end}"')
     
-    table_xml = re.sub(r'(<sortState\s[^>]*?)ref="([^"]+)"', _remap_sort_ref, table_xml)
-    table_xml = re.sub(r'(<sortCondition\s[^>]*?)ref="([^"]+)"', _remap_sort_ref, table_xml)
+    table_xml = re.sub(
+        r'<sortCondition\s[^>]*?ref="[^"]*"[^>]*/>\s*',
+        _remap_sort_condition_tbl, table_xml)
+    
+    # Schritt 2: sortState — ganzen Block + leeren sortState entfernen
+    def _remap_sort_state_tbl(m):
+        full = m.group(0)
+        ref_in_el = re.search(r'ref="([^"]+)"', full)
+        if not ref_in_el:
+            return full
+        ref = ref_in_el.group(1)
+        if ':' not in ref:
+            return full
+        start, end = ref.split(':')
+        d1s, col_s, d2s, row_s = _parse_cell_ref(start)
+        d1e, col_e, d2e, row_e = _parse_cell_ref(end)
+        if col_s is None or col_e is None:
+            return full
+        sc = _col_letter_to_num(col_s)
+        ec = _col_letter_to_num(col_e)
+        nc_s = col_map.get(sc)
+        nc_e = col_map.get(ec)
+        if nc_s is None:
+            for c in range(sc, ec + 1):
+                nc_s = col_map.get(c)
+                if nc_s:
+                    break
+        if nc_e is None:
+            for c in range(ec, sc - 1, -1):
+                nc_e = col_map.get(c)
+                if nc_e:
+                    break
+        if nc_s is None or nc_e is None:
+            return ''
+        new_start = f"{d1s}{_num_to_col_letter(nc_s)}{d2s}{row_s}"
+        new_end = f"{d1e}{_num_to_col_letter(nc_e)}{d2e}{row_e}"
+        result = full.replace(f'ref="{ref}"', f'ref="{new_start}:{new_end}"')
+        if '<sortCondition' not in result:
+            return ''
+        return result
+    
+    # sortState mit Content
+    table_xml = re.sub(
+        r'<sortState\s[^>]*?ref="[^"]*"[^>]*>.*?</sortState>\s*',
+        _remap_sort_state_tbl, table_xml, flags=re.DOTALL)
+    # sortState self-closing
+    table_xml = re.sub(
+        r'<sortState\s[^>]*?ref="[^"]*"[^>]*/>\s*',
+        _remap_sort_state_tbl, table_xml)
     
     # Leere autoFilter bereinigen (nur noch ref, keine Kinder)
     # <autoFilter ref="..."></autoFilter> → <autoFilter ref="..."/>
@@ -764,7 +1331,8 @@ def _apply_col_map_to_workbook_xml(wb_xml, col_map, sheet_name):
 def direct_xml_column_operations(file_path, output_path, sheet_name,
                                  deleted_columns=None, inserted_columns=None,
                                  column_order=None, hidden_columns=None,
-                                 headers=None, data=None, return_bytes=False):
+                                 headers=None, data=None, return_bytes=False,
+                                 strip_row_hidden=False, hidden_rows=None):
     """
     Führt Spaltenoperationen direkt auf dem XML durch (ZIP-to-ZIP).
     
@@ -782,6 +1350,11 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
         hidden_columns: Liste von 0-basierten Spaltenindizes zum Verstecken
         headers: Liste der Header (für eingefügte Spalten)
         data: 2D-Liste der Daten (für eingefügte Spalten)
+        strip_row_hidden: Wenn True, werden hidden-Attribute von <row> Tags
+                         VOR den Spalten-Ops entfernt (werden danach separat re-applied)
+        hidden_rows: Liste von 0-basierten Zeilenindizes zum Verstecken.
+                    Wenn angegeben, werden hidden-Attribute NACH den Spalten-Ops
+                    direkt im selben ZIP-Durchgang gesetzt (kein extra ZIP-Pass).
     
     Returns:
         Dict mit success und outputPath
@@ -839,6 +1412,15 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
             # 2. Lese Sheet-XML
             sheet_content = src_zip.read(sheet_zip_path).decode('utf-8')
             
+            # 2b. Hidden-Attribute von <row> Tags entfernen (werden später re-applied)
+            # Analog zum manuellen Workaround: Zeilen einblenden → Spalten-Ops → wieder ausblenden
+            if strip_row_hidden:
+                _before_len = len(sheet_content)
+                sheet_content = re.sub(r'(<row\s[^>]*?)\s+hidden="[^"]*"', r'\1', sheet_content)
+                _stripped = _before_len - len(sheet_content)
+                if _stripped > 0:
+                    sys.stderr.write(f"[XML_COL_OPS] Row-hidden Attribute entfernt ({_stripped} Bytes Differenz)\n")
+            
             # 3. Maximale Spalte aus Sheet ermitteln (für Mapping-Größe)
             max_col_in_sheet = 1
             for cm in re.finditer(r'<c\s[^>]*r="([A-Z]+)\d+"', sheet_content):
@@ -880,7 +1462,7 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                         else:
                             resolved = target.lstrip('/')
                         
-                        if 'table' in rtype.lower():
+                        if rtype.endswith('/table'):
                             table_files[rid] = resolved
                         elif 'drawing' in rtype.lower():
                             drawing_files[rid] = resolved
@@ -968,7 +1550,8 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                     # Sammle alle neuen Zellen pro Zeile (effizient)
                     new_cells_by_row = {}  # excel_row → list of cell XML strings
                     
-                    insert_offset = 0  # Kumulativer Offset für vorherige Inserts
+                    # Frontend-Positionen sind FINALE Positionen (nach allen Einfügungen).
+                    # Kein kumulativer Offset nötig — position + 1 ist direkt die 1-basierte Spalte.
                     for op in ops:
                         position = op['position']
                         count = op.get('count', 1)
@@ -976,7 +1559,7 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                         
                         # Header-Zellen (Zeile 1)
                         for i, header in enumerate(op_headers):
-                            col_num = position + 1 + i + insert_offset
+                            col_num = position + 1 + i
                             col_letter = _num_to_col_letter(col_num)
                             cell_ref = f"{col_letter}1"
                             escaped = str(header).replace(
@@ -989,7 +1572,7 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                         # Falls keine headers, trotzdem die Position merken
                         if not op_headers:
                             for i in range(count):
-                                col_num = position + 1 + i + insert_offset
+                                col_num = position + 1 + i
                                 inserted_col_info.append((col_num, f'Column{col_num}'))
                         
                         # Daten-Zellen
@@ -997,9 +1580,9 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                             for row_idx, row_data in enumerate(data):
                                 excel_row = row_idx + 2
                                 for ci in range(count):
-                                    col_idx = position + ci + insert_offset
+                                    col_idx = position + ci
                                     if col_idx < len(row_data) and row_data[col_idx] is not None:
-                                        col_num = position + 1 + ci + insert_offset
+                                        col_num = position + 1 + ci
                                         col_letter = _num_to_col_letter(col_num)
                                         cell_ref = f"{col_letter}{excel_row}"
                                         val = row_data[col_idx]
@@ -1012,8 +1595,6 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                                             new_cell = (f'<c r="{cell_ref}" t="inlineStr">'
                                                         f'<is><t>{escaped}</t></is></c>')
                                         new_cells_by_row.setdefault(excel_row, []).append(new_cell)
-                        
-                        insert_offset += count
                     
                     # Alle neuen Zellen in einem Durchgang einfügen
                     if new_cells_by_row:
@@ -1148,7 +1729,130 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                 
                 sheet_content = re.sub(r'<col\s[^>]*/>', _fix_col_hidden, sheet_content)
             
+            # 6b. Hidden Rows direkt im selben Durchgang anwenden
+            # Statt separatem ZIP-to-ZIP Pass (_apply_hidden_rows_to_xlsx)
+            # werden hidden-Attribute hier in-memory gesetzt.
+            if hidden_rows:
+                _hr_set = set(hidden_rows)
+                _hr_counts = [0, 0]  # [added, unchanged]
+                
+                def _apply_row_hidden(m):
+                    row_tag = m.group(0)
+                    r_m = re.search(r'\br="(\d+)"', row_tag)
+                    if not r_m:
+                        return row_tag
+                    row_num = int(r_m.group(1))
+                    # 0-basiert in hidden_rows, Datenzeilen ab row 2 (row 1 = Header)
+                    row_idx = row_num - 2
+                    
+                    if row_idx not in _hr_set:
+                        return row_tag
+                    
+                    # hidden="1" einfügen (Attribut wurde bereits in 2b gestrippt)
+                    if row_tag.rstrip().endswith('/>'):
+                        base = row_tag.rstrip()[:-2].rstrip()
+                        result = base + ' hidden="1"/>'
+                    else:
+                        # Opening tag: vor > einfügen
+                        result = row_tag.rstrip().rstrip('>') + ' hidden="1">'
+                    _hr_counts[0] += 1
+                    return result
+                
+                sheet_content = re.sub(r'<row\s[^>]*?/?>', _apply_row_hidden, sheet_content)
+                sys.stderr.write(f"[XML_COL_OPS] Hidden rows applied: {_hr_counts[0]} rows hidden "
+                                 f"(von {len(hidden_rows)} angefordert)\n")
+            
             modified_files[sheet_zip_path] = sheet_content.encode('utf-8')
+            
+            # ---- DEBUG: Sheet-XML auf Festplatte dumpen ----
+            try:
+                _dump_dir = os.path.join(os.path.dirname(output_path), '_debug_xml_dump')
+                os.makedirs(_dump_dir, exist_ok=True)
+                _dump_path = os.path.join(_dump_dir, 'sheet1_after_colops.xml')
+                with open(_dump_path, 'w', encoding='utf-8') as _df:
+                    _df.write(sheet_content)
+                sys.stderr.write(f"[XML_COL_OPS] DEBUG: Sheet-XML gedumpt nach {_dump_path}\n")
+                
+                # Zusätzlich: Alle potentiell problematischen Elemente auflisten
+                _problem_elements = []
+                # Prüfe ob gelöschte Spalten-Buchstaben noch vorkommen
+                if deleted_columns:
+                    _del_letters = set()
+                    for dc in deleted_columns:
+                        _del_letters.add(_num_to_col_letter(dc + 1))
+                    for _dl in sorted(_del_letters):
+                        # Suche nach Zell-Referenzen mit diesem Buchstaben
+                        _cell_refs = re.findall(rf'r="{_dl}\d+"', sheet_content)
+                        if _cell_refs:
+                            _problem_elements.append(f"  GELÖSCHTE Spalte {_dl} hat noch {len(_cell_refs)} Zell-Refs: {_cell_refs[:5]}")
+                        # Suche nach sortCondition/sortState/filterColumn mit diesem Buchstaben
+                        for _tag in ['sortCondition', 'sortState', 'filterColumn', 'autoFilter']:
+                            _tag_refs = re.findall(rf'<{_tag}\s[^>]*{_dl}\d+[^>]*>', sheet_content)
+                            if _tag_refs:
+                                _problem_elements.append(f"  GELÖSCHTE Spalte {_dl} in <{_tag}>: {_tag_refs[:3]}")
+                
+                if _problem_elements:
+                    sys.stderr.write(f"[XML_COL_OPS] WARNUNG: Verbleibende Referenzen auf gelöschte Spalten:\n")
+                    for _pe in _problem_elements:
+                        sys.stderr.write(f"[XML_COL_OPS] {_pe}\n")
+                else:
+                    sys.stderr.write(f"[XML_COL_OPS] OK: Keine Referenzen auf gelöschte Spalten gefunden\n")
+                
+                # Auch: Col-Map loggen
+                if col_map:
+                    _sample = {k: v for i, (k, v) in enumerate(sorted(col_map.items())) if i < 15}
+                    sys.stderr.write(f"[XML_COL_OPS] col_map (erste 15): {_sample}\n")
+                    sys.stderr.write(f"[XML_COL_OPS] deleted_columns (0-basiert): {deleted_columns}\n")
+                    _del_1based = [dc + 1 for dc in (deleted_columns or [])]
+                    _del_letters_list = [_num_to_col_letter(dc + 1) for dc in (deleted_columns or [])]
+                    sys.stderr.write(f"[XML_COL_OPS] gelöschte Spalten (1-basiert): {_del_1based} = {_del_letters_list}\n")
+            except Exception as _dump_err:
+                sys.stderr.write(f"[XML_COL_OPS] DEBUG-Dump Fehler: {_dump_err}\n")
+            
+            # ---- DEBUG: Sheet-XML auf Festplatte dumpen ----
+            try:
+                _dump_dir = os.path.join(os.path.dirname(output_path), '_debug_xml_dump')
+                os.makedirs(_dump_dir, exist_ok=True)
+                _dump_path = os.path.join(_dump_dir, 'sheet1_after_colops.xml')
+                with open(_dump_path, 'w', encoding='utf-8') as _df:
+                    _df.write(sheet_content)
+                sys.stderr.write(f"[XML_COL_OPS] DEBUG: Sheet-XML gedumpt nach {_dump_path}\n")
+                
+                # Zusätzlich: Alle potentiell problematischen Elemente auflisten
+                _problem_elements = []
+                # Prüfe ob gelöschte Spalten-Buchstaben noch vorkommen
+                if deleted_columns:
+                    _del_letters = set()
+                    for dc in deleted_columns:
+                        _del_letters.add(_num_to_col_letter(dc + 1))
+                    for _dl in sorted(_del_letters):
+                        # Suche nach Zell-Referenzen mit diesem Buchstaben
+                        _cell_refs = re.findall(rf'r="{_dl}\d+"', sheet_content)
+                        if _cell_refs:
+                            _problem_elements.append(f"  GELÖSCHTE Spalte {_dl} hat noch {len(_cell_refs)} Zell-Refs: {_cell_refs[:5]}")
+                        # Suche nach sortCondition/sortState/filterColumn mit diesem Buchstaben
+                        for _tag in ['sortCondition', 'sortState', 'filterColumn', 'autoFilter']:
+                            _tag_refs = re.findall(rf'<{_tag}\s[^>]*{_dl}\d+[^>]*>', sheet_content)
+                            if _tag_refs:
+                                _problem_elements.append(f"  GELÖSCHTE Spalte {_dl} in <{_tag}>: {_tag_refs[:3]}")
+                
+                if _problem_elements:
+                    sys.stderr.write(f"[XML_COL_OPS] WARNUNG: Verbleibende Referenzen auf gelöschte Spalten:\n")
+                    for _pe in _problem_elements:
+                        sys.stderr.write(f"[XML_COL_OPS] {_pe}\n")
+                else:
+                    sys.stderr.write(f"[XML_COL_OPS] OK: Keine Referenzen auf gelöschte Spalten gefunden\n")
+                
+                # Auch: Col-Map loggen
+                if col_map:
+                    _sample = {k: v for i, (k, v) in enumerate(sorted(col_map.items())) if i < 15}
+                    sys.stderr.write(f"[XML_COL_OPS] col_map (erste 15): {_sample}\n")
+                    sys.stderr.write(f"[XML_COL_OPS] deleted_columns (0-basiert): {deleted_columns}\n")
+                    _del_1based = [dc + 1 for dc in (deleted_columns or [])]
+                    _del_letters_list = [_num_to_col_letter(dc + 1) for dc in (deleted_columns or [])]
+                    sys.stderr.write(f"[XML_COL_OPS] gelöschte Spalten (1-basiert): {_del_1based} = {_del_letters_list}\n")
+            except Exception as _dump_err:
+                sys.stderr.write(f"[XML_COL_OPS] DEBUG-Dump Fehler: {_dump_err}\n")
             
             # 7. calcChain.xml entfernen: Enthält Zell-Referenzen die nach
             # Spaltenverschiebungen stale werden → Excel-Reparatur.
@@ -1248,6 +1952,328 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
         if temp_output and os.path.exists(temp_output):
             os.remove(temp_output)
         sys.stderr.write(f"[XML_COL_OPS] Fehler: {e}\n")
+        import traceback
+        traceback.print_exc(file=sys.stderr)
+        raise
+
+
+# =============================================================================
+# DIREKTE XML-ZEILENOPERATIONEN (ZIP-to-ZIP)
+# =============================================================================
+
+def direct_xml_row_operations(file_path, output_path, sheet_name,
+                              deleted_rows=None, row_order=None,
+                              hidden_rows=None):
+    """
+    Führt Zeilenoperationen direkt auf dem XML durch (ZIP-to-ZIP).
+    
+    KEIN openpyxl-Roundtrip → alle Strukturen bleiben intakt:
+    - Namespaces, Slicers, Drawings, Media, RichData, External Links
+    - Tables, SharedStrings, Styles, Conditional Formatting
+    
+    Analog zu direct_xml_column_operations, aber für Zeilen.
+    
+    Args:
+        file_path: Quelldatei (.xlsx)
+        output_path: Zieldatei (.xlsx)
+        sheet_name: Name des Sheets
+        deleted_rows: Liste von 0-basierten Daten-Indizes zum Löschen
+        row_order: Liste wo row_order[new_pos] = old_pos_after_delete (0-basiert)
+        hidden_rows: Liste von 0-basierten Daten-Indizes zum Verstecken
+    
+    Returns:
+        Dict mit success, outputPath, method, has_slicers
+    """
+    sys.stderr.write(f"[XML_ROW_OPS] Start für Sheet '{sheet_name}'\n")
+    sys.stderr.write(f"[XML_ROW_OPS] deleted={len(deleted_rows) if deleted_rows else 0}, "
+                     f"reorder={row_order is not None}, "
+                     f"hidden={len(hidden_rows) if hidden_rows else 0}\n")
+    
+    MAIN_NS = 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'
+    RELS_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
+    R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    
+    temp_output = output_path + '.row_tmp'
+    
+    try:
+        with zipfile.ZipFile(file_path, 'r') as src_zip:
+            # 1. Finde Sheet-XML Pfad
+            wb_xml_raw = src_zip.read('xl/workbook.xml').decode('utf-8')
+            wb_root = ET.fromstring(wb_xml_raw)
+            
+            sheet_rid = None
+            for sheet_el in wb_root.iter(f'{{{MAIN_NS}}}sheet'):
+                if sheet_el.get('name') == sheet_name:
+                    sheet_rid = sheet_el.get(f'{{{R_NS}}}id')
+                    break
+            
+            if not sheet_rid:
+                raise ValueError(f"Sheet '{sheet_name}' nicht in workbook.xml gefunden")
+            
+            rels_xml_raw = src_zip.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+            rels_root = ET.fromstring(rels_xml_raw)
+            
+            sheet_file = None
+            for rel_el in rels_root.iter(f'{{{RELS_NS}}}Relationship'):
+                if rel_el.get('Id') == sheet_rid:
+                    sheet_file = rel_el.get('Target')
+                    break
+            
+            if not sheet_file:
+                raise ValueError(f"Relationship {sheet_rid} nicht gefunden")
+            
+            sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+            parts = sheet_zip_path.split('/')
+            normalized = []
+            for p in parts:
+                if p == '..':
+                    if normalized:
+                        normalized.pop()
+                elif p != '.':
+                    normalized.append(p)
+            sheet_zip_path = '/'.join(normalized)
+            
+            sys.stderr.write(f"[XML_ROW_OPS] Sheet-ZIP-Pfad: {sheet_zip_path}\n")
+            
+            # 2. Lese Sheet-XML
+            sheet_content = src_zip.read(sheet_zip_path).decode('utf-8')
+            
+            # 3. Maximale Zeile aus Sheet ermitteln
+            max_row_in_sheet = 1
+            for rm in re.finditer(r'<row\s[^>]*?r="(\d+)"', sheet_content):
+                row_num = int(rm.group(1))
+                if row_num > max_row_in_sheet:
+                    max_row_in_sheet = row_num
+            
+            sys.stderr.write(f"[XML_ROW_OPS] Max Zeile im Sheet: {max_row_in_sheet}\n")
+            
+            # 4. Finde zugehörige Table-Dateien
+            sheet_rels_path = sheet_zip_path.replace(
+                'worksheets/', 'worksheets/_rels/') + '.rels'
+            table_files = {}  # rId → ZIP-Pfad
+            
+            if sheet_rels_path in src_zip.namelist():
+                sheet_rels_content = src_zip.read(sheet_rels_path).decode('utf-8')
+                try:
+                    rels_el = ET.fromstring(sheet_rels_content)
+                    for rel_node in rels_el.iter(f'{{{RELS_NS}}}Relationship'):
+                        rid = rel_node.get('Id', '')
+                        target = rel_node.get('Target', '')
+                        rtype = rel_node.get('Type', '')
+                        
+                        if not target.startswith('/'):
+                            resolved = 'xl/worksheets/' + target
+                            rparts = resolved.split('/')
+                            norm = []
+                            for p in rparts:
+                                if p == '..':
+                                    if norm:
+                                        norm.pop()
+                                elif p != '.':
+                                    norm.append(p)
+                            resolved = '/'.join(norm)
+                        else:
+                            resolved = target.lstrip('/')
+                        
+                        if 'table' in rtype.lower():
+                            table_files[rid] = resolved
+                except ET.ParseError as pe:
+                    sys.stderr.write(f"[XML_ROW_OPS] WARNUNG: Sheet-Rels Parse-Fehler: {pe}\n")
+            
+            sys.stderr.write(f"[XML_ROW_OPS] Tables: {list(table_files.values())}\n")
+            
+            # 5. Zeilen-Mappings bauen
+            data_row_map, meta_row_map = _build_row_maps(
+                deleted_rows, row_order, max_row_in_sheet)
+            
+            surviving_count = len([v for k, v in data_row_map.items() if k != 1])
+            sys.stderr.write(f"[XML_ROW_OPS] {surviving_count} Zeilen überleben "
+                             f"(von {max_row_in_sheet - 1} Datenzeilen)\n")
+            
+            # 6. Mapping auf Sheet-XML anwenden
+            modified_files = {}
+            
+            sheet_content = _apply_row_map_to_sheet_xml(
+                sheet_content, data_row_map, meta_row_map)
+            sys.stderr.write(f"[XML_ROW_OPS] Sheet-XML angepasst\n")
+            
+            # 7. Hidden Rows anwenden (auf die neuen Zeilennummern)
+            if hidden_rows:
+                # hidden_rows sind 0-basierte Daten-Indizes → Excel-Zeilen = idx + 2
+                # Wir müssen sie durch data_row_map auf finale Positionen mappen
+                hidden_excel_rows = set()
+                for idx in hidden_rows:
+                    old_excel = idx + 2
+                    new_excel = data_row_map.get(old_excel)
+                    if new_excel is not None:
+                        hidden_excel_rows.add(new_excel)
+                
+                if hidden_excel_rows:
+                    def _set_row_hidden(m):
+                        row_tag = m.group(0)
+                        r_m = re.search(r'r="(\d+)"', row_tag)
+                        if r_m and int(r_m.group(1)) in hidden_excel_rows:
+                            if 'hidden="1"' not in row_tag:
+                                # Vor dem schließenden > oder /> einfügen
+                                if row_tag.endswith('/>'):
+                                    return row_tag[:-2] + ' hidden="1"/>'
+                                elif row_tag.endswith('>'):
+                                    return row_tag[:-1] + ' hidden="1">'
+                            return row_tag
+                        else:
+                            # Nicht-hidden Zeilen: hidden="1" entfernen falls vorhanden
+                            return re.sub(r'\s*hidden="1"', '', row_tag)
+                    
+                    sheet_content = re.sub(r'<row\s[^>]*?>', _set_row_hidden, sheet_content)
+                    sys.stderr.write(f"[XML_ROW_OPS] {len(hidden_excel_rows)} Zeilen versteckt\n")
+            
+            modified_files[sheet_zip_path] = sheet_content.encode('utf-8')
+            
+            # 8. Table-XMLs anpassen (Zeilen-Bereich kürzen)
+            for rid, table_path in table_files.items():
+                if table_path in src_zip.namelist():
+                    table_content = src_zip.read(table_path).decode('utf-8')
+                    new_table = _apply_row_map_to_table_xml(table_content, meta_row_map)
+                    if new_table != table_content:
+                        modified_files[table_path] = new_table.encode('utf-8')
+                        sys.stderr.write(f"[XML_ROW_OPS] Table {table_path} angepasst\n")
+            
+            # 9. Comments anpassen (xl/comments*.xml)
+            for cname in src_zip.namelist():
+                if re.match(r'xl/comments\d*\.xml$', cname):
+                    comments_xml = src_zip.read(cname).decode('utf-8')
+                    def _remap_comment_row_ref(m):
+                        prefix = m.group(1)
+                        ref = m.group(2)
+                        new_ref = _remap_row_in_ref(ref, data_row_map)
+                        if new_ref is None:
+                            return ''  # Kommentar für gelöschte Zeile entfernen
+                        return f'{prefix}ref="{new_ref}"'
+                    new_comments = re.sub(
+                        r'(<comment\s[^>]*?)ref="([A-Z]+\d+)"',
+                        _remap_comment_row_ref, comments_xml)
+                    if new_comments != comments_xml:
+                        modified_files[cname] = new_comments.encode('utf-8')
+                        sys.stderr.write(f"[XML_ROW_OPS] {cname} Kommentar-Refs angepasst\n")
+            
+            # 10. workbook.xml: definedNames mit Zeilen-Referenzen anpassen
+            wb_xml_content = src_zip.read('xl/workbook.xml').decode('utf-8')
+            # definedName-Werte wie "Sheet1!$A$1:$J$100" → Zeilen aktualisieren
+            def _remap_defined_name_rows(m):
+                full = m.group(0)
+                value = m.group(1)
+                parts = value.split(',')
+                new_parts = []
+                changed = False
+                for part in parts:
+                    part = part.strip()
+                    if '!' in part:
+                        sheet_prefix, ref_part = part.rsplit('!', 1)
+                        if ':' in ref_part:
+                            new_ref = _remap_row_range_ref(ref_part, meta_row_map)
+                        else:
+                            new_ref = _remap_row_in_ref(ref_part, meta_row_map)
+                        if new_ref is not None:
+                            new_parts.append(f"{sheet_prefix}!{new_ref}")
+                            if new_ref != ref_part:
+                                changed = True
+                        else:
+                            changed = True
+                    else:
+                        new_parts.append(part)
+                if changed and new_parts:
+                    new_value = ','.join(new_parts)
+                    return full.replace(f'>{value}<', f'>{new_value}<')
+                return full
+            
+            new_wb_xml = re.sub(
+                r'<definedName\s[^>]*>([^<]+)</definedName>',
+                _remap_defined_name_rows, wb_xml_content)
+            if new_wb_xml != wb_xml_content:
+                modified_files['xl/workbook.xml'] = new_wb_xml.encode('utf-8')
+                sys.stderr.write(f"[XML_ROW_OPS] workbook.xml definedNames angepasst\n")
+            
+            # 11. calcChain.xml entfernen (Excel regeneriert beim Öffnen)
+            skip_files = set()
+            namelist = src_zip.namelist()
+            if 'xl/calcChain.xml' in namelist:
+                skip_files.add('xl/calcChain.xml')
+                sys.stderr.write(f"[XML_ROW_OPS] calcChain.xml wird übersprungen\n")
+            
+            if skip_files:
+                ct_path = '[Content_Types].xml'
+                if ct_path in namelist:
+                    ct_xml = (modified_files[ct_path].decode('utf-8')
+                              if ct_path in modified_files
+                              else src_zip.read(ct_path).decode('utf-8'))
+                    ct_orig = ct_xml
+                    ct_xml = re.sub(
+                        r'<Override\s[^>]*PartName="/xl/calcChain\.xml"[^>]*/>\s*',
+                        '', ct_xml)
+                    if ct_xml != ct_orig:
+                        modified_files[ct_path] = ct_xml.encode('utf-8')
+                
+                wb_rels_path = 'xl/_rels/workbook.xml.rels'
+                if wb_rels_path in namelist:
+                    wb_rels = (modified_files[wb_rels_path].decode('utf-8')
+                               if wb_rels_path in modified_files
+                               else src_zip.read(wb_rels_path).decode('utf-8'))
+                    wb_rels_orig = wb_rels
+                    wb_rels = re.sub(
+                        r'<Relationship\s[^>]*Target="calcChain\.xml"[^>]*/>\s*',
+                        '', wb_rels)
+                    if wb_rels != wb_rels_orig:
+                        modified_files[wb_rels_path] = wb_rels.encode('utf-8')
+            
+            # 12. Slicer-Erkennung
+            has_slicers = any(
+                n.startswith('xl/slicerCaches/') or n.startswith('xl/slicers/')
+                for n in namelist)
+            if not has_slicers:
+                for check_path in ['[Content_Types].xml', 'xl/workbook.xml']:
+                    content = None
+                    if check_path in modified_files:
+                        content = modified_files[check_path].decode('utf-8')
+                    elif check_path in namelist:
+                        content = src_zip.read(check_path).decode('utf-8')
+                    if content and 'slicer' in content.lower():
+                        has_slicers = True
+                        break
+            if not has_slicers and 'slicer' in sheet_content.lower():
+                has_slicers = True
+            
+            # 13. ZIP-to-ZIP: Original-Einträge 1:1 kopieren, nur modifizierte ersetzen
+            with zipfile.ZipFile(temp_output, 'w', zipfile.ZIP_DEFLATED) as dst_zip:
+                for item in src_zip.infolist():
+                    if item.filename.endswith('/'):
+                        continue
+                    if item.filename.startswith('__MACOSX') or \
+                       item.filename.endswith('.DS_Store') or \
+                       item.filename.split('/')[-1].startswith('._'):
+                        continue
+                    if item.filename in skip_files:
+                        continue
+                    
+                    if item.filename in modified_files:
+                        item.compress_type = zipfile.ZIP_DEFLATED
+                        dst_zip.writestr(item, modified_files[item.filename])
+                    else:
+                        data_bytes = src_zip.read(item.filename)
+                        dst_zip.writestr(item, data_bytes)
+        
+        # An Zielort verschieben
+        if os.path.exists(output_path):
+            os.remove(output_path)
+        shutil.move(temp_output, output_path)
+        
+        sys.stderr.write(f"[XML_ROW_OPS] Erfolgreich: {output_path}\n")
+        return {'success': True, 'outputPath': output_path, 'method': 'xml-row-ops',
+                'has_slicers': has_slicers}
+    
+    except Exception as e:
+        if os.path.exists(temp_output):
+            os.remove(temp_output)
+        sys.stderr.write(f"[XML_ROW_OPS] Fehler: {e}\n")
         import traceback
         traceback.print_exc(file=sys.stderr)
         raise

@@ -862,7 +862,8 @@ function extractSheetMetadata(fileBufferOrPath, sheetName, existingZip = null) {
         hiddenRows: [],  // 0-basierte Daten-Indizes (ohne Header)
         mergedCells: [],
         autoFilterRange: null,
-        imageCells: []  // Zellen die Bild-Formeln enthalten (DISPIMG, IMAGE)
+        imageCells: [],  // Zellen die Bild-Formeln enthalten (DISPIMG, IMAGE)
+        hasConditionalFormatting: false  // true wenn Sheet <conditionalFormatting> enthält
     };
     
     try {
@@ -956,6 +957,9 @@ function extractSheetMetadata(fileBufferOrPath, sheetName, existingZip = null) {
                 }
             }
         }
+
+        // Bedingte Formatierung erkennen
+        result.hasConditionalFormatting = sheetXml.includes('<conditionalFormatting');
 
         // AutoFilter direkt aus Sheet-XML
         const afMatch = sheetXml.match(/<autoFilter[^>]*ref="([^"]*)"/);
@@ -2206,6 +2210,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null, cached
             autoFilterRange,
             rowHighlights,  // NEU: Zeilenfarben als Array von [rowIndex, colorName]
             imageCells: metadata.imageCells || [],  // NEU: Bild-Zellen mit vm-Werten für Copy&Paste
+            hasConditionalFormatting: metadata.hasConditionalFormatting || false,
             stats: {
                 rows: data.length,
                 columns: headers.length,
