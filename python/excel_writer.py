@@ -4536,41 +4536,109 @@ def _replace_cell_value_in_xml(sheet_content, cell_ref, value, main_ns, shared_s
 
 
 def _set_hidden_cols_in_xml(sheet_content, hidden_columns, main_ns):
-    """Setzt hidden-Attribute auf <col> Elemente im Worksheet-XML."""
+    """Setzt hidden-Attribute auf <col> Elemente im Worksheet-XML.
+    Splittet <col>-Ranges wenn nötig, um gemischte hidden/visible Bereiche korrekt abzubilden.
+    Erstellt fehlende <col>-Elemente für Spalten ohne bestehende Definition.
+    """
     import re
     
     if not hidden_columns:
         return sheet_content
     
-    hidden_set = set(hidden_columns)
+    hidden_set = set(hidden_columns)  # 0-basiert
     
-    # Finde alle <col> Elemente und setze/entferne hidden
-    def _fix_col(m):
-        col_el = m.group(0)
-        # Extrahiere min/max
-        min_m = re.search(r'min="(\d+)"', col_el)
-        max_m = re.search(r'max="(\d+)"', col_el)
+    # Finde <cols>...</cols> Bereich
+    cols_match = re.search(r'(<cols>)(.*?)(</cols>)', sheet_content, re.DOTALL)
+    if not cols_match:
+        # Kein <cols> vorhanden - erstelle neue <col>-Elemente für versteckte Spalten
+        sorted_hidden = sorted(hidden_set)
+        if not sorted_hidden:
+            return sheet_content
+        ranges = _group_consecutive_indices(sorted_hidden)
+        col_els = ''.join(f'<col min="{s+1}" max="{e+1}" hidden="1"/>' for s, e in ranges)
+        cols_xml = f'<cols>{col_els}</cols>'
+        sheet_content = re.sub(r'(<sheetData)', cols_xml + r'\1', sheet_content, count=1)
+        return sheet_content
+    
+    cols_inner = cols_match.group(2)
+    col_elements = list(re.finditer(r'<col\s[^>]*/>', cols_inner))
+    covered_cols = set()  # 0-basiert
+    new_col_strs = []
+    
+    for m_el in col_elements:
+        el_str = m_el.group(0)
+        min_m = re.search(r'min="(\d+)"', el_str)
+        max_m = re.search(r'max="(\d+)"', el_str)
         if not min_m or not max_m:
-            return col_el
+            new_col_strs.append(el_str)
+            continue
+        
         col_min = int(min_m.group(1))
         col_max = int(max_m.group(1))
         
-        # Prüfe ob ALLE Spalten in diesem Range versteckt sein sollen
-        # (0-basiert in hidden_columns, 1-basiert in XML)
+        for c in range(col_min, col_max + 1):
+            covered_cols.add(c - 1)
+        
+        # Base-Attribute extrahieren (ohne min, max, hidden)
+        inner = el_str[4:-2].strip()  # '<col ' ... '/>'
+        inner = re.sub(r'\bmin="[^"]*"', '', inner)
+        inner = re.sub(r'\bmax="[^"]*"', '', inner)
+        inner = re.sub(r'\bhidden="[^"]*"', '', inner)
+        base_attrs = ' '.join(inner.split())  # Whitespace normalisieren
+        if base_attrs:
+            base_attrs = ' ' + base_attrs
+        
         all_hidden = all((c - 1) in hidden_set for c in range(col_min, col_max + 1))
+        none_hidden = not any((c - 1) in hidden_set for c in range(col_min, col_max + 1))
         
         if all_hidden:
-            if 'hidden="1"' not in col_el and "hidden='1'" not in col_el:
-                col_el = col_el.replace('/>', ' hidden="1"/>')
-                if not col_el.endswith('/>'):
-                    col_el = re.sub(r'>', ' hidden="1">', col_el, count=1)
+            new_col_strs.append(f'<col min="{col_min}" max="{col_max}"{base_attrs} hidden="1"/>')
+        elif none_hidden:
+            new_col_strs.append(f'<col min="{col_min}" max="{col_max}"{base_attrs}/>')
         else:
-            col_el = re.sub(r'\s*hidden="1"', '', col_el)
-        
-        return col_el
+            # Gemischt - Range splitten in zusammenhängende hidden/visible Teilbereiche
+            run_start = col_min
+            run_hidden = (col_min - 1) in hidden_set
+            for c in range(col_min + 1, col_max + 1):
+                c_hidden = (c - 1) in hidden_set
+                if c_hidden != run_hidden:
+                    # Aktuellen Run abschließen
+                    h_attr = ' hidden="1"' if run_hidden else ''
+                    new_col_strs.append(f'<col min="{run_start}" max="{c - 1}"{base_attrs}{h_attr}/>')
+                    run_start = c
+                    run_hidden = c_hidden
+            # Letzten Run abschließen
+            h_attr = ' hidden="1"' if run_hidden else ''
+            new_col_strs.append(f'<col min="{run_start}" max="{col_max}"{base_attrs}{h_attr}/>')
     
-    sheet_content = re.sub(r'<col\s[^>]*/>', _fix_col, sheet_content)
+    # Fehlende <col>-Elemente für versteckte Spalten ohne bestehende Definition
+    uncovered_hidden = sorted(h for h in hidden_set if h not in covered_cols)
+    if uncovered_hidden:
+        ranges = _group_consecutive_indices(uncovered_hidden)
+        for s, e in ranges:
+            new_col_strs.append(f'<col min="{s+1}" max="{e+1}" hidden="1"/>')
+    
+    new_cols_inner = ''.join(new_col_strs)
+    sheet_content = sheet_content[:cols_match.start(2)] + new_cols_inner + sheet_content[cols_match.end(2):]
     return sheet_content
+
+
+def _group_consecutive_indices(sorted_indices):
+    """Gruppiert aufeinanderfolgende 0-basierte Indizes in (start, end) Ranges."""
+    if not sorted_indices:
+        return []
+    ranges = []
+    start = sorted_indices[0]
+    end = start
+    for h in sorted_indices[1:]:
+        if h == end + 1:
+            end = h
+        else:
+            ranges.append((start, end))
+            start = h
+            end = h
+    ranges.append((start, end))
+    return ranges
 
 
 def _set_hidden_rows_in_xml(sheet_content, hidden_rows, main_ns):
