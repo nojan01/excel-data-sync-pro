@@ -1944,7 +1944,7 @@
     
     <!-- Footer -->
     <footer style="background: var(--bg-medium); border-top: 1px solid var(--border); padding: 8px 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
-        © Norbert Jander 2026 · v1.8.4
+        © Norbert Jander 2026 · v1.9.0
     </footer>
     
     <!-- Mapping Modal -->
@@ -2412,7 +2412,42 @@
                     • Die Datenzeilen werden entfernt, nur Überschriften bleiben
                 </p>
                 
-                <h3 style="margin-bottom: 10px;">📁 Arbeitsordner</h3>
+                <h3 style="margin-bottom: 10px;">� Spalten aus anderer Datei hinzufügen (Data Join)</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Fügt Spalten aus einer zweiten Excel-Datei in die aktuell geöffnete Datei ein – basierend auf einer gemeinsamen Schlüsselspalte (z.B. Seriennummer).
+                </p>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    • Toolbar-Button: <strong>🔗 Spalten hinzufügen</strong><br>
+                    • Wählen Sie die Quelldatei und das Arbeitsblatt<br>
+                    • Legen Sie die Schlüsselspalte in Ziel- und Quelldatei fest<br>
+                    • Wählen Sie, welche Spalten hinzugefügt werden und an welcher Position<br>
+                    • Mit <strong>👁️ Vorschau</strong> werden Treffer-Statistiken angezeigt, bevor übertragen wird<br>
+                    • Im Live-Modus werden die Spalten direkt in Excel eingefügt
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">🔎 Fehlende Seriennummern finden <span style="font-size: 11px; background: var(--success); color: #fff; padding: 2px 6px; border-radius: 3px; vertical-align: middle;">NEU 1.9</span></h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Gleicht eine <strong>Soll-Liste</strong> (z.B. alle Server laut Inventar) gegen mehrere <strong>Ist-Listen</strong> (z.B. pro Abteilung) ab und exportiert alle Seriennummern, die in <strong>keiner</strong> Ist-Liste enthalten sind.
+                </p>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    • Toolbar-Button: <strong>🔎 Fehlende Seriennummern</strong><br>
+                    • Soll-Liste wird automatisch mit der aktuell geöffneten Datei vorbelegt<br>
+                    • Beliebig viele Ist-Listen können hinzugefügt werden – pro Eintrag Datei, Arbeitsblatt, Seriennummer-Spalte und ein optionales <strong>Abteilungs-Label</strong><br>
+                    • Die Spaltennamen der Seriennummern dürfen in allen Dateien <strong>unterschiedlich</strong> heißen (z.B. „Seriennummer", „Serial No.", „S/N")<br>
+                    • Die SN-Spalte wird automatisch erkannt (erkennt „serien", „serial", „sn")
+                </p>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Normalisierung beim Vergleich</strong> – damit auch Tippvarianten als gleich erkannt werden:<br>
+                    • Groß-/Kleinschreibung wird ignoriert (<code>sn001</code> = <code>SN001</code>)<br>
+                    • Leerzeichen am Anfang/Ende werden entfernt (<code>" SN001 "</code> = <code>SN001</code>)<br>
+                    • Führende Nullen werden ignoriert (<code>0000SN001</code> = <code>SN001</code>)<br>
+                    • Leere Zellen werden übersprungen
+                </p>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    <strong>Export:</strong> Eine neue <code>.xlsx</code>-Datei (Speicherort frei wählbar) mit allen fehlenden Soll-Zeilen, inklusive einer Spalte „Status" mit Hinweis, in welchen Ist-Listen gesucht wurde.
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">�📁 Arbeitsordner</h3>
                 <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
                     Legen Sie einen Arbeitsordner fest, der als Standard-Verzeichnis für alle Datei-Dialoge verwendet wird.<br>
                     Die config.json wird zuerst im Arbeitsordner gesucht, dann im Programmordner.
@@ -2698,7 +2733,42 @@
                     The new file is automatically loaded as target file (File 2).
                 </p>
                 
-                <h3 style="margin-bottom: 10px;">📁 Working Directory</h3>
+                <h3 style="margin-bottom: 10px;">� Add Columns From Another File (Data Join)</h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Adds columns from a second Excel file into the currently opened file – matched via a common key column (e.g. serial number).
+                </p>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    • Toolbar button: <strong>🔗 Add Columns</strong><br>
+                    • Select source file and worksheet<br>
+                    • Define the key column in both target and source<br>
+                    • Choose which columns to add and at which position<br>
+                    • <strong>👁️ Preview</strong> shows match statistics before applying<br>
+                    • In Live mode the new columns are inserted directly in Excel
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">🔎 Find Missing Serial Numbers <span style="font-size: 11px; background: var(--success); color: #fff; padding: 2px 6px; border-radius: 3px; vertical-align: middle;">NEW 1.9</span></h3>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    Compares a <strong>target list</strong> (e.g. all servers per inventory) against multiple <strong>actual lists</strong> (e.g. per department) and exports all serial numbers that are <strong>missing</strong> in every actual list.
+                </p>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    • Toolbar button: <strong>🔎 Missing Serials</strong><br>
+                    • The target list is pre-filled with the currently opened file<br>
+                    • Any number of actual lists can be added – per entry file, worksheet, serial column and an optional <strong>department label</strong><br>
+                    • Serial column names may <strong>differ</strong> across all files (e.g. "Serial No.", "S/N", "Seriennummer")<br>
+                    • The SN column is auto-detected (recognises "serial", "sn", "serien")
+                </p>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 10px;">
+                    <strong>Normalisation during comparison</strong> – so typing variants are still treated as equal:<br>
+                    • Case-insensitive (<code>sn001</code> = <code>SN001</code>)<br>
+                    • Leading/trailing whitespace is stripped<br>
+                    • Leading zeros are ignored (<code>0000SN001</code> = <code>SN001</code>)<br>
+                    • Empty cells are skipped
+                </p>
+                <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
+                    <strong>Export:</strong> A new <code>.xlsx</code> file (location freely chosen) with all missing target rows, including a "Status" column indicating which actual lists were checked.
+                </p>
+                
+                <h3 style="margin-bottom: 10px;">�📁 Working Directory</h3>
                 <p style="color: var(--text-muted); line-height: 1.6; margin-bottom: 15px;">
                     Set a working directory that is used as the default location for all file dialogs.<br>
                     The config.json is first searched in the working directory, then in the program folder.
@@ -3897,7 +3967,7 @@
                 createAndLoad: '📅 Erstellen & Laden',
                 
                 // Footer
-                copyright: '© Norbert Jander 2026 · v1.8.4',
+                copyright: '© Norbert Jander 2026 · v1.9.0',
                 
                 // Extra Columns
                 extraColumns: 'Extra-Spalten',
@@ -4227,7 +4297,7 @@
                 createAndLoad: '📅 Create & Load',
                 
                 // Footer
-                copyright: '© Norbert Jander 2026 · v1.8.4',
+                copyright: '© Norbert Jander 2026 · v1.9.0',
                 
                 // Extra Columns
                 extraColumns: 'Extra Columns',
