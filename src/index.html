@@ -9633,10 +9633,18 @@
             // Sortiere aufsteigend nach Position für den Export
             insertOperations.sort((a, b) => a.position - b.position);
             
+            // Snapshot der ORIGINAL-Positionen für die Live-Session:
+            // Python's data_join_sync verwaltet den insert_offset selbst und
+            // erwartet daher Original-Positionen. Ohne diesen Snapshot würde
+            // der Offset doppelt addiert → 2. Spalte landet eine Position zu weit rechts.
+            const liveOperations = insertOperations.map(op => ({
+                position: op.position,
+                count: op.count,
+                headers: op.headers
+            }));
+            
             // Original-Positionen → FINALE Positionen umrechnen (kumulativer Offset)
-            // Backend (_build_col_map_for_insert) erwartet FINALE Positionen.
-            // Bei 2+ Spalten an verschiedenen Positionen verschiebt jede Einfügung
-            // alle nachfolgenden Positionen nach rechts.
+            // Backend (_build_col_map_for_insert, nur-Export-Pfad) erwartet FINALE Positionen.
             let cumulativeInsertOffset = 0;
             for (const op of insertOperations) {
                 op.position += cumulativeInsertOffset;
@@ -9679,9 +9687,10 @@
             // Live-Session: Spalten in Excel im Hintergrund synchronisieren
             // WICHTIG: AWAIT statt fire-and-forget, damit beim Speichern
             // die Spalten bereits in Excel eingefügt sind!
+            // liveOperations enthält ORIGINAL-Positionen (Python addiert insert_offset selbst)
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 try {
-                    await _syncDataJoinToLiveSession(insertOperations, explorerState, sourceMap, currentKeyIndex, markNotFound);
+                    await _syncDataJoinToLiveSession(liveOperations, explorerState, sourceMap, currentKeyIndex, markNotFound);
                 } catch (err) {
                     console.error('[LiveSession] DataJoin sync error:', err);
                     showFloatingStatus('⚠️ Excel-Sync fehlgeschlagen — beim Speichern wird erneut versucht', 'warning');
