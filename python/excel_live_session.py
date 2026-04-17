@@ -666,8 +666,11 @@ class ExcelLiveSession:
                 else:
                     self.workbook.save()
             
-            # Passwort aktualisieren
-            if password is not None:
+            # Passwort-State aktualisieren
+            # 'KEEP' ist ein Sentinel vom main.js-Handler (kein neues Passwort gewollt)
+            # und darf NICHT als file_password gespeichert werden, sonst wird beim
+            # nächsten Export die Datei mit dem Literal 'KEEP' verschlüsselt.
+            if password is not None and password != 'KEEP':
                 self.file_password = password if password else None
             
             # Nach dem Speichern: Session-Performance-Modus wiederherstellen
