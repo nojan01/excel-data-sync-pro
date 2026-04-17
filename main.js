@@ -4349,6 +4349,17 @@ ipcMain.handle('liveSession:insertColumn', async (event, colIndex, count = 1, he
     }
 });
 
+ipcMain.handle('liveSession:dataJoinSync', async (event, operations) => {
+    console.log('[LiveSession] IPC: dataJoinSync', Array.isArray(operations) ? operations.length : 0, 'ops');
+    try {
+        const session = getLiveSession();
+        return await session.dataJoinSync(operations);
+    } catch (error) {
+        console.error('[LiveSession] IPC dataJoinSync error:', error);
+        return { success: false, error: error.message };
+    }
+});
+
 ipcMain.handle('liveSession:moveColumn', async (event, fromIndex, toIndex) => {
     console.log('[LiveSession] IPC: moveColumn', fromIndex, '->', toIndex);
     try {

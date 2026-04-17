@@ -558,6 +558,19 @@ class ExcelLiveSession {
     }
 
     /**
+     * Data-Join-Sync: mehrere Spalten-Einfügungen + Werte in einem Rutsch
+     * operations: [{ position, count, headers, columnData }]
+     */
+    async dataJoinSync(operations) {
+        console.log('[LiveSession] dataJoinSync:', Array.isArray(operations) ? operations.length : 0, 'ops');
+        // Großzügiger Timeout: bei sehr vielen Zeilen/Spalten kann das dauern.
+        return this._sendCommand({
+            action: 'dataJoinSync',
+            operations: Array.isArray(operations) ? operations : []
+        }, 300000);
+    }
+
+    /**
      * Verschiebt eine Spalte
      */
     async moveColumn(fromIndex, toIndex) {
