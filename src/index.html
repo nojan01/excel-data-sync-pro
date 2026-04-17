@@ -13955,24 +13955,33 @@
             
             if (totalChanges > 0 || hasActiveFilters) {
                 let message;
+                let confirmLabel;
+                let dialogTitle;
                 if (totalChanges > 0 && hasActiveFilters) {
                     message = currentLanguage === 'en'
                         ? `You have ${totalChanges} unsaved change(s) and active filters.\n\nDo you really want to close the Data Explorer without saving?`
                         : `Sie haben ${totalChanges} ungespeicherte Änderung(en) und aktive Filter.\n\nMöchten Sie den Datenexplorer wirklich ohne Speichern schließen?`;
+                    confirmLabel = currentLanguage === 'en' ? 'Close without saving' : 'Ohne Speichern schließen';
+                    dialogTitle = currentLanguage === 'en' ? 'Unsaved Changes' : 'Ungespeicherte Änderungen';
                 } else if (hasActiveFilters) {
+                    // Nur Filter aktiv, keine ungespeicherten Daten → sanftere Warnung
                     message = currentLanguage === 'en'
-                        ? `Filters are active in Excel. Do you really want to close the Data Explorer without saving?`
-                        : `Es sind Filter in Excel aktiv.\n\nMöchten Sie den Datenexplorer wirklich ohne Speichern schließen?`;
+                        ? `Filters are still active in Excel. They will be cleared when closing.\n\nClose Data Explorer?`
+                        : `In Excel sind noch Filter aktiv. Diese werden beim Schließen zurückgesetzt.\n\nDatenexplorer schließen?`;
+                    confirmLabel = currentLanguage === 'en' ? 'Close' : 'Schließen';
+                    dialogTitle = currentLanguage === 'en' ? 'Active Filters' : 'Aktive Filter';
                 } else {
                     message = currentLanguage === 'en' 
                         ? `You have ${totalChanges} unsaved change(s).\n\nDo you really want to close the Data Explorer without saving?`
                         : `Sie haben ${totalChanges} ungespeicherte Änderung(en).\n\nMöchten Sie den Datenexplorer wirklich ohne Speichern schließen?`;
+                    confirmLabel = currentLanguage === 'en' ? 'Close without saving' : 'Ohne Speichern schließen';
+                    dialogTitle = currentLanguage === 'en' ? 'Unsaved Changes' : 'Ungespeicherte Änderungen';
                 }
                 
                 const confirmed = await showConfirmDialog(
-                    currentLanguage === 'en' ? 'Unsaved Changes' : 'Ungespeicherte Änderungen',
+                    dialogTitle,
                     message,
-                    currentLanguage === 'en' ? 'Close without saving' : 'Ohne Speichern schließen',
+                    confirmLabel,
                     currentLanguage === 'en' ? 'Cancel' : 'Abbrechen'
                 );
                 
