@@ -523,6 +523,19 @@ class ExcelLiveSession {
         });
     }
 
+    /**
+     * Markiert mehrere Zeilen in EINEM Aufruf (Batch)
+     * @param {number[]} rows - 0-basierte Zeilen-Indizes
+     * @param {string|null} color
+     */
+    async highlightRowsBatch(rows, color) {
+        return this._sendCommand({
+            action: 'highlightRowsBatch',
+            rows: rows,
+            color: color
+        }, 120000);
+    }
+
     // =========================================================================
     // SPALTEN-OPERATIONEN
     // =========================================================================

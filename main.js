@@ -4327,6 +4327,16 @@ ipcMain.handle('liveSession:highlightRow', async (event, rowIndex, color) => {
     }
 });
 
+ipcMain.handle('liveSession:highlightRowsBatch', async (event, rows, color) => {
+    console.log('[LiveSession] IPC: highlightRowsBatch', Array.isArray(rows) ? rows.length : 0, color);
+    try {
+        const session = getLiveSession();
+        return await session.highlightRowsBatch(rows, color);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 // === SPALTEN-OPERATIONEN ===
 
 ipcMain.handle('liveSession:deleteColumn', async (event, colIndex) => {
