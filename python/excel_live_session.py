@@ -1732,22 +1732,73 @@ class ExcelLiveSession:
                     
                     # 3) Header + Daten via xlwings schreiben (frische Referenz)
                     if headers:
-                        for i, header in enumerate(headers):
-                            self.worksheet.range((1, excel_col + i)).value = header
+                        # Header bulk: eine Zeile, mehrere Spalten
+                        try:
+                            if count > 1:
+                                self.worksheet.range((1, excel_col), (1, excel_col + count - 1)).value = list(headers)
+                            else:
+                                self.worksheet.range((1, excel_col)).value = headers[0]
+                        except Exception as he:
+                            self._log(f"  Header-Bulk-Write fehlgeschlagen ({he}), fallback einzeln")
+                            for i, header in enumerate(headers):
+                                self.worksheet.range((1, excel_col + i)).value = header
                     
-                    # 4) Spaltendaten setzen — Zelle für Zelle (wie openpyxl)
-                    #    Bulk range().value versagt auf PivotTable-Sheets,
-                    #    deshalb: nur non-empty Werte einzeln schreiben
-                    for i, col_values in enumerate(column_data):
-                        if col_values and len(col_values) > 0:
-                            target_col = excel_col + i
-                            written = 0
-                            for idx, val in enumerate(col_values):
-                                if val is not None and val != '':
-                                    self.worksheet.range((2 + idx, target_col)).value = val
-                                    written += 1
-                            self._log(f"  Spalte {target_col}: {written}/{len(col_values)} Werte geschrieben")
-                            total_values += written
+                    # 4) Spaltendaten setzen — Bulk 2D-Array mit Fallback
+                    #    Bulk range().value kann auf PivotTable-Sheets versagen;
+                    #    in dem Fall fallen wir pro Spalte auf Zelle-für-Zelle zurück.
+                    if column_data and any(cd for cd in column_data):
+                        # Anzahl Zeilen = Max-Länge aller Spalten
+                        max_rows = max((len(cd) for cd in column_data if cd), default=0)
+                        if max_rows > 0:
+                            # 2D-Matrix bauen (rows x count), fehlende Zellen = None
+                            matrix = []
+                            for r in range(max_rows):
+                                row_vals = []
+                                for c in range(count):
+                                    cd = column_data[c] if c < len(column_data) else None
+                                    if cd and r < len(cd):
+                                        v = cd[r]
+                                        row_vals.append(None if (v is None or v == '') else v)
+                                    else:
+                                        row_vals.append(None)
+                                matrix.append(row_vals)
+                            
+                            # Nicht-leere Gesamtzahl für Rückgabe/Logging
+                            ne_total = sum(
+                                1 for row in matrix for v in row if v is not None
+                            )
+                            
+                            bulk_ok = False
+                            try:
+                                if count == 1:
+                                    # 1 Spalte: als 2D vertikal [[v],[v],...]
+                                    self.worksheet.range(
+                                        (2, excel_col), (1 + max_rows, excel_col)
+                                    ).value = matrix
+                                else:
+                                    self.worksheet.range(
+                                        (2, excel_col), (1 + max_rows, excel_col + count - 1)
+                                    ).value = matrix
+                                bulk_ok = True
+                                total_values += ne_total
+                                self._log(
+                                    f"  Bulk-Write: {count} Spalte(n) x {max_rows} Zeilen "
+                                    f"({ne_total} non-empty) in 1 COM-Call"
+                                )
+                            except Exception as bwe:
+                                self._log(f"  Bulk-Write fehlgeschlagen ({bwe}), Fallback Zelle-für-Zelle")
+                            
+                            if not bulk_ok:
+                                for i, col_values in enumerate(column_data):
+                                    if col_values and len(col_values) > 0:
+                                        target_col = excel_col + i
+                                        written = 0
+                                        for idx, val in enumerate(col_values):
+                                            if val is not None and val != '':
+                                                self.worksheet.range((2 + idx, target_col)).value = val
+                                                written += 1
+                                        self._log(f"  Spalte {target_col}: {written}/{len(col_values)} Werte geschrieben")
+                                        total_values += written
                     
                     total_inserted += count
                     insert_offset += count
