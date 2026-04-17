@@ -2003,24 +2003,68 @@ class ExcelLiveSession:
             
             last_row = self.worksheet.used_range.last_cell.row if self.worksheet.used_range else 1000
             
-            # Screen-Updates + Events aus für atomare Operation (verhindert Excel-Hänger)
+            # Performance-Modus aktivieren
             app = self.app
             app.screen_updating = False
+            original_calculation = None
+            try:
+                original_calculation = app.calculation
+                app.calculation = 'manual'
+            except Exception:
+                pass
             try:
                 app.api.EnableEvents = False
             except Exception:
                 pass
+            if platform.system() == 'Windows':
+                try:
+                    self.worksheet.api.EnableFormatConditionsCalculation = False
+                except Exception:
+                    pass
             
             try:
-                # 1. Hidden-Rows merken und ALLE einblenden (wie Excel es erwartet)
-                hidden_rows = []
+                # 1. Hidden-Row-Blöcke via SpecialCells(xlCellTypeVisible) ermitteln.
+                #    EINE COM-Abfrage statt Schleife über alle Zeilen (vorher
+                #    bei großen Sheets extrem langsam: N COM-Roundtrips).
+                hidden_blocks = []  # Liste von (start_row, end_row)
                 try:
-                    for row_idx in range(1, last_row + 1):
-                        if self.worksheet.api.Rows(row_idx).Hidden:
-                            hidden_rows.append(row_idx)
-                    if hidden_rows:
-                        self._log(f"Blende {len(hidden_rows)} versteckte Zeilen ein vor Spaltenverschiebung")
-                        # Alle Zeilen auf einmal einblenden
+                    if platform.system() == 'Windows' and last_row > 0:
+                        full_rows = self.worksheet.range(f'A1:A{last_row}').api
+                        try:
+                            visible = full_rows.SpecialCells(12)  # xlCellTypeVisible
+                        except Exception:
+                            visible = None
+                        if visible is not None:
+                            visible_ranges = []
+                            try:
+                                areas = visible.Areas
+                                area_count = areas.Count
+                                for i in range(1, area_count + 1):
+                                    a = areas.Item(i)
+                                    r0 = int(a.Row)
+                                    rn = r0 + int(a.Rows.Count) - 1
+                                    visible_ranges.append((r0, rn))
+                            except Exception:
+                                visible_ranges = []
+                            
+                            # Hidden = Lücken zwischen Visible-Bereichen
+                            if visible_ranges:
+                                visible_ranges.sort()
+                                cursor = 1
+                                for (vs, ve) in visible_ranges:
+                                    if vs > cursor:
+                                        hidden_blocks.append((cursor, vs - 1))
+                                    cursor = ve + 1
+                                if cursor <= last_row:
+                                    hidden_blocks.append((cursor, last_row))
+                    
+                    if hidden_blocks:
+                        total_hidden = sum(e - s + 1 for (s, e) in hidden_blocks)
+                        self._log(
+                            f"Blende {total_hidden} versteckte Zeilen in "
+                            f"{len(hidden_blocks)} Block/Blöcken ein vor Spaltenverschiebung"
+                        )
+                        # Alle Zeilen auf einmal einblenden (1 COM-Call)
                         self.worksheet.api.Rows.Hidden = False
                 except Exception as e:
                     self._log(f"Hidden-Row-State konnte nicht gesichert werden: {e}")
@@ -2043,18 +2087,24 @@ class ExcelLiveSession:
                 except Exception:
                     pass
                 
-                # 3. Hidden-Rows wiederherstellen
-                if hidden_rows:
+                # 3. Hidden-Rows blockweise wiederherstellen (ein COM-Call pro Block
+                #    statt pro Zeile)
+                if hidden_blocks:
                     try:
-                        for row_idx in hidden_rows:
-                            self.worksheet.api.Rows(row_idx).Hidden = True
-                        self._log(f"{len(hidden_rows)} versteckte Zeilen wiederhergestellt")
+                        for (rs, re_) in hidden_blocks:
+                            rng = self.worksheet.range(f'A{rs}:A{re_}')
+                            rng.api.EntireRow.Hidden = True
+                        self._log(
+                            f"{len(hidden_blocks)} Hidden-Row-Block/Blöcke wiederhergestellt"
+                        )
                     except Exception as e:
                         self._log(f"Hidden-Row-State konnte nicht wiederhergestellt werden: {e}")
             finally:
-                # Events + Screen-Updates immer wieder aktivieren
+                # Session-Performance-Modus: enable_events bleibt aus (wie andere Ops),
+                # aber Calculation und ScreenUpdating zurücksetzen.
                 try:
-                    app.api.EnableEvents = True
+                    if original_calculation is not None:
+                        app.calculation = original_calculation
                 except Exception:
                     pass
                 app.screen_updating = True
