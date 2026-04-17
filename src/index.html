@@ -12372,15 +12372,17 @@
                     }
                 }
                 
+                const vmVal = (explorerState.cellVmMap && explorerState.cellVmMap[styleKey]) || null;
+                const cellValue = explorerState.data[row][col] ?? '';
                 return {
                     row,
                     col,
-                    value: explorerState.data[row][col] ?? '',
+                    value: cellValue,
                     style,
                     formula: explorerState.cellFormulas[styleKey] || null,
                     hyperlink: explorerState.cellHyperlinks[styleKey] || null,
                     richText,
-                    vm: (explorerState.cellVmMap && explorerState.cellVmMap[styleKey]) || null
+                    vm: vmVal
                 };
             }).sort((a, b) => a.row - b.row || a.col - b.col);
             

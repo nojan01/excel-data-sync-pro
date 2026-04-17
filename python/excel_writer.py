@@ -3892,12 +3892,20 @@ def _apply_vm_cell_map_to_xlsx(xlsx_path, sheet_name, vm_cell_map):
         r_id = m.group(1)
         
         rels_xml = zin.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+        # Attribut-Reihenfolge variiert je nach Writer (openpyxl schreibt Target vor Id)
         rel_pattern = re.compile(
             r'<Relationship\s[^>]*Id="' + re.escape(r_id) + r'"[^>]*Target="([^"]+)"',
             re.IGNORECASE
         )
         m2 = rel_pattern.search(rels_xml)
         if not m2:
+            rel_pattern2 = re.compile(
+                r'<Relationship\s[^>]*Target="([^"]+)"[^>]*Id="' + re.escape(r_id) + r'"',
+                re.IGNORECASE
+            )
+            m2 = rel_pattern2.search(rels_xml)
+        if not m2:
+            sys.stderr.write(f"[VM_CELL_MAP] Relationship '{r_id}' nicht in workbook.xml.rels gefunden\n")
             return
         
         sheet_target = m2.group(1)
@@ -3905,36 +3913,89 @@ def _apply_vm_cell_map_to_xlsx(xlsx_path, sheet_name, vm_cell_map):
         
         sheet_xml = zin.read(sheet_xml_path).decode('utf-8')
     
-    # vm-Attribute setzen für Zellen die noch kein vm haben
+    # Bestehende vm-Zellen ermitteln + Style-Index der Originale sammeln
+    existing_vm = set()
+    vm_val_to_style = {}
+    for vm_match in re.finditer(r'<c\s[^>]*?r="([A-Z]+\d+)"[^>]*?\bvm="(\d+)"', sheet_xml):
+        existing_vm.add(vm_match.group(1))
+        vv = vm_match.group(2)
+        if vv not in vm_val_to_style:
+            s_m = re.search(r'\bs="(\d+)"', vm_match.group(0))
+            if s_m:
+                vm_val_to_style[vv] = s_m.group(1)
+    for vm_match in re.finditer(r'<c\s[^>]*?\bvm="(\d+)"[^>]*?r="([A-Z]+\d+)"', sheet_xml):
+        existing_vm.add(vm_match.group(2))
+        vv = vm_match.group(1)
+        if vv not in vm_val_to_style:
+            s_m = re.search(r'\bs="(\d+)"', vm_match.group(0))
+            if s_m:
+                vm_val_to_style[vv] = s_m.group(1)
+    
+    # Nur neue vm-Zellen (nicht schon vom Original-Restore gesetzt)
+    new_vm_refs = {ref: val for ref, val in vm_by_ref.items() if ref not in existing_vm}
+    if not new_vm_refs:
+        sys.stderr.write(f"[VM_CELL_MAP] Alle {len(vm_by_ref)} vm-Zellen bereits vorhanden\n")
+        return
+    
+    # vm-Attribute setzen — wie v1.8.2: t="e" + <v>#VALUE!</v> + Style vom Original
     vm_applied = 0
-    for cell_ref, vm_val in vm_by_ref.items():
+    for cell_ref, vm_val in new_vm_refs.items():
+        orig_style_idx = vm_val_to_style.get(vm_val)
+        
         cell_pattern = re.compile(r'(<c\s[^>]*?r="' + re.escape(cell_ref) + r'"[^>]*?)(/?>)')
         match = cell_pattern.search(sheet_xml)
-        if match:
-            if 'vm=' in match.group(0):
-                continue  # Bereits vom Original-Restore vorhanden
-            new_attr = match.group(1) + f' vm="{vm_val}"' + match.group(2)
-            sheet_xml = sheet_xml[:match.start()] + new_attr + sheet_xml[match.end():]
+        if match and 'vm=' not in match.group(0):
+            # vm-Attribut hinzufügen
+            c_tag = match.group(1) + f' vm="{vm_val}"' + match.group(2)
+            
+            # Zelltyp auf t="e" (Error) setzen — Excel erwartet #VALUE! für Bild-Zellen
+            c_tag = re.sub(r'\bt="[^"]*"', 't="e"', c_tag)
+            if ' t="' not in c_tag:
+                c_tag = c_tag.replace('<c ', '<c t="e" ', 1)
+            
+            # Style vom Original übernehmen
+            if orig_style_idx and f's="{orig_style_idx}"' not in c_tag:
+                if re.search(r'\bs="\d+"', c_tag):
+                    c_tag = re.sub(r'\bs="\d+"', f's="{orig_style_idx}"', c_tag)
+                else:
+                    c_tag = c_tag.replace('<c ', f'<c s="{orig_style_idx}" ', 1)
+            
+            # Value auf #VALUE! setzen
+            rest_start = match.end()
+            rest_of_cell = sheet_xml[rest_start:]
+            close_c = rest_of_cell.find('</c>')
+            if close_c >= 0 and not match.group(2).endswith('/>'):
+                cell_content = rest_of_cell[:close_c]
+                after_cell = rest_of_cell[close_c:]
+                cell_content = re.sub(r'<v>[^<]*</v>', '<v>#VALUE!</v>', cell_content)
+                if '<v>' not in cell_content:
+                    cell_content = '<v>#VALUE!</v>'
+                sheet_xml = sheet_xml[:match.start()] + c_tag + cell_content + after_cell
+            elif match.group(2) == '/>':
+                c_tag = c_tag[:-2] + '><v>#VALUE!</v></c>'
+                sheet_xml = sheet_xml[:match.start()] + c_tag + sheet_xml[match.end():]
+            else:
+                sheet_xml = sheet_xml[:match.start()] + c_tag + sheet_xml[match.end():]
             vm_applied += 1
-        else:
-            # Zelle existiert nicht → in passender Zeile erstellen
+        elif not match:
+            # Zelle existiert nicht — in passender Zeile erstellen
+            style_attr = f' s="{orig_style_idx}"' if orig_style_idx else ''
             row_num_match = re.search(r'(\d+)$', cell_ref)
             if row_num_match:
                 row_num = row_num_match.group(1)
                 row_pattern = re.compile(r'(<row\s[^>]*?\br="' + re.escape(row_num) + r'"[^>]*?>)')
                 row_match = row_pattern.search(sheet_xml)
                 if row_match:
-                    cell_el = f'<c r="{cell_ref}" vm="{vm_val}"/>'
+                    cell_el = f'<c r="{cell_ref}"{style_attr} t="e" vm="{vm_val}"><v>#VALUE!</v></c>'
                     insert_pos = row_match.end()
                     sheet_xml = sheet_xml[:insert_pos] + cell_el + sheet_xml[insert_pos:]
                     vm_applied += 1
                 else:
-                    # Zeile existiert auch nicht → vor </sheetData> erstellen
                     sheet_data_end = re.search(r'</sheetData>', sheet_xml)
                     if sheet_data_end:
-                        row_el = f'<row r="{row_num}"><c r="{cell_ref}" vm="{vm_val}"/></row>'
+                        row_el = f'<row r="{row_num}"><c r="{cell_ref}"{style_attr} t="e" vm="{vm_val}"><v>#VALUE!</v></c></row>\n'
                         insert_pos = sheet_data_end.start()
-                        sheet_xml = sheet_xml[:insert_pos] + row_el + '\n' + sheet_xml[insert_pos:]
+                        sheet_xml = sheet_xml[:insert_pos] + row_el + sheet_xml[insert_pos:]
                         vm_applied += 1
     
     if vm_applied > 0:
@@ -3985,11 +4046,18 @@ def _apply_auto_filter_xml(xlsx_path, sheet_name, auto_filter_range):
         
         # rId → Dateiname aus workbook.xml.rels
         rels_xml = zin.read('xl/_rels/workbook.xml.rels').decode('utf-8')
+        # Attribut-Reihenfolge variiert je nach Writer (openpyxl schreibt Target vor Id)
         rel_pattern = re.compile(
             r'<Relationship\s[^>]*Id="' + re.escape(r_id) + r'"[^>]*Target="([^"]+)"',
             re.IGNORECASE
         )
         m2 = rel_pattern.search(rels_xml)
+        if not m2:
+            rel_pattern2 = re.compile(
+                r'<Relationship\s[^>]*Target="([^"]+)"[^>]*Id="' + re.escape(r_id) + r'"',
+                re.IGNORECASE
+            )
+            m2 = rel_pattern2.search(rels_xml)
         if not m2:
             sys.stderr.write(f"[AUTO_FILTER] rId '{r_id}' nicht in rels gefunden\n")
             return

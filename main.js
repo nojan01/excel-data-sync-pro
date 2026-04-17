@@ -1,51 +1,10 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
+const XlsxPopulate = require('xlsx-populate'); // Für Passwort-Verschlüsselung
+const { readSheetWithExcelJS } = require('./exceljs-reader'); // ExcelJS Reader für Datenexplorer
+const pythonBridge = require('./python/python_bridge'); // Python/openpyxl Fallback-Export
 const fs = require('fs');
 const os = require('os');
-
-// Schwere Module lazy laden — werden erst bei erster Nutzung importiert
-// xlsx-populate (15 MB) + exceljs (22 MB) + python_bridge verzögern den Start sonst erheblich
-let _XlsxPopulate = null;
-function getXlsxPopulate() {
-    if (!_XlsxPopulate) _XlsxPopulate = require('xlsx-populate');
-    return _XlsxPopulate;
-}
-let _readSheetWithExcelJS = null;
-function getReadSheetWithExcelJS() {
-    if (!_readSheetWithExcelJS) _readSheetWithExcelJS = require('./exceljs-reader').readSheetWithExcelJS;
-    return _readSheetWithExcelJS;
-}
-let _extractSheetMetadata = null;
-function getExtractSheetMetadata() {
-    if (!_extractSheetMetadata) _extractSheetMetadata = require('./exceljs-reader').extractSheetMetadata;
-    return _extractSheetMetadata;
-}
-let _applyNumFmtToLiveData = null;
-function getApplyNumFmtToLiveData() {
-    if (!_applyNumFmtToLiveData) _applyNumFmtToLiveData = require('./exceljs-reader').applyNumFmtToLiveData;
-    return _applyNumFmtToLiveData;
-}
-let _pythonBridge = null;
-function getPythonBridge() {
-    if (!_pythonBridge) _pythonBridge = require('./python/python_bridge');
-    return _pythonBridge;
-}
-
-/**
- * Atomares Schreiben: Schreibt in Temp-Datei und benennt um.
- * Verhindert Dateikorruption bei Absturz/Stromausfall während des Schreibens.
- */
-function atomicWriteFileSync(targetPath, data) {
-    const tmpPath = targetPath + '.tmp';
-    try {
-        fs.writeFileSync(tmpPath, data);
-        fs.renameSync(tmpPath, targetPath);
-    } catch (err) {
-        // Temp-Datei aufräumen falls Rename fehlschlägt
-        try { fs.unlinkSync(tmpPath); } catch (_) {}
-        throw err;
-    }
-}
 
 // Erhöhe V8 Heap-Größe für große Dateien (muss vor app.ready gesetzt werden)
 // 4GB - ausreichend für große Excel-Dateien, schont den Arbeitsspeicher
@@ -121,51 +80,6 @@ function clearWorkbookCache() {
     console.log('[Cache] Cache geleert');
 }
 
-// FILE-BUFFER-CACHE: Vermeidet doppeltes Lesen großer Dateien über Netzwerk/Internet
-// readFile liest die Datei und cachet den Buffer, readSheet nutzt den Cache
-const _fileBufferCache = new Map();
-const FILE_BUFFER_CACHE_MAX_AGE = 300_000; // 5 Minuten (verlängert für große Dateien über langsame Netzwerke)
-const FILE_BUFFER_CACHE_MAX_SIZE = 2;      // Max 2 Dateien im Cache
-
-function getCachedFileBuffer(filePath) {
-    const entry = _fileBufferCache.get(filePath);
-    if (entry && (Date.now() - entry.timestamp < FILE_BUFFER_CACHE_MAX_AGE)) {
-        console.log(`[BufferCache] Treffer für ${path.basename(filePath)} (${(entry.buffer.length / 1024 / 1024).toFixed(1)} MB, Alter: ${((Date.now() - entry.timestamp) / 1000).toFixed(0)}s)`);
-        return entry.buffer;
-    }
-    if (entry) {
-        console.log(`[BufferCache] Abgelaufen für ${path.basename(filePath)} (Alter: ${((Date.now() - entry.timestamp) / 1000).toFixed(0)}s)`);
-        _fileBufferCache.delete(filePath);
-    }
-    return null;
-}
-
-/**
- * Aktualisiert den Timestamp eines gecachten Buffers, damit er nicht abläuft
- * solange die Datei im Explorer geöffnet ist.
- */
-function touchCachedFileBuffer(filePath) {
-    const entry = _fileBufferCache.get(filePath);
-    if (entry) {
-        entry.timestamp = Date.now();
-        return true;
-    }
-    return false;
-}
-
-function setCachedFileBuffer(filePath, buffer) {
-    if (_fileBufferCache.size >= FILE_BUFFER_CACHE_MAX_SIZE) {
-        let oldestKey = null;
-        let oldestTime = Date.now();
-        for (const [k, v] of _fileBufferCache.entries()) {
-            if (v.timestamp < oldestTime) { oldestTime = v.timestamp; oldestKey = k; }
-        }
-        if (oldestKey) _fileBufferCache.delete(oldestKey);
-    }
-    _fileBufferCache.set(filePath, { buffer, timestamp: Date.now() });
-    console.log(`[BufferCache] Gecacht: ${path.basename(filePath)} (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`);
-}
-
 /**
  * Direkte ZIP-Manipulation für Partial-Cell-Mode
  * Ändert nur die betroffenen Zellen im sheet.xml ohne die gesamte Datei zu laden
@@ -189,7 +103,12 @@ async function savePartialCellChangesDirectly(filePath, cellChangesBySheet) {
         const sheetMatches = workbookXml.matchAll(/<sheet[^>]+name="([^"]+)"[^>]+r:id="(rId\d+)"/g);
         for (const match of sheetMatches) {
             // XML-Entities dekodieren (&amp; -> &, &lt; -> <, etc.)
-            const decodedName = decodeXmlEntities(match[1]);
+            const decodedName = match[1]
+                .replace(/&amp;/g, '&')
+                .replace(/&lt;/g, '<')
+                .replace(/&gt;/g, '>')
+                .replace(/&quot;/g, '"')
+                .replace(/&apos;/g, "'");
             sheetIdMap[decodedName] = match[2];
         }
         
@@ -252,13 +171,13 @@ async function savePartialCellChangesDirectly(filePath, cellChangesBySheet) {
             console.log(`[DirectSave] Sheet "${sheetName}": ${Object.keys(changedCells).length} Zellen aktualisiert`);
         }
         
-        // 7. ZIP zurückschreiben (atomar: temp + rename)
+        // 7. ZIP zurückschreiben
         const outputBuffer = await zip.generateAsync({
             type: 'nodebuffer',
             compression: 'DEFLATE'
         });
         
-        atomicWriteFileSync(filePath, outputBuffer);
+        fs.writeFileSync(filePath, outputBuffer);
         
         // Cache invalidieren da Datei geändert wurde
         clearWorkbookCache();
@@ -289,17 +208,6 @@ function numberToColumnLetter(num) {
         num = Math.floor((num - 1) / 26);
     }
     return letter;
-}
-
-/**
- * Hilfsfunktion: Spalten-Buchstabe zu Nummer (A=1, B=2, AA=27, etc.)
- */
-function columnLetterToNumber(letters) {
-    let result = 0;
-    for (let i = 0; i < letters.length; i++) {
-        result = result * 26 + (letters.charCodeAt(i) - 64);
-    }
-    return result;
 }
 
 /**
@@ -399,18 +307,6 @@ function escapeXml(str) {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&apos;');
-}
-
-/**
- * Hilfsfunktion: Dekodiert XML-Entities (z.B. &amp; -> &)
- */
-function decodeXmlEntities(str) {
-    return str
-        .replace(/&amp;/g, '&')
-        .replace(/&lt;/g, '<')
-        .replace(/&gt;/g, '>')
-        .replace(/&quot;/g, '"')
-        .replace(/&apos;/g, "'");
 }
 
 
@@ -808,6 +704,21 @@ const networkLog = {
     isNetworkPath(filePath) {
         if (!filePath || typeof filePath !== 'string') return false;
 
+        // macOS: /Volumes/ (außer Macintosh HD)
+        if (process.platform === 'darwin') {
+            if (filePath.startsWith('/Volumes/')) {
+                // Lokale Festplatte ausschließen
+                const volumeName = filePath.split('/')[2];
+                // Typische lokale Volume-Namen
+                const localVolumes = ['Macintosh HD', 'Macintosh HD - Data', 'System'];
+                return !localVolumes.includes(volumeName);
+            }
+            // SMB/AFP-Mounts in anderen Pfaden
+            if (filePath.includes('/net/') || filePath.includes('/Network/')) {
+                return true;
+            }
+        }
+
         // Windows: UNC-Pfade (\\server\share) oder gemappte Laufwerke prüfen
         if (process.platform === 'win32') {
             // UNC-Pfad
@@ -839,71 +750,72 @@ const networkLog = {
     async updateNetworkDrives(logResults = false) {
         if (process.platform !== 'win32') return;
 
-        // Hilfsfunktion: exec als Promise (blockiert NICHT den Event-Loop)
-        const execAsync = (cmd, options) => {
-            return new Promise((resolve) => {
-                require('child_process').exec(cmd, options, (error, stdout) => {
-                    if (error) resolve('');
-                    else resolve(stdout || '');
-                });
-            });
-        };
-
         try {
-            const newDrives = new Set();
+            const { execSync } = require('child_process');
+            this.networkDrives = new Set();
 
-            // Alle 3 Methoden parallel ausführen (statt sequentiell ~25s → ~10s)
-            const [psOutput, netUseOutput, allDrivesOutput] = await Promise.all([
-                // Methode 1: PowerShell Get-CimInstance für DriveType=4 (klassische Netzlaufwerke)
-                execAsync(
+            // Methode 1: PowerShell Get-CimInstance für DriveType=4 (klassische Netzlaufwerke)
+            try {
+                const psOutput = execSync(
                     'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=4\" | Select-Object -ExpandProperty DeviceID"',
                     { encoding: 'utf8', timeout: 10000, windowsHide: true }
-                ),
-                // Methode 2: net use für gemappte Netzlaufwerke (inkl. VMware Shared Folders)
-                execAsync('net use', {
+                );
+
+                const psLines = psOutput.split('\n');
+                for (const line of psLines) {
+                    const match = line.trim().match(/^([A-Z]):?$/i);
+                    if (match) {
+                        this.networkDrives.add(match[1].toUpperCase());
+                    }
+                }
+            } catch (e) {
+                // PowerShell fehlgeschlagen, ignorieren
+            }
+
+            // Methode 2: net use für gemappte Netzlaufwerke (inkl. VMware Shared Folders)
+            try {
+                const netUseOutput = execSync('net use', {
                     encoding: 'utf8',
                     timeout: 5000,
                     windowsHide: true
-                }),
-                // Methode 3: Prüfe alle Laufwerke auf Remote-Eigenschaft (VMware, VirtualBox etc.)
-                execAsync(
-                    'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk | Format-Table DeviceID,DriveType,ProviderName -HideTableHeaders"',
-                    { encoding: 'utf8', timeout: 10000, windowsHide: true }
-                )
-            ]);
+                });
 
-            // Methode 1 auswerten
-            for (const line of psOutput.split('\n')) {
-                const match = line.trim().match(/^([A-Z]):?$/i);
-                if (match) {
-                    newDrives.add(match[1].toUpperCase());
-                }
-            }
-
-            // Methode 2 auswerten
-            for (const line of netUseOutput.split('\n')) {
-                const match = line.match(/\s+([A-Z]):\s+/i);
-                if (match) {
-                    newDrives.add(match[1].toUpperCase());
-                }
-            }
-
-            // Methode 3 auswerten
-            for (const line of allDrivesOutput.split('\n')) {
-                const lower = line.toLowerCase();
-                if (lower.includes('vmware') ||
-                    lower.includes('virtualbox') ||
-                    lower.includes('vboxsvr') ||
-                    lower.includes('\\\\')) {
-                    const match = line.match(/([A-Z]):/i);
+                // Suche nach Zeilen mit Laufwerksbuchstaben (z.B. "OK           Y:        \\vmware-host\...")
+                const netUseLines = netUseOutput.split('\n');
+                for (const line of netUseLines) {
+                    const match = line.match(/\s+([A-Z]):\s+/i);
                     if (match) {
-                        newDrives.add(match[1].toUpperCase());
+                        this.networkDrives.add(match[1].toUpperCase());
                     }
                 }
+            } catch (e) {
+                // net use fehlgeschlagen, ignorieren
             }
 
-            // Ergebnis atomar übernehmen
-            this.networkDrives = newDrives;
+            // Methode 3: Prüfe alle Laufwerke auf Remote-Eigenschaft (VMware, VirtualBox etc.)
+            try {
+                const allDrivesOutput = execSync(
+                    'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk | Format-Table DeviceID,DriveType,ProviderName -HideTableHeaders"',
+                    { encoding: 'utf8', timeout: 10000, windowsHide: true }
+                );
+
+                const driveLines = allDrivesOutput.split('\n');
+                for (const line of driveLines) {
+                    const lower = line.toLowerCase();
+                    // Prüfe auf VMware, VirtualBox oder andere Netzwerk-Provider
+                    if (lower.includes('vmware') ||
+                        lower.includes('virtualbox') ||
+                        lower.includes('vboxsvr') ||
+                        lower.includes('\\\\')) {
+                        const match = line.match(/([A-Z]):/i);
+                        if (match) {
+                            this.networkDrives.add(match[1].toUpperCase());
+                        }
+                    }
+                }
+            } catch (e) {
+                // Fallback fehlgeschlagen, ignorieren
+            }
 
             // Log gefundene Netzlaufwerke nur beim ersten Scan
             if (logResults) {
@@ -1431,8 +1343,9 @@ function isValidFilePath(filePath) {
 // FENSTER ERSTELLEN
 // ============================================
 function createWindow() {
-    // Windows Icon
-    const iconFile = 'icon.ico';
+    // Plattformspezifisches Icon
+    const iconFile = process.platform === 'darwin' ? 'icon.icns' :
+                     process.platform === 'win32' ? 'icon.ico' : 'icon.png';
 
     mainWindow = new BrowserWindow({
         width: 1600,
@@ -1497,15 +1410,13 @@ function createWindow() {
         {
             label: 'View',
             submenu: [
-                // Reload nur im Entwicklungsmodus
+                // Reload/DevTools nur im Entwicklungsmodus
                 ...(isDevMode ? [
                     { role: 'reload', accelerator: 'CmdOrCtrl+R' },
                     { role: 'forceReload', accelerator: 'CmdOrCtrl+Shift+R' },
+                    { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Shift+I' },
                     { type: 'separator' },
                 ] : []),
-                // DevTools immer verfügbar (für Debugging beim Kunden)
-                { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Shift+I' },
-                { type: 'separator' },
                 { role: 'resetZoom' },
                 { role: 'zoomIn' },
                 { role: 'zoomOut' },
@@ -1514,6 +1425,22 @@ function createWindow() {
             ]
         }
     ];
+
+    // Auf macOS muss das App-Menü zuerst kommen
+    if (process.platform === 'darwin') {
+        appMenuTemplate.unshift({
+            label: app.name,
+            submenu: [
+                { role: 'about' },
+                { type: 'separator' },
+                { role: 'hide' },
+                { role: 'hideOthers' },
+                { role: 'unhide' },
+                { type: 'separator' },
+                { role: 'quit' }
+            ]
+        });
+    }
 
     const appMenu = Menu.buildFromTemplate(appMenuTemplate);
     Menu.setApplicationMenu(appMenu);
@@ -1611,15 +1538,14 @@ app.whenReady().then(async () => {
         }
     });
 
-    // Fenster SOFORT erstellen — schwere Initialisierung danach im Hintergrund
-    createWindow();
-
     // Network-Logger initialisieren (für Netzlaufwerk-Protokollierung)
     networkLog.init();
 
-    // Excel-Verfügbarkeit im Hintergrund prüfen (blockiert NICHT den UI-Start)
-    getPythonBridge().checkExcelAvailable().then(excelStatus => {
-        const engine = getPythonBridge().getExcelEngine();
+    // Excel-Verfügbarkeit prüfen und loggen
+    try {
+        const excelStatus = await pythonBridge.checkExcelAvailable();
+        const engine = pythonBridge.getExcelEngine();
+        
         if (excelStatus.excelAvailable) {
             console.log(`[App] ✓ Microsoft Excel erkannt - xlwings wird verwendet (Engine: ${engine})`);
             securityLog.log('INFO', 'EXCEL_DETECTED', { 
@@ -1635,10 +1561,12 @@ app.whenReady().then(async () => {
                 message: excelStatus.message 
             });
         }
-    }).catch(error => {
+    } catch (error) {
         console.log('[App] ⚠ Excel-Prüfung fehlgeschlagen:', error.message);
         securityLog.log('WARN', 'EXCEL_CHECK_FAILED', { error: error.message });
-    });
+    }
+
+    createWindow();
 
     // IPC-Handler: Prüft ob eine Datei per "Öffnen mit..." übergeben wurde
     // Wird vom Frontend abgefragt, um Config-Dateien-Ladung zu überspringen
@@ -1666,7 +1594,9 @@ app.whenReady().then(async () => {
 });
 
 app.on('window-all-closed', () => {
-    app.quit();
+    if (process.platform !== 'darwin') {
+        app.quit();
+    }
 });
 
 // Cleanup: Live Session beenden beim Schließen der App
@@ -1711,7 +1641,7 @@ ipcMain.handle('dialog:openFile', async (event, options) => {
         // Standard-Pfad setzen (hilft bei Dialog-Größenproblemen unter Windows)
         const defaultPath = options.defaultPath || app.getPath('documents');
 
-        const result = await dialog.showOpenDialog({
+        const result = await dialog.showOpenDialog(mainWindow, {
             title: options.title || 'Datei oeffnen',
             defaultPath: defaultPath,
             filters: options.filters || [
@@ -1753,7 +1683,7 @@ ipcMain.handle('dialog:saveFile', async (event, options) => {
         // Standard-Pfad setzen falls nicht angegeben
         const defaultPath = options.defaultPath || app.getPath('documents');
 
-        const result = await dialog.showSaveDialog({
+        const result = await dialog.showSaveDialog(mainWindow, {
             title: options.title || 'Datei speichern',
             defaultPath: defaultPath,
             filters: options.filters || [
@@ -1792,7 +1722,7 @@ ipcMain.handle('dialog:openFolder', async (event, options) => {
     try {
         const defaultPath = options.defaultPath || app.getPath('documents');
 
-        const result = await dialog.showOpenDialog({
+        const result = await dialog.showOpenDialog(mainWindow, {
             title: options.title || 'Ordner auswaehlen',
             defaultPath: defaultPath,
             properties: ['openDirectory']
@@ -2069,7 +1999,14 @@ function removeUnusedColumns(worksheet, usedColumnCount, originalColumnCount) {
     }
 }
 
-// columnLetterToNumber — jetzt oben bei numberToColumnLetter definiert (Zeile ~302)
+// Hilfsfunktion: Spalten-Buchstabe zu Nummer (A=1, B=2, AA=27, etc.)
+function columnLetterToNumber(letters) {
+    let result = 0;
+    for (let i = 0; i < letters.length; i++) {
+        result = result * 26 + (letters.charCodeAt(i) - 64);
+    }
+    return result;
+}
 
 // Hilfsfunktion: Entfernt nicht verwendete Zeilen aus dem Worksheet (Formatierung, Höhe etc.)
 function removeUnusedRows(worksheet, usedRowCount, originalRowCount) {
@@ -2173,8 +2110,7 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
         if (password) {
             // Passwortgeschützte Dateien: xlsx-populate zum Entschlüsseln nötig
             const fileBuffer = await fs.promises.readFile(filePath);
-            setCachedFileBuffer(filePath, fileBuffer);
-            const workbook = await getXlsxPopulate().fromDataAsync(fileBuffer, { password });
+            const workbook = await XlsxPopulate.fromDataAsync(fileBuffer, { password });
             sheets = workbook.sheets().map(ws => ws.name());
             hiddenSheets = workbook.sheets()
                 .filter(ws => ws.hidden())
@@ -2197,7 +2133,6 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             const AdmZip = require('adm-zip');
             const fileBuffer = await fs.promises.readFile(filePath);
             const zip = new AdmZip(fileBuffer);
-            setCachedFileBuffer(filePath, fileBuffer);
             const workbookEntry = zip.getEntry('xl/workbook.xml');
             
             if (!workbookEntry) {
@@ -2227,7 +2162,7 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             
             if (sheets.length === 0) {
                 // Fallback: xlsx-populate wenn Regex nichts findet
-                const workbook = await getXlsxPopulate().fromDataAsync(fileBuffer);
+                const workbook = await XlsxPopulate.fromDataAsync(fileBuffer);
                 sheets = workbook.sheets().map(ws => ws.name());
                 hiddenSheets = workbook.sheets()
                     .filter(ws => ws.hidden())
@@ -2280,25 +2215,8 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
     }
 
     try {
-        // Buffer-Cache auffrischen damit er nicht abläuft bei langsamen Netzwerken
-        touchCachedFileBuffer(filePath);
-        // Nutze ExcelJS Reader (gecachten Buffer übergeben um Netzwerk-Re-Read zu vermeiden)
-        let cachedBuffer = getCachedFileBuffer(filePath);
-        
-        // Kein Cache? Datei jetzt lesen und cachen, damit nachfolgende Sheet-Wechsel
-        // nicht erneut über das Netzwerk laden müssen (kritisch bei langsamen Netzwerken)
-        if (!cachedBuffer && !password) {
-            try {
-                const buf = await fs.promises.readFile(filePath);
-                setCachedFileBuffer(filePath, buf);
-                cachedBuffer = buf;
-                console.log(`[readSheet] Buffer für ${path.basename(filePath)} neu gelesen und gecacht (${(buf.length / 1024 / 1024).toFixed(1)} MB)`);
-            } catch (readErr) {
-                console.warn(`[readSheet] Buffer-Cache nicht möglich: ${readErr.message}`);
-            }
-        }
-        
-        const result = await getReadSheetWithExcelJS()(filePath, sheetName, password, cachedBuffer);
+        // Nutze ExcelJS Reader
+        const result = await readSheetWithExcelJS(filePath, sheetName, password);
         
         if (!result.success) {
             return result;
@@ -2330,55 +2248,6 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
                 needsPassword: true
             };
         }
-        return { success: false, error: error.message };
-    }
-});
-
-// Leichtgewichtige Sheet-Metadaten aus ZIP extrahieren (ohne Zelldaten zu parsen)
-// ~10-30ms aus gecachtem Buffer — liefert hiddenColumns, hiddenRows, mergedCells, autoFilterRange, imageCells
-ipcMain.handle('excel:readSheetMetadata', async (event, filePath, sheetName) => {
-    if (!isValidFilePath(filePath)) {
-        return { success: false, error: 'Ungültiger Dateipfad' };
-    }
-    try {
-        let cachedBuffer = getCachedFileBuffer(filePath);
-        if (!cachedBuffer) {
-            try {
-                const buf = await fs.promises.readFile(filePath);
-                setCachedFileBuffer(filePath, buf);
-                cachedBuffer = buf;
-            } catch (readErr) {
-                return { success: false, error: `Datei nicht lesbar: ${readErr.message}` };
-            }
-        }
-        const metadata = getExtractSheetMetadata()(cachedBuffer, sheetName);
-        return { success: true, ...metadata };
-    } catch (error) {
-        return { success: false, error: error.message };
-    }
-});
-
-// SSF-basierte Zahlenformatierung für Live-Session-Rohdaten
-// Ersetzt die langsame Python-seitige _apply_number_formats() (200k+ COM-Aufrufe)
-ipcMain.handle('excel:applyNumFmtToLiveData', async (event, filePath, sheetName, headers, data) => {
-    if (!isValidFilePath(filePath)) {
-        return { success: false, error: 'Ungültiger Dateipfad' };
-    }
-    try {
-        let cachedBuffer = getCachedFileBuffer(filePath);
-        if (!cachedBuffer) {
-            try {
-                const buf = await fs.promises.readFile(filePath);
-                setCachedFileBuffer(filePath, buf);
-                cachedBuffer = buf;
-            } catch (readErr) {
-                return { success: false, error: `Datei nicht lesbar: ${readErr.message}` };
-            }
-        }
-        const result = getApplyNumFmtToLiveData()(cachedBuffer, sheetName, headers, data);
-        return { success: true, ...result };
-    } catch (error) {
-        console.error('[applyNumFmt] Fehler:', error);
         return { success: false, error: error.message };
     }
 });
@@ -2630,11 +2499,11 @@ ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, origin
         
         // Engine-Preference vom Frontend übernehmen (für diesen Export)
         if (enginePreference) {
-            getPythonBridge().setExcelEngine(enginePreference);
+            pythonBridge.setExcelEngine(enginePreference);
         }
         
         // Export mit Python/openpyxl durchführen
-        const result = await getPythonBridge().exportMultipleSheets(sourcePath, targetPath, sheets, { password, sourcePassword, originalSourcePath, pendingSheetOperations });
+        const result = await pythonBridge.exportMultipleSheets(sourcePath, targetPath, sheets, { password, sourcePassword, originalSourcePath, pendingSheetOperations });
         
         const duration = Date.now() - startTime;
         
@@ -2672,6 +2541,7 @@ ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, origin
             message: result.message,
             sheetsExported: result.sheetsExported,
             method: result.method || 'openpyxl',
+            debugLog: result.debugLog || '',
             passwordProtected: !!password,
             stats: { totalTimeMs: duration }
         };
@@ -2692,7 +2562,7 @@ ipcMain.handle('python:exportMultipleSheets', async (event, { sourcePath, origin
 // ======================================================================
 ipcMain.handle('excel:checkAvailable', async () => {
     try {
-        return await getPythonBridge().checkExcelAvailable();
+        return await pythonBridge.checkExcelAvailable();
     } catch (error) {
         return { success: false, excelAvailable: false, error: error.message };
     }
@@ -2780,9 +2650,9 @@ ipcMain.handle('excel:addSheet', async (event, { filePath, sheetName }) => {
         const modifiedContentTypes = contentTypesXml.replace('</Types>', `${newContentType}</Types>`);
         zip.file('[Content_Types].xml', modifiedContentTypes);
 
-        // 8. ZIP speichern (atomar: temp + rename)
+        // 8. ZIP speichern
         const outputBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-        atomicWriteFileSync(filePath, outputBuffer);
+        fs.writeFileSync(filePath, outputBuffer);
 
         // Cache invalidieren
         clearWorkbookCache();
@@ -2835,7 +2705,7 @@ ipcMain.handle('excel:deleteSheet', async (event, { filePath, sheetName }) => {
             return result;
         }
         
-        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
 
         // Mindestens ein Blatt muss bleiben
         if (workbook.sheets().length <= 1) {
@@ -2872,7 +2742,7 @@ ipcMain.handle('excel:renameSheet', async (event, { filePath, oldName, newName }
             return await session.renameSheet(oldName, newName);
         }
         
-        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
 
         // Prüfe ob neuer Name bereits existiert
         const existingSheet = workbook.sheet(newName);
@@ -2909,7 +2779,7 @@ ipcMain.handle('excel:cloneSheet', async (event, { filePath, sheetName, newName 
             return await session.cloneSheet(sheetName, newName);
         }
         
-        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
 
         // Prüfe ob neuer Name bereits existiert
         const existingSheet = workbook.sheet(newName);
@@ -2946,7 +2816,7 @@ ipcMain.handle('excel:moveSheet', async (event, { filePath, sheetName, newIndex 
             return await session.moveSheet(sheetName, newIndex);
         }
         
-        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
 
         workbook.moveSheet(sheetName, newIndex);
         await saveWorkbookOptimized(workbook, filePath, {}, filePath);
@@ -3011,7 +2881,7 @@ ipcMain.handle('excel:setSheetVisibility', async (event, { filePath, sheetName, 
         zip.file('xl/workbook.xml', modifiedXml);
 
         const outputBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-        atomicWriteFileSync(filePath, outputBuffer);
+        fs.writeFileSync(filePath, outputBuffer);
 
         // Cache invalidieren
         clearWorkbookCache();
@@ -3058,22 +2928,11 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
     }
 
     try {
-        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
+        const workbook = await XlsxPopulate.fromFileAsync(filePath);
         const worksheet = workbook.sheet(sheetName);
 
         if (!worksheet) {
             return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
-        }
-
-        // Quelldatei laden für Ausrichtungsübernahme
-        let sourceWorksheet = null;
-        if (sourceFilePath && sourceSheetName && sourceColumns.length > 0) {
-            try {
-                const sourceWorkbook = await getXlsxPopulate().fromFileAsync(sourceFilePath);
-                sourceWorksheet = sourceWorkbook.sheet(sourceSheetName);
-            } catch (e) {
-                // Quelldatei konnte nicht geladen werden - Ausrichtung wird nicht übernommen
-            }
         }
 
         // Hilfsfunktion: Deutsches Datum zu Excel-Datum konvertieren
@@ -3288,10 +3147,6 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             if (enableFlag && row.flag) {
                 const flagCell = worksheet.cell(newRowNum, flagColumn);
                 copyStyleFromTemplate(flagCell, flagColumn);
-                if (row.isManual) {
-                    flagCell.style('horizontalAlignment', 'center');
-                    flagCell.style('verticalAlignment', 'center');
-                }
                 flagCell.value(row.flag);
             }
 
@@ -3299,10 +3154,6 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
             if (enableComment && row.comment) {
                 const commentCell = worksheet.cell(newRowNum, commentColumn);
                 copyStyleFromTemplate(commentCell, commentColumn);
-                if (row.isManual) {
-                    commentCell.style('horizontalAlignment', 'center');
-                    commentCell.style('verticalAlignment', 'center');
-                }
                 commentCell.value(row.comment);
             }
 
@@ -3320,23 +3171,6 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
                         // Formatierung von Template-Zeile der Zieldatei kopieren
                         // (Quelldatei kann bedingte Formatierungen nicht liefern)
                         copyStyleFromTemplate(targetCell, colNumber);
-
-                        // Ausrichtung von Quelldatei übernehmen (überschreibt Template)
-                        if (sourceWorksheet && row.sourceRowIndex && sourceColumns[index] !== undefined) {
-                            try {
-                                const srcCell = sourceWorksheet.cell(row.sourceRowIndex, sourceColumns[index] + 1);
-                                const hAlign = srcCell.style('horizontalAlignment');
-                                const vAlign = srcCell.style('verticalAlignment');
-                                if (hAlign) targetCell.style('horizontalAlignment', hAlign);
-                                if (vAlign) targetCell.style('verticalAlignment', vAlign);
-                            } catch (e) {
-                                // Ignoriere Fehler bei einzelnen Zellen
-                            }
-                        } else if (row.isManual) {
-                            // Manuelle Zeilen: zentrale Ausrichtung setzen
-                            targetCell.style('horizontalAlignment', 'center');
-                            targetCell.style('verticalAlignment', 'center');
-                        }
 
                         const converted = convertValue(value, targetCell);
                         targetCell.value(converted.value);
@@ -3435,7 +3269,7 @@ ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetNa
         }
 
         // Jetzt die kopierte Datei öffnen und nur die Datenwerte löschen
-        const workbook = await getXlsxPopulate().fromFileAsync(targetPath);
+        const workbook = await XlsxPopulate.fromFileAsync(targetPath);
 
         // Wenn sheetName angegeben und existiert, nutze dieses Sheet
         // Ansonsten nimm das erste Sheet
@@ -3618,7 +3452,7 @@ ipcMain.handle('config:save', async (event, { filePath, config, mergeMode = 'aut
             }
         }
 
-        atomicWriteFileSync(filePath, JSON.stringify(finalConfig, null, 2));
+        fs.writeFileSync(filePath, JSON.stringify(finalConfig, null, 2), 'utf8');
         
         securityLog.log('INFO', 'CONFIG_SAVED', { 
             path: path.basename(filePath),
@@ -3942,7 +3776,7 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
 
                     // Excel-Engine aus Config setzen (falls vorhanden)
                     if (mergedConfig.excelEngine) {
-                        getPythonBridge().setExcelEngine(mergedConfig.excelEngine);
+                        pythonBridge.setExcelEngine(mergedConfig.excelEngine);
                         console.log(`[Config] Excel-Engine aus config.json: ${mergedConfig.excelEngine}`);
                     }
 
@@ -3997,7 +3831,29 @@ function shiftColumnReference(ref, shiftBy) {
     });
 }
 
-// decodeXmlEntities + escapeXml (= encodeXmlEntities) — oben bei Hilfsfunktionen definiert (~Zeile 400)
+/**
+ * Hilfsfunktion: Dekodiert XML-Entities (z.B. &amp; -> &)
+ */
+function decodeXmlEntities(str) {
+    return str
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&apos;/g, "'");
+}
+
+/**
+ * Hilfsfunktion: Enkodiert XML-Entities (z.B. & -> &amp;)
+ */
+function encodeXmlEntities(str) {
+    return str
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&apos;');
+}
 
 /**
  * Erstellt ein leeres Template aus einer Quelldatei.
@@ -4072,7 +3928,7 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
         let modifiedWorkbookXml = workbookXml;
         for (const decodedName of sheetsToRemove) {
             // XML-encoded Name für Regex verwenden
-            const encodedName = escapeXml(decodedName);
+            const encodedName = encodeXmlEntities(decodedName);
             const sheetRegex = new RegExp(`<sheet[^>]*name="${encodedName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*/>`, 'g');
             modifiedWorkbookXml = modifiedWorkbookXml.replace(sheetRegex, '');
         }
@@ -4194,14 +4050,14 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
             processedSheets++;
         }
 
-        // 9. Template speichern (atomar: temp + rename)
+        // 9. Template speichern
         const outputBuffer = await zip.generateAsync({
             type: 'nodebuffer',
             compression: 'DEFLATE',
             compressionOptions: { level: 6 }
         });
 
-        atomicWriteFileSync(outputPath, outputBuffer);
+        fs.writeFileSync(outputPath, outputBuffer);
 
         securityLog.log('INFO', 'TEMPLATE_CREATED', {
             sourceFile: path.basename(sourcePath),
@@ -4281,9 +4137,13 @@ ipcMain.handle('liveSession:openFile', async (event, filePath, sheetName, passwo
 
 // Datei speichern
 // password: undefined = altes Passwort beibehalten, null = Passwort entfernen, 'xxx' = neues Passwort
-ipcMain.handle('liveSession:saveFile', async (event, outputPath, password, selectedSheets) => {
+ipcMain.handle('liveSession:saveFile', async (event, outputPath, password) => {
     try {
         const session = getLiveSession();
+        
+        // Hole aktuelles Passwort der Session
+        const currentPasswordStatus = await session.getPasswordStatus();
+        const currentPassword = currentPasswordStatus.hasPassword ? 'HAS_PASSWORD' : null;
         
         // Python speichert die Datei
         // Wenn password === undefined, soll Python das Original-Passwort beibehalten (keine Entschlüsselung)
@@ -4294,12 +4154,15 @@ ipcMain.handle('liveSession:saveFile', async (event, outputPath, password, selec
             pythonPasswordArg = 'KEEP'; // Altes Passwort beibehalten
         } else if (password === null || password === '') {
             pythonPasswordArg = null; // Passwort entfernen
-        } else {
+        } else if (process.platform === 'win32') {
             // Windows: COM-API setzt das Passwort direkt (Excel sperrt die Datei für xlsx-populate)
             pythonPasswordArg = password;
+        } else {
+            // macOS: Python entschlüsselt zuerst, xlsx-populate verschlüsselt danach
+            pythonPasswordArg = null;
         }
         
-        const result = await session.saveFile(outputPath, pythonPasswordArg, selectedSheets || null);
+        const result = await session.saveFile(outputPath, pythonPasswordArg);
         
         if (!result.success) {
             return result;
@@ -4310,14 +4173,33 @@ ipcMain.handle('liveSession:saveFile', async (event, outputPath, password, selec
         // - password === null: Passwort entfernen (Datei wurde entschlüsselt, nichts weiter tun)
         // - password === 'xxx': neues Passwort setzen
         if (password && password !== '' && outputPath) {
-            // Windows: COM-API hat das Passwort bereits direkt gesetzt
-            result.hasPassword = true;
-            console.log('[LiveSession] Neues Passwort via COM-API gesetzt');
+            if (process.platform === 'win32') {
+                // Windows: COM-API hat das Passwort bereits direkt gesetzt
+                result.hasPassword = true;
+                console.log('[LiveSession] Neues Passwort via COM-API gesetzt');
+            } else {
+                // macOS: xlsx-populate verschlüsselt die Datei
+                try {
+                    const XlsxPopulate = require('xlsx-populate');
+                    
+                    // Kurze Pause um sicherzustellen dass die Datei vollständig geschrieben wurde
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                    
+                    // Datei ist jetzt unverschlüsselt, wir können sie öffnen und mit neuem Passwort speichern
+                    const pwWorkbook = await XlsxPopulate.fromFileAsync(outputPath);
+                    await pwWorkbook.toFileAsync(outputPath, { password: password });
+                    result.hasPassword = true;
+                    console.log('[LiveSession] Neues Passwort erfolgreich gesetzt');
+                } catch (pwError) {
+                    console.error('[LiveSession] Fehler beim Passwort-Setzen:', pwError.message);
+                    result.passwordError = pwError.message;
+                }
+            }
         } else if (password === null || password === '') {
             result.hasPassword = false;
         } else {
             // password === undefined: altes Passwort beibehalten
-            // result.hasPassword kommt bereits von Python (save_file Rückgabe)
+            result.hasPassword = currentPassword ? true : false;
         }
         
         return result;
@@ -4445,16 +4327,6 @@ ipcMain.handle('liveSession:highlightRow', async (event, rowIndex, color) => {
     }
 });
 
-ipcMain.handle('liveSession:highlightRowsBatch', async (event, rows, color) => {
-    console.log('[LiveSession] IPC: highlightRowsBatch', rows.length, 'rows', color);
-    try {
-        const session = getLiveSession();
-        return await session.highlightRowsBatch(rows, color);
-    } catch (error) {
-        return { success: false, error: error.message };
-    }
-});
-
 // === SPALTEN-OPERATIONEN ===
 
 ipcMain.handle('liveSession:deleteColumn', async (event, colIndex) => {
@@ -4472,16 +4344,6 @@ ipcMain.handle('liveSession:insertColumn', async (event, colIndex, count = 1, he
     try {
         const session = getLiveSession();
         return await session.insertColumn(colIndex, count, headers);
-    } catch (error) {
-        return { success: false, error: error.message };
-    }
-});
-
-ipcMain.handle('liveSession:dataJoinSync', async (event, operations) => {
-    console.log('[LiveSession] IPC: dataJoinSync', operations.length, 'operations');
-    try {
-        const session = getLiveSession();
-        return await session.dataJoinSync(operations);
     } catch (error) {
         return { success: false, error: error.message };
     }
@@ -4545,21 +4407,11 @@ ipcMain.handle('liveSession:copyCells', async (event, sourceCells, targetRow, ta
     }
 });
 
-ipcMain.handle('liveSession:switchSheet', async (event, sheetName, includeData = false) => {
-    console.log('[LiveSession] IPC: switchSheet', sheetName, includeData ? '(mit Daten)' : '');
+ipcMain.handle('liveSession:switchSheet', async (event, sheetName) => {
+    console.log('[LiveSession] IPC: switchSheet', sheetName);
     try {
         const session = getLiveSession();
-        return await session.switchSheet(sheetName, includeData);
-    } catch (error) {
-        return { success: false, error: error.message };
-    }
-});
-
-ipcMain.handle('liveSession:activateSheet', async (event, sheetName) => {
-    console.log('[LiveSession] IPC: activateSheet', sheetName);
-    try {
-        const session = getLiveSession();
-        return await session.activateSheet(sheetName);
+        return await session.switchSheet(sheetName);
     } catch (error) {
         return { success: false, error: error.message };
     }
@@ -4649,7 +4501,14 @@ ipcMain.handle('liveSession:getRecoveryFiles', async (event) => {
 ipcMain.handle('liveSession:deleteRecoveryFile', async (event, filePath) => {
     try {
         // Sicherheitsprüfung: Pfad muss im Recovery-Verzeichnis liegen
-        const recoveryDir = path.join(process.env.APPDATA || '', 'ExcelDataSyncPro', 'recovery');
+        let recoveryDir;
+        if (process.platform === 'darwin') {
+            recoveryDir = path.join(os.homedir(), 'Library', 'Application Support', 'ExcelDataSyncPro', 'recovery');
+        } else if (process.platform === 'win32') {
+            recoveryDir = path.join(process.env.APPDATA || '', 'ExcelDataSyncPro', 'recovery');
+        } else {
+            recoveryDir = path.join(os.homedir(), '.exceldatasyncpro', 'recovery');
+        }
         const resolvedPath = path.resolve(filePath);
         if (!resolvedPath.startsWith(path.resolve(recoveryDir))) {
             securityLog.log('SECURITY', 'RECOVERY_DELETE_BLOCKED', {
@@ -4670,7 +4529,14 @@ ipcMain.handle('liveSession:deleteRecoveryFile', async (event, filePath) => {
 ipcMain.handle('liveSession:openRecoveryFolder', async (event) => {
     try {
         const { shell } = require('electron');
-        const recoveryDir = path.join(process.env.APPDATA || '', 'ExcelDataSyncPro', 'recovery');
+        let recoveryDir;
+        if (process.platform === 'darwin') {
+            recoveryDir = path.join(require('os').homedir(), 'Library', 'Application Support', 'ExcelDataSyncPro', 'recovery');
+        } else if (process.platform === 'win32') {
+            recoveryDir = path.join(process.env.APPDATA || '', 'ExcelDataSyncPro', 'recovery');
+        } else {
+            recoveryDir = path.join(require('os').homedir(), '.exceldatasyncpro', 'recovery');
+        }
         
         // Verzeichnis erstellen falls nicht vorhanden
         if (!require('fs').existsSync(recoveryDir)) {

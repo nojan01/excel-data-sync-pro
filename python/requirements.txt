@@ -1,2 +1,2 @@
 openpyxl>=3.0.0
-xlwings>=0.35.0
+xlwings>=0.30.0

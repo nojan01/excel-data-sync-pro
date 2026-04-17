@@ -33,9 +33,6 @@ class ExcelLiveSession {
         this.responseBuffer = '';
         this.isBusy = false;  // true wenn gerade ein Befehl verarbeitet wird
         this._currentTimeoutId = null;
-        this._cmdCounter = 0;       // Laufende Command-ID (verhindert Response-Desync nach Timeout)
-        this._currentCmdId = null;  // ID des aktuell laufenden Befehls
-        this._waitingForStaleResponse = false;  // true wenn Timeout feuerte, aber Python noch arbeitet
     }
 
     /**
@@ -98,30 +95,10 @@ class ExcelLiveSession {
                         if (line.trim()) {
                             try {
                                 const response = JSON.parse(line);
-                                // Command-ID prüfen: Verspätete Antworten nach Timeout verwerfen
-                                const respCmdId = response._cmdId;
-                                if (respCmdId != null && respCmdId !== this._currentCmdId) {
-                                    console.warn(`[LiveSession] Stale response received: cmd#${respCmdId} (expected cmd#${this._currentCmdId})`);
-                                    // Nach Timeout: Python ist jetzt fertig → Queue weiterverarbeiten
-                                    if (this._waitingForStaleResponse) {
-                                        this._waitingForStaleResponse = false;
-                                        this.isBusy = false;
-                                        console.log('[LiveSession] Stale response processed, resuming queue...');
-                                        this._processNextCommand();
-                                    }
-                                    continue;
-                                }
                                 if (this.currentResolve) {
                                     this.currentResolve(response);
                                     this.currentResolve = null;
                                     this.currentReject = null;
-                                } else if (this._waitingForStaleResponse) {
-                                    // Antwort kam nach Timeout mit gleicher cmdId —
-                                    // currentResolve ist null (bereits rejected), aber Queue muss freigegeben werden
-                                    this._waitingForStaleResponse = false;
-                                    this.isBusy = false;
-                                    console.log(`[LiveSession] Late response after timeout (cmd#${respCmdId}), resuming queue...`);
-                                    this._processNextCommand();
                                 }
                             } catch (e) {
                                 console.error('[LiveSession] JSON Parse Error:', e, 'Line:', line);
@@ -191,47 +168,6 @@ class ExcelLiveSession {
             const entry = { command, resolve, reject, timeout };
 
             if (this.isBusy) {
-                // setRowValues: Nur letzte Version pro Zeile behalten (Deduplizierung)
-                if (command.action === 'setRowValues' && command.rowIndex !== undefined) {
-                    const existingIdx = this.commandQueue.findIndex(
-                        e => e.command.action === 'setRowValues' && e.command.rowIndex === command.rowIndex
-                    );
-                    if (existingIdx >= 0) {
-                        // Alten Eintrag ablösen (resolve mit skip-Marker) und ersetzen
-                        const old = this.commandQueue[existingIdx];
-                        old.resolve({ success: true, skipped: true, reason: 'superseded' });
-                        this.commandQueue[existingIdx] = entry;
-                        console.log(`[LiveSession] Command deduplicated: setRowValues row=${command.rowIndex} (queue size: ${this.commandQueue.length})`);
-                        return;
-                    }
-                }
-                // switchSheet: Nur letzten Sheet-Wechsel behalten (Deduplizierung)
-                // Bei schnellem Tab-Wechsel werden Zwischenschritte übersprungen
-                if (command.action === 'switchSheet') {
-                    const existingIdx = this.commandQueue.findIndex(
-                        e => e.command.action === 'switchSheet'
-                    );
-                    if (existingIdx >= 0) {
-                        const old = this.commandQueue[existingIdx];
-                        old.resolve({ success: true, skipped: true, reason: 'superseded' });
-                        this.commandQueue[existingIdx] = entry;
-                        console.log(`[LiveSession] Command deduplicated: switchSheet → "${command.sheetName}" (queue size: ${this.commandQueue.length})`);
-                        return;
-                    }
-                }
-                // setCellValue: Nur letzte Version pro Zelle behalten (Deduplizierung)
-                if (command.action === 'setCellValue' && command.rowIndex !== undefined && command.colIndex !== undefined) {
-                    const existingIdx = this.commandQueue.findIndex(
-                        e => e.command.action === 'setCellValue' && e.command.rowIndex === command.rowIndex && e.command.colIndex === command.colIndex
-                    );
-                    if (existingIdx >= 0) {
-                        const old = this.commandQueue[existingIdx];
-                        old.resolve({ success: true, skipped: true, reason: 'superseded' });
-                        this.commandQueue[existingIdx] = entry;
-                        console.log(`[LiveSession] Command deduplicated: setCellValue row=${command.rowIndex} col=${command.colIndex} (queue size: ${this.commandQueue.length})`);
-                        return;
-                    }
-                }
                 // Befehl in Queue einreihen — wird nach aktuellem Befehl ausgeführt
                 this.commandQueue.push(entry);
                 console.log(`[LiveSession] Command queued: ${command.action} (queue size: ${this.commandQueue.length})`);
@@ -250,26 +186,18 @@ class ExcelLiveSession {
 
         this.isBusy = true;
         const cmdStartTime = Date.now();
-        // Command-ID zuweisen (für Response-Matching nach Timeout)
-        const cmdId = ++this._cmdCounter;
-        command._cmdId = cmdId;
-        this._currentCmdId = cmdId;
-        console.log(`[LiveSession] Executing: ${command.action}${command.rowIndex !== undefined ? ` (row=${command.rowIndex})` : ''} [cmd#${cmdId}]`);
+        console.log(`[LiveSession] Executing: ${command.action}${command.rowIndex !== undefined ? ` (row=${command.rowIndex})` : ''}`);
 
         this._currentTimeoutId = setTimeout(() => {
             if (this.isBusy) {
                 const elapsed = Date.now() - cmdStartTime;
-                console.error(`[LiveSession] TIMEOUT after ${elapsed}ms: ${command.action} [cmd#${cmdId}]`);
-                // WICHTIG: isBusy bleibt TRUE — Python arbeitet noch!
-                // Erst wenn die verspätete Antwort kommt, wird _processNextCommand aufgerufen.
-                // Sonst: Kaskaden-Timeouts, weil der nächste Befehl sofort gesendet wird
-                // aber Python noch den alten verarbeitet.
+                console.error(`[LiveSession] TIMEOUT after ${elapsed}ms: ${command.action}`);
+                this.isBusy = false;
                 this.currentResolve = null;
                 this.currentReject = null;
                 this._currentTimeoutId = null;
-                this._waitingForStaleResponse = true;
                 reject(new Error('Timeout waiting for response'));
-                // NICHT: this._processNextCommand() — wird in stdout-Handler aufgerufen
+                this._processNextCommand();
             }
         }, timeout);
 
@@ -344,7 +272,6 @@ class ExcelLiveSession {
         this.currentResolve = null;
         this.currentReject = null;
         this.isBusy = false;
-        this._waitingForStaleResponse = false;
     }
 
     /**
@@ -379,13 +306,12 @@ class ExcelLiveSession {
      * @param {string|null} outputPath - Optionaler neuer Pfad
      * @param {string|null} password - Optionales Passwort (null=beibehalten, ''=entfernen, 'xxx'=neu)
      */
-    async saveFile(outputPath = null, password = null, selectedSheets = null) {
+    async saveFile(outputPath = null, password = null) {
         return this._sendCommand({
             action: 'save',
             outputPath: outputPath,
-            password: password,
-            selectedSheets: selectedSheets
-        }, 300000);  // 5min Timeout - Calculate() + Save bei großen Dateien
+            password: password
+        });
     }
     
     /**
@@ -452,9 +378,6 @@ class ExcelLiveSession {
         this.isReady = false;
         this.isBusy = false;
         this.commandQueue = [];
-        this.responseBuffer = '';
-        this.currentResolve = null;
-        this.currentReject = null;
         if (this._currentTimeoutId) {
             clearTimeout(this._currentTimeoutId);
             this._currentTimeoutId = null;
@@ -462,10 +385,31 @@ class ExcelLiveSession {
     }
     
     /**
-     * Beendet Excel separat über OS-Mechanismen (nur Windows)
+     * Beendet Excel separat über OS-Mechanismen
      */
     _forceCloseExcel() {
-        // Auf Windows wird Excel über den Python-Prozess beendet
+        if (process.platform === 'darwin') {
+            const { exec } = require('child_process');
+            const fileName = this._openedFilePath 
+                ? path.basename(this._openedFilePath) 
+                : null;
+            
+            if (fileName) {
+                const script = `tell application "Microsoft Excel"
+                    try
+                        close workbook "${fileName}" saving no
+                    end try
+                    if (count of workbooks) is 0 then quit
+                end tell`;
+                exec(`osascript -e '${script}'`, { timeout: 5000 }, (err) => {
+                    if (err) console.log('[LiveSession] macOS Excel-Cleanup Fehler:', err.message);
+                    else console.log('[LiveSession] macOS: Excel Workbook geschlossen');
+                });
+            } else {
+                exec(`osascript -e 'tell application "Microsoft Excel" to quit saving no'`,
+                    { timeout: 5000 });
+            }
+        }
     }
 
     /**
@@ -579,20 +523,6 @@ class ExcelLiveSession {
         });
     }
 
-    /**
-     * Markiert mehrere Zeilen mit Farbe in einem Aufruf
-     * @param {number[]} rows - Array von 0-basierten Zeilen-Indizes
-     * @param {string|null} color - Farbe oder null zum Entfernen
-     */
-    async highlightRowsBatch(rows, color) {
-        const timeout = Math.max(60000, rows.length * 50); // Min 60s, +50ms pro Zeile
-        return this._sendCommand({
-            action: 'highlightRowsBatch',
-            rows: rows,
-            color: color
-        }, timeout);
-    }
-
     // =========================================================================
     // SPALTEN-OPERATIONEN
     // =========================================================================
@@ -624,24 +554,7 @@ class ExcelLiveSession {
             colIndex: colIndex,
             count: count,
             headers: headers
-        }, 180000);  // 180s — Excel muss bei großen Dateien Formeln/Formatierung verschieben
-    }
-
-    /**
-     * Data Join Batch-Sync: Spalten einfügen + Werte setzen in EINEM Aufruf
-     * @param {Array} operations - Array von {position, count, headers, columnData}
-     */
-    async dataJoinSync(operations) {
-        console.log('[LiveSession] dataJoinSync:', operations.length, 'operations');
-        // Dynamischer Timeout: 120s Basis + 10ms pro Datenwert
-        const totalValues = operations.reduce((sum, op) => {
-            return sum + (op.columnData || []).reduce((s, col) => s + (col ? col.length : 0), 0);
-        }, 0);
-        const timeout = Math.max(120000, totalValues * 10 + 60000);
-        return this._sendCommand({
-            action: 'dataJoinSync',
-            operations: operations
-        }, timeout);
+        });
     }
 
     /**
@@ -690,14 +603,12 @@ class ExcelLiveSession {
      * @param {number} startRow - 0-basierter Start-Zeilenindex (Default: 0)
      */
     async setColumnValues(colIndex, values, startRow = 0) {
-        // Dynamischer Timeout: große Spalten (6000+ Zeilen) brauchen via COM länger
-        const timeout = Math.max(60000, values.length * 10); // Min 60s, +10ms pro Wert
         return this._sendCommand({
             action: 'setColumnValues',
             colIndex: colIndex,
             values: values,
             startRow: startRow
-        }, timeout);
+        });
     }
     
     /**
@@ -732,27 +643,12 @@ class ExcelLiveSession {
     /**
      * Wechselt das aktive Arbeitsblatt in der Live Session
      * @param {string} sheetName - Name des Zielblatts
-     * @param {boolean} [includeData=false] - Wenn true, werden Sheet-Daten direkt mitgeliefert
      */
-    async switchSheet(sheetName, includeData = false) {
-        // Mit Daten: längerer Timeout (10K Zeilen × 100 Spalten brauchen Zeit für COM-Read + JSON-Transfer)
-        const timeout = includeData ? 120000 : 90000;
+    async switchSheet(sheetName) {
         return this._sendCommand({
             action: 'switchSheet',
-            sheetName: sheetName,
-            includeData: includeData
-        }, timeout);
-    }
-
-    /**
-     * Visueller Sheet-Wechsel in Excel — NACH dem Datenladen aufrufen.
-     * Hebt Interactive=False kurz auf, aktiviert das Sheet, wartet auf Repaint.
-     */
-    async activateSheet(sheetName) {
-        return this._sendCommand({
-            action: 'activateSheet',
             sheetName: sheetName
-        }, 10000);
+        });
     }
 
     /**
