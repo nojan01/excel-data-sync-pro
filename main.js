@@ -4369,6 +4369,16 @@ ipcMain.handle('liveSession:hideColumn', async (event, colIndex, hidden = true) 
     }
 });
 
+ipcMain.handle('liveSession:hideColumnsBatch', async (event, colIndices, hidden = true) => {
+    console.log('[LiveSession] IPC: hideColumnsBatch', colIndices?.length, hidden);
+    try {
+        const session = getLiveSession();
+        return await session.hideColumnsBatch(colIndices, hidden);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 // === ZELL-OPERATIONEN ===
 
 ipcMain.handle('liveSession:setCellValue', async (event, rowIndex, colIndex, value) => {

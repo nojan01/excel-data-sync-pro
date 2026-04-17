@@ -580,6 +580,17 @@ class ExcelLiveSession {
         });
     }
 
+    /**
+     * Versteckt oder zeigt mehrere Spalten in einem Rutsch (Performance)
+     */
+    async hideColumnsBatch(colIndices, hidden = true) {
+        return this._sendCommand({
+            action: 'hideColumnsBatch',
+            colIndices: Array.isArray(colIndices) ? colIndices : [],
+            hidden: hidden
+        });
+    }
+
     // =========================================================================
     // ZELL-OPERATIONEN
     // =========================================================================

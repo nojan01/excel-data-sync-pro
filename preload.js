@@ -109,6 +109,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     liveSessionDataJoinSync: (operations) => ipcRenderer.invoke('liveSession:dataJoinSync', operations),
     liveSessionMoveColumn: (fromIndex, toIndex) => ipcRenderer.invoke('liveSession:moveColumn', fromIndex, toIndex),
     liveSessionHideColumn: (colIndex, hidden) => ipcRenderer.invoke('liveSession:hideColumn', colIndex, hidden !== false),
+    liveSessionHideColumnsBatch: (colIndices, hidden) => ipcRenderer.invoke('liveSession:hideColumnsBatch', colIndices, hidden !== false),
 
     // Zell-Operationen
     liveSessionSetCellValue: (rowIndex, colIndex, value) => ipcRenderer.invoke('liveSession:setCellValue', rowIndex, colIndex, value),

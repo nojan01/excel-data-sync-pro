@@ -17449,12 +17449,22 @@
             }
             
             // Live-Session: Spalte in Excel ein-/ausblenden
+            // Checkboxen während Command disablen um Klick-Stacking bei schnellen Klicks
+            // zu verhindern (sonst hängt Excel durch überlappende COM-Calls).
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
+                const toggleContainer = document.getElementById('columnToggles');
+                if (toggleContainer) {
+                    toggleContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.disabled = true; });
+                }
                 try {
                     const excelColIndex = getExcelColumnPosition(colIndex);
                     await window.electronAPI.liveSessionHideColumn(excelColIndex, !visible);
                 } catch (error) {
                     console.error('[LiveSession] Spalten-Sichtbarkeit Fehler:', error);
+                } finally {
+                    if (toggleContainer) {
+                        toggleContainer.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.disabled = false; });
+                    }
                 }
             }
             
@@ -17468,17 +17478,15 @@
         };
         
         async function showAllExplorerColumns() {
-            // Live-Session: Alle Spalten in Excel einblenden
+            // Live-Session: Alle Spalten in Excel einblenden (Batch — 1 COM-Call)
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 try {
-                    // Alle versteckten Spalten einblenden
                     const hiddenColumns = explorerState.headers
                         .map((_, i) => i)
                         .filter(i => !explorerState.visibleColumns.includes(i));
-                    
-                    for (const colIndex of hiddenColumns) {
-                        const excelColIndex = getExcelColumnPosition(colIndex);
-                        await window.electronAPI.liveSessionHideColumn(excelColIndex, false);
+                    if (hiddenColumns.length > 0) {
+                        const excelCols = hiddenColumns.map(c => getExcelColumnPosition(c));
+                        await window.electronAPI.liveSessionHideColumnsBatch(excelCols, false);
                     }
                     console.log('[LiveSession] All columns shown');
                 } catch (error) {
@@ -17497,13 +17505,12 @@
         }
         
         async function hideAllExplorerColumns() {
-            // Live-Session: Alle Spalten in Excel ausblenden
+            // Live-Session: Alle Spalten in Excel ausblenden (Batch)
             if (explorerState.liveSessionActive && explorerState.liveSessionReady) {
                 try {
-                    // Alle sichtbaren Spalten ausblenden
-                    for (const colIndex of explorerState.visibleColumns) {
-                        const excelColIndex = getExcelColumnPosition(colIndex);
-                        await window.electronAPI.liveSessionHideColumn(excelColIndex, true);
+                    if (explorerState.visibleColumns.length > 0) {
+                        const excelCols = explorerState.visibleColumns.map(c => getExcelColumnPosition(c));
+                        await window.electronAPI.liveSessionHideColumnsBatch(excelCols, true);
                     }
                     console.log('[LiveSession] All columns hidden');
                 } catch (error) {

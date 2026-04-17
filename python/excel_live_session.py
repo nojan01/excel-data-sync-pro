@@ -1362,11 +1362,27 @@ class ExcelLiveSession:
             # Nutze eine Zelle der Zeile und dann entire_row (analog zu hide_column)
             row_range = self.worksheet.range(f'A{excel_row}')
             
-            if platform.system() == 'Windows':
-                row_range.api.EntireRow.Hidden = hidden
-            else:
-                # macOS: Nutze xlwings api
-                row_range.api.entire_row.hidden.set(hidden)
+            # Screen-Updating aus + COM-Retry (gegen Excel-Hang bei schnellen Klicks)
+            app = self.workbook.app
+            prev_screen = None
+            try:
+                prev_screen = app.screen_updating
+                app.screen_updating = False
+            except Exception:
+                pass
+            try:
+                def _do_hide_row():
+                    if platform.system() == 'Windows':
+                        row_range.api.EntireRow.Hidden = hidden
+                    else:
+                        row_range.api.entire_row.hidden.set(hidden)
+                self._com_retry(_do_hide_row, desc=f'hide_row {excel_row}')
+            finally:
+                if prev_screen is not None:
+                    try:
+                        app.screen_updating = prev_screen
+                    except Exception:
+                        pass
             
             self._log(f"Zeile {excel_row} {'versteckt' if hidden else 'angezeigt'}")
             return {'success': True, 'row': row_index, 'hidden': hidden}
@@ -1933,11 +1949,32 @@ class ExcelLiveSession:
             # Nutze eine Zelle der Spalte und dann entire_column
             col_range = self.worksheet.range(f'{col_letter}1')
             
-            if platform.system() == 'Windows':
-                col_range.api.EntireColumn.Hidden = hidden
-            else:
-                # macOS: Nutze xlwings api
-                col_range.api.entire_column.hidden.set(hidden)
+            # Screen-Updating deaktivieren + COM-Retry:
+            # Wenn der User schnell mehrfach klickt ist Excel oft noch mit dem
+            # vorherigen Redraw beschäftigt und wirft RPC_E_CALL_REJECTED /
+            # RPC_E_SERVERCALL_RETRYLATER. Ohne Retry blockiert der nächste
+            # COM-Call die Pipeline und Excel erscheint eingefroren.
+            app = self.workbook.app
+            prev_screen = None
+            try:
+                prev_screen = app.screen_updating
+                app.screen_updating = False
+            except Exception:
+                pass
+            
+            try:
+                def _do_hide():
+                    if platform.system() == 'Windows':
+                        col_range.api.EntireColumn.Hidden = hidden
+                    else:
+                        col_range.api.entire_column.hidden.set(hidden)
+                self._com_retry(_do_hide, desc=f'hide_column {col_letter}')
+            finally:
+                if prev_screen is not None:
+                    try:
+                        app.screen_updating = prev_screen
+                    except Exception:
+                        pass
             
             self._log(f"Spalte {col_letter} {'versteckt' if hidden else 'angezeigt'}")
             return {'success': True, 'column': col_index, 'hidden': hidden}
@@ -1945,6 +1982,119 @@ class ExcelLiveSession:
         except Exception as e:
             self._log(f"Fehler beim Verstecken der Spalte: {e}")
             return {'success': False, 'error': str(e)}
+    
+    def hide_columns_batch(self, col_indices: list, hidden: bool = True) -> Dict[str, Any]:
+        """Versteckt oder zeigt mehrere Spalten auf einmal (Performance-optimiert)"""
+        try:
+            if not self.worksheet:
+                return {'success': False, 'error': 'Keine Datei geöffnet'}
+            if not col_indices:
+                return {'success': True, 'count': 0}
+            
+            # Undo: Inverse Operation
+            self._push_undo_command(
+                f'{len(col_indices)} Spalten {"ausgeblendet" if hidden else "eingeblendet"}',
+                'hide_columns_batch',
+                {'col_indices': list(col_indices), 'hidden': not hidden}
+            )
+            
+            # 0-basiert → 1-basiert (Excel)
+            excel_cols = sorted(int(c) + 1 for c in col_indices)
+            
+            # Gruppiere aufeinanderfolgende Spalten in Bereiche
+            # z.B. [1,2,3,5,7,8] → ["A1:C1", "E1:E1", "G1:H1"]
+            ranges = []
+            start = excel_cols[0]
+            end = excel_cols[0]
+            for c in excel_cols[1:]:
+                if c == end + 1:
+                    end = c
+                else:
+                    ranges.append((start, end))
+                    start = c
+                    end = c
+            ranges.append((start, end))
+            
+            app = self.workbook.app
+            prev_screen = None
+            try:
+                prev_screen = app.screen_updating
+                app.screen_updating = False
+            except Exception:
+                pass
+            
+            try:
+                def _do_hide_all():
+                    for (s, e) in ranges:
+                        s_letter = self._get_column_letter(s)
+                        e_letter = self._get_column_letter(e)
+                        rng = self.worksheet.range(f'{s_letter}1:{e_letter}1')
+                        if platform.system() == 'Windows':
+                            rng.api.EntireColumn.Hidden = hidden
+                        else:
+                            rng.api.entire_column.hidden.set(hidden)
+                self._com_retry(_do_hide_all, desc=f'hide_columns_batch ({len(excel_cols)} cols)')
+            finally:
+                if prev_screen is not None:
+                    try:
+                        app.screen_updating = prev_screen
+                    except Exception:
+                        pass
+            
+            self._log(f"Batch: {len(excel_cols)} Spalten {'versteckt' if hidden else 'angezeigt'} ({len(ranges)} Ranges)")
+            return {'success': True, 'count': len(excel_cols), 'hidden': hidden}
+        except Exception as e:
+            self._log(f"Fehler beim Batch-Verstecken von Spalten: {e}")
+            return {'success': False, 'error': str(e)}
+    
+    def _com_retry(self, func, max_attempts: int = 8, desc: str = 'com_call'):
+        """Führt eine COM-Operation aus und wiederholt sie bei
+        RPC_E_CALL_REJECTED / RPC_E_SERVERCALL_RETRYLATER.
+        
+        Diese HRESULTs bedeuten: "Excel ist gerade beschäftigt (Redraw, Modal,
+        Calculation), bitte später nochmal versuchen". Ohne Retry blockiert
+        bzw. crasht die COM-Pipeline bei schnellen aufeinander folgenden Calls.
+        """
+        if platform.system() != 'Windows':
+            return func()
+        
+        # HRESULTs (negative int32 in Python, daher Signed-Repräsentation)
+        RPC_E_CALL_REJECTED = -2147418111       # 0x80010001
+        RPC_E_SERVERCALL_RETRYLATER = -2147418110  # 0x80010002
+        RPC_E_SERVERCALL_REJECTED = -2147418110
+        
+        try:
+            import pywintypes
+            com_error_cls = pywintypes.com_error
+        except Exception:
+            com_error_cls = None
+        
+        delay = 0.05  # 50ms Start, exponentielles Backoff
+        last_err = None
+        for attempt in range(max_attempts):
+            try:
+                return func()
+            except Exception as e:
+                last_err = e
+                hr = None
+                # pywintypes.com_error hat .hresult oder .args[0]
+                try:
+                    if com_error_cls and isinstance(e, com_error_cls):
+                        hr = e.hresult if hasattr(e, 'hresult') else (e.args[0] if e.args else None)
+                    else:
+                        hr = getattr(e, 'hresult', None) or (e.args[0] if getattr(e, 'args', None) else None)
+                except Exception:
+                    hr = None
+                
+                is_busy = hr in (RPC_E_CALL_REJECTED, RPC_E_SERVERCALL_RETRYLATER, RPC_E_SERVERCALL_REJECTED)
+                if not is_busy:
+                    raise  # Anderer Fehler → sofort weiterwerfen
+                
+                self._log(f"[COM-Retry] {desc}: Excel busy (hr={hr}), attempt {attempt+1}/{max_attempts}, wait {delay*1000:.0f}ms")
+                time.sleep(delay)
+                delay = min(delay * 1.8, 0.8)  # max ~800ms Einzelwait
+        # Alle Versuche fehlgeschlagen
+        raise last_err if last_err else RuntimeError(f'{desc}: alle Retries fehlgeschlagen')
     
     # =========================================================================
     # ZELL-OPERATIONEN
@@ -3753,6 +3903,7 @@ end tell'''
             'dataJoinSync': lambda: self.data_join_sync(cmd.get('operations', [])),
             'moveColumn': lambda: self.move_column(cmd.get('fromIndex'), cmd.get('toIndex')),
             'hideColumn': lambda: self.hide_column(cmd.get('colIndex'), cmd.get('hidden', True)),
+            'hideColumnsBatch': lambda: self.hide_columns_batch(cmd.get('colIndices', []), cmd.get('hidden', True)),
             
             # Zellen
             'setCellValue': lambda: self.set_cell_value(cmd.get('rowIndex'), cmd.get('colIndex'), cmd.get('value'), old_value=cmd.get('oldValue')),
