@@ -4590,3 +4590,58 @@ ipcMain.handle('liveSession:openRecoveryFolder', async (event) => {
         return { success: false, error: error.message };
     }
 });
+
+// =============================================================================
+// Serial-Check: Fehlende Seriennummern gegen mehrere Ist-Listen finden
+// =============================================================================
+// Schreibt eine einfache XLSX (ein Sheet, optional mit Header) von
+// im Renderer bereits aufbereiteten Zeilen. Die eigentliche Such-/
+// Normalisierungslogik läuft im Renderer, da dort die bestehenden
+// read-APIs genutzt werden.
+ipcMain.handle('serialCheck:exportXlsx', async (event, { outputPath, sheetName, headers, rows }) => {
+    try {
+        if (!outputPath) {
+            return { success: false, error: 'Kein Zielpfad angegeben' };
+        }
+        const ExcelJS = require('exceljs');
+        const wb = new ExcelJS.Workbook();
+        wb.creator = 'Excel Data Sync Pro';
+        wb.created = new Date();
+        const ws = wb.addWorksheet(String(sheetName || 'Fehlend').slice(0, 31));
+        
+        if (Array.isArray(headers) && headers.length > 0) {
+            const headerRow = ws.addRow(headers.map(h => (h == null ? '' : String(h))));
+            headerRow.font = { bold: true };
+            headerRow.fill = {
+                type: 'pattern',
+                pattern: 'solid',
+                fgColor: { argb: 'FFFFE699' }
+            };
+        }
+        
+        const safeRows = Array.isArray(rows) ? rows : [];
+        for (const r of safeRows) {
+            ws.addRow(Array.isArray(r) ? r : [r]);
+        }
+        
+        // Auto-Spaltenbreite (grob)
+        if (Array.isArray(headers) && headers.length > 0) {
+            headers.forEach((h, i) => {
+                let maxLen = String(h || '').length;
+                for (const r of safeRows) {
+                    const v = Array.isArray(r) ? r[i] : null;
+                    if (v != null) {
+                        const l = String(v).length;
+                        if (l > maxLen) maxLen = l;
+                    }
+                }
+                ws.getColumn(i + 1).width = Math.min(Math.max(maxLen + 2, 10), 60);
+            });
+        }
+        
+        await wb.xlsx.writeFile(outputPath);
+        return { success: true, path: outputPath, rows: safeRows.length };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});

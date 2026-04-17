@@ -6,6 +6,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     openFileDialog: (options) => ipcRenderer.invoke('dialog:openFile', options),
     saveFileDialog: (options) => ipcRenderer.invoke('dialog:saveFile', options),
     openFolderDialog: (options) => ipcRenderer.invoke('dialog:openFolder', options),
+    
+    // Serial-Check Export
+    serialCheckExportXlsx: (payload) => ipcRenderer.invoke('serialCheck:exportXlsx', payload),
 
     // Dateisystem
     checkFileExists: (filePath) => ipcRenderer.invoke('fs:checkFileExists', filePath),

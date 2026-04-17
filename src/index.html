@@ -3227,6 +3227,9 @@
                     <button class="btn btn-primary" id="btnDataJoin" title="Spalten aus einer anderen Excel-Datei hinzufügen (basierend auf gemeinsamer Seriennummer)" disabled data-i18n="addColumns" data-i18n-title="addColumnsTitle" style="height: 34px;">
                         🔗 Spalten hinzufügen
                     </button>
+                    <button class="btn btn-primary" id="btnSerialCheck" title="Seriennummern der Soll-Liste gegen mehrere Ist-Listen prüfen und fehlende exportieren" style="height: 34px;">
+                        🔎 Fehlende Seriennummern
+                    </button>
                     <button class="btn btn-warning" id="btnExplorerUndo" title="Letzte Aktion rückgängig machen (Strg+Z) — nur bei aktiver Live-Session" style="display: none; height: 34px;">
                         ↩️ Undo
                     </button>
@@ -3469,6 +3472,54 @@
             </div>
             <div class="modal-footer" style="display: flex; gap: 10px; justify-content: flex-end;">
                 <button class="btn btn-secondary" id="btnClosePreview">Schließen</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Serial-Check Modal: Fehlende Seriennummern gegen mehrere Ist-Listen -->
+    <div class="modal-overlay hidden" id="serialCheckModal">
+        <div class="modal modal-large" style="max-width: 960px; width: 92%; max-height: 88vh;">
+            <div class="modal-header">
+                <div class="modal-title">🔎 Fehlende Seriennummern finden</div>
+                <button class="modal-close" id="btnCloseSerialCheck">&times;</button>
+            </div>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px; overflow-y: auto;">
+                <div style="padding: 12px; background: linear-gradient(135deg, #2d2d30 0%, #252526 100%); border-radius: 6px; border-left: 4px solid var(--info); font-size: 13px; line-height: 1.5;">
+                    Vergleicht die Seriennummern der <strong>Soll-Liste</strong> gegen mehrere <strong>Ist-Listen</strong> (z.B. Abteilungen). Fehlende Einträge werden als separate Excel-Datei exportiert. Vergleich ist case-insensitiv, Whitespace und führende Nullen werden ignoriert.
+                </div>
+                
+                <!-- Soll-Liste -->
+                <fieldset style="border: 1px solid var(--border); border-radius: 6px; padding: 12px;">
+                    <legend style="padding: 0 8px; color: var(--info); font-weight: 600;">📋 Soll-Liste</legend>
+                    <div style="display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: center; margin-bottom: 8px;">
+                        <div id="scTargetFileName" style="font-size: 13px; color: var(--text-muted); padding: 6px 10px; background: var(--bg-light); border-radius: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Keine Datei gewählt</div>
+                        <button class="btn btn-primary" id="btnSCTargetFile" style="height: 30px;">📂 Datei wählen</button>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                        <div>
+                            <label style="font-size: 12px; color: var(--text-muted);">Tabellenblatt</label>
+                            <select id="scTargetSheet" class="form-control" disabled style="width: 100%;"></select>
+                        </div>
+                        <div>
+                            <label style="font-size: 12px; color: var(--text-muted);">Seriennummern-Spalte</label>
+                            <select id="scTargetColumn" class="form-control" disabled style="width: 100%;"></select>
+                        </div>
+                    </div>
+                </fieldset>
+                
+                <!-- Ist-Listen -->
+                <fieldset style="border: 1px solid var(--border); border-radius: 6px; padding: 12px;">
+                    <legend style="padding: 0 8px; color: var(--success); font-weight: 600;">✅ Ist-Listen (Abteilungen)</legend>
+                    <div id="scSourcesContainer" style="display: flex; flex-direction: column; gap: 10px;"></div>
+                    <button class="btn btn-secondary" id="btnSCAddSource" style="margin-top: 10px; height: 30px;">+ Ist-Liste hinzufügen</button>
+                </fieldset>
+                
+                <!-- Status -->
+                <div id="scStatus" style="font-size: 13px; color: var(--text-muted); min-height: 18px;"></div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border);">
+                <button class="btn btn-secondary" id="btnCancelSerialCheck">Abbrechen</button>
+                <button class="btn btn-success" id="btnRunSerialCheck">🔎 Fehlende finden &amp; exportieren</button>
             </div>
         </div>
     </div>
@@ -8948,6 +8999,346 @@
             dataJoinState.columnPositions = [];
             dataJoinState.previewCalculated = false;
             dataJoinState.matchStats = { targetRows: 0, sourceRows: 0, matches: 0, noMatch: 0 };
+        }
+        
+        // =====================================================================
+        // Serial-Check: Fehlende Seriennummern gegen mehrere Ist-Listen
+        // =====================================================================
+        const serialCheckState = {
+            target: { filePath: null, fileName: null, sheets: [], sheetName: null, headers: [], columnIndex: -1 },
+            sources: [] // je: { id, filePath, fileName, sheets, sheetName, headers, columnIndex, label }
+        };
+        let _scNextId = 1;
+        
+        function _scNormalize(v) {
+            if (v == null) return '';
+            let s = String(v).trim().toLowerCase();
+            // führende Nullen ignorieren — aber komplett-Null/leer behandeln wir als leer
+            s = s.replace(/^0+/, '');
+            return s;
+        }
+        
+        function _scSetStatus(msg, kind) {
+            const el = document.getElementById('scStatus');
+            if (!el) return;
+            el.textContent = msg || '';
+            el.style.color = kind === 'error' ? 'var(--danger, #d9534f)'
+                : kind === 'success' ? 'var(--success, #5cb85c)'
+                : 'var(--text-muted)';
+        }
+        
+        async function openSerialCheckModal() {
+            // State zurücksetzen
+            serialCheckState.target = { filePath: null, fileName: null, sheets: [], sheetName: null, headers: [], columnIndex: -1 };
+            serialCheckState.sources = [];
+            _scSetStatus('');
+            
+            document.getElementById('scTargetFileName').textContent = 'Keine Datei gewählt';
+            const scSheet = document.getElementById('scTargetSheet');
+            const scCol = document.getElementById('scTargetColumn');
+            scSheet.innerHTML = ''; scSheet.disabled = true;
+            scCol.innerHTML = ''; scCol.disabled = true;
+            
+            document.getElementById('scSourcesContainer').innerHTML = '';
+            
+            // Vorbelegen mit aktueller Explorer-Datei, falls vorhanden
+            if (explorerState && explorerState.filePath) {
+                try {
+                    await _scLoadTargetFile(explorerState.filePath);
+                    // Wenn aktuelles Sheet existiert → übernehmen
+                    if (explorerState.currentSheet && serialCheckState.target.sheets.includes(explorerState.currentSheet)) {
+                        document.getElementById('scTargetSheet').value = explorerState.currentSheet;
+                        await _scLoadTargetSheet(explorerState.currentSheet);
+                    }
+                } catch (e) {
+                    console.warn('[SerialCheck] Vorbelegen fehlgeschlagen:', e);
+                }
+            }
+            
+            // Eine erste Ist-Zeile zufügen
+            _scAddSourceRow();
+            
+            // Modal-Buttons & Handler (idempotent via onclick-Setzer)
+            document.getElementById('btnCloseSerialCheck').onclick = closeSerialCheckModal;
+            document.getElementById('btnCancelSerialCheck').onclick = closeSerialCheckModal;
+            document.getElementById('btnSCTargetFile').onclick = _scPickTargetFile;
+            document.getElementById('btnSCAddSource').onclick = _scAddSourceRow;
+            document.getElementById('btnRunSerialCheck').onclick = runSerialCheck;
+            document.getElementById('scTargetSheet').onchange = async (e) => {
+                try {
+                    await _scLoadTargetSheet(e.target.value);
+                } catch (err) {
+                    _scSetStatus('Fehler: ' + (err && err.message ? err.message : err), 'error');
+                }
+            };
+            document.getElementById('scTargetColumn').onchange = (e) => {
+                const v = parseInt(e.target.value, 10);
+                serialCheckState.target.columnIndex = isNaN(v) ? -1 : v;
+            };
+            
+            document.getElementById('serialCheckModal').classList.remove('hidden');
+        }
+        
+        function closeSerialCheckModal() {
+            document.getElementById('serialCheckModal').classList.add('hidden');
+        }
+        
+        async function _scLoadTargetFile(filePath) {
+            const res = await window.electronAPI.readExcelFile(filePath);
+            if (!res || !res.success) {
+                throw new Error(res && res.error ? res.error : 'Datei konnte nicht gelesen werden');
+            }
+            const sheets = Array.isArray(res.sheets) ? res.sheets : [];
+            serialCheckState.target.filePath = filePath;
+            serialCheckState.target.fileName = filePath.split(/[\\/]/).pop();
+            serialCheckState.target.sheets = sheets;
+            serialCheckState.target.sheetName = null;
+            serialCheckState.target.headers = [];
+            serialCheckState.target.columnIndex = -1;
+            
+            document.getElementById('scTargetFileName').textContent = serialCheckState.target.fileName;
+            const scSheet = document.getElementById('scTargetSheet');
+            scSheet.innerHTML = '<option value="">-- Tabellenblatt --</option>' +
+                sheets.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+            scSheet.disabled = sheets.length === 0;
+            
+            const scCol = document.getElementById('scTargetColumn');
+            scCol.innerHTML = '';
+            scCol.disabled = true;
+        }
+        
+        async function _scLoadTargetSheet(sheetName) {
+            if (!sheetName || !serialCheckState.target.filePath) return;
+            const res = await window.electronAPI.readExcelSheet(serialCheckState.target.filePath, sheetName, null);
+            if (!res || !res.success) {
+                throw new Error(res && res.error ? res.error : 'Blatt konnte nicht gelesen werden');
+            }
+            serialCheckState.target.sheetName = sheetName;
+            serialCheckState.target.headers = Array.isArray(res.headers) ? res.headers : [];
+            serialCheckState.target.columnIndex = -1;
+            
+            const scCol = document.getElementById('scTargetColumn');
+            scCol.innerHTML = '<option value="">-- Spalte wählen --</option>' +
+                serialCheckState.target.headers.map((h, i) => `<option value="${i}">${escapeHtml(String(h ?? ''))}</option>`).join('');
+            scCol.disabled = serialCheckState.target.headers.length === 0;
+            // Heuristik: erste Spalte mit "seriennummer" / "serial" / "sn" im Namen vorauswählen
+            const idx = serialCheckState.target.headers.findIndex(h => /serien|serial|\bsn\b/i.test(String(h ?? '')));
+            if (idx >= 0) {
+                scCol.value = String(idx);
+                serialCheckState.target.columnIndex = idx;
+            }
+        }
+        
+        function _scAddSourceRow() {
+            const id = _scNextId++;
+            const src = { id, filePath: null, fileName: null, sheets: [], sheetName: null, headers: [], columnIndex: -1, label: '' };
+            serialCheckState.sources.push(src);
+            
+            const container = document.getElementById('scSourcesContainer');
+            const row = document.createElement('div');
+            row.dataset.scSourceId = String(id);
+            row.style.cssText = 'display: grid; grid-template-columns: 1.2fr 1.5fr 1fr 1fr auto; gap: 8px; align-items: end; padding: 8px; background: var(--bg-light); border-radius: 4px;';
+            row.innerHTML = `
+                <div>
+                    <label style="font-size: 11px; color: var(--text-muted);">Abteilung / Label</label>
+                    <input type="text" class="form-control sc-label" placeholder="z.B. Abteilung A" style="width: 100%;">
+                </div>
+                <div>
+                    <label style="font-size: 11px; color: var(--text-muted);">Datei</label>
+                    <div style="display: grid; grid-template-columns: 1fr auto; gap: 4px;">
+                        <div class="sc-filename" style="font-size: 12px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Keine Datei</div>
+                        <button class="btn btn-primary sc-select-file" style="height: 30px; padding: 0 8px;">📂</button>
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size: 11px; color: var(--text-muted);">Blatt</label>
+                    <select class="form-control sc-sheet" disabled style="width: 100%;"></select>
+                </div>
+                <div>
+                    <label style="font-size: 11px; color: var(--text-muted);">SN-Spalte</label>
+                    <select class="form-control sc-column" disabled style="width: 100%;"></select>
+                </div>
+                <div>
+                    <button class="btn btn-danger sc-remove" title="Entfernen" style="height: 30px; padding: 0 10px;">✕</button>
+                </div>
+            `;
+            container.appendChild(row);
+            
+            const qs = sel => row.querySelector(sel);
+            qs('.sc-label').oninput = e => { src.label = e.target.value; };
+            qs('.sc-select-file').onclick = async () => {
+                try {
+                    const pickedPath = await window.electronAPI.openFileDialog({
+                        title: 'Ist-Liste wählen',
+                        filters: [{ name: 'Excel-Dateien', extensions: ['xlsx', 'xlsm', 'xls'] }]
+                    });
+                    if (!pickedPath) return;
+                    _scSetStatus('Lade Ist-Datei…');
+                    const res = await window.electronAPI.readExcelFile(pickedPath);
+                    if (!res || !res.success) throw new Error(res && res.error ? res.error : 'Datei konnte nicht gelesen werden');
+                    src.filePath = pickedPath;
+                    src.fileName = pickedPath.split(/[\\/]/).pop();
+                    src.sheets = Array.isArray(res.sheets) ? res.sheets : [];
+                    src.sheetName = null;
+                    src.headers = [];
+                    src.columnIndex = -1;
+                    if (!src.label) {
+                        src.label = src.fileName.replace(/\.(xlsx|xlsm|xls)$/i, '');
+                        qs('.sc-label').value = src.label;
+                    }
+                    qs('.sc-filename').textContent = src.fileName;
+                    qs('.sc-filename').title = src.filePath;
+                    const sheetSel = qs('.sc-sheet');
+                    sheetSel.innerHTML = '<option value="">-- Blatt --</option>' +
+                        src.sheets.map(s => `<option value="${escapeHtml(s)}">${escapeHtml(s)}</option>`).join('');
+                    sheetSel.disabled = src.sheets.length === 0;
+                    qs('.sc-column').innerHTML = '';
+                    qs('.sc-column').disabled = true;
+                    _scSetStatus('');
+                } catch (e) {
+                    _scSetStatus('Fehler: ' + (e && e.message ? e.message : e), 'error');
+                }
+            };
+            qs('.sc-sheet').onchange = async (e) => {
+                const sn = e.target.value;
+                if (!sn || !src.filePath) return;
+                try {
+                    _scSetStatus('Lade Blatt…');
+                    const res = await window.electronAPI.readExcelSheet(src.filePath, sn, null);
+                    if (!res || !res.success) throw new Error(res && res.error ? res.error : 'Blatt konnte nicht gelesen werden');
+                    src.sheetName = sn;
+                    src.headers = Array.isArray(res.headers) ? res.headers : [];
+                    src.columnIndex = -1;
+                    const colSel = qs('.sc-column');
+                    colSel.innerHTML = '<option value="">-- Spalte --</option>' +
+                        src.headers.map((h, i) => `<option value="${i}">${escapeHtml(String(h ?? ''))}</option>`).join('');
+                    colSel.disabled = src.headers.length === 0;
+                    const idx = src.headers.findIndex(h => /serien|serial|\bsn\b/i.test(String(h ?? '')));
+                    if (idx >= 0) { colSel.value = String(idx); src.columnIndex = idx; }
+                    _scSetStatus('');
+                } catch (err) {
+                    _scSetStatus('Fehler: ' + (err && err.message ? err.message : err), 'error');
+                }
+            };
+            qs('.sc-column').onchange = e => { src.columnIndex = parseInt(e.target.value, 10); if (isNaN(src.columnIndex)) src.columnIndex = -1; };
+            qs('.sc-remove').onclick = () => {
+                const i = serialCheckState.sources.findIndex(s => s.id === id);
+                if (i >= 0) serialCheckState.sources.splice(i, 1);
+                row.remove();
+            };
+        }
+        
+        async function _scPickTargetFile() {
+            const pickedPath = await window.electronAPI.openFileDialog({
+                title: 'Soll-Liste wählen',
+                filters: [{ name: 'Excel-Dateien', extensions: ['xlsx', 'xlsm', 'xls'] }]
+            });
+            if (!pickedPath) return;
+            try {
+                _scSetStatus('Lade Soll-Datei…');
+                await _scLoadTargetFile(pickedPath);
+                _scSetStatus('');
+                // Sheet-Select-Handler (auto-load) wird zentral beim Modal-Open gesetzt
+            } catch (e) {
+                _scSetStatus('Fehler: ' + (e && e.message ? e.message : e), 'error');
+            }
+        }
+        
+        async function runSerialCheck() {
+            try {
+                // Validierung
+                const t = serialCheckState.target;
+                if (!t.filePath || !t.sheetName || t.columnIndex < 0) {
+                    _scSetStatus('Bitte Soll-Datei, Blatt und Seriennummern-Spalte wählen', 'error');
+                    return;
+                }
+                const srcs = serialCheckState.sources.filter(s => s.filePath && s.sheetName && s.columnIndex >= 0);
+                if (srcs.length === 0) {
+                    _scSetStatus('Bitte mindestens eine vollständige Ist-Liste angeben', 'error');
+                    return;
+                }
+                
+                _scSetStatus('Lade Soll-Daten…');
+                const tRes = await window.electronAPI.readExcelSheet(t.filePath, t.sheetName, null);
+                if (!tRes || !tRes.success) throw new Error(tRes && tRes.error ? tRes.error : 'Soll-Blatt nicht lesbar');
+                const tHeaders = Array.isArray(tRes.headers) ? tRes.headers : [];
+                const tData = Array.isArray(tRes.data) ? tRes.data : [];
+                
+                // Normalisierte SN-Mengen pro Ist-Liste
+                const sourceSets = [];
+                for (let i = 0; i < srcs.length; i++) {
+                    const s = srcs[i];
+                    _scSetStatus(`Lade Ist-Liste ${i + 1}/${srcs.length}: ${s.label || s.fileName}…`);
+                    const sRes = await window.electronAPI.readExcelSheet(s.filePath, s.sheetName, null);
+                    if (!sRes || !sRes.success) throw new Error(`${s.label || s.fileName}: nicht lesbar`);
+                    const sData = Array.isArray(sRes.data) ? sRes.data : [];
+                    const set = new Set();
+                    for (const row of sData) {
+                        if (!Array.isArray(row)) continue;
+                        const key = _scNormalize(row[s.columnIndex]);
+                        if (key) set.add(key);
+                    }
+                    sourceSets.push({ label: s.label || s.fileName, set });
+                }
+                
+                // Fehlende finden
+                _scSetStatus('Vergleiche…');
+                const missingRows = [];
+                let emptyCount = 0;
+                for (const row of tData) {
+                    if (!Array.isArray(row)) continue;
+                    const raw = row[t.columnIndex];
+                    const key = _scNormalize(raw);
+                    if (!key) { emptyCount++; continue; }
+                    let found = false;
+                    for (const src of sourceSets) {
+                        if (src.set.has(key)) { found = true; break; }
+                    }
+                    if (!found) {
+                        // Volle Zeile übernehmen, am Ende Info-Spalte
+                        const out = tHeaders.map((_, i) => row[i] != null ? row[i] : '');
+                        out.push('Nicht in: ' + sourceSets.map(s => s.label).join(', '));
+                        missingRows.push(out);
+                    }
+                }
+                
+                if (missingRows.length === 0) {
+                    _scSetStatus(`✅ Keine fehlenden Seriennummern gefunden (Soll: ${tData.length} Zeilen, davon ${emptyCount} leer).`, 'success');
+                    showNotification('Alle Seriennummern der Soll-Liste sind in mindestens einer Ist-Liste vorhanden.', 'success');
+                    return;
+                }
+                
+                // Export-Dialog
+                const defaultName = (t.fileName || 'SollListe').replace(/\.(xlsx|xlsm|xls)$/i, '') + '_Fehlend.xlsx';
+                const savePath = await window.electronAPI.saveFileDialog({
+                    title: 'Fehlende Seriennummern speichern',
+                    defaultPath: defaultName,
+                    filters: [{ name: 'Excel-Dateien', extensions: ['xlsx'] }]
+                });
+                if (!savePath) {
+                    _scSetStatus('Abgebrochen.', 'error');
+                    return;
+                }
+                
+                _scSetStatus('Schreibe Export-Datei…');
+                const outHeaders = [...tHeaders.map(h => (h == null ? '' : String(h))), 'Status'];
+                const writeRes = await window.electronAPI.serialCheckExportXlsx({
+                    outputPath: savePath,
+                    sheetName: 'Fehlende Seriennummern',
+                    headers: outHeaders,
+                    rows: missingRows
+                });
+                if (!writeRes || !writeRes.success) {
+                    throw new Error(writeRes && writeRes.error ? writeRes.error : 'Export fehlgeschlagen');
+                }
+                
+                _scSetStatus(`✅ ${missingRows.length} fehlende Seriennummer(n) exportiert.`, 'success');
+                showNotification(`${missingRows.length} fehlende Seriennummer(n) nach ${savePath.split(/[\\/]/).pop()} exportiert.`, 'success');
+            } catch (e) {
+                console.error('[SerialCheck] Fehler:', e);
+                _scSetStatus('Fehler: ' + (e && e.message ? e.message : e), 'error');
+                showNotification('Fehler beim Abgleich: ' + (e && e.message ? e.message : e), 'error');
+            }
         }
         
         function openDataJoinModal() {
@@ -20664,6 +21055,10 @@
             };
             elements.btnPreviewDataJoin.onclick = calculateDataJoinPreview;
             elements.btnExecuteDataJoin.onclick = executeDataJoin;
+            
+            // Serial-Check
+            const btnSerialCheck = document.getElementById('btnSerialCheck');
+            if (btnSerialCheck) btnSerialCheck.onclick = openSerialCheckModal;
             
             // Data Join Drag & Drop Zone
             const joinDropZone = document.getElementById('joinDropZone');
