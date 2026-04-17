@@ -3204,6 +3204,9 @@
                     <button class="btn btn-primary" id="btnToggleExcel" title="Excel-Fenster ein-/ausblenden" disabled style="height: 34px;">
                         👁️ Excel
                     </button>
+                    <button class="btn btn-secondary" id="btnToggleExcelInteractive" title="Excel temporär bedienbar machen (Scrollen / Klicken)" disabled style="height: 34px; display: none;">
+                        🔒 Bedienbar
+                    </button>
                     <!-- Live-Mode Status (automatisch aktiviert wenn Excel verfügbar) -->
                     <div id="liveModeIndicator" style="display: flex; padding: 4px 12px; border-radius: 4px; font-size: 12px; font-weight: 600; align-items: center; gap: 6px; background: var(--bg-lighter); height: 34px; box-sizing: border-box; margin-left: auto;" title="Live-Modus wird automatisch aktiviert wenn Excel verfügbar ist">
                         <span id="liveModeIcon">⚫</span>
@@ -5720,6 +5723,7 @@
             btnExplorerOpenFile: document.getElementById('btnExplorerOpenFile'),
             btnExplorerSearch: document.getElementById('btnExplorerSearch'),
             btnToggleExcel: document.getElementById('btnToggleExcel'),
+            btnToggleExcelInteractive: document.getElementById('btnToggleExcelInteractive'),
             btnExplorerFullscreen: document.getElementById('btnExplorerFullscreen'),
             btnCloseExplorerX: document.getElementById('btnCloseExplorerX'),
             btnCloseExplorerFooter: document.getElementById('btnCloseExplorerFooter'),
@@ -8523,6 +8527,7 @@
                 explorerState.liveSessionActive = true;
                 explorerState.liveSessionReady = true;
                 explorerState.excelVisible = false;
+                explorerState.excelInteractive = false;
                 
                 // Read-Only-Warnung wenn Datei schreibgeschützt geöffnet wurde
                 if (openResult.readOnly) {
@@ -8574,6 +8579,7 @@
                 explorerState.liveSessionActive = false;
                 explorerState.liveSessionReady = false;
                 explorerState.excelVisible = false;
+                explorerState.excelInteractive = false;
                 updateLiveModeIndicator();
                 updateExcelToggleButton();
             }
@@ -8639,6 +8645,10 @@
                 
                 if (result && result.success) {
                     explorerState.excelVisible = newVisible;
+                    // Beim Ausblenden: Interactive-Modus immer zurücksetzen
+                    if (!newVisible && explorerState.excelInteractive) {
+                        explorerState.excelInteractive = false;
+                    }
                     updateExcelToggleButton();
                     showFloatingStatus(newVisible ? '👁️ Excel eingeblendet' : '🙈 Excel ausgeblendet');
                 } else {
@@ -8646,6 +8656,41 @@
                 }
             } catch (error) {
                 console.error('[LiveSession] Fehler bei toggleExcelVisibility:', error);
+                showFloatingStatus('Fehler: ' + error.message, true);
+            }
+        }
+        
+        /**
+         * Schaltet Excel temporär in den bedienbaren Modus (Scrollen/Klicken).
+         * Achtung: Änderungen die der User direkt in Excel macht, landen NICHT im Datenmodell.
+         */
+        async function toggleExcelInteractive() {
+            if (!explorerState.liveSessionActive || !explorerState.liveSessionReady) {
+                showFloatingStatus('Keine Live-Session aktiv', true);
+                return;
+            }
+            if (!explorerState.excelVisible) {
+                showFloatingStatus('Excel muss eingeblendet sein', true);
+                return;
+            }
+            
+            try {
+                const newInteractive = !explorerState.excelInteractive;
+                const result = await window.electronAPI.liveSessionSetInteractive(newInteractive);
+                
+                if (result && result.success) {
+                    explorerState.excelInteractive = newInteractive;
+                    updateExcelToggleButton();
+                    if (newInteractive) {
+                        showFloatingStatus('🔓 Excel bedienbar – manuelle Änderungen werden NICHT übernommen!', true);
+                    } else {
+                        showFloatingStatus('🔒 Excel wieder gesperrt');
+                    }
+                } else {
+                    showFloatingStatus('Fehler beim Umschalten: ' + (result?.error || ''), true);
+                }
+            } catch (error) {
+                console.error('[LiveSession] Fehler bei toggleExcelInteractive:', error);
                 showFloatingStatus('Fehler: ' + error.message, true);
             }
         }
@@ -8671,6 +8716,25 @@
             } else {
                 btn.innerHTML = '👁️ Excel';
                 btn.title = 'Live-Session nicht aktiv';
+            }
+            
+            // Interactive-Button: nur sichtbar wenn Excel-Fenster eingeblendet
+            const btnInt = document.getElementById('btnToggleExcelInteractive');
+            if (btnInt) {
+                const showInt = isLiveActive && explorerState.excelVisible;
+                btnInt.style.display = showInt ? '' : 'none';
+                btnInt.disabled = !showInt;
+                if (explorerState.excelInteractive) {
+                    btnInt.innerHTML = '🔓 Bedienbar';
+                    btnInt.title = 'Klicken um Excel wieder zu sperren';
+                    btnInt.classList.add('btn-warning');
+                    btnInt.classList.remove('btn-secondary');
+                } else {
+                    btnInt.innerHTML = '🔒 Bedienbar';
+                    btnInt.title = 'Excel temporär bedienbar machen (Scrollen / Klicken). Achtung: Manuelle Änderungen werden NICHT übernommen!';
+                    btnInt.classList.add('btn-secondary');
+                    btnInt.classList.remove('btn-warning');
+                }
             }
         }
         
@@ -8816,6 +8880,7 @@
             liveSessionActive: false,  // true wenn Live-Session aktiv ist
             liveSessionReady: false,   // true wenn Session bereit für Operationen
             excelVisible: false,       // true wenn Excel-Fenster sichtbar ist
+            excelInteractive: false,   // true wenn Excel temporär bedienbar (Interactive=True)
             // VM-Map für Bild-Zellen (Copy&Paste von Zell-Bildern)
             cellVmMap: {},  // "styleKeyRow-col" -> vmValue (z.B. "19-6" -> "1")
             // Virtual Scrolling
@@ -10151,6 +10216,7 @@
             explorerState.liveSessionActive = false;
             explorerState.liveSessionReady = false;
             explorerState.excelVisible = false;
+            explorerState.excelInteractive = false;
             explorerState.engineMode = 'openpyxl';
             explorerState.fileReadOnly = false;
             
@@ -20617,6 +20683,9 @@
             
             // Excel Ein-/Ausblenden Button
             elements.btnToggleExcel.onclick = toggleExcelVisibility;
+            if (elements.btnToggleExcelInteractive) {
+                elements.btnToggleExcelInteractive.onclick = toggleExcelInteractive;
+            }
             document.getElementById('btnClosePreviewX').onclick = closeExplorerPreview;
             document.getElementById('btnClosePreview').onclick = closeExplorerPreview;
             

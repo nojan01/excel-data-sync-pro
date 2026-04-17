@@ -134,6 +134,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
     // Sichtbarkeit & Status
     liveSessionSetVisible: (visible) => ipcRenderer.invoke('liveSession:setVisible', visible),
+    liveSessionSetInteractive: (interactive) => ipcRenderer.invoke('liveSession:setInteractive', interactive),
     liveSessionCheckAlive: () => ipcRenderer.invoke('liveSession:checkAlive'),
 
     // Recovery

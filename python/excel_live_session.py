@@ -358,6 +358,29 @@ class ExcelLiveSession:
             self._log(f"Fehler bei set_visible: {e}")
             return {'success': False, 'error': str(e)}
     
+    def set_interactive(self, interactive: bool = False) -> Dict[str, Any]:
+        """Schaltet die Excel-Interaktivität temporär um.
+        
+        interactive=True: User darf in Excel scrollen/klicken (Excel NICHT gesperrt).
+            Achtung: Der User könnte versehentlich Zellen bearbeiten, diese
+            Änderungen landen NICHT im Datenmodell des Explorers.
+        interactive=False: Excel wieder sperren (Standard während Live-Session).
+        """
+        try:
+            if not self.app:
+                return {'success': False, 'error': 'Keine Excel-App aktiv'}
+            
+            if platform.system() == 'Windows':
+                self.app.api.Interactive = bool(interactive)
+            else:
+                self.app.api.interactive.set(bool(interactive))
+            
+            self._log(f"Excel Interactive gesetzt: {interactive}")
+            return {'success': True, 'interactive': bool(interactive)}
+        except Exception as e:
+            self._log(f"Fehler bei set_interactive: {e}")
+            return {'success': False, 'error': str(e)}
+    
     def _force_screen_refresh(self):
         """Erzwingt einen Screen-Refresh in Excel"""
         try:
@@ -3757,6 +3780,7 @@ end tell'''
             'initApp': lambda: self.init_app(),
             'quit': lambda: self._quit(),
             'setVisible': lambda: self.set_visible(cmd.get('visible', True)),
+            'setInteractive': lambda: self.set_interactive(cmd.get('interactive', False)),
             
             # Recovery
             'getRecoveryFiles': lambda: self.get_recovery_files(),

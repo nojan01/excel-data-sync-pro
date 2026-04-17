@@ -4478,6 +4478,16 @@ ipcMain.handle('liveSession:setVisible', async (event, visible) => {
     }
 });
 
+ipcMain.handle('liveSession:setInteractive', async (event, interactive) => {
+    console.log('[LiveSession] IPC: setInteractive', interactive);
+    try {
+        const session = getLiveSession();
+        return await session.setInteractive(interactive);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
 ipcMain.handle('liveSession:checkAlive', async (event) => {
     try {
         const session = getLiveSession();

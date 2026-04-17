@@ -784,6 +784,16 @@ class ExcelLiveSession {
             visible: visible
         });
     }
+
+    /**
+     * Schaltet Excel-Interaktivität um (Scrollen/Klicken durch User)
+     */
+    async setInteractive(interactive) {
+        return this._sendCommand({
+            action: 'setInteractive',
+            interactive: !!interactive
+        });
+    }
     
     /**
      * Prüft ob Excel und das Workbook noch aktiv sind
