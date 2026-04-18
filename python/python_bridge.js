@@ -1363,7 +1363,18 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
     }
     
     // Passwortschutz anwenden
-    // xlwings/openpyxl unterstützt keinen Passwortschutz, daher verwenden wir xlsx-populate
+    // xlwings/openpyxl unterstützt keinen Passwortschutz, daher verwenden wir den Encryptor
+    // von xlsx-populate DIREKT (ohne Workbook-Roundtrip).
+    //
+    // WICHTIG: Früher wurde XlsxPopulate.fromFileAsync + toFileAsync verwendet. Das hat aber
+    // alle XML-Teile durch den xlsx-populate-Parser laufen lassen und dabei u.a. die
+    // worksheet-XMLs neu serialisiert. Dadurch wurden die Referenzen zu xl/tables/tableN.xml
+    // inkonsistent und Excel meldete beim Öffnen:
+    //   "Reparierte Datensätze: Tabelle von /xl/tables/table1.xml-Part"
+    //
+    // Der Encryptor arbeitet auf Byte-Ebene (Buffer → Buffer) und lässt die ZIP-Einträge
+    // unverändert. Dadurch bleiben Tables, Drawings, ConditionalFormatting etc. 1:1 erhalten.
+    //
     // options.password == null (null/undefined): Checkbox nicht aktiviert → Original-Passwort beibehalten
     // options.password === '':                   Checkbox aktiviert, leer → Passwort entfernen
     // options.password === 'xxx':                Checkbox aktiviert mit Wert → Neues Passwort setzen
@@ -1371,10 +1382,12 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
     const finalPassword = (options.password != null) ? options.password : options.sourcePassword;
     if (finalPassword) {
         try {
-            const XlsxPopulate = require('xlsx-populate');
+            const Encryptor = require('xlsx-populate/lib/Encryptor');
+            const encryptor = new Encryptor();
             // Datei ist jetzt entschlüsselt (wurde oben entschlüsselt oder war nie verschlüsselt)
-            const pwWorkbook = await XlsxPopulate.fromFileAsync(targetPath);
-            await pwWorkbook.toFileAsync(targetPath, { password: finalPassword });
+            const rawData = fs.readFileSync(targetPath);
+            const encrypted = encryptor.encrypt(rawData, finalPassword);
+            fs.writeFileSync(targetPath, encrypted);
             safeLog(`[Python] Passwortschutz angewendet (${options.password !== undefined ? 'neues Passwort' : 'Original-Passwort beibehalten'})`);
         } catch (pwError) {
             safeError('[Python] Fehler beim Passwortschutz:', pwError.message);
