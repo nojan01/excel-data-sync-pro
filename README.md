@@ -1,5 +1,163 @@
 # Excel Data Sync Pro
 
+Desktop-Anwendung zum Explorieren, Synchronisieren und Verarbeiten von Excel-Dateien (`.xlsx`) – mit vollem Erhalt von Formatierungen, bedingten Formatierungen, Bildern und Formeln.
+
+**Version: 1.9.0** · © Norbert Jander 2026 · MIT License · Plattform: Windows x64
+
+---
+
+## Kernfunktionen
+
+### 🔍 Datenexplorer
+
+Vollständiger Excel-Viewer und -Editor mit Formatierungs-Treue:
+
+- Mehrfach-Zellauswahl (Shift/Strg/Mausziehen), Zellen-Kontextmenü (Kopieren, Löschen, Einfügen)
+- Direktes Bearbeiten von Zellinhalten per Doppelklick, Undo/Redo
+- Sortieren & spaltenbasierte Filter mit „Suchen & Ersetzen" (inkl. Undo)
+- Zeilen/Spalten einfügen, löschen, verschieben, aus-/einblenden
+- Arbeitsblatt-Verwaltung: hinzufügen, löschen, umbenennen, kopieren
+- Rich-Text, Hyperlinks, Formel-Indikator, Merged Cells, AutoFilter
+- Bilder in Zellen (Copy & Paste), Conditional Formatting bleibt erhalten
+- Crash-Recovery (automatische Sicherung alle 30 s)
+
+### 🔗 Data Join – Spalten aus anderer Datei hinzufügen
+
+Fügt eine oder mehrere Spalten aus einer zweiten `.xlsx` anhand einer gemeinsamen Schlüsselspalte hinzu (z. B. Seriennummer). Mit Vorschau (Treffer-Statistik) und optionaler Markierung nicht gefundener Zeilen.
+
+### 🔎 Fehlende Seriennummern finden *(v1.9)*
+
+Gleicht eine **Soll-Liste** (z. B. Inventar) gegen beliebig viele **Ist-Listen** (z. B. pro Abteilung) ab und exportiert alle Einträge, die in keiner Ist-Liste enthalten sind. Spaltennamen dürfen unterschiedlich heißen, Vergleich ist case-insensitiv und ignoriert Whitespace/führende Nullen.
+
+### 📄 Templates & Monatsdateien
+
+- Template aus Quelldatei erzeugen (CF-Regeln bleiben erhalten, Datenzeilen werden entfernt)
+- Neue Monatsdatei aus Template erstellen (automatische Sheet-Umbenennung)
+- Optional: Flag- und Kommentar-Spalten automatisch einfügen
+
+### 📤 Datenübertragung (klassisch)
+
+- Quelldatei durchsuchen (Wildcards `*` und `?`), Zeilen per Klick in Warteschlange
+- Direkte Übertragung in Zieldatei mit Spalten-Mapping
+- Flags A/D/C (Add/Delete/Change), freier Kommentar, Duplikat-Erkennung
+- Export nur geänderter Zeilen oder komplette Datei
+
+### 🔒 Protokollierung
+
+- **Sicherheits-Protokoll**: HMAC-SHA256-signierte Log-Einträge mit Hash-Chain, Integritätsprüfung
+- **Netzwerk-Protokoll**: Multi-User-Tracking bei Dateien auf Netzlaufwerken, Konflikt-Warnung, Session-Lock (`.~lock.*`), DSGVO-konform (nur Rechnername)
+
+---
+
+## Dual-Backend-Architektur (Windows)
+
+Für große Dateien und komplexe Formate wird ein Python-Backend verwendet. Die App wählt automatisch den besten verfügbaren Modus:
+
+| Modus | Voraussetzung | Einsatz |
+|-------|---------------|---------|
+| **xlwings (Live-Session)** | Excel lokal installiert | Live-Bearbeitung direkt in Excel, maximale Formatierungs-Treue |
+| **openpyxl (Fallback)** | — (eingebettetes Python) | Reiner Dateipfad ohne Excel, optimierte XML-Direkt-Pipeline |
+| **ExcelJS (Node)** | — | Lesen von Sheets, einfache Exports (z. B. Serial-Check) |
+
+Das eingebettete Python (inkl. openpyxl, xlwings, lxml) ist in der Installation enthalten – es muss nichts separat installiert werden.
+
+---
+
+## Installation
+
+1. [`Excel-Data-Sync-Pro-<Version>-Setup-x64.exe`](https://github.com/nojan01/excel-data-sync-pro/releases) herunterladen
+2. Installer ausführen (Code-signiert)
+3. App über Startmenü/Desktop-Icon starten
+
+---
+
+## Tastenkürzel
+
+| Taste | Aktion |
+|-------|--------|
+| `Strg`+`F` | Fokus auf Suchfeld |
+| `Strg`+`S` | Speichern / Warteschlange exportieren |
+| `Strg`+`Enter` | Ausgewählte Zeilen direkt übertragen |
+| `Strg`+`O` | Konfiguration laden |
+| `F1` | Hilfe |
+| `F11` | Vollbild (Datenexplorer) |
+| `Esc` | Dialog schließen |
+
+---
+
+## Konfiguration
+
+`config.json` speichert Spalten-Mapping, Sheet-Auswahl und Optionen. Automatische Suchreihenfolge:
+
+1. Arbeitsordner (höchste Priorität)
+2. Portable EXE-Ordner
+3. Installationsordner
+4. Dokumente-Ordner
+5. Downloads-Ordner
+
+💡 Tipp: Eine zentrale `config.json` auf einem Netzlaufwerk für Team-Setup.
+
+---
+
+## Changelog (Auszug)
+
+### v1.9.0 *(aktuell)*
+- **Neu:** Fehlende Seriennummern finden (Soll-Ist-Abgleich über mehrere Dateien)
+- **Verbessert:** Klarere Warnung beim Schließen wenn nur Filter aktiv sind
+- **Performance:** 3 Optimierungen im openpyxl-Fallback (Table-XML-Restore, Format-Backup, Diagnose-Gating)
+
+### v1.8.x
+- Data Join mit 2+ Spalten: Offset-Korrekturen, Live-Sync mit Bulk-Write
+- Zeilen einfügen/löschen/verschieben und Spalten-Operationen deutlich schneller
+- In-Memory-Export-Pipeline (FALL 3a ohne Zwischendatei)
+- xlwings 0.35.0, zahlreiche Live-Session-Stabilitätsfixes
+- Copy & Paste von Zellbildern in Merged Cells (openpyxl-Fallback)
+- AutoFilter-Export: GUI-Filter werden als `hiddenRows` übernommen
+- Excel temporär bedienbar machen (Toggle im Live-Modus)
+- Merged-Cell XML-Korruptionsfix, Undo für Suchen & Ersetzen
+
+### v1.7.x
+- xlwings Live-Session-Modus (Live-Bearbeitung direkt in Excel)
+- Performance-Optimierungen für große Dateien (>10 MB)
+
+### v1.6.x
+- Data Join (Spalten aus zweiter Datei über Schlüsselspalte)
+- Erweiterter Datenexplorer (Multi-Select, Kontextmenü, Rich-Text)
+
+### v1.5.x
+- Sicherheits-Protokoll mit HMAC-Signaturen und Hash-Chain
+- Netzwerk-Protokoll für Multi-User-Szenarien
+
+Ältere Versionen: siehe Git-History.
+
+---
+
+## Technik
+
+- **Runtime:** Electron + Node.js
+- **Excel-Libs:** ExcelJS, xlsx-populate (JS), openpyxl + xlwings + lxml (Python, eingebettet)
+- **Sicherheit:** HMAC-SHA256, SHA-256 Hash-Chain, signierter Installer
+- **Format:** `.xlsx` (inkl. passwortgeschützter Dateien beim Lesen)
+
+---
+
+## Fehlerbehebung
+
+**„Datei kann nicht gelesen werden"** – Datei in Excel geöffnet? Schließen und erneut versuchen.
+
+**„Suche findet nichts"** – Wildcards (`*text*`) nutzen; richtiges Arbeitsblatt ausgewählt?
+
+**Datei-Konflikt-Warnung auf Netzlaufwerk** – Ein Kollege bearbeitet die Datei aktuell (`.~lock.<Datei>.xlsx`). Abstimmen und ggf. warten.
+
+**Performance-Probleme bei sehr großen Dateien** – Live-Session-Modus (Excel installiert) liefert die beste Performance.
+
+---
+
+## Lizenz
+
+MIT License – © Norbert Jander 2026
+# Excel Data Sync Pro
+
 Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen Excel-Dateien, mit Formatierungserhalt, Flag-/Kommentar-Funktion und Template-Erstellung.
 
 ## Version
