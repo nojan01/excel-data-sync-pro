@@ -17310,6 +17310,24 @@
                 }
             }
             
+            // EditedCells nach Zeile gruppieren (0-basierte Daten-Indizes, OHNE Header-Offset).
+            // WICHTIG: Spezielle Marker-Keys ("_rowInserted" etc.) bleiben unangetastet
+            // und werden NICHT verschoben — sie werden separat behandelt.
+            const editedCellsByRow = {};
+            const preservedMarkerEdits = new Map();
+            for (const [key, value] of explorerState.editedCells.entries()) {
+                if (typeof key === 'string' && key.startsWith('_')) {
+                    preservedMarkerEdits.set(key, value);
+                    continue;
+                }
+                const [keyRow, keyCol] = key.split('-');
+                const rowIdx = parseInt(keyRow);
+                if (Number.isInteger(rowIdx) && rowIdx >= 0) {
+                    if (!editedCellsByRow[rowIdx]) editedCellsByRow[rowIdx] = {};
+                    editedCellsByRow[rowIdx][keyCol] = value;
+                }
+            }
+            
             // Sammle Zeilen-Bundles mit allen Metadaten (jetzt O(n))
             // EFFIZIENT: Direkte Referenzen, keine Kopien nötig da wir nur verschieben
             const totalRows = explorerState.data.length;
@@ -17328,6 +17346,7 @@
                     richText: richTextByRow[styleRowIdx] || {},
                     formulas: formulasByRow[styleRowIdx] || {},
                     hyperlinks: hyperlinksByRow[styleRowIdx] || {},
+                    editedCells: editedCellsByRow[i] || {},  // 0-basierte Daten-Zeile (kein Header-Offset)
                     isHidden: explorerState.hiddenRows?.has(i) || false,
                     highlight: explorerState.rowHighlights.get(i) || null
                 };
@@ -17370,6 +17389,12 @@
             explorerState.cellHyperlinks = {};
             explorerState.hiddenRows = new Set();
             explorerState.rowHighlights = new Map();
+            // EditedCells komplett leeren — Marker-Keys ("_rowsReordered" etc.) gleich wieder setzen,
+            // damit Per-Row-Edits unten mit korrekten neuen Keys eingefügt werden.
+            explorerState.editedCells = new Map();
+            preservedMarkerEdits.forEach((value, key) => {
+                explorerState.editedCells.set(key, value);
+            });
             
             // Header-Styles behalten (Key "0-x")
             for (const [key, value] of Object.entries(previousCellStyles)) {
@@ -17412,6 +17437,11 @@
                 // Hyperlinks mit neuem Key
                 for (const [col, link] of Object.entries(bundle.hyperlinks)) {
                     explorerState.cellHyperlinks[`${newStyleRowIdx}-${col}`] = link;
+                }
+                
+                // EditedCells mit neuem 0-basierten Daten-Index als Key (kein Header-Offset)
+                for (const [col, val] of Object.entries(bundle.editedCells)) {
+                    explorerState.editedCells.set(`${newRowIdx}-${col}`, val);
                 }
             });
             
@@ -19109,15 +19139,15 @@
                             // xlwings schreibt keine Bulk-Daten, also müssen wir die editedCells mitsenden.
                             const changedCellsForStructural = {};
                             
-                            // Bei Filter: Mapping von originalIndex zu newIndex in filteredData erstellen
-                            let filterIndexMap = null;
-                            if (isFiltered) {
-                                filterIndexMap = new Map();
-                                explorerState.filteredData.forEach((item, newIdx) => {
-                                    filterIndexMap.set(item.originalIndex, newIdx);
-                                });
-                            }
-                            
+                            // WICHTIG: Cell-Edit-Keys IMMER in vollen Daten-Koordinaten senden
+                            // (NICHT in filteredData-Indizes umrechnen!).
+                            // Begründung: Die Python COMBINED-Pipeline (_fp_real_edits) operiert direkt
+                            // auf der Source-XLSX (Voll-Datei), und auch insertedRowInfo.position /
+                            // deletedRowIndices verwenden Voll-Daten-Indizes. Eine Filter-Umrechnung
+                            // hier würde Edits in falsche Excel-Zeilen schreiben (oder verlieren),
+                            // sobald Zeilen-Inserts/-Deletes mit aktivem Filter kombiniert werden.
+                            // Bei aktivem Filter werden nicht-sichtbare Edits trotzdem mitgesendet —
+                            // das ist korrekt, weil die Source-XLSX die zugehörige Zeile besitzt.
                             for (const cellKey of explorerState.editedCells.keys()) {
                                 // Überspringe spezielle Marker-Keys
                                 if (cellKey.startsWith('_')) continue;
@@ -19126,22 +19156,8 @@
                                 const originalRowIdx = parseInt(rowStr);
                                 const colIdx = parseInt(colStr);
                                 
-                                if (isFiltered) {
-                                    // Bei Filter: Index umrechnen und prüfen ob Zeile sichtbar ist
-                                    const newRowIdx = filterIndexMap.get(originalRowIdx);
-                                    if (newRowIdx !== undefined && colIdx >= 0) {
-                                        // Hole Wert aus filteredData mit neuem Index
-                                        const row = explorerState.filteredData[newRowIdx]?.row;
-                                        if (row) {
-                                            changedCellsForStructural[`${newRowIdx}-${colIdx}`] = row[colIdx];
-                                        }
-                                    }
-                                    // Zeile nicht sichtbar = nicht exportieren
-                                } else {
-                                    // Ohne Filter: Original-Indizes verwenden
-                                    if (originalRowIdx >= 0 && colIdx >= 0 && explorerState.data[originalRowIdx]) {
-                                        changedCellsForStructural[cellKey] = explorerState.data[originalRowIdx][colIdx];
-                                    }
+                                if (originalRowIdx >= 0 && colIdx >= 0 && explorerState.data[originalRowIdx]) {
+                                    changedCellsForStructural[cellKey] = explorerState.data[originalRowIdx][colIdx];
                                 }
                             }
                             
