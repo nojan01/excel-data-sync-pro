@@ -30,6 +30,10 @@ npm-debug.log*
 
 # Development files (tests, debug, analyze)
 _dev/
+_test_*.py
+_test_*.js
+test-data/
+python/ExcelDataSyncPro/
 
 # Package lock
 package-lock.json
