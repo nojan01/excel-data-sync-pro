@@ -10750,6 +10750,11 @@
             explorerState.pendingSheetOperations = [];  // Reset Pending Sheet Ops
             explorerState.liveSheetChanges = 0;  // Reset Live-Sheet-Änderungen
             explorerState.sheetDiskNameMap = new Map();  // Reset Disk-Name-Mapping
+            // Preload-Token invalidieren (stoppt laufenden Hintergrund-Preload)
+            if (explorerState._preloadToken) {
+                explorerState._preloadToken.cancelled = true;
+            }
+            explorerState._preloadToken = null;
             
             // UI zurücksetzen
             if (elements.explorerSheetSelect) {
@@ -14344,6 +14349,12 @@
             _log(`=== FERTIG === Gesamt: ${Date.now() - _loadStart}ms, Engine: ${explorerState.engineMode}`);
             elements.explorerStatus.textContent = '';
             showFloatingStatus(`📂 ${result.fileName} geladen (${explorerState.engineMode})`);
+
+            // Hintergrund-Preload der restlichen Sheets (nur openpyxl-Modus)
+            if (explorerState.engineMode !== 'live') {
+                // fire-and-forget; läuft mit requestIdleCallback
+                startBackgroundSheetPreload().catch(err => console.warn('[Preload] Exception:', err));
+            }
             
             // Pivot-Warnung NUR im openpyxl-Fallback (im Live-/xlwings-Mode bleiben
             // Pivots beim Speichern erhalten — keine Warnung nötig)
@@ -15084,6 +15095,109 @@
                 rowMapping: explorerState.rowMapping ? [...explorerState.rowMapping] : null,
                 columnOperationsQueue: [...explorerState.columnOperationsQueue]
             });
+        }
+
+        /**
+         * Lädt alle noch nicht gecachten Sheets im Hintergrund (nur openpyxl-Modus).
+         * Läuft sequenziell mit requestIdleCallback/setTimeout zwischen Sheets, damit
+         * die UI responsiv bleibt. Kann jederzeit via preloadToken.cancelled gestoppt
+         * werden (Datei-Wechsel, Export, Close).
+         */
+        async function startBackgroundSheetPreload() {
+            // Nur im openpyxl-Fallback (Live-Mode hat alle Daten schon in Excel)
+            if (explorerState.engineMode === 'live') return;
+            // Opt-Out per LocalStorage
+            if (localStorage.getItem('preloadSheetsInBackground') === 'false') return;
+            if (!explorerState.filePath || !Array.isArray(explorerState.sheets)) return;
+
+            const token = { cancelled: false };
+            explorerState._preloadToken = token;
+
+            const fileAtStart = explorerState.filePath;
+            const filePassword = explorerState.filePassword;
+
+            const toPreload = explorerState.sheets.filter(s => {
+                if (s === explorerState.selectedSheet) return false;
+                if (explorerState.sheetDataCache.has(s)) return false;
+                return true;
+            });
+
+            if (toPreload.length === 0) return;
+            console.log(`[Preload] Starte Hintergrund-Preload für ${toPreload.length} Sheets`);
+
+            const idle = (cb) => {
+                if (typeof window.requestIdleCallback === 'function') {
+                    window.requestIdleCallback(cb, { timeout: 2000 });
+                } else {
+                    setTimeout(cb, 50);
+                }
+            };
+
+            for (const sheetName of toPreload) {
+                if (token.cancelled) { console.log('[Preload] abgebrochen'); return; }
+                // Datei gewechselt? → stoppen
+                if (explorerState.filePath !== fileAtStart) { console.log('[Preload] Datei hat gewechselt, stoppe'); return; }
+                // Sheet wurde inzwischen manuell geladen oder ist aktuell ausgewählt
+                if (explorerState.sheetDataCache.has(sheetName)) continue;
+                if (sheetName === explorerState.selectedSheet) continue;
+
+                // Auf Idle warten
+                await new Promise(res => idle(res));
+                if (token.cancelled || explorerState.filePath !== fileAtStart) return;
+
+                // Disk-Sheet-Namen berücksichtigen (bei umbenannten Sheets)
+                let diskSheetName = sheetName;
+                if (explorerState.sheetDiskNameMap && explorerState.sheetDiskNameMap.has(sheetName)) {
+                    diskSheetName = explorerState.sheetDiskNameMap.get(sheetName);
+                }
+
+                try {
+                    const t0 = performance.now();
+                    const res = await window.electronAPI.readExcelSheet(fileAtStart, diskSheetName, filePassword);
+                    if (token.cancelled || explorerState.filePath !== fileAtStart) return;
+                    if (!res || !res.success) {
+                        console.warn(`[Preload] "${sheetName}" fehlgeschlagen: ${res?.error || 'unbekannt'}`);
+                        continue;
+                    }
+                    // Nicht cachen, falls User inzwischen manuell geladen hat
+                    if (explorerState.sheetDataCache.has(sheetName)) continue;
+
+                    // Cache-Eintrag aufbauen (gleiche Struktur wie saveCurrentSheetToCache)
+                    const data = res.data.slice(1); // ExcelJS: data[0] = headers
+                    const headers = res.headers;
+                    const hiddenColsSet = new Set(res.hiddenColumns || []);
+                    const visibleColumns = headers.map((_, i) => i).filter(i => !hiddenColsSet.has(i));
+                    const rowHighlights = new Map();
+                    if (res.rowHighlights && res.rowHighlights.length > 0) {
+                        for (const [rowIdx, color] of res.rowHighlights) rowHighlights.set(rowIdx, color);
+                    }
+
+                    explorerState.sheetDataCache.set(sheetName, {
+                        headers: [...headers],
+                        data: data.map(row => [...row]),
+                        originalData: data.map(row => [...row]),
+                        editedCells: new Map(),
+                        rowHighlights,
+                        visibleColumns,
+                        columnOrder: [],
+                        dataValidations: res.dataValidations || {},
+                        cellStyles: res.cellStyles || {},
+                        cellFormulas: res.cellFormulas || {},
+                        cellHyperlinks: res.cellHyperlinks || {},
+                        richTextCells: res.richTextCells || {},
+                        hiddenRows: new Set(res.hiddenRows || []),
+                        autoFilterRange: res.autoFilterRange || null,
+                        mergedCells: res.mergedCells || [],
+                        rowMapping: data.map((_, i) => i),
+                        columnOperationsQueue: []
+                    });
+                    console.log(`[Preload] "${sheetName}" gecacht (${data.length} Zeilen, ${(performance.now() - t0).toFixed(0)}ms)`);
+                } catch (err) {
+                    if (token.cancelled) return;
+                    console.warn(`[Preload] "${sheetName}" Fehler:`, err?.message || err);
+                }
+            }
+            console.log('[Preload] fertig');
         }
         
         // Prüft ob es ungespeicherte Änderungen in irgendeinem Sheet gibt
