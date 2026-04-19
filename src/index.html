@@ -8985,6 +8985,8 @@
             dataValidations: {},  // colIndex -> { type: 'column'|'rows', values: [], rows: {} }
             // Bedingte Formatierung (Sheet-weit)
             hasConditionalFormatting: false,  // true wenn Sheet CF-Regeln hat → Paste mit Format deaktiviert
+            // Blattschutz (Sheet-weit) — Hide Spalten/Zeilen wirkt nicht solange aktiv
+            sheetProtected: false,
             // Cell Styles (Formatierungen aus Excel)
             cellStyles: {},  // "rowIndex-colIndex" -> { bold, italic, fontColor, fill, fontSize, textAlign, ... }
             // Cell Formulas (Formeln aus Excel)
@@ -14907,6 +14909,11 @@
             if (result.hasConditionalFormatting !== undefined) {
                 explorerState.hasConditionalFormatting = !!result.hasConditionalFormatting;
             }
+            // Blattschutz-Flag (warnt User, dass Hide nicht wirkt)
+            if (result.sheetProtected !== undefined) {
+                explorerState.sheetProtected = !!result.sheetProtected;
+            }
+            explorerState._sheetProtectedWarned = false;
             // xlwings liefert data bereits ohne Header-Zeile, ExcelJS hat Header in data[0]
             explorerState.data = result._fromLiveSession ? result.data : result.data.slice(1);
             // Kopie der Originaldaten speichern (deep copy)
@@ -17973,6 +17980,16 @@
         }
         
         window.toggleExplorerColumn = async function(colIndex, visible) {
+            // Hinweis bei aktivem Blattschutz: Hide wirkt nicht im Export
+            if (!visible && explorerState.sheetProtected && !explorerState._sheetProtectedWarned) {
+                explorerState._sheetProtectedWarned = true;
+                showFloatingStatus(
+                    currentLanguage === 'en'
+                        ? '⚠️ Sheet is protected — hidden columns may not apply on export. Remove protection in Excel first.'
+                        : '⚠️ Blattschutz aktiv — versteckte Spalten werden im Export evtl. nicht übernommen. Bitte zuerst in Excel den Blattschutz aufheben.',
+                    'warning'
+                );
+            }
             if (visible) {
                 if (!explorerState.visibleColumns.includes(colIndex)) {
                     explorerState.visibleColumns.push(colIndex);
@@ -19137,7 +19154,7 @@
                             // WICHTIG: changedCells auch bei strukturellen Änderungen senden!
                             // Bei Data Join sind die eingefügten Daten NUR in editedCells, nicht in der Datei.
                             // xlwings schreibt keine Bulk-Daten, also müssen wir die editedCells mitsenden.
-                            const changedCellsForStructural = {};
+                            let changedCellsForStructural = {};
                             
                             // WICHTIG: Cell-Edit-Keys IMMER in vollen Daten-Koordinaten senden
                             // (NICHT in filteredData-Indizes umrechnen!).
@@ -19159,6 +19176,24 @@
                                 if (originalRowIdx >= 0 && colIdx >= 0 && explorerState.data[originalRowIdx]) {
                                     changedCellsForStructural[cellKey] = explorerState.data[originalRowIdx][colIdx];
                                 }
+                            }
+                            
+                            // Spalten-Remap: editedCells-Keys nutzen ORIGINAL/logische Spaltenindizes,
+                            // aber Python erwartet sie in physischen Excel-Spalten (nach columnOrder).
+                            // Ohne dieses Remap landet ein Edit in der falschen Spalte (z.B. in der
+                            // verschobenen Spalte statt in der Nachbarspalte).
+                            if (columnOrder) {
+                                const remappedEdits = {};
+                                for (const [key, val] of Object.entries(changedCellsForStructural)) {
+                                    const [rowStr, colStr] = key.split('-');
+                                    const oldColIdx = parseInt(colStr);
+                                    const newColIdx = columnOrder.indexOf(oldColIdx);
+                                    if (newColIdx !== -1) {
+                                        remappedEdits[`${rowStr}-${newColIdx}`] = val;
+                                    }
+                                    // Spalte gelöscht (newColIdx === -1) → Edit verwerfen
+                                }
+                                changedCellsForStructural = remappedEdits;
                             }
                             
                             if (Object.keys(changedCellsForStructural).length > 0) {

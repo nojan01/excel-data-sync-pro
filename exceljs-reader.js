@@ -863,7 +863,8 @@ function extractSheetMetadata(fileBufferOrPath, sheetName, existingZip = null) {
         mergedCells: [],
         autoFilterRange: null,
         imageCells: [],  // Zellen die Bild-Formeln enthalten (DISPIMG, IMAGE)
-        hasConditionalFormatting: false  // true wenn Sheet <conditionalFormatting> enthält
+        hasConditionalFormatting: false,  // true wenn Sheet <conditionalFormatting> enthält
+        sheetProtected: false  // true wenn Sheet <sheetProtection> enthält (Hide funktioniert dann nicht)
     };
     
     try {
@@ -960,6 +961,9 @@ function extractSheetMetadata(fileBufferOrPath, sheetName, existingZip = null) {
 
         // Bedingte Formatierung erkennen
         result.hasConditionalFormatting = sheetXml.includes('<conditionalFormatting');
+
+        // Blattschutz erkennen (sheet ist geschützt → hide column wirkt nicht)
+        result.sheetProtected = /<sheetProtection\b/.test(sheetXml);
 
         // AutoFilter direkt aus Sheet-XML
         const afMatch = sheetXml.match(/<autoFilter[^>]*ref="([^"]*)"/);
@@ -2211,6 +2215,7 @@ async function readSheetWithExcelJS(filePath, sheetName, password = null, cached
             rowHighlights,  // NEU: Zeilenfarben als Array von [rowIndex, colorName]
             imageCells: metadata.imageCells || [],  // NEU: Bild-Zellen mit vm-Werten für Copy&Paste
             hasConditionalFormatting: metadata.hasConditionalFormatting || false,
+            sheetProtected: metadata.sheetProtected || false,
             stats: {
                 rows: data.length,
                 columns: headers.length,

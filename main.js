@@ -1410,13 +1410,11 @@ function createWindow() {
         {
             label: 'View',
             submenu: [
-                // Reload/DevTools nur im Entwicklungsmodus
-                ...(isDevMode ? [
-                    { role: 'reload', accelerator: 'CmdOrCtrl+R' },
-                    { role: 'forceReload', accelerator: 'CmdOrCtrl+Shift+R' },
-                    { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Shift+I' },
-                    { type: 'separator' },
-                ] : []),
+                // Reload/DevTools immer verfügbar (für User-Diagnostik)
+                { role: 'reload', accelerator: 'CmdOrCtrl+R' },
+                { role: 'forceReload', accelerator: 'CmdOrCtrl+Shift+R' },
+                { role: 'toggleDevTools', accelerator: 'CmdOrCtrl+Shift+I' },
+                { type: 'separator' },
                 { role: 'resetZoom' },
                 { role: 'zoomIn' },
                 { role: 'zoomOut' },
