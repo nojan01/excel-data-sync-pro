@@ -680,10 +680,23 @@ class ExcelLiveSession {
     /**
      * Wechselt das aktive Arbeitsblatt in der Live Session
      * @param {string} sheetName - Name des Zielblatts
+     * @param {boolean} includeData - Wenn true, werden headers+data direkt zurückgegeben (spart 1 Roundtrip)
      */
-    async switchSheet(sheetName) {
+    async switchSheet(sheetName, includeData = false) {
         return this._sendCommand({
             action: 'switchSheet',
+            sheetName: sheetName,
+            includeData: includeData
+        });
+    }
+
+    /**
+     * Aktiviert ein Arbeitsblatt in Excel (visueller Wechsel, ohne Daten zu lesen)
+     * @param {string} sheetName - Name des Zielblatts
+     */
+    async activateSheet(sheetName) {
+        return this._sendCommand({
+            action: 'activateSheet',
             sheetName: sheetName
         });
     }

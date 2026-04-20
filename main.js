@@ -4436,12 +4436,54 @@ ipcMain.handle('liveSession:copyCells', async (event, sourceCells, targetRow, ta
     }
 });
 
-ipcMain.handle('liveSession:switchSheet', async (event, sheetName) => {
-    console.log('[LiveSession] IPC: switchSheet', sheetName);
+ipcMain.handle('liveSession:switchSheet', async (event, sheetName, includeData = false) => {
+    console.log('[LiveSession] IPC: switchSheet', sheetName, 'includeData=', includeData);
     try {
         const session = getLiveSession();
-        return await session.switchSheet(sheetName);
+        return await session.switchSheet(sheetName, includeData);
     } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('liveSession:activateSheet', async (event, sheetName) => {
+    console.log('[LiveSession] IPC: activateSheet', sheetName);
+    try {
+        const session = getLiveSession();
+        return await session.activateSheet(sheetName);
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+});
+
+// Leichtgewichtiger Metadata-Reader für Live-Modus (nur ZIP, keine Datenzellen)
+ipcMain.handle('excel:readSheetMetadata', async (event, filePath, sheetName) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    try {
+        const { extractSheetMetadata } = require('./exceljs-reader');
+        const fileBuffer = await fs.promises.readFile(filePath);
+        const meta = extractSheetMetadata(fileBuffer, sheetName);
+        return { success: true, ...meta };
+    } catch (error) {
+        console.warn('[excel:readSheetMetadata] Fehler:', error.message);
+        return { success: false, error: error.message };
+    }
+});
+
+// SSF-Zahlenformatierung für Live-Modus-Rohdaten (ersetzt Python _apply_number_formats)
+ipcMain.handle('excel:applyNumFmtToLiveData', async (event, filePath, sheetName, headers, data) => {
+    if (!isValidFilePath(filePath)) {
+        return { success: false, error: 'Ungültiger Dateipfad' };
+    }
+    try {
+        const { applyNumFmtToLiveData } = require('./exceljs-reader');
+        const fileBuffer = await fs.promises.readFile(filePath);
+        const result = applyNumFmtToLiveData(fileBuffer, sheetName, headers, data);
+        return { success: true, ...result };
+    } catch (error) {
+        console.error('[excel:applyNumFmtToLiveData] Fehler:', error.message);
         return { success: false, error: error.message };
     }
 });
