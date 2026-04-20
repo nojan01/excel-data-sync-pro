@@ -1896,13 +1896,23 @@ class ExcelLiveSession:
             self.app.screen_updating = False
             original_calculation = self.app.calculation
             self.app.calculation = 'manual'
-            self.app.enable_events = False
+            # WICHTIG: enable_events bleibt TRUE, damit PivotTable-Konflikte
+            # als COM-Exception durchschlagen (sonst: silent discard → Werte
+            # landen nicht in der Datei, readBack liefert None).
+            self.app.enable_events = True
             # Bedingte Formatierung deaktivieren (nur Windows)
             if platform.system() == 'Windows':
                 try:
                     self.worksheet.api.EnableFormatConditionsCalculation = False
                 except Exception:
                     pass
+            # Ziel-Sheet muss aktiv sein, damit Columns.Insert() + range().value
+            # zuverlässig greifen. Ohne activate() werden Writes auf nicht-aktive
+            # Sheets bei bestimmten Excel-Zuständen silent verworfen.
+            try:
+                self.worksheet.activate()
+            except Exception as _act_err:
+                self._log(f"DataJoin: worksheet.activate() warn: {_act_err}")
             try:
                 for op in sorted_ops:
                     pos = op.get('position', 0) + insert_offset
@@ -1977,6 +1987,23 @@ class ExcelLiveSession:
                             )
                             
                             bulk_ok = False
+                            bulk_verified = False
+                            # Erste non-empty Zelle für Verification merken
+                            verify_row = None
+                            verify_col = None
+                            verify_val = None
+                            for ci in range(count):
+                                cd_ci = column_data[ci] if ci < len(column_data) else None
+                                if not cd_ci:
+                                    continue
+                                for ri, v in enumerate(cd_ci):
+                                    if v is not None and v != '':
+                                        verify_row = 2 + ri
+                                        verify_col = excel_col + ci
+                                        verify_val = v
+                                        break
+                                if verify_row is not None:
+                                    break
                             try:
                                 if count == 1:
                                     # 1 Spalte: als 2D vertikal [[v],[v],...]
@@ -1988,7 +2015,6 @@ class ExcelLiveSession:
                                         (2, excel_col), (1 + max_rows, excel_col + count - 1)
                                     ).value = matrix
                                 bulk_ok = True
-                                total_values += ne_total
                                 self._log(
                                     f"  Bulk-Write: {count} Spalte(n) x {max_rows} Zeilen "
                                     f"({ne_total} non-empty) in 1 COM-Call"
@@ -1996,17 +2022,44 @@ class ExcelLiveSession:
                             except Exception as bwe:
                                 self._log(f"  Bulk-Write fehlgeschlagen ({bwe}), Fallback Zelle-für-Zelle")
                             
-                            if not bulk_ok:
+                            # Verification nach Bulk-Write: wurde wirklich geschrieben?
+                            # PivotTable-Kollisionen verwerfen Writes bei enable_events=False silent.
+                            if bulk_ok and verify_row is not None:
+                                try:
+                                    rb = self.worksheet.range((verify_row, verify_col)).value
+                                    if str(rb) == str(verify_val):
+                                        bulk_verified = True
+                                        total_values += ne_total
+                                    else:
+                                        self._log(
+                                            f"  Bulk-Verify FEHLGESCHLAGEN: "
+                                            f"col={verify_col} row={verify_row} "
+                                            f"wrote={verify_val!r} readBack={rb!r} — Fallback Zelle-für-Zelle"
+                                        )
+                                        bulk_ok = False
+                                except Exception as ve:
+                                    self._log(f"  Bulk-Verify-Lesefehler ({ve}), nehme Bulk als gelungen an")
+                                    bulk_verified = True
+                                    total_values += ne_total
+                            elif bulk_ok:
+                                # Nichts zu verifizieren (alle Werte leer)
+                                bulk_verified = True
+                                total_values += ne_total
+                            
+                            if not bulk_verified:
+                                # Zelle-für-Zelle mit durchschlagenden Exceptions:
+                                # Bei PivotTable-Konflikt wirft Excel hier eine klare COM-Exception,
+                                # die nach außen propagiert und vom Frontend angezeigt wird.
+                                cell_written = 0
                                 for i, col_values in enumerate(column_data):
                                     if col_values and len(col_values) > 0:
                                         target_col = excel_col + i
-                                        written = 0
                                         for idx, val in enumerate(col_values):
                                             if val is not None and val != '':
                                                 self.worksheet.range((2 + idx, target_col)).value = val
-                                                written += 1
-                                        self._log(f"  Spalte {target_col}: {written}/{len(col_values)} Werte geschrieben")
-                                        total_values += written
+                                                cell_written += 1
+                                self._log(f"  Cell-by-cell Fallback: {cell_written} Werte geschrieben")
+                                total_values += cell_written
                     
                     total_inserted += count
                     insert_offset += count
@@ -2016,8 +2069,10 @@ class ExcelLiveSession:
                 
             finally:
                 # Session-Performance-Modus beibehalten:
-                # EnableFormatConditionsCalculation=False, enable_events=False
-                self.app.enable_events = False
+                # EnableFormatConditionsCalculation=False.
+                # enable_events bleibt TRUE (siehe oben), damit nachfolgende
+                # Writes (setCellsBatch etc.) PT-Konflikte ebenfalls melden.
+                self.app.enable_events = True
                 self.app.calculation = original_calculation
                 self.app.screen_updating = True
             

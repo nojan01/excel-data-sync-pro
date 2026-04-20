@@ -9427,7 +9427,7 @@
             explorerState.headers.forEach((header, index) => {
                 const option = document.createElement('option');
                 option.value = index;
-                option.textContent = `${getColumnLetter(index)}: ${header || '(leer)'}`;
+                option.textContent = `${getColumnLetter(index + 1)}: ${header || '(leer)'}`;
                 targetKeySelect.appendChild(option);
             });
             targetKeySelect.disabled = false;
@@ -9556,7 +9556,7 @@
                 dataJoinState.sourceHeaders.forEach((header, index) => {
                     const option = document.createElement('option');
                     option.value = index;
-                    option.textContent = `${getColumnLetter(index)}: ${header || '(leer)'}`;
+                    option.textContent = `${getColumnLetter(index + 1)}: ${header || '(leer)'}`;
                     sourceKeySelect.appendChild(option);
                 });
                 sourceKeySelect.disabled = false;
@@ -9586,7 +9586,7 @@
             
             // Erstelle Optionen für Ziel-Positionen
             const targetPositionOptions = explorerState.headers.map((h, idx) => 
-                `<option value="${idx}">nach ${getColumnLetter(idx)}: ${h || '(leer)'}</option>`
+                `<option value="${idx}">nach ${getColumnLetter(idx + 1)}: ${h || '(leer)'}</option>`
             ).join('');
             
             dataJoinState.sourceHeaders.forEach((header, index) => {
@@ -9596,7 +9596,7 @@
                 row.innerHTML = `
                     <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; flex: 0 0 auto;">
                         <input type="checkbox" class="green-checkbox join-column-checkbox" data-index="${index}">
-                        <span style="font-weight: 500; color: var(--primary-light); min-width: 30px;">${getColumnLetter(index)}</span>
+                        <span style="font-weight: 500; color: var(--primary-light); min-width: 30px;">${getColumnLetter(index + 1)}</span>
                         <span style="color: var(--text); min-width: 120px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${header || '(leer)'}">${header || '(leer)'}</span>
                     </label>
                     <span style="color: var(--text-muted); font-size: 12px;">→</span>
@@ -9668,7 +9668,7 @@
                 if (!posSelect) return;
                 const rawValue = posSelect.value;
                 const basePos = rawValue.split('+')[0]; // "end" oder z.B. "3"
-                const name = dataJoinState.sourceHeaders[sourceIndex] || `Spalte ${getColumnLetter(sourceIndex)}`;
+                const name = dataJoinState.sourceHeaders[sourceIndex] || `Spalte ${getColumnLetter(sourceIndex + 1)}`;
                 selectedCols.push({ sourceIndex, basePos, name });
             });
             
@@ -9729,7 +9729,7 @@
                     // Eigenen Eintrag überspringen
                     if (item.isNew && item.sourceIndex === currentSourceIndex) return;
                     
-                    const letter = getColumnLetter(vIdx);
+                    const letter = getColumnLetter(vIdx + 1);
                     const style = item.isNew ? 'color: #4ec9b0; font-style: italic;' : '';
                     optionsHtml += `<option value="${item.value}" style="${style}">nach ${letter}: ${item.label}</option>`;
                 });
@@ -9893,7 +9893,7 @@
                 
                 // Neue Header für diese Position - mit Duplikatprüfung
                 const newHeaders = sourceIndices.map(idx => {
-                    let headerName = dataJoinState.sourceHeaders[idx] || `Spalte ${getColumnLetter(idx)}`;
+                    let headerName = dataJoinState.sourceHeaders[idx] || `Spalte ${getColumnLetter(idx + 1)}`;
                     let finalName = headerName;
                     let counter = 2;
                     // Prüfe ob Name bereits existiert (in explorerState.headers oder bereits hinzugefügten newHeaders)
