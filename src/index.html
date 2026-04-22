@@ -3300,6 +3300,9 @@
                     <button class="btn btn-primary" id="btnSerialCheck" title="Seriennummern der Soll-Liste gegen mehrere Ist-Listen prüfen und fehlende exportieren" style="height: 34px;">
                         🔎 Fehlende Seriennummern
                     </button>
+                    <button class="btn btn-primary" id="btnValueCount" title="Werte einer gemeinsamen Spalte über mehrere Dateien zählen (z.B. Servertyp)" style="height: 34px;">
+                        📊 Werte zählen
+                    </button>
                     <button class="btn btn-warning" id="btnExplorerUndo" title="Letzte Aktion rückgängig machen (Strg+Z) — nur bei aktiver Live-Session" style="display: none; height: 34px;">
                         ↩️ Undo
                     </button>
@@ -3590,6 +3593,74 @@
             <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border);">
                 <button class="btn btn-secondary" id="btnCancelSerialCheck">Abbrechen</button>
                 <button class="btn btn-success" id="btnRunSerialCheck">🔎 Fehlende finden &amp; exportieren</button>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Value-Count Modal: Werte einer gemeinsamen Spalte über mehrere Dateien zählen -->
+    <div class="modal-overlay hidden" id="valueCountModal">
+        <div class="modal modal-large" style="max-width: 1100px; width: 94%; max-height: 90vh;">
+            <div class="modal-header">
+                <div class="modal-title">📊 Werte zählen über Dateien</div>
+                <button class="modal-close" id="btnCloseValueCount">&times;</button>
+            </div>
+            <div class="modal-body" style="display: flex; flex-direction: column; gap: 15px; overflow-y: auto;">
+                <div style="padding: 12px; background: linear-gradient(135deg, #2d2d30 0%, #252526 100%); border-radius: 6px; border-left: 4px solid var(--info); font-size: 13px; line-height: 1.5;">
+                    Zählt für eine gemeinsame Spalte (z.B. <strong>Servertyp</strong>) die vorkommenden Werte über mehrere Bestandsdateien. Ergebnis ist eine Tabelle mit Wert, Gesamt und Anzahl pro Datei. Vergleich ist case-insensitiv, Whitespace wird ignoriert.
+                </div>
+                
+                <!-- Dateien -->
+                <fieldset style="border: 1px solid var(--border); border-radius: 6px; padding: 12px;">
+                    <legend style="padding: 0 8px; color: var(--success); font-weight: 600;">📂 Bestandsdateien</legend>
+                    <div id="vcSourcesContainer" style="display: flex; flex-direction: column; gap: 10px;"></div>
+                    <button class="btn btn-secondary" id="btnVCAddSource" style="margin-top: 10px; height: 30px;">+ Datei hinzufügen</button>
+                </fieldset>
+                
+                <!-- Optionen -->
+                <fieldset style="border: 1px solid var(--border); border-radius: 6px; padding: 12px;">
+                    <legend style="padding: 0 8px; color: var(--info); font-weight: 600;">⚙️ Optionen</legend>
+                    <div style="display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px;">
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                            <input type="checkbox" id="vcOptCaseInsensitive" class="green-checkbox" checked>
+                            <span>Case-insensitiv (Groß-/Kleinschreibung ignorieren)</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                            <input type="checkbox" id="vcOptTrim" class="green-checkbox" checked>
+                            <span>Whitespace trimmen</span>
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+                            <input type="checkbox" id="vcOptIncludeEmpty" class="green-checkbox">
+                            <span>Leere Werte einbeziehen</span>
+                        </label>
+                    </div>
+                </fieldset>
+                
+                <!-- Status -->
+                <div id="vcStatus" style="font-size: 13px; color: var(--text-muted); min-height: 18px;"></div>
+                
+                <!-- Ergebnis -->
+                <div id="vcResultContainer" style="display: none; flex-direction: column; gap: 8px;">
+                    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                        <div style="font-weight: 600; color: var(--text);">📋 Ergebnis</div>
+                        <div id="vcResultSummary" style="font-size: 12px; color: var(--text-muted);"></div>
+                        <div style="margin-left: auto; display: flex; gap: 6px; align-items: center;">
+                            <input type="text" id="vcResultFilter" placeholder="🔍 Filter…" class="form-control" style="width: 200px; height: 28px;">
+                            <button class="btn btn-secondary" id="btnVCSortValue" title="Nach Wert sortieren" style="height: 28px;">↕ Wert</button>
+                            <button class="btn btn-secondary" id="btnVCSortCount" title="Nach Anzahl sortieren" style="height: 28px;">↕ Anzahl</button>
+                        </div>
+                    </div>
+                    <div style="max-height: 380px; overflow: auto; border: 1px solid var(--border); border-radius: 4px;">
+                        <table id="vcResultTable" style="width: 100%; border-collapse: collapse; font-size: 13px;">
+                            <thead id="vcResultHead" style="position: sticky; top: 0; background: var(--bg-light); z-index: 1;"></thead>
+                            <tbody id="vcResultBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; padding: 12px 16px; border-top: 1px solid var(--border);">
+                <button class="btn btn-secondary" id="btnCancelValueCount">Schließen</button>
+                <button class="btn btn-primary" id="btnRunValueCount">📊 Auswerten</button>
+                <button class="btn btn-success" id="btnExportValueCount" disabled>💾 Export Excel</button>
             </div>
         </div>
     </div>
@@ -9410,6 +9481,340 @@
                 console.error('[SerialCheck] Fehler:', e);
                 _scSetStatus('Fehler: ' + (e && e.message ? e.message : e), 'error');
                 showNotification('Fehler beim Abgleich: ' + (e && e.message ? e.message : e), 'error');
+            }
+        }
+        
+        // =====================================================================
+        // Value-Count: Werte einer gemeinsamen Spalte über mehrere Dateien zählen
+        // =====================================================================
+        const valueCountState = {
+            sources: [],          // { id, filePath, fileName, sheets, sheetName, headers, columnIndex, label }
+            results: null,        // { totals: Map<displayValue, {total, perSource: {id: count}}>, fileLabels: [{id,label}] }
+            sortMode: 'count-desc' // 'count-desc' | 'count-asc' | 'value-asc' | 'value-desc'
+        };
+        let _vcNextId = 1;
+        
+        function _vcNormalize(v, caseInsensitive, trimOn) {
+            if (v == null) return '';
+            let s = String(v);
+            if (trimOn) s = s.trim();
+            if (caseInsensitive) s = s.toLowerCase();
+            return s;
+        }
+        
+        function _vcSetStatus(msg, kind) {
+            const el = document.getElementById('vcStatus');
+            if (!el) return;
+            el.textContent = msg || '';
+            el.style.color = kind === 'error' ? 'var(--danger, #d9534f)'
+                : kind === 'success' ? 'var(--success, #5cb85c)'
+                : 'var(--text-muted)';
+        }
+        
+        async function openValueCountModal() {
+            valueCountState.sources = [];
+            valueCountState.results = null;
+            valueCountState.sortMode = 'count-desc';
+            _vcSetStatus('');
+            document.getElementById('vcSourcesContainer').innerHTML = '';
+            document.getElementById('vcResultContainer').style.display = 'none';
+            document.getElementById('vcResultFilter').value = '';
+            const btnExport = document.getElementById('btnExportValueCount');
+            if (btnExport) btnExport.disabled = true;
+            
+            // Vorbelegen mit aktueller Explorer-Datei
+            _vcAddSourceRow();
+            if (explorerState && explorerState.filePath) {
+                try {
+                    const first = valueCountState.sources[0];
+                    await _vcLoadSourceFile(first, explorerState.filePath);
+                    if (explorerState.currentSheet && first.sheets.includes(explorerState.currentSheet)) {
+                        await _vcLoadSourceSheet(first, explorerState.currentSheet);
+                    }
+                } catch (e) {
+                    console.warn('[ValueCount] Vorbelegen fehlgeschlagen:', e);
+                }
+            }
+            
+            document.getElementById('btnCloseValueCount').onclick = closeValueCountModal;
+            document.getElementById('btnCancelValueCount').onclick = closeValueCountModal;
+            document.getElementById('btnVCAddSource').onclick = _vcAddSourceRow;
+            document.getElementById('btnRunValueCount').onclick = runValueCount;
+            document.getElementById('btnExportValueCount').onclick = exportValueCount;
+            document.getElementById('vcResultFilter').oninput = _vcRenderResults;
+            document.getElementById('btnVCSortValue').onclick = () => {
+                valueCountState.sortMode = valueCountState.sortMode === 'value-asc' ? 'value-desc' : 'value-asc';
+                _vcRenderResults();
+            };
+            document.getElementById('btnVCSortCount').onclick = () => {
+                valueCountState.sortMode = valueCountState.sortMode === 'count-desc' ? 'count-asc' : 'count-desc';
+                _vcRenderResults();
+            };
+            
+            document.getElementById('valueCountModal').classList.remove('hidden');
+        }
+        
+        function closeValueCountModal() {
+            document.getElementById('valueCountModal').classList.add('hidden');
+        }
+        
+        async function _vcLoadSourceFile(src, filePath) {
+            const res = await window.electronAPI.readExcelFile(filePath);
+            if (!res || !res.success) throw new Error(res && res.error ? res.error : 'Datei nicht lesbar');
+            src.filePath = filePath;
+            src.fileName = filePath.split(/[\\/]/).pop();
+            src.sheets = Array.isArray(res.sheets) ? res.sheets : [];
+            src.sheetName = null;
+            src.headers = [];
+            src.columnIndex = -1;
+            if (!src.label) src.label = src.fileName.replace(/\.(xlsx|xlsm|xls)$/i, '');
+            _vcSyncRowUI(src);
+        }
+        
+        async function _vcLoadSourceSheet(src, sheetName) {
+            const res = await window.electronAPI.readExcelSheet(src.filePath, sheetName, null);
+            if (!res || !res.success) throw new Error(res && res.error ? res.error : 'Blatt nicht lesbar');
+            src.sheetName = sheetName;
+            src.headers = Array.isArray(res.headers) ? res.headers : [];
+            src.columnIndex = -1;
+            _vcSyncRowUI(src);
+        }
+        
+        function _vcSyncRowUI(src) {
+            const row = document.querySelector(`#vcSourcesContainer [data-vc-source-id="${src.id}"]`);
+            if (!row) return;
+            const qs = sel => row.querySelector(sel);
+            qs('.vc-label').value = src.label || '';
+            qs('.vc-filename').textContent = src.fileName || 'Keine Datei';
+            qs('.vc-filename').title = src.filePath || '';
+            const sheetSel = qs('.vc-sheet');
+            sheetSel.innerHTML = '<option value="">-- Blatt --</option>' +
+                src.sheets.map(s => `<option value="${escapeHtml(s)}"${s === src.sheetName ? ' selected' : ''}>${escapeHtml(s)}</option>`).join('');
+            sheetSel.disabled = src.sheets.length === 0;
+            const colSel = qs('.vc-column');
+            colSel.innerHTML = '<option value="">-- Spalte --</option>' +
+                src.headers.map((h, i) => `<option value="${i}"${i === src.columnIndex ? ' selected' : ''}>${escapeHtml(String(h ?? ''))}</option>`).join('');
+            colSel.disabled = src.headers.length === 0;
+        }
+        
+        function _vcAddSourceRow() {
+            const id = _vcNextId++;
+            const src = { id, filePath: null, fileName: null, sheets: [], sheetName: null, headers: [], columnIndex: -1, label: '' };
+            valueCountState.sources.push(src);
+            
+            const container = document.getElementById('vcSourcesContainer');
+            const row = document.createElement('div');
+            row.dataset.vcSourceId = String(id);
+            row.style.cssText = 'display: grid; grid-template-columns: 1.2fr 1.5fr 1fr 1.2fr auto; gap: 8px; align-items: end; padding: 8px; background: var(--bg-light); border-radius: 4px;';
+            row.innerHTML = `
+                <div>
+                    <label style="font-size: 11px; color: var(--text-muted);">Label</label>
+                    <input type="text" class="form-control vc-label" placeholder="z.B. Bestand A" style="width: 100%;">
+                </div>
+                <div>
+                    <label style="font-size: 11px; color: var(--text-muted);">Datei</label>
+                    <div style="display: grid; grid-template-columns: 1fr auto; gap: 4px;">
+                        <div class="vc-filename" style="font-size: 12px; padding: 6px 8px; background: var(--bg); border: 1px solid var(--border); border-radius: 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">Keine Datei</div>
+                        <button class="btn btn-primary vc-select-file" style="height: 30px; padding: 0 8px;">📂</button>
+                    </div>
+                </div>
+                <div>
+                    <label style="font-size: 11px; color: var(--text-muted);">Blatt</label>
+                    <select class="form-control vc-sheet" disabled style="width: 100%;"></select>
+                </div>
+                <div>
+                    <label style="font-size: 11px; color: var(--text-muted);">Spalte</label>
+                    <select class="form-control vc-column" disabled style="width: 100%;"></select>
+                </div>
+                <div>
+                    <button class="btn btn-danger vc-remove" title="Entfernen" style="height: 30px; padding: 0 10px;">✕</button>
+                </div>
+            `;
+            container.appendChild(row);
+            
+            const qs = sel => row.querySelector(sel);
+            qs('.vc-label').oninput = e => { src.label = e.target.value; };
+            qs('.vc-select-file').onclick = async () => {
+                try {
+                    const pickedPath = await window.electronAPI.openFileDialog({
+                        title: 'Bestandsdatei wählen',
+                        filters: [{ name: 'Excel-Dateien', extensions: ['xlsx', 'xlsm', 'xls'] }]
+                    });
+                    if (!pickedPath) return;
+                    _vcSetStatus('Lade Datei…');
+                    await _vcLoadSourceFile(src, pickedPath);
+                    _vcSetStatus('');
+                } catch (e) {
+                    _vcSetStatus('Fehler: ' + (e && e.message ? e.message : e), 'error');
+                }
+            };
+            qs('.vc-sheet').onchange = async (e) => {
+                const sn = e.target.value;
+                if (!sn || !src.filePath) return;
+                try {
+                    _vcSetStatus('Lade Blatt…');
+                    await _vcLoadSourceSheet(src, sn);
+                    _vcSetStatus('');
+                } catch (err) {
+                    _vcSetStatus('Fehler: ' + (err && err.message ? err.message : err), 'error');
+                }
+            };
+            qs('.vc-column').onchange = e => {
+                const v = parseInt(e.target.value, 10);
+                src.columnIndex = isNaN(v) ? -1 : v;
+            };
+            qs('.vc-remove').onclick = () => {
+                const i = valueCountState.sources.findIndex(s => s.id === id);
+                if (i >= 0) valueCountState.sources.splice(i, 1);
+                row.remove();
+            };
+        }
+        
+        async function runValueCount() {
+            try {
+                const srcs = valueCountState.sources.filter(s => s.filePath && s.sheetName && s.columnIndex >= 0);
+                if (srcs.length === 0) {
+                    _vcSetStatus('Bitte mindestens eine vollständige Datei (Datei + Blatt + Spalte) angeben', 'error');
+                    return;
+                }
+                const caseInsensitive = document.getElementById('vcOptCaseInsensitive').checked;
+                const trimOn = document.getElementById('vcOptTrim').checked;
+                const includeEmpty = document.getElementById('vcOptIncludeEmpty').checked;
+                
+                // Aggregation: keyNorm -> { display, perSource: Map<id,count>, total }
+                const agg = new Map();
+                const fileLabels = [];
+                let scannedRows = 0;
+                
+                for (let i = 0; i < srcs.length; i++) {
+                    const s = srcs[i];
+                    const label = s.label || s.fileName;
+                    fileLabels.push({ id: s.id, label });
+                    _vcSetStatus(`Lade ${i + 1}/${srcs.length}: ${label}…`);
+                    const res = await window.electronAPI.readExcelSheet(s.filePath, s.sheetName, null);
+                    if (!res || !res.success) throw new Error(`${label}: nicht lesbar`);
+                    const data = Array.isArray(res.data) ? res.data : [];
+                    for (const row of data) {
+                        if (!Array.isArray(row)) continue;
+                        scannedRows++;
+                        const raw = row[s.columnIndex];
+                        const keyNorm = _vcNormalize(raw, caseInsensitive, trimOn);
+                        if (!keyNorm && !includeEmpty) continue;
+                        // Anzeige-Wert: erste Fundstelle (nicht-normalisiert, aber ggf. getrimmt)
+                        const display = keyNorm === ''
+                            ? '(leer)'
+                            : (trimOn ? String(raw ?? '').trim() : String(raw ?? ''));
+                        let entry = agg.get(keyNorm);
+                        if (!entry) {
+                            entry = { display, perSource: {}, total: 0 };
+                            agg.set(keyNorm, entry);
+                        }
+                        entry.perSource[s.id] = (entry.perSource[s.id] || 0) + 1;
+                        entry.total++;
+                    }
+                }
+                
+                valueCountState.results = { agg, fileLabels, scannedRows };
+                _vcSetStatus(`✅ ${agg.size} unterschiedliche Werte in ${scannedRows} Zeilen aus ${srcs.length} Datei(en).`, 'success');
+                document.getElementById('vcResultContainer').style.display = 'flex';
+                document.getElementById('btnExportValueCount').disabled = agg.size === 0;
+                _vcRenderResults();
+            } catch (e) {
+                console.error('[ValueCount] Fehler:', e);
+                _vcSetStatus('Fehler: ' + (e && e.message ? e.message : e), 'error');
+                showNotification('Fehler beim Auswerten: ' + (e && e.message ? e.message : e), 'error');
+            }
+        }
+        
+        function _vcRenderResults() {
+            const r = valueCountState.results;
+            if (!r) return;
+            const head = document.getElementById('vcResultHead');
+            const body = document.getElementById('vcResultBody');
+            const summary = document.getElementById('vcResultSummary');
+            const filter = (document.getElementById('vcResultFilter').value || '').toLowerCase();
+            
+            // Header
+            const fileCols = r.fileLabels.map(f =>
+                `<th style="padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--border); white-space: nowrap;" title="${escapeHtml(f.label)}">${escapeHtml(f.label)}</th>`
+            ).join('');
+            head.innerHTML = `
+                <tr>
+                    <th style="padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border);">#</th>
+                    <th style="padding: 6px 10px; text-align: left; border-bottom: 1px solid var(--border);">Wert</th>
+                    <th style="padding: 6px 10px; text-align: right; border-bottom: 1px solid var(--border);">Gesamt</th>
+                    ${fileCols}
+                </tr>
+            `;
+            
+            // Sort + filter
+            const rows = Array.from(r.agg.entries()).map(([key, v]) => ({ key, ...v }));
+            const sort = valueCountState.sortMode;
+            rows.sort((a, b) => {
+                if (sort === 'count-desc') return b.total - a.total || a.display.localeCompare(b.display);
+                if (sort === 'count-asc') return a.total - b.total || a.display.localeCompare(b.display);
+                if (sort === 'value-asc') return a.display.localeCompare(b.display);
+                if (sort === 'value-desc') return b.display.localeCompare(a.display);
+                return 0;
+            });
+            const filtered = filter
+                ? rows.filter(x => x.display.toLowerCase().includes(filter))
+                : rows;
+            
+            const totalSum = filtered.reduce((a, x) => a + x.total, 0);
+            summary.textContent = `${filtered.length} / ${rows.length} Werte · ${totalSum} Treffer`;
+            
+            // Body
+            body.innerHTML = filtered.map((x, i) => {
+                const perCols = r.fileLabels.map(f => {
+                    const c = x.perSource[f.id] || 0;
+                    const muted = c === 0 ? ' style="color: var(--text-muted);"' : '';
+                    return `<td style="padding: 5px 10px; text-align: right; border-bottom: 1px solid var(--border);"${muted}>${c}</td>`;
+                }).join('');
+                return `
+                    <tr style="${i % 2 ? 'background: rgba(255,255,255,0.02);' : ''}">
+                        <td style="padding: 5px 10px; color: var(--text-muted); border-bottom: 1px solid var(--border);">${i + 1}</td>
+                        <td style="padding: 5px 10px; border-bottom: 1px solid var(--border); word-break: break-word;">${escapeHtml(x.display)}</td>
+                        <td style="padding: 5px 10px; text-align: right; font-weight: 600; border-bottom: 1px solid var(--border);">${x.total}</td>
+                        ${perCols}
+                    </tr>
+                `;
+            }).join('');
+        }
+        
+        async function exportValueCount() {
+            try {
+                const r = valueCountState.results;
+                if (!r || r.agg.size === 0) return;
+                const defaultName = 'Werte_Zaehlung.xlsx';
+                const savePath = await window.electronAPI.saveFileDialog({
+                    title: 'Wert-Zählung exportieren',
+                    defaultPath: defaultName,
+                    filters: [{ name: 'Excel-Dateien', extensions: ['xlsx'] }]
+                });
+                if (!savePath) return;
+                
+                const headers = ['Wert', 'Gesamt', ...r.fileLabels.map(f => f.label)];
+                const rows = Array.from(r.agg.values())
+                    .sort((a, b) => b.total - a.total || a.display.localeCompare(b.display))
+                    .map(v => [v.display, v.total, ...r.fileLabels.map(f => v.perSource[f.id] || 0)]);
+                
+                _vcSetStatus('Schreibe Export…');
+                const writeRes = await window.electronAPI.serialCheckExportXlsx({
+                    outputPath: savePath,
+                    sheetName: 'Werte-Zählung',
+                    headers,
+                    rows
+                });
+                if (!writeRes || !writeRes.success) {
+                    throw new Error(writeRes && writeRes.error ? writeRes.error : 'Export fehlgeschlagen');
+                }
+                _vcSetStatus(`✅ ${rows.length} Werte nach ${savePath.split(/[\\/]/).pop()} exportiert.`, 'success');
+                showNotification(`Export erfolgreich: ${rows.length} Werte`, 'success');
+            } catch (e) {
+                console.error('[ValueCount] Export-Fehler:', e);
+                _vcSetStatus('Export-Fehler: ' + (e && e.message ? e.message : e), 'error');
+                showNotification('Export-Fehler: ' + (e && e.message ? e.message : e), 'error');
             }
         }
         
@@ -21303,6 +21708,10 @@
             // Serial-Check
             const btnSerialCheck = document.getElementById('btnSerialCheck');
             if (btnSerialCheck) btnSerialCheck.onclick = openSerialCheckModal;
+            
+            // Value-Count
+            const btnValueCount = document.getElementById('btnValueCount');
+            if (btnValueCount) btnValueCount.onclick = openValueCountModal;
             
             // Data Join Drag & Drop Zone
             const joinDropZone = document.getElementById('joinDropZone');
