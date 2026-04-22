@@ -9599,13 +9599,13 @@
         
         function _vcAddSourceRow() {
             const id = _vcNextId++;
-            const src = { id, filePath: null, fileName: null, sheets: [], sheetName: null, headers: [], columnIndex: -1, label: '' };
+            const src = { id, filePath: null, fileName: null, sheets: [], sheetName: null, headers: [], columnIndex: -1, label: '', skipFirstRow: true };
             valueCountState.sources.push(src);
             
             const container = document.getElementById('vcSourcesContainer');
             const row = document.createElement('div');
             row.dataset.vcSourceId = String(id);
-            row.style.cssText = 'display: grid; grid-template-columns: 1.2fr 1.5fr 1fr 1.2fr auto; gap: 8px; align-items: end; padding: 8px; background: var(--bg-light); border-radius: 4px;';
+            row.style.cssText = 'display: grid; grid-template-columns: 1.2fr 1.5fr 1fr 1.2fr auto auto; gap: 8px; align-items: end; padding: 8px; background: var(--bg-light); border-radius: 4px;';
             row.innerHTML = `
                 <div>
                     <label style="font-size: 11px; color: var(--text-muted);">Label</label>
@@ -9625,6 +9625,13 @@
                 <div>
                     <label style="font-size: 11px; color: var(--text-muted);">Spalte</label>
                     <select class="form-control vc-column" disabled style="width: 100%;"></select>
+                </div>
+                <div title="Erste Zeile ist Überschrift — beim Zählen überspringen">
+                    <label style="font-size: 11px; color: var(--text-muted); display: block;">Header</label>
+                    <label style="height: 30px; display: flex; align-items: center; gap: 4px; cursor: pointer; font-size: 12px;">
+                        <input type="checkbox" class="vc-skip-header green-checkbox" checked>
+                        <span>ignorieren</span>
+                    </label>
                 </div>
                 <div>
                     <button class="btn btn-danger vc-remove" title="Entfernen" style="height: 30px; padding: 0 10px;">✕</button>
@@ -9663,6 +9670,9 @@
                 const v = parseInt(e.target.value, 10);
                 src.columnIndex = isNaN(v) ? -1 : v;
             };
+            qs('.vc-skip-header').onchange = e => {
+                src.skipFirstRow = !!e.target.checked;
+            };
             qs('.vc-remove').onclick = () => {
                 const i = valueCountState.sources.findIndex(s => s.id === id);
                 if (i >= 0) valueCountState.sources.splice(i, 1);
@@ -9693,7 +9703,8 @@
                     _vcSetStatus(`Lade ${i + 1}/${srcs.length}: ${label}…`);
                     const res = await window.electronAPI.readExcelSheet(s.filePath, s.sheetName, null);
                     if (!res || !res.success) throw new Error(`${label}: nicht lesbar`);
-                    const data = Array.isArray(res.data) ? res.data : [];
+                    const allData = Array.isArray(res.data) ? res.data : [];
+                    const data = s.skipFirstRow ? allData.slice(1) : allData;
                     for (const row of data) {
                         if (!Array.isArray(row)) continue;
                         scannedRows++;
