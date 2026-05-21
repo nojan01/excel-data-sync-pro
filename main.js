@@ -1572,6 +1572,11 @@ app.whenReady().then(async () => {
         return pendingFileOpen || null;
     });
 
+    // IPC-Handler: Liefert die aktuelle App-Version (aus package.json)
+    ipcMain.handle('app:getVersion', () => {
+        try { return app.getVersion(); } catch (_) { return null; }
+    });
+
     // Prüfe ob eine Datei per Kommandozeile/"Öffnen mit..." übergeben wurde
     const startupFile = getFileFromArgs(process.argv);
     if (startupFile) {

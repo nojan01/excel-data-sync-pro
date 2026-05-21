@@ -1,7 +1,19 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
+// App-Version synchron aus package.json lesen (fallback falls IPC nicht antwortet)
+let APP_VERSION = '';
+try {
+    APP_VERSION = require('./package.json').version || '';
+} catch (_) {
+    try { APP_VERSION = process.env.npm_package_version || ''; } catch (_) { /* ignore */ }
+}
+
 // Sichere API fuer das Frontend bereitstellen
 contextBridge.exposeInMainWorld('electronAPI', {
+    // App-Info
+    appVersion: APP_VERSION,
+    getAppVersion: () => ipcRenderer.invoke('app:getVersion'),
+
     // Dialoge
     openFileDialog: (options) => ipcRenderer.invoke('dialog:openFile', options),
     saveFileDialog: (options) => ipcRenderer.invoke('dialog:saveFile', options),

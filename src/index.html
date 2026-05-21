@@ -1624,6 +1624,7 @@
         <div class="logo">
             <div class="logo-icon" style="font-size: 16px; line-height: 1.2;">📊</div>
             <span>Excel Data Sync Pro</span>
+            <span id="appVersionBadge" style="margin-left: 8px; font-size: 11px; font-weight: 500; color: var(--text-muted); opacity: 0.8;"></span>
         </div>
         <div class="header-actions">
             <button class="btn btn-primary" id="btnImportConfig" title="Gemeinsame config.json aus Programmordner laden">
@@ -1944,7 +1945,7 @@
     
     <!-- Footer -->
     <footer style="background: var(--bg-medium); border-top: 1px solid var(--border); padding: 8px 20px; text-align: center; color: var(--text-muted); font-size: 12px;">
-        © Norbert Jander 2026 · v1.9.0
+        © Norbert Jander 2026 · v{version}
     </footer>
     
     <!-- Mapping Modal -->
@@ -4038,7 +4039,7 @@
                 createAndLoad: '📅 Erstellen & Laden',
                 
                 // Footer
-                copyright: '© Norbert Jander 2026 · v1.9.0',
+                copyright: '© Norbert Jander 2026 · v{version}',
                 
                 // Extra Columns
                 extraColumns: 'Extra-Spalten',
@@ -4368,7 +4369,7 @@
                 createAndLoad: '📅 Create & Load',
                 
                 // Footer
-                copyright: '© Norbert Jander 2026 · v1.9.0',
+                copyright: '© Norbert Jander 2026 · v{version}',
                 
                 // Extra Columns
                 extraColumns: 'Extra Columns',
@@ -4550,7 +4551,7 @@
             document.querySelector('.empty-state-text').innerHTML = t('instructions');
             
             // Footer
-            document.querySelector('footer').innerHTML = t('copyright');
+            document.querySelector('footer').innerHTML = t('copyright').replace('{version}', window.__appVersion || window.electronAPI?.appVersion || '');
             
             // Queue panel
             document.getElementById('btnClearQueue').innerHTML = t('clear');
@@ -14177,6 +14178,36 @@
         
         // Event Listeners für Find & Replace
         document.addEventListener('DOMContentLoaded', () => {
+            // App-Version im Header anzeigen (synchron aus preload, async als Fallback)
+            try {
+                const vSync = window.electronAPI?.appVersion;
+                if (vSync) window.__appVersion = vSync;
+            } catch (_) { /* ignore */ }
+            const applyVersion = (v) => {
+                if (!v) return;
+                window.__appVersion = v;
+                const el = document.getElementById('appVersionBadge');
+                if (el) el.textContent = 'v' + v;
+                const footer = document.querySelector('footer');
+                if (footer) {
+                    // Footer immer aus Template neu schreiben, damit Version auch dann
+                    // erscheint, wenn updateLanguage() bereits vorher lief.
+                    try {
+                        const tpl = (typeof t === 'function') ? t('copyright') : footer.innerHTML;
+                        footer.innerHTML = tpl.replace('{version}', v);
+                    } catch (_) {
+                        footer.innerHTML = footer.innerHTML.replace('{version}', v);
+                    }
+                }
+            };
+            applyVersion(window.__appVersion);
+            (async () => {
+                try {
+                    const v = await window.electronAPI?.getAppVersion?.();
+                    applyVersion(v);
+                } catch (_) { /* ignore */ }
+            })();
+
             // Toggle Button
             document.getElementById('btnToggleFindReplace')?.addEventListener('click', toggleFindReplacePanel);
             
