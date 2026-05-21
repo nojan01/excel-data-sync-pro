@@ -690,9 +690,11 @@ const networkLog = {
 
         // Windows: Netzlaufwerke erkennen
         if (process.platform === 'win32') {
-            this.updateNetworkDrives(true); // true = initial scan, loggen
-            // Periodisch aktualisieren (alle 30 Sekunden), aber ohne Logging
-            setInterval(() => this.updateNetworkDrives(false), 30000);
+            // Async ausführen, damit der App-Start nicht blockiert wird
+            this.updateNetworkDrives(true).catch(() => {});
+            // Periodisch aktualisieren (alle 5 Minuten) - Netzlaufwerke ändern sich selten,
+            // 30s war zu aggressiv und verursachte 2-3s UI-Freezes durch execSync/PowerShell
+            setInterval(() => { this.updateNetworkDrives(false).catch(() => {}); }, 5 * 60 * 1000);
         }
     },
 
@@ -750,89 +752,75 @@ const networkLog = {
     async updateNetworkDrives(logResults = false) {
         if (process.platform !== 'win32') return;
 
+        // Mehrfache parallele Scans verhindern
+        if (this._scanInFlight) return;
+        this._scanInFlight = true;
+
+        // Async exec - blockiert den Main-Prozess NICHT (im Gegensatz zu execSync).
+        // Die drei Detection-Methoden werden parallel ausgeführt.
+        const { exec } = require('child_process');
+        const execAsync = (cmd, timeout) => new Promise((resolve) => {
+            exec(cmd, { encoding: 'utf8', timeout, windowsHide: true, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+                resolve(err ? '' : (stdout || ''));
+            });
+        });
+
         try {
-            const { execSync } = require('child_process');
-            this.networkDrives = new Set();
+            const drives = new Set();
 
-            // Methode 1: PowerShell Get-CimInstance für DriveType=4 (klassische Netzlaufwerke)
-            try {
-                const psOutput = execSync(
+            const [psOutput, netUseOutput, allDrivesOutput] = await Promise.all([
+                // Methode 1: PowerShell Get-CimInstance für DriveType=4 (klassische Netzlaufwerke)
+                execAsync(
                     'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk -Filter \"DriveType=4\" | Select-Object -ExpandProperty DeviceID"',
-                    { encoding: 'utf8', timeout: 10000, windowsHide: true }
-                );
-
-                const psLines = psOutput.split('\n');
-                for (const line of psLines) {
-                    const match = line.trim().match(/^([A-Z]):?$/i);
-                    if (match) {
-                        this.networkDrives.add(match[1].toUpperCase());
-                    }
-                }
-            } catch (e) {
-                // PowerShell fehlgeschlagen, ignorieren
-            }
-
-            // Methode 2: net use für gemappte Netzlaufwerke (inkl. VMware Shared Folders)
-            try {
-                const netUseOutput = execSync('net use', {
-                    encoding: 'utf8',
-                    timeout: 5000,
-                    windowsHide: true
-                });
-
-                // Suche nach Zeilen mit Laufwerksbuchstaben (z.B. "OK           Y:        \\vmware-host\...")
-                const netUseLines = netUseOutput.split('\n');
-                for (const line of netUseLines) {
-                    const match = line.match(/\s+([A-Z]):\s+/i);
-                    if (match) {
-                        this.networkDrives.add(match[1].toUpperCase());
-                    }
-                }
-            } catch (e) {
-                // net use fehlgeschlagen, ignorieren
-            }
-
-            // Methode 3: Prüfe alle Laufwerke auf Remote-Eigenschaft (VMware, VirtualBox etc.)
-            try {
-                const allDrivesOutput = execSync(
+                    3000
+                ),
+                // Methode 2: net use für gemappte Netzlaufwerke (inkl. VMware Shared Folders)
+                execAsync('net use', 3000),
+                // Methode 3: Prüfe alle Laufwerke auf Remote-Eigenschaft (VMware, VirtualBox etc.)
+                execAsync(
                     'powershell -NoProfile -Command "Get-CimInstance Win32_LogicalDisk | Format-Table DeviceID,DriveType,ProviderName -HideTableHeaders"',
-                    { encoding: 'utf8', timeout: 10000, windowsHide: true }
-                );
+                    3000
+                )
+            ]);
 
-                const driveLines = allDrivesOutput.split('\n');
-                for (const line of driveLines) {
-                    const lower = line.toLowerCase();
-                    // Prüfe auf VMware, VirtualBox oder andere Netzwerk-Provider
-                    if (lower.includes('vmware') ||
-                        lower.includes('virtualbox') ||
-                        lower.includes('vboxsvr') ||
-                        lower.includes('\\\\')) {
-                        const match = line.match(/([A-Z]):/i);
-                        if (match) {
-                            this.networkDrives.add(match[1].toUpperCase());
-                        }
-                    }
-                }
-            } catch (e) {
-                // Fallback fehlgeschlagen, ignorieren
+            for (const line of psOutput.split('\n')) {
+                const match = line.trim().match(/^([A-Z]):?$/i);
+                if (match) drives.add(match[1].toUpperCase());
             }
 
-            // Log gefundene Netzlaufwerke nur beim ersten Scan
+            for (const line of netUseOutput.split('\n')) {
+                const match = line.match(/\s+([A-Z]):\s+/i);
+                if (match) drives.add(match[1].toUpperCase());
+            }
+
+            for (const line of allDrivesOutput.split('\n')) {
+                const lower = line.toLowerCase();
+                if (lower.includes('vmware') ||
+                    lower.includes('virtualbox') ||
+                    lower.includes('vboxsvr') ||
+                    lower.includes('\\\\')) {
+                    const match = line.match(/([A-Z]):/i);
+                    if (match) drives.add(match[1].toUpperCase());
+                }
+            }
+
+            this.networkDrives = drives;
+
             if (logResults) {
                 securityLog.log('INFO', 'NETWORK_DRIVES_DETECTED', {
                     detected: this.networkDrives.size > 0 ? Array.from(this.networkDrives).join(', ') : 'none',
                     count: this.networkDrives.size
                 });
             }
-
         } catch (err) {
             console.log('Network drive detection error:', err.message);
-            // Nur beim ersten Scan Fehler loggen
             if (logResults) {
                 securityLog.log('WARN', 'NETWORK_DRIVES_SCAN_FAILED', {
                     error: err.message
                 });
             }
+        } finally {
+            this._scanInFlight = false;
         }
     },
 

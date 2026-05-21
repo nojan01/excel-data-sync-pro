@@ -11268,12 +11268,13 @@
         }
         
         // Auto-Save für Crash-Recovery starten
+        // Intervall: 60s (vorher 30s) — bei großen Dateien reduziert das die Last
+        const EXPLORER_AUTOSAVE_INTERVAL_MS = 60000;
         function startExplorerAutoSave() {
-            // Alle 30 Sekunden speichern
             if (explorerAutoSaveInterval) {
                 clearInterval(explorerAutoSaveInterval);
             }
-            explorerAutoSaveInterval = setInterval(saveExplorerRecoveryData, 30000);
+            explorerAutoSaveInterval = setInterval(saveExplorerRecoveryData, EXPLORER_AUTOSAVE_INTERVAL_MS);
             // Sofort einmal speichern
             saveExplorerRecoveryData();
         }
@@ -11287,97 +11288,83 @@
             _lastRecoveryFingerprint = '';
         }
         
-        // Recovery-Daten speichern
+        // Recovery-Daten speichern (DIFF-ONLY ab v2.0)
+        // Speichert nur die Änderungen (editedCells, rowHighlights, pendingOps),
+        // NICHT die kompletten Datensätze. Bei Wiederherstellung wird die Datei neu
+        // geladen und die Diffs werden auf die Sheets angewendet.
         let _recoveryIdleHandle = null;
         let _lastRecoveryFingerprint = '';
         function saveExplorerRecoveryData() {
-            if (!explorerState.filePath || explorerState.data.length === 0) {
+            if (!explorerState.filePath) {
                 return;
             }
-            
-            // Schnelle Prüfung VOR Idle-Callback: Gibt es überhaupt Änderungen?
+
+            // Schnelle Prüfung: Gibt es überhaupt Änderungen?
             const totalChanges = countAllChanges();
             const hasPendingOps = explorerState.pendingSheetOperations.length > 0;
             if (totalChanges === 0 && !hasPendingOps) {
-                // Keine Änderungen - Recovery-Daten löschen (leichtgewichtig)
                 if (_lastRecoveryFingerprint !== '') {
                     localStorage.removeItem(EXPLORER_RECOVERY_KEY);
                     _lastRecoveryFingerprint = '';
                 }
                 return;
             }
-            
-            // Fingerprint: Erkennt ob sich seit letztem Save etwas geändert hat
-            // Vermeidet teure Deep-Copy + JSON.stringify wenn nichts Neues passiert ist
+
+            // Fingerprint zur Erkennung von Änderungen seit letztem Save
             let cacheFingerprint = '';
             for (const [name, c] of explorerState.sheetDataCache) {
                 cacheFingerprint += `${name}:${c.editedCells.size}:${c.rowHighlights.size},`;
             }
-            const fingerprint = `${totalChanges}|${explorerState.data.length}|${explorerState.rowHighlights.size}|${explorerState.pendingSheetOperations.length}|${explorerState.selectedSheet}|${cacheFingerprint}`;
+            const fingerprint = `${totalChanges}|${explorerState.pendingSheetOperations.length}|${explorerState.selectedSheet}|${cacheFingerprint}|cur:${explorerState.editedCells.size}:${explorerState.rowHighlights.size}`;
             if (fingerprint === _lastRecoveryFingerprint) {
-                return; // Keine Änderung seit letztem Save
+                return;
             }
-            
-            // Vorherigen ausstehenden Idle-Callback abbrechen
+
             if (_recoveryIdleHandle !== null) {
                 (window.cancelIdleCallback || clearTimeout).call(window, _recoveryIdleHandle);
                 _recoveryIdleHandle = null;
             }
-            
+
             const doSave = () => {
                 _recoveryIdleHandle = null;
                 try {
-                    // Aktuelles Sheet im Cache speichern (Deep-Copy nur wenn nötig)
+                    // Aktuelles Sheet erst in Cache schreiben (damit alle Sheets gleich behandelt werden)
                     saveCurrentSheetToCache();
-                    
-                    // Map/Set zu Arrays konvertieren für JSON
-                    const editedCellsArray = Array.from(explorerState.editedCells.entries());
-                    const rowHighlightsArray = Array.from(explorerState.rowHighlights.entries());
-                    
-                    // Sheet-Cache konvertieren
-                    const sheetCacheArray = [];
-                    for (const [sheetName, cached] of explorerState.sheetDataCache) {
-                        sheetCacheArray.push({
-                            sheetName,
-                            headers: cached.headers,
-                            data: cached.data,
-                            originalData: cached.originalData,
-                            visibleColumns: cached.visibleColumns,
-                            editedCells: Array.from(cached.editedCells.entries()),
-                            rowHighlights: Array.from(cached.rowHighlights.entries())
-                        });
+
+                    // Pro Sheet nur die Diffs sammeln (KEINE data/originalData/headers)
+                    const sheetDeltas = {};
+                    for (const [sheetName, c] of explorerState.sheetDataCache) {
+                        const edits = c.editedCells && c.editedCells.size > 0
+                            ? Array.from(c.editedCells.entries()) : [];
+                        const highlights = c.rowHighlights && c.rowHighlights.size > 0
+                            ? Array.from(c.rowHighlights.entries()) : [];
+                        if (edits.length === 0 && highlights.length === 0) continue;
+                        sheetDeltas[sheetName] = { editedCells: edits, rowHighlights: highlights };
                     }
-                    
+
                     const recoveryData = {
+                        version: '2.0',
                         timestamp: Date.now(),
                         filePath: explorerState.filePath,
                         fileName: explorerState.fileName,
-                        sheets: explorerState.sheets,
                         selectedSheet: explorerState.selectedSheet,
-                        headers: explorerState.headers,
-                        data: explorerState.data,
-                        originalData: explorerState.originalData,
-                        visibleColumns: explorerState.visibleColumns,
-                        columnOrder: explorerState.columnOrder,
-                        editedCells: editedCellsArray,
-                        rowHighlights: rowHighlightsArray,
-                        sheetDataCache: sheetCacheArray,
+                        sheets: sheetDeltas,
                         pendingSheetOperations: explorerState.pendingSheetOperations,
-                        hiddenSheets: Array.from(explorerState.hiddenSheets)
+                        hiddenSheets: Array.from(explorerState.hiddenSheets || [])
                     };
-                    
+
                     localStorage.setItem(EXPLORER_RECOVERY_KEY, JSON.stringify(recoveryData));
                     _lastRecoveryFingerprint = fingerprint;
                 } catch (e) {
                     console.warn('Explorer Recovery-Speicherung fehlgeschlagen:', e);
                 }
             };
-            
-            // Serialisierung in Idle-Zeit verschieben, damit UI-Interaktionen nicht blockiert werden
+
+            // Serialisierung in Idle-Zeit verschieben (auch wenn der Payload jetzt klein ist)
             if (window.requestIdleCallback) {
-                _recoveryIdleHandle = requestIdleCallback(doSave, { timeout: 10000 });
+                _recoveryIdleHandle = requestIdleCallback(doSave, { timeout: 5000 });
             } else {
-                _recoveryIdleHandle = setTimeout(doSave, 100);
+                _recoveryIdleHandle = setTimeout(doSave, 50);
             }
         }
         
@@ -11405,7 +11392,15 @@
         }
         
         // Recovery-Daten anwenden
-        function applyExplorerRecoveryData(data) {
+        // v2.0 (Diff-only): Datei muss vorher per loadExplorerFileByPath geladen sein.
+        //   Diese Funktion wendet danach die gespeicherten Diffs auf alle Sheets an.
+        // v1.x (Legacy):    Vollständige Datenwiederherstellung aus dem Snapshot.
+        async function applyExplorerRecoveryData(data) {
+            if (data && data.version === '2.0') {
+                await applyExplorerRecoveryDataV2(data);
+                return;
+            }
+            // ----- Legacy v1.x: vollständige State-Wiederherstellung -----
             explorerState.filePath = data.filePath;
             explorerState.fileName = data.fileName;
             explorerState.sheets = data.sheets || [];
@@ -11458,6 +11453,77 @@
             
             // Auto-Save starten
             startExplorerAutoSave();
+        }
+
+        // Wendet v2.0-Recovery (Diffs) an: lädt die Datei und schreibt die gespeicherten
+        // editedCells/rowHighlights pro Sheet wieder in den Cache.
+        async function applyExplorerRecoveryDataV2(data) {
+            // 1. Datei laden (öffnet ggf. Live-Session, fragt Passwort ab etc.)
+            await loadExplorerFileByPath(data.filePath);
+
+            // Wenn das Laden fehlgeschlagen ist (Pfad/Pw), abbrechen
+            if (!explorerState.filePath) {
+                showNotification(
+                    currentLanguage === 'en' ? 'Recovery failed: file could not be loaded' : 'Wiederherstellung fehlgeschlagen: Datei konnte nicht geladen werden',
+                    'error'
+                );
+                return;
+            }
+
+            // 2. Pending-Sheet-Operations & hidden sheets übernehmen
+            explorerState.pendingSheetOperations = data.pendingSheetOperations || [];
+            explorerState.hiddenSheets = new Set(data.hiddenSheets || explorerState.hiddenSheets || []);
+
+            // 3. Diffs pro Sheet anwenden — Sheets werden bei Bedarf sequenziell geladen
+            const originalSheet = explorerState.selectedSheet;
+            const targetSheet = data.selectedSheet || originalSheet;
+            const sheetNames = data.sheets ? Object.keys(data.sheets) : [];
+
+            let appliedSheets = 0;
+            for (const sheetName of sheetNames) {
+                if (!explorerState.sheets.includes(sheetName)) continue; // Sheet existiert nicht mehr
+                const diff = data.sheets[sheetName];
+
+                // Sheet aktivieren, damit die Daten geladen werden
+                if (explorerState.selectedSheet !== sheetName) {
+                    // Aktuelles Sheet in den Cache speichern (damit Edits nicht verloren gehen)
+                    saveCurrentSheetToCache();
+                    await loadExplorerSheet(sheetName);
+                }
+
+                // Diffs auf den aktuellen State anwenden
+                if (Array.isArray(diff.editedCells)) {
+                    for (const [key, value] of diff.editedCells) {
+                        explorerState.editedCells.set(key, value);
+                        // Wert auch in data-Array setzen, damit die UI ihn anzeigt
+                        const [rStr, cStr] = String(key).split(',');
+                        const r = parseInt(rStr, 10), c = parseInt(cStr, 10);
+                        if (!isNaN(r) && !isNaN(c) && explorerState.data[r]) {
+                            explorerState.data[r][c] = value;
+                        }
+                    }
+                }
+                if (Array.isArray(diff.rowHighlights)) {
+                    for (const [idx, color] of diff.rowHighlights) {
+                        explorerState.rowHighlights.set(parseInt(idx, 10), color);
+                    }
+                }
+                saveCurrentSheetToCache();
+                appliedSheets++;
+            }
+
+            // 4. Zurück zum ursprünglich aktiven Sheet wechseln
+            if (targetSheet && explorerState.selectedSheet !== targetSheet && explorerState.sheets.includes(targetSheet)) {
+                saveCurrentSheetToCache();
+                await loadExplorerSheet(targetSheet);
+                if (elements.explorerSheetSelect) {
+                    elements.explorerSheetSelect.value = targetSheet;
+                }
+            }
+
+            // 5. UI aktualisieren
+            filterExplorerData();
+            // Auto-Save ist bereits durch loadExplorerFileByPath gestartet
         }
         
         // Recovery-Daten löschen
@@ -14357,7 +14423,15 @@
             
             // Prüfe auf Recovery-Daten (von vorherigem Crash)
             if (recoveryData && !explorerState.filePath) {
-                const totalRecoveryChanges = (recoveryData.editedCells?.length || 0);
+                // Anzahl Änderungen ermitteln (v2.0 = Diffs pro Sheet, v1.x = flache Liste)
+                let totalRecoveryChanges = 0;
+                if (recoveryData.version === '2.0' && recoveryData.sheets) {
+                    for (const s of Object.values(recoveryData.sheets)) {
+                        totalRecoveryChanges += (s.editedCells?.length || 0);
+                    }
+                } else {
+                    totalRecoveryChanges = (recoveryData.editedCells?.length || 0);
+                }
                 
                 // Prüfe ob die Datei noch existiert
                 let fileExists = false;
@@ -14379,7 +14453,7 @@
                     );
                     
                     if (restore) {
-                        applyExplorerRecoveryData(recoveryData);
+                        await applyExplorerRecoveryData(recoveryData);
                         showNotification(
                             currentLanguage === 'en' ? 'Data restored successfully' : 'Daten erfolgreich wiederhergestellt', 
                             'success'
