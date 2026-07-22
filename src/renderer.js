@@ -17189,6 +17189,30 @@
         }
         
         // ==================== New Month Modal Functions ====================
+        function getSuggestedMonthFilename(templateName, referenceDate = new Date()) {
+            let baseName = templateName || 'Vertragsliste.xlsx';
+            baseName = baseName.replace(/\.(xlsx|xls)$/i, '');
+
+            // Das Template-Präfix und einen eventuell bereits vorhandenen
+            // Monats-/Tages-Suffix entfernen, bevor das neue Monatsende
+            // vorangestellt wird.
+            baseName = baseName
+                .replace(/^template[_\-\s]*/i, '')
+                .replace(/[_\-\s]*\d{4}-\d{2}(?:-\d{2})?$/, '')
+                .replace(/^[_\-\s]+|[_\-\s]+$/g, '');
+
+            const year = referenceDate.getFullYear();
+            const monthIndex = referenceDate.getMonth();
+            const lastDay = new Date(year, monthIndex + 1, 0);
+            const datePrefix = [
+                year,
+                String(monthIndex + 1).padStart(2, '0'),
+                String(lastDay.getDate()).padStart(2, '0')
+            ].join('-');
+
+            return `${datePrefix}_${baseName || 'Vertragsliste'}.xlsx`;
+        }
+
         function openNewMonthModal() {
             if (!state.template.filePath && !state.template.data) {
                 showStatus(elements.transferStatus, 'Bitte erst ein Template laden', 'error');
@@ -17201,15 +17225,7 @@
                 templateNameEl.textContent = state.template.name || '-';
             }
             
-            // Vorschlag für neuen Dateinamen: Template-Name als Basis verwenden
-            let baseName = state.template.name || 'Vertragsliste.xlsx';
-            // Entferne .xlsx/.xls Endung falls vorhanden
-            baseName = baseName.replace(/\.(xlsx|xls)$/i, '');
-            // Füge aktuellen Monat hinzu
-            const now = new Date();
-            const year = now.getFullYear();
-            const month = String(now.getMonth() + 1).padStart(2, '0');
-            elements.newMonthFilename.value = `${baseName}_${year}-${month}.xlsx`;
+            elements.newMonthFilename.value = getSuggestedMonthFilename(state.template.name);
             
             elements.newMonthModal.classList.remove('hidden');
         }
