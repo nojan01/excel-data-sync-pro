@@ -2,7 +2,7 @@
 
 Desktop-Anwendung zum Explorieren, Synchronisieren und Verarbeiten von Excel-Dateien (`.xlsx`) – mit vollem Erhalt von Formatierungen, bedingten Formatierungen, Bildern und Formeln.
 
-**Version: 1.9.0** · © Norbert Jander 2026 · MIT License · Plattform: Windows x64
+**Version: 1.3.0** · © Norbert Jander 2026 · MIT License · Plattform: Windows x64
 
 ---
 
@@ -95,13 +95,13 @@ Das eingebettete Python (inkl. openpyxl, xlwings, lxml) ist in der Installation 
 4. Dokumente-Ordner
 5. Downloads-Ordner
 
-💡 Tipp: Eine zentrale `config.json` auf einem Netzlaufwerk für Team-Setup.
+💡 Tipp: Eine zentrale `config.json` auf einem Netzlaufwerk für Team-Setup. Persönliche Einstellungen werden dabei nach dem angemeldeten Benutzer getrennt; Details und das Dateiformat stehen in [docs/CONFIG-BEISPIEL.md](docs/CONFIG-BEISPIEL.md).
 
 ---
 
 ## Changelog (Auszug)
 
-### v1.9.0 *(aktuell)*
+### v1.3.0 *(aktuell)*
 - **Neu:** Fehlende Seriennummern finden (Soll-Ist-Abgleich über mehrere Dateien)
 - **Verbessert:** Klarere Warnung beim Schließen wenn nur Filter aktiv sind
 - **Performance:** 3 Optimierungen im openpyxl-Fallback (Table-XML-Restore, Format-Backup, Diagnose-Gating)
@@ -162,7 +162,7 @@ Eine Desktop-Anwendung zum Synchronisieren und Übertragen von Zeilen zwischen E
 
 ## Version
 
-**v1.5.0** - © Norbert Jander 2026
+**v1.3.0** - © Norbert Jander 2026
 
 ## Hauptfunktionen
 

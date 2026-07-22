@@ -1,10 +1,25 @@
 const { app, BrowserWindow, ipcMain, dialog, Menu } = require('electron');
 const path = require('path');
-const XlsxPopulate = require('xlsx-populate'); // Für Passwort-Verschlüsselung
-const { readSheetWithExcelJS } = require('./exceljs-reader'); // ExcelJS Reader für Datenexplorer
 const pythonBridge = require('./python/python_bridge'); // Python/openpyxl Fallback-Export
 const fs = require('fs');
 const os = require('os');
+
+// Diese Bibliotheken werden erst bei der ersten Excel-Operation geladen. Das
+// verkürzt den kritischen Startpfad erheblich, wenn die App nur geöffnet wird.
+let XlsxPopulate = null;
+let readSheetWithExcelJS = null;
+
+function getXlsxPopulate() {
+    if (!XlsxPopulate) XlsxPopulate = require('xlsx-populate');
+    return XlsxPopulate;
+}
+
+function getReadSheetWithExcelJS() {
+    if (!readSheetWithExcelJS) {
+        ({ readSheetWithExcelJS } = require('./exceljs-reader'));
+    }
+    return readSheetWithExcelJS;
+}
 
 // Erhöhe V8 Heap-Größe für große Dateien (muss vor app.ready gesetzt werden)
 // 4GB - ausreichend für große Excel-Dateien, schont den Arbeitsspeicher
@@ -92,7 +107,7 @@ async function savePartialCellChangesDirectly(filePath, cellChangesBySheet) {
         console.log('[DirectSave] Starte direkte ZIP-Manipulation');
         
         // 1. Excel-Datei als ZIP laden
-        const fileData = fs.readFileSync(filePath);
+        const fileData = await fs.promises.readFile(filePath);
         const zip = await JSZip.loadAsync(fileData);
         
         // 2. workbook.xml lesen um Sheet-IDs zu bekommen
@@ -177,7 +192,7 @@ async function savePartialCellChangesDirectly(filePath, cellChangesBySheet) {
             compression: 'DEFLATE'
         });
         
-        fs.writeFileSync(filePath, outputBuffer);
+        await fs.promises.writeFile(filePath, outputBuffer);
         
         // Cache invalidieren da Datei geändert wurde
         clearWorkbookCache();
@@ -1092,8 +1107,13 @@ const networkLog = {
  * Config-Schema-Validierung
  * Prüft ob die geladene Konfiguration gültige Typen und Werte hat
  */
+const CONFIG_LOCK_TIMEOUT_MS = 12_000;
+const CONFIG_LOCK_STALE_MS = 5 * 60_000;
+const CONFIG_READ_RETRIES = 3;
+
 /**
- * Ermittelt den Computernamen für die Computer-spezifische Konfiguration
+ * Ermittelt den Computernamen ausschließlich für die Migration bestehender
+ * Computer-Abschnitte. Neue Konfigurationen verwenden ihn nicht mehr.
  * @returns {string} Der Computername in Großbuchstaben
  */
 function getComputerName() {
@@ -1101,37 +1121,196 @@ function getComputerName() {
 }
 
 /**
- * Führt die default-Konfiguration mit der Computer-spezifischen zusammen
- * @param {Object} rawConfig - Die rohe Config mit default und Computer-Abschnitten
- * @returns {{mergedConfig: Object, computerName: string, hasComputerSection: boolean}}
+ * Ermittelt eine stabile Kennung des angemeldeten Betriebssystem-Benutzers.
+ * Auf Terminalservern teilen sich alle Sitzungen denselben Hostnamen; der
+ * Benutzername ist deshalb die richtige Trennung für persönliche Abschnitte.
+ * @returns {string}
  */
-function mergeComputerConfig(rawConfig) {
-    const computerName = getComputerName();
-    
-    // Prüfe ob es eine verschachtelte Struktur ist (hat 'default' Abschnitt)
-    if (!rawConfig.default && !rawConfig[computerName]) {
-        // Alte flache Struktur - direkt zurückgeben
+function getConfigUserId() {
+    let username = '';
+    try {
+        username = os.userInfo().username || '';
+    } catch {
+        // In eingeschränkten Laufzeitumgebungen ist os.userInfo() nicht immer verfügbar.
+    }
+
+    username = username || process.env.USERNAME || process.env.USER || 'UNKNOWN_USER';
+    const domain = process.env.USERDOMAIN || process.env.USERDNSDOMAIN || '';
+    const normalized = `${domain ? `${domain}_` : ''}${username}`
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9._-]+/g, '_')
+        .slice(0, 120);
+
+    return normalized || 'UNKNOWN_USER';
+}
+
+function hasOwn(object, key) {
+    return Object.prototype.hasOwnProperty.call(object, key);
+}
+
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Erkennt sowohl das neue Benutzerprofil-Format als auch die bisherige
+ * Struktur mit default- und Rechnerabschnitten.
+ */
+function isStructuredConfig(rawConfig) {
+    if (!isPlainObject(rawConfig)) return false;
+    if (hasOwn(rawConfig, 'default') || isPlainObject(rawConfig.users) || hasOwn(rawConfig, 'schemaVersion')) {
+        return true;
+    }
+
+    // Repariert auch Dateien, bei denen ein alter Rechnerabschnitt vorhanden
+    // ist, aber der default-Abschnitt versehentlich fehlt.
+    return Object.entries(rawConfig).some(([key, value]) =>
+        !configSchema.configFields.includes(key) && isPlainObject(value)
+    );
+}
+
+/**
+ * Führt default mit dem Abschnitt des angemeldeten Benutzers zusammen.
+ * Rechnerabschnitte bleiben als Lesefallback für alte Dateien unterstützt.
+ */
+function mergeUserConfig(rawConfig) {
+    const userId = getConfigUserId();
+    const legacyComputerName = getComputerName();
+
+    if (!isStructuredConfig(rawConfig)) {
         return {
             mergedConfig: rawConfig,
-            computerName: computerName,
-            hasComputerSection: false,
+            userId,
+            hasUserSection: false,
             isLegacyFormat: true
         };
     }
-    
-    // Neue verschachtelte Struktur
-    const defaultConfig = rawConfig.default || {};
-    const computerConfig = rawConfig[computerName] || {};
-    
-    // Deep merge: Computer-spezifische Werte überschreiben default
-    const mergedConfig = { ...defaultConfig, ...computerConfig };
-    
+
+    const defaultConfig = isPlainObject(rawConfig.default) ? rawConfig.default : {};
+    const users = isPlainObject(rawConfig.users) ? rawConfig.users : {};
+    const userConfig = isPlainObject(users[userId]) ? users[userId] : null;
+    const legacyComputerConfig = !userConfig && isPlainObject(rawConfig[legacyComputerName])
+        ? rawConfig[legacyComputerName]
+        : null;
+
     return {
-        mergedConfig,
-        computerName,
-        hasComputerSection: !!rawConfig[computerName],
+        mergedConfig: { ...defaultConfig, ...(userConfig || legacyComputerConfig || {}) },
+        userId,
+        hasUserSection: Boolean(userConfig || legacyComputerConfig),
+        loadedLegacyComputerSection: Boolean(legacyComputerConfig),
         isLegacyFormat: false
     };
+}
+
+function getConfigLockPath(filePath) {
+    return `${filePath}.lock`;
+}
+
+function wait(milliseconds) {
+    return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+async function acquireConfigLock(filePath) {
+    const lockPath = getConfigLockPath(filePath);
+    const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const lockData = {
+        token,
+        userId: getConfigUserId(),
+        pid: process.pid,
+        createdAt: new Date().toISOString()
+    };
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < CONFIG_LOCK_TIMEOUT_MS) {
+        try {
+            await fs.promises.writeFile(lockPath, JSON.stringify(lockData), {
+                encoding: 'utf8',
+                mode: 0o600,
+                flag: 'wx'
+            });
+            return { lockPath, token };
+        } catch (error) {
+            if (error.code !== 'EEXIST') throw error;
+
+            try {
+                const stat = await fs.promises.stat(lockPath);
+                if (Date.now() - stat.mtimeMs > CONFIG_LOCK_STALE_MS) {
+                    await fs.promises.unlink(lockPath);
+                    continue;
+                }
+            } catch (lockError) {
+                if (lockError.code !== 'ENOENT') {
+                    // Der Lock wird gerade geändert; beim nächsten Durchlauf erneut prüfen.
+                }
+            }
+
+            await wait(125 + Math.floor(Math.random() * 125));
+        }
+    }
+
+    const error = new Error('Die Konfiguration wird gerade von einem anderen Benutzer gespeichert. Bitte erneut versuchen.');
+    error.code = 'ELOCKED';
+    throw error;
+}
+
+async function releaseConfigLock(lock) {
+    if (!lock) return;
+
+    try {
+        const content = await fs.promises.readFile(lock.lockPath, 'utf8');
+        const lockData = JSON.parse(content);
+        if (lockData.token === lock.token) {
+            await fs.promises.unlink(lock.lockPath);
+        }
+    } catch (error) {
+        if (error.code !== 'ENOENT') {
+            console.warn('[Config] Lock konnte nicht freigegeben werden:', error.message);
+        }
+    }
+}
+
+async function readConfigJson(filePath, { allowMissing = false } = {}) {
+    let lastError;
+
+    for (let attempt = 0; attempt <= CONFIG_READ_RETRIES; attempt++) {
+        try {
+            const content = await fs.promises.readFile(filePath, 'utf8');
+            return JSON.parse(content);
+        } catch (error) {
+            if (error.code === 'ENOENT' && allowMissing) return null;
+            lastError = error;
+
+            const retryable = error instanceof SyntaxError ||
+                ['EBUSY', 'EAGAIN', 'EPERM', 'ENOENT'].includes(error.code);
+            if (!retryable || attempt === CONFIG_READ_RETRIES) break;
+            await wait(100 * (attempt + 1));
+        }
+    }
+
+    throw lastError;
+}
+
+async function writeConfigAtomically(filePath, config) {
+    const directory = path.dirname(filePath);
+    const basename = path.basename(filePath);
+    const temporaryPath = path.join(
+        directory,
+        `.${basename}.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2)}.tmp`
+    );
+    let handle;
+
+    try {
+        handle = await fs.promises.open(temporaryPath, 'wx', 0o600);
+        await handle.writeFile(JSON.stringify(config, null, 2), 'utf8');
+        await handle.sync();
+        await handle.close();
+        handle = null;
+        await fs.promises.rename(temporaryPath, filePath);
+    } finally {
+        if (handle) await handle.close().catch(() => {});
+        await fs.promises.unlink(temporaryPath).catch(() => {});
+    }
 }
 
 const configSchema = {
@@ -1281,7 +1460,7 @@ const configSchema = {
             'theme', 'language',
             // Zusätzliche Keys aus config.json
             'file1SheetName', 'file2SheetName', 'mapping', 'exportDate',
-            'extraColumns', 'file1Name', 'file2Name', 'templateName'
+            'extraColumns', 'file1Name', 'file2Name', 'templateName', 'excelEngine'
         ];
 
         for (const key of safeKeys) {
@@ -1302,17 +1481,6 @@ const configSchema = {
 function isValidFilePath(filePath) {
     if (!filePath || typeof filePath !== 'string') {
         securityLog.log('WARN', 'INVALID_PATH_TYPE', { type: typeof filePath });
-        return false;
-    }
-
-    // Normalisiere den Pfad
-    const normalized = path.normalize(filePath);
-
-    // Prüfe auf Path Traversal-Muster
-    if (normalized.includes('..')) {
-        securityLog.log('SECURITY', 'PATH_TRAVERSAL_ATTEMPT', {
-            path: filePath.substring(0, 100) + (filePath.length > 100 ? '...' : '')
-        });
         return false;
     }
 
@@ -1496,10 +1664,36 @@ function createWindow() {
     });
 }
 
-app.whenReady().then(async () => {
-    // Security-Logger initialisieren (für Datei-basiertes Logging)
-    securityLog.init();
-    securityLog.log('INFO', 'APP_STARTED', { version: app.getVersion(), gpuFallback: _gpuFallbackActive });
+async function checkExcelAvailabilityInBackground() {
+    // Die Prüfung kann unter Windows Excel starten. Sie darf daher nie den
+    // sichtbaren Start des Fensters verzögern.
+    try {
+        const excelStatus = await pythonBridge.checkExcelAvailable();
+        const engine = pythonBridge.getExcelEngine();
+        
+        if (excelStatus.excelAvailable) {
+            console.log(`[App] ✓ Microsoft Excel erkannt - xlwings wird verwendet (Engine: ${engine})`);
+            securityLog.log('INFO', 'EXCEL_DETECTED', { 
+                method: 'xlwings', 
+                configuredEngine: engine,
+                message: excelStatus.message 
+            });
+        } else {
+            console.log(`[App] ✗ Microsoft Excel nicht verfügbar - openpyxl wird verwendet (Engine: ${engine})`);
+            securityLog.log('INFO', 'EXCEL_NOT_DETECTED', { 
+                method: 'openpyxl', 
+                configuredEngine: engine,
+                message: excelStatus.message 
+            });
+        }
+    } catch (error) {
+        console.log('[App] ⚠ Excel-Prüfung fehlgeschlagen:', error.message);
+        securityLog.log('WARN', 'EXCEL_CHECK_FAILED', { error: error.message });
+    }
+}
+
+app.whenReady().then(() => {
+    createWindow();
 
     // GPU-Fallback-Flag nach erfolgreichem Start entfernen
     // Beim nächsten Start wird wieder GPU versucht (sofern kein erneuter Crash)
@@ -1524,35 +1718,15 @@ app.whenReady().then(async () => {
         }
     });
 
-    // Network-Logger initialisieren (für Netzlaufwerk-Protokollierung)
-    networkLog.init();
-
-    // Excel-Verfügbarkeit prüfen und loggen
-    try {
-        const excelStatus = await pythonBridge.checkExcelAvailable();
-        const engine = pythonBridge.getExcelEngine();
-        
-        if (excelStatus.excelAvailable) {
-            console.log(`[App] ✓ Microsoft Excel erkannt - xlwings wird verwendet (Engine: ${engine})`);
-            securityLog.log('INFO', 'EXCEL_DETECTED', { 
-                method: 'xlwings', 
-                configuredEngine: engine,
-                message: excelStatus.message 
-            });
-        } else {
-            console.log(`[App] ✗ Microsoft Excel nicht verfügbar - openpyxl wird verwendet (Engine: ${engine})`);
-            securityLog.log('INFO', 'EXCEL_NOT_DETECTED', { 
-                method: 'openpyxl', 
-                configuredEngine: engine,
-                message: excelStatus.message 
-            });
-        }
-    } catch (error) {
-        console.log('[App] ⚠ Excel-Prüfung fehlgeschlagen:', error.message);
-        securityLog.log('WARN', 'EXCEL_CHECK_FAILED', { error: error.message });
-    }
-
-    createWindow();
+    // Nicht-kritische Initialisierung erst nach dem ersten sichtbaren Frame.
+    mainWindow.once('ready-to-show', () => {
+        setImmediate(() => {
+            securityLog.init();
+            securityLog.log('INFO', 'APP_STARTED', { version: app.getVersion(), gpuFallback: _gpuFallbackActive });
+            networkLog.init();
+            void checkExcelAvailabilityInBackground();
+        });
+    });
 
     // IPC-Handler: Prüft ob eine Datei per "Öffnen mit..." übergeben wurde
     // Wird vom Frontend abgefragt, um Config-Dateien-Ladung zu überspringen
@@ -1591,17 +1765,21 @@ app.on('window-all-closed', () => {
 });
 
 // Cleanup: Live Session beenden beim Schließen der App
-app.on('before-quit', async () => {
-    try {
-        const { getLiveSession } = require('./python/excel_live_bridge');
-        const session = getLiveSession();
-        if (session && session.isRunning) {
-            console.log('[App] Beende Live Session vor dem Schließen...');
-            await session.close();
-        }
-    } catch (e) {
-        console.error('[App] Fehler beim Beenden der Live Session:', e.message);
-    }
+let quitCleanupComplete = false;
+app.on('before-quit', (event) => {
+    if (quitCleanupComplete) return;
+
+    const session = getLiveSession();
+    if (!session?.pythonProcess) return;
+
+    event.preventDefault();
+    quitCleanupComplete = true;
+    console.log('[App] Beende Live Session vor dem Schließen...');
+
+    const timeout = new Promise(resolve => setTimeout(resolve, 12_000));
+    Promise.race([session.close(), timeout])
+        .catch(error => console.error('[App] Fehler beim Beenden der Live Session:', error.message))
+        .finally(() => app.quit());
 });
 
 app.on('activate', () => {
@@ -1766,7 +1944,7 @@ ipcMain.handle('fs:findFiles', async (event, { directory, pattern }) => {
             return { success: false, error: 'Verzeichnis nicht gefunden', files: [] };
         }
         
-        const allFiles = fs.readdirSync(directory);
+        const allFiles = await fs.promises.readdir(directory);
         
         // Pattern in RegExp umwandeln (z.B. "Defence&Space_MVMS_Change_Request_*.*" -> RegExp)
         // * wird zu .*, ? wird zu ., Sonderzeichen werden escaped
@@ -1824,10 +2002,6 @@ async function saveWorkbookOptimized(workbook, filePath, saveOptions = {}, sourc
         clearWorkbookCache();
         
         // Garbage Collection nach dem Speichern für große Dateien
-        if (fileSizeMB > 10 && global.gc) {
-            global.gc();
-            console.log('[SaveOptimized] Garbage Collection durchgeführt');
-        }
     } catch (saveError) {
         console.error('[SaveOptimized] Speichern fehlgeschlagen:', saveError.message);
         throw saveError;
@@ -2101,7 +2275,7 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
         if (password) {
             // Passwortgeschützte Dateien: xlsx-populate zum Entschlüsseln nötig
             const fileBuffer = await fs.promises.readFile(filePath);
-            const workbook = await XlsxPopulate.fromDataAsync(fileBuffer, { password });
+            const workbook = await getXlsxPopulate().fromDataAsync(fileBuffer, { password });
             sheets = workbook.sheets().map(ws => ws.name());
             hiddenSheets = workbook.sheets()
                 .filter(ws => ws.hidden())
@@ -2153,7 +2327,7 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             
             if (sheets.length === 0) {
                 // Fallback: xlsx-populate wenn Regex nichts findet
-                const workbook = await XlsxPopulate.fromDataAsync(fileBuffer);
+                const workbook = await getXlsxPopulate().fromDataAsync(fileBuffer);
                 sheets = workbook.sheets().map(ws => ws.name());
                 hiddenSheets = workbook.sheets()
                     .filter(ws => ws.hidden())
@@ -2207,7 +2381,7 @@ ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = 
 
     try {
         // Nutze ExcelJS Reader
-        const result = await readSheetWithExcelJS(filePath, sheetName, password);
+        const result = await getReadSheetWithExcelJS()(filePath, sheetName, password);
         
         if (!result.success) {
             return result;
@@ -2584,7 +2758,7 @@ ipcMain.handle('excel:addSheet', async (event, { filePath, sheetName }) => {
         // Offline: JSZip-basiert - vermeidet XlsxPopulate-Re-Serialisierung
         // die komplexe XLSX-Features (Tables, CF, etc.) korrumpieren kann
         const JSZip = require('jszip');
-        const fileData = fs.readFileSync(filePath);
+        const fileData = await fs.promises.readFile(filePath);
         const zip = await JSZip.loadAsync(fileData);
 
         // 1. workbook.xml lesen und prüfen
@@ -2643,7 +2817,7 @@ ipcMain.handle('excel:addSheet', async (event, { filePath, sheetName }) => {
 
         // 8. ZIP speichern
         const outputBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-        fs.writeFileSync(filePath, outputBuffer);
+        await fs.promises.writeFile(filePath, outputBuffer);
 
         // Cache invalidieren
         clearWorkbookCache();
@@ -2696,7 +2870,7 @@ ipcMain.handle('excel:deleteSheet', async (event, { filePath, sheetName }) => {
             return result;
         }
         
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
 
         // Mindestens ein Blatt muss bleiben
         if (workbook.sheets().length <= 1) {
@@ -2733,7 +2907,7 @@ ipcMain.handle('excel:renameSheet', async (event, { filePath, oldName, newName }
             return await session.renameSheet(oldName, newName);
         }
         
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
 
         // Prüfe ob neuer Name bereits existiert
         const existingSheet = workbook.sheet(newName);
@@ -2770,7 +2944,7 @@ ipcMain.handle('excel:cloneSheet', async (event, { filePath, sheetName, newName 
             return await session.cloneSheet(sheetName, newName);
         }
         
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
 
         // Prüfe ob neuer Name bereits existiert
         const existingSheet = workbook.sheet(newName);
@@ -2807,7 +2981,7 @@ ipcMain.handle('excel:moveSheet', async (event, { filePath, sheetName, newIndex 
             return await session.moveSheet(sheetName, newIndex);
         }
         
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
 
         workbook.moveSheet(sheetName, newIndex);
         await saveWorkbookOptimized(workbook, filePath, {}, filePath);
@@ -2835,7 +3009,7 @@ ipcMain.handle('excel:setSheetVisibility', async (event, { filePath, sheetName, 
 
         // Offline: JSZip-basiert - nur workbook.xml ändern
         const JSZip = require('jszip');
-        const fileData = fs.readFileSync(filePath);
+        const fileData = await fs.promises.readFile(filePath);
         const zip = await JSZip.loadAsync(fileData);
 
         const workbookXml = await zip.file('xl/workbook.xml').async('string');
@@ -2872,7 +3046,7 @@ ipcMain.handle('excel:setSheetVisibility', async (event, { filePath, sheetName, 
         zip.file('xl/workbook.xml', modifiedXml);
 
         const outputBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
-        fs.writeFileSync(filePath, outputBuffer);
+        await fs.promises.writeFile(filePath, outputBuffer);
 
         // Cache invalidieren
         clearWorkbookCache();
@@ -2919,7 +3093,7 @@ ipcMain.handle('excel:insertRows', async (event, { filePath, sheetName, rows, st
     }
 
     try {
-        const workbook = await XlsxPopulate.fromFileAsync(filePath);
+        const workbook = await getXlsxPopulate().fromFileAsync(filePath);
         const worksheet = workbook.sheet(sheetName);
 
         if (!worksheet) {
@@ -3260,7 +3434,7 @@ ipcMain.handle('excel:copyFile', async (event, { sourcePath, targetPath, sheetNa
         }
 
         // Jetzt die kopierte Datei öffnen und nur die Datenwerte löschen
-        const workbook = await XlsxPopulate.fromFileAsync(targetPath);
+        const workbook = await getXlsxPopulate().fromFileAsync(targetPath);
 
         // Wenn sheetName angegeben und existiert, nutze dieses Sheet
         // Ansonsten nimm das erste Sheet
@@ -3373,8 +3547,8 @@ ipcMain.handle('excel:exportMultipleSheets', async (event, { sourcePath, targetP
 // KONFIGURATION
 // ============================================
 
-// Config speichern (mit Unterstützung für Computer-spezifische Abschnitte)
-ipcMain.handle('config:save', async (event, { filePath, config, mergeMode = 'auto' }) => {
+// Config speichern (mit atomarem Mehrbenutzer-Merge)
+ipcMain.handle('config:save', async (event, { filePath, config }) => {
     // Sicherheitsprüfung: Pfad validieren
     if (!isValidFilePath(filePath)) {
         return { success: false, error: 'Ungültiger Dateipfad' };
@@ -3393,77 +3567,83 @@ ipcMain.handle('config:save', async (event, { filePath, config, mergeMode = 'aut
 
         // Config bereinigen (nur bekannte Felder speichern)
         const sanitizedConfig = configSchema.sanitize(config);
-        const computerName = getComputerName();
-        
-        let finalConfig = sanitizedConfig;
+        const userId = getConfigUserId();
+        const lock = await acquireConfigLock(filePath);
+        let finalConfig;
         let savedToSection = null;
-        let convertedToNested = false;
-        
-        // Prüfen ob die Datei existiert
-        if (fs.existsSync(filePath) && mergeMode !== 'overwrite') {
-            try {
-                const existingContent = fs.readFileSync(filePath, 'utf8');
-                const existingConfig = JSON.parse(existingContent);
-                
-                // Prüfe ob es bereits eine verschachtelte Struktur ist (hat 'default' Abschnitt)
-                const hasNestedStructure = existingConfig.default !== undefined;
-                
-                if (hasNestedStructure) {
-                    // Bereits verschachtelt: Nur den eigenen Computer-Abschnitt aktualisieren
-                    finalConfig = { ...existingConfig };
-                    finalConfig[computerName] = sanitizedConfig;
-                    savedToSection = computerName;
-                    
-                    securityLog.log('INFO', 'CONFIG_MERGED_TO_SECTION', {
-                        computerName: computerName,
-                        path: path.basename(filePath)
-                    });
-                } else {
-                    // Flache Struktur existiert -> In verschachtelte Struktur konvertieren!
-                    // Die bestehende flache Config wird zu "default"
-                    // Die neue Config wird unter dem Computernamen gespeichert
-                    finalConfig = {
-                        default: existingConfig,  // Bestehende Config wird default
-                        [computerName]: sanitizedConfig  // Neue Config unter Computer-Name
-                    };
-                    savedToSection = computerName;
-                    convertedToNested = true;
-                    
-                    securityLog.log('INFO', 'CONFIG_CONVERTED_TO_NESTED', {
-                        computerName: computerName,
-                        path: path.basename(filePath)
-                    });
-                }
-            } catch (parseError) {
-                // Datei existiert aber ist kein gültiges JSON -> überschreiben
-                securityLog.log('WARN', 'CONFIG_EXISTING_INVALID', {
-                    path: path.basename(filePath),
-                    error: parseError.message
-                });
-            }
-        }
+        let convertedToUserProfiles = false;
 
-        fs.writeFileSync(filePath, JSON.stringify(finalConfig, null, 2), 'utf8');
+        try {
+            // Die Datei wird erst NACH dem exklusiven Lock gelesen. Damit kann
+            // kein zweiter Speichervorgang zwischen Lesen und Schreiben verlorengehen.
+            const existingConfig = await readConfigJson(filePath, { allowMissing: true });
+
+            if (existingConfig === null) {
+                // Das erste Speichern bleibt absichtlich flach: Es dient damit
+                // zugleich als gemeinsamer Standard für noch nicht eingerichtete Nutzer.
+                finalConfig = sanitizedConfig;
+            } else if (isStructuredConfig(existingConfig)) {
+                const existingUsers = isPlainObject(existingConfig.users) ? existingConfig.users : {};
+                const legacyComputerConfig = isPlainObject(existingConfig[getComputerName()])
+                    ? existingConfig[getComputerName()]
+                    : {};
+                const existingUserConfig = isPlainObject(existingUsers[userId])
+                    ? existingUsers[userId]
+                    : legacyComputerConfig;
+
+                // Unbekannte Felder und alle anderen Benutzerabschnitte bleiben erhalten.
+                finalConfig = {
+                    ...existingConfig,
+                    schemaVersion: 2,
+                    default: isPlainObject(existingConfig.default) ? existingConfig.default : {},
+                    users: {
+                        ...existingUsers,
+                        [userId]: { ...existingUserConfig, ...sanitizedConfig }
+                    }
+                };
+                savedToSection = userId;
+            } else {
+                // Bestehende flache Datei wird beim ersten persönlichen Speichern
+                // in das Benutzerprofil-Format überführt.
+                finalConfig = {
+                    schemaVersion: 2,
+                    default: existingConfig,
+                    users: {
+                        [userId]: sanitizedConfig
+                    }
+                };
+                savedToSection = userId;
+                convertedToUserProfiles = true;
+            }
+
+            // Die alte Datei bleibt bis zum vollständigen Schreiben der temporären
+            // Datei unverändert. rename veröffentlicht danach die neue Version.
+            await writeConfigAtomically(filePath, finalConfig);
+        } finally {
+            await releaseConfigLock(lock);
+        }
         
         securityLog.log('INFO', 'CONFIG_SAVED', { 
             path: path.basename(filePath),
-            computerName: savedToSection || 'flat',
+            userId: savedToSection || 'flat',
             mode: savedToSection ? 'merged' : 'overwrite',
-            convertedToNested: convertedToNested
+            convertedToUserProfiles
         });
         
         return { 
             success: true,
             savedToSection: savedToSection,
-            computerName: computerName,
-            convertedToNested: convertedToNested
+            userId,
+            convertedToUserProfiles
         };
     } catch (error) {
         securityLog.log('ERROR', 'CONFIG_SAVE_FAILED', { error: error.message });
         
         // Benutzerfreundliche Fehlermeldungen
         let userMessage = error.message;
-        if (error.code === 'EPERM' || error.code === 'EACCES' || error.code === 'EROFS') {
+        if (error.code === 'ELOCKED') {
+            userMessage = error.message;
+        } else if (error.code === 'EPERM' || error.code === 'EACCES' || error.code === 'EROFS') {
             userMessage = 'Config-Datei ist schreibgeschützt oder Sie haben keine Schreibberechtigung.';
         } else if (error.code === 'ENOENT') {
             userMessage = 'Zielordner existiert nicht.';
@@ -3483,23 +3663,22 @@ ipcMain.handle('config:load', async (event, filePath) => {
     }
 
     try {
-        if (!fs.existsSync(filePath)) {
-            return { success: false, error: 'Datei nicht gefunden' };
-        }
-        const content = fs.readFileSync(filePath, 'utf8');
         let config;
         try {
-            config = JSON.parse(content);
+            config = await readConfigJson(filePath);
         } catch (parseError) {
+            if (parseError.code === 'ENOENT') {
+                return { success: false, error: 'Datei nicht gefunden' };
+            }
             securityLog.log('ERROR', 'CONFIG_INVALID_JSON', {
                 path: path.basename(filePath),
                 error: parseError.message
             });
-            return { success: false, error: 'Ungültige JSON-Syntax' };
+            return { success: false, error: 'Config-Datei konnte nicht vollständig gelesen werden. Bitte erneut versuchen.' };
         }
 
-        // Computer-spezifische Config zusammenführen
-        const { mergedConfig, computerName, hasComputerSection, isLegacyFormat } = mergeComputerConfig(config);
+        // Benutzer-spezifische Config zusammenführen
+        const { mergedConfig, userId, hasUserSection, isLegacyFormat, loadedLegacyComputerSection } = mergeUserConfig(config);
 
         // Schema-Validierung (auf der gemergten Config)
         const validation = configSchema.validate(mergedConfig);
@@ -3512,8 +3691,9 @@ ipcMain.handle('config:load', async (event, filePath) => {
             return {
                 success: true,
                 config: configSchema.sanitize(mergedConfig),
-                computerName: computerName,
-                hasComputerSection: hasComputerSection,
+                userId,
+                hasUserSection,
+                loadedLegacyComputerSection,
                 isLegacyFormat: isLegacyFormat,
                 warnings: validation.errors
             };
@@ -3521,14 +3701,16 @@ ipcMain.handle('config:load', async (event, filePath) => {
 
         securityLog.log('INFO', 'CONFIG_LOADED', { 
             path: path.basename(filePath),
-            computerName: computerName,
-            hasComputerSection: hasComputerSection
+            userId,
+            hasUserSection,
+            loadedLegacyComputerSection
         });
         return { 
             success: true, 
             config: configSchema.sanitize(mergedConfig),
-            computerName: computerName,
-            hasComputerSection: hasComputerSection,
+            userId,
+            hasUserSection,
+            loadedLegacyComputerSection,
             isLegacyFormat: isLegacyFormat
         };
     } catch (error) {
@@ -3726,61 +3908,67 @@ ipcMain.handle('config:loadFromAppDir', async (event, workingDir) => {
                 possiblePaths.push(path.join(process.cwd(), 'config.json'));
             }
 
-            // Schnelle Suche - bei erstem Treffer abbrechen
+            // Suche in Prioritätsreihenfolge. Eine vorhandene, aber gerade nicht
+            // lesbare Config ist ein Fehler – nicht auf eine andere Config ausweichen.
             for (const configPath of possiblePaths) {
-                if (fs.existsSync(configPath)) {
-                    const content = fs.readFileSync(configPath, 'utf8');
-                    let config;
-                    try {
-                        config = JSON.parse(content);
-                    } catch (parseError) {
-                        securityLog.log('WARN', 'CONFIG_PARSE_ERROR', {
-                            path: path.basename(configPath),
-                            error: parseError.message
-                        });
-                        continue; // Nächsten Pfad probieren
-                    }
+                let config;
+                try {
+                    config = await readConfigJson(configPath);
+                } catch (readError) {
+                    if (readError.code === 'ENOENT') continue;
 
-                    // Computer-spezifische Config zusammenführen
-                    const { mergedConfig, computerName, hasComputerSection, isLegacyFormat } = mergeComputerConfig(config);
-
-                    // Schema-Validierung (auf der gemergten Config)
-                    const validation = configSchema.validate(mergedConfig);
-                    if (!validation.valid) {
-                        securityLog.log('WARN', 'CONFIG_VALIDATION_FAILED', {
-                            path: path.basename(configPath),
-                            errors: validation.errors
-                        });
-                    }
-
-                    const source = configPath.includes(workingDir || '') ? 'workingDir' :
-                                   configPath.includes(portableDir) ? 'portable' :
-                                   configPath.includes(exeDir) ? 'exeDir' : 'userDir';
-
-                    securityLog.log('INFO', 'CONFIG_AUTO_LOADED', {
+                    securityLog.log('WARN', 'CONFIG_PARSE_ERROR', {
                         path: path.basename(configPath),
-                        source: source,
-                        computerName: computerName,
-                        hasComputerSection: hasComputerSection,
-                        isLegacyFormat: isLegacyFormat
+                        error: readError.message
                     });
-
-                    // Excel-Engine aus Config setzen (falls vorhanden)
-                    if (mergedConfig.excelEngine) {
-                        pythonBridge.setExcelEngine(mergedConfig.excelEngine);
-                        console.log(`[Config] Excel-Engine aus config.json: ${mergedConfig.excelEngine}`);
-                    }
-
                     return {
-                        success: true,
-                        config: configSchema.sanitize(mergedConfig),
-                        path: configPath,
-                        computerName: computerName,
-                        hasComputerSection: hasComputerSection,
-                        isLegacyFormat: isLegacyFormat,
-                        warnings: validation.valid ? undefined : validation.errors
+                        success: false,
+                        error: 'Config-Datei konnte nicht vollständig gelesen werden. Bitte erneut versuchen.',
+                        path: configPath
                     };
                 }
+
+                // Benutzer-spezifische Config zusammenführen
+                const { mergedConfig, userId, hasUserSection, isLegacyFormat, loadedLegacyComputerSection } = mergeUserConfig(config);
+
+                // Schema-Validierung (auf der gemergten Config)
+                const validation = configSchema.validate(mergedConfig);
+                if (!validation.valid) {
+                    securityLog.log('WARN', 'CONFIG_VALIDATION_FAILED', {
+                        path: path.basename(configPath),
+                        errors: validation.errors
+                    });
+                }
+
+                const source = configPath.includes(workingDir || '') ? 'workingDir' :
+                               configPath.includes(portableDir) ? 'portable' :
+                               configPath.includes(exeDir) ? 'exeDir' : 'userDir';
+
+                securityLog.log('INFO', 'CONFIG_AUTO_LOADED', {
+                    path: path.basename(configPath),
+                    source,
+                    userId,
+                    hasUserSection,
+                    loadedLegacyComputerSection,
+                    isLegacyFormat
+                });
+
+                // Excel-Engine aus Config setzen (falls vorhanden)
+                if (mergedConfig.excelEngine) {
+                    pythonBridge.setExcelEngine(mergedConfig.excelEngine);
+                    console.log(`[Config] Excel-Engine aus config.json: ${mergedConfig.excelEngine}`);
+                }
+
+                return {
+                    success: true,
+                    config: configSchema.sanitize(mergedConfig),
+                    path: configPath,
+                    userId,
+                    hasUserSection,
+                    loadedLegacyComputerSection,
+                    isLegacyFormat,
+                    warnings: validation.valid ? undefined : validation.errors
+                };
             }
 
             // Keine config.json gefunden
@@ -3871,7 +4059,7 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
         const JSZip = require('jszip');
 
         // 1. Quelldatei als ZIP lesen
-        const sourceBuffer = fs.readFileSync(sourcePath);
+        const sourceBuffer = await fs.promises.readFile(sourcePath);
         const zip = await JSZip.loadAsync(sourceBuffer);
 
         // 2. workbook.xml lesen um Sheet-Zuordnungen zu bekommen
@@ -4048,7 +4236,7 @@ ipcMain.handle('excel:createTemplateFromSource', async (event, { sourcePath, out
             compressionOptions: { level: 6 }
         });
 
-        fs.writeFileSync(outputPath, outputBuffer);
+        await fs.promises.writeFile(outputPath, outputBuffer);
 
         securityLog.log('INFO', 'TEMPLATE_CREATED', {
             sourceFile: path.basename(sourcePath),
@@ -4583,8 +4771,10 @@ ipcMain.handle('liveSession:deleteRecoveryFile', async (event, filePath) => {
         } else {
             recoveryDir = path.join(os.homedir(), '.exceldatasyncpro', 'recovery');
         }
+        const resolvedRecoveryDir = path.resolve(recoveryDir);
         const resolvedPath = path.resolve(filePath);
-        if (!resolvedPath.startsWith(path.resolve(recoveryDir))) {
+        const relativePath = path.relative(resolvedRecoveryDir, resolvedPath);
+        if (!relativePath || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath)) {
             securityLog.log('SECURITY', 'RECOVERY_DELETE_BLOCKED', {
                 path: filePath.substring(0, 100),
                 reason: 'Pfad liegt nicht im Recovery-Verzeichnis'

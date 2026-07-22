@@ -5,8 +5,8 @@
   "main": "main.js",
   "license": "MIT",
   "scripts": {
-    "start": "electron --max-old-space-size=4096 --expose-gc .",
-    "dev": "electron --max-old-space-size=4096 --expose-gc . --dev",
+    "start": "electron --max-old-space-size=4096 .",
+    "dev": "electron --max-old-space-size=4096 . --dev",
     "build:win": "electron-builder --win nsis --x64",
     "build:win-arm64": "electron-builder --win nsis --arm64"
   },
@@ -84,14 +84,14 @@
   },
   "author": "Norbert Jander",
   "devDependencies": {
-    "electron": "^41.2.1",
-    "electron-builder": "^26.0.12",
+    "electron": "^41.10.3",
+    "electron-builder": "^26.15.3",
     "electron-reload": "^2.0.0-alpha.1",
-    "eslint": "^9.39.2"
+    "eslint": "^9.39.5"
   },
   "dependencies": {
-    "adm-zip": "^0.5.16",
-    "exceljs": "^3.4.0",
+    "adm-zip": "^0.6.0",
+    "exceljs": "^4.4.0",
     "ssf": "^0.11.2",
     "xlsx-populate": "^1.21.0"
   }

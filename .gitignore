@@ -35,8 +35,7 @@ _test_*.js
 test-data/
 python/ExcelDataSyncPro/
 
-# Package lock
-package-lock.json
+# Die Abhängigkeiten werden mit package-lock.json reproduzierbar festgeschrieben.
 .env
 *.pfx
 certificates/

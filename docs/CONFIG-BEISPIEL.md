@@ -1,124 +1,62 @@
-# Computer-spezifische Konfiguration
+# Benutzerprofile in einer gemeinsamen `config.json`
 
 ## Überblick
 
-Ab Version 1.0.13 unterstützt die `config.json` Computer-spezifische Abschnitte. So können mehrere Benutzer dieselbe zentrale Konfigurationsdatei verwenden, aber unterschiedliche Netzwerkpfade haben.
+Eine zentrale `config.json` kann von mehreren Mitarbeitern auf einem Netzlaufwerk oder Terminalserver verwendet werden. Persönliche Einstellungen werden dabei nach dem angemeldeten Betriebssystem-Benutzer getrennt – **nicht** nach dem Hostnamen. Das ist wichtig, wenn mehrere Sitzungen dieselbe Servermaschine verwenden.
+
+Beim Speichern schützt die App die gesamte Lese-Merge-Schreiboperation mit einer exklusiven Lock-Datei (`config.json.lock`). Die neue Version wird zunächst in eine temporäre Datei im gleichen Ordner geschrieben und anschließend atomar veröffentlicht. Dadurch können zwei parallele Speichervorgänge keine Benutzerabschnitte mehr verlieren.
+
+Alle gleichzeitig verwendeten Installationen sollten auf diese Version aktualisiert werden. Ältere Programmversionen kennen die Lock-Datei nicht und können deshalb weiterhin parallel direkt in dieselbe Datei schreiben.
 
 ## Struktur
 
 ```json
 {
+  "schemaVersion": 2,
   "default": {
     "file1Path": "\\\\server\\share\\Quelldatei.xlsx",
     "file2Path": "\\\\server\\share\\Zieldatei.xlsx",
     "sheet1Name": "Daten",
     "sheet2Name": "Daten",
-    "startColumn": 3,
-    "checkColumn": 1,
-    "flagColumn": 1,
-    "commentColumn": 2
+    "startColumn": 3
   },
-  "PC-MUELLER": {
-    "file1Path": "Z:\\Projekt\\Quelldatei.xlsx",
-    "file2Path": "Z:\\Projekt\\Zieldatei.xlsx"
-  },
-  "PC-SCHMIDT": {
-    "file1Path": "X:\\Daten\\Quelldatei.xlsx",
-    "file2Path": "X:\\Daten\\Zieldatei.xlsx"
-  },
-  "LAPTOP-MEIER": {
-    "file1Path": "M:\\Shared\\Quelldatei.xlsx"
+  "users": {
+    "CONTOSO_ALICE": {
+      "file1Path": "Z:\\Projekt\\Quelldatei.xlsx"
+    },
+    "CONTOSO_BOB": {
+      "file1Path": "X:\\Daten\\Quelldatei.xlsx",
+      "file2Path": "X:\\Daten\\Zieldatei.xlsx"
+    }
   }
 }
 ```
 
-## Funktionsweise beim Laden
+Die Kennung wird aus Benutzername und – sofern verfügbar – Windows-Domäne gebildet, in Großbuchstaben. Sie wird nach einem Speichern in der Statusmeldung angezeigt.
 
-1. **Computername ermitteln**: Die App ermittelt automatisch den Windows-Computernamen (in Großbuchstaben)
-2. **Merge-Logik**: 
-   - Zuerst werden alle Werte aus `default` geladen
-   - Dann werden die Werte des passenden Computer-Abschnitts darüber gelegt
-   - Fehlende Werte bleiben aus `default`
+## Laden und Speichern
 
-## Funktionsweise beim Speichern (Netzwerk-sicher!)
+1. Beim Laden übernimmt die App zuerst alle Werte aus `default`.
+2. Danach überschreibt sie diese mit dem Abschnitt in `users` für den angemeldeten Benutzer.
+3. Beim Speichern bleibt `default`, alle anderen Benutzerabschnitte und auch unbekannte Felder erhalten.
+4. Ist die Datei noch flach, wird sie beim ersten persönlichen Speichern in das obige Format überführt. Die bisherige flache Config wird dabei zu `default`.
 
-Wenn User 2 seine Config speichert und eine config.json mit verschachtelter Struktur existiert:
-
-1. Die **bestehende config.json wird gelesen**
-2. **Nur der eigene Computer-Abschnitt wird aktualisiert**
-3. Alle anderen Abschnitte (default, andere Computer) **bleiben unverändert**
-
-### Beispiel
-
-**Vorher** (config.json auf dem Netzlaufwerk):
-```json
-{
-  "default": { "sheet1Name": "Daten" },
-  "PC-MUELLER": { "file1Path": "Z:\\Datei.xlsx" }
-}
-```
-
-**User auf PC-SCHMIDT speichert seine Config**
-
-**Nachher**:
-```json
-{
-  "default": { "sheet1Name": "Daten" },
-  "PC-MUELLER": { "file1Path": "Z:\\Datei.xlsx" },
-  "PC-SCHMIDT": { "file1Path": "X:\\Datei.xlsx", "file2Path": "X:\\Ziel.xlsx" }
-}
-```
-
-→ Müllers Einstellungen wurden **nicht überschrieben**!
-
-## Erste Einrichtung (Admin)
-
-1. Config-Datei mit `default`-Abschnitt auf dem Netzlaufwerk anlegen:
-   ```json
-   {
-     "default": {
-       "sheet1Name": "Daten",
-       "sheet2Name": "Daten",
-       "startColumn": 3
-     }
-   }
-   ```
-
-2. Jeder User startet die App und speichert seine Config → sein Abschnitt wird automatisch hinzugefügt
-
-## Beispiel Laden
-
-Wenn PC `PC-SCHMIDT` die Config lädt:
-- `file1Path`: `X:\Daten\Quelldatei.xlsx` (vom PC-SCHMIDT-Abschnitt)
-- `file2Path`: `X:\Daten\Zieldatei.xlsx` (vom PC-SCHMIDT-Abschnitt)
-- `sheet1Name`: `Daten` (vom default-Abschnitt)
-- `startColumn`: `3` (vom default-Abschnitt)
-- usw.
-
-## Computername ermitteln
-
-Den Computernamen finden Sie:
-- **Windows**: Systemsteuerung → System oder `hostname` in CMD
-- **In der App**: Wird in der Statuszeile angezeigt beim Laden/Speichern der Config
+Eine neue, erstmals gespeicherte Config bleibt zunächst flach. So ist sie weiterhin direkt als gemeinsamer Team-Standard nutzbar. Erst wenn ein Benutzer persönliche Einstellungen zu einer vorhandenen flachen Datei speichert, erfolgt die Umstellung auf Benutzerprofile.
 
 ## Abwärtskompatibilität
 
-Das alte flache Format funktioniert weiterhin:
+Alte Configs mit Rechnerabschnitten bleiben lesbar. Ihr bisheriger Rechnerabschnitt dient übergangsweise als Fallback, bis der Benutzer seine Config einmal speichert. Danach wird ein Benutzerprofil unter `users` angelegt; die alten Abschnitte werden nicht gelöscht.
 
 ```json
 {
-  "file1Path": "C:\\Dateien\\Quelldatei.xlsx",
-  "file2Path": "C:\\Dateien\\Zieldatei.xlsx"
+  "default": { "sheet1Name": "Daten" },
+  "PC-ALT": { "file1Path": "Z:\\Datei.xlsx" }
 }
 ```
 
-Die App erkennt automatisch ob es sich um das neue oder alte Format handelt.
-Bei flachem Format wird die Datei komplett überschrieben (altes Verhalten).
+## Hinweise für Administratoren
 
-## Tipps
-
-1. **UNC-Pfade im default**: Verwenden Sie im `default`-Abschnitt UNC-Pfade (`\\server\share\...`), dann brauchen nur PCs mit abweichenden Laufwerksbuchstaben einen eigenen Abschnitt.
-
-2. **Nur abweichende Werte**: Tragen Sie im Computer-Abschnitt nur die Werte ein, die vom Standard abweichen.
-
-3. **Groß-/Kleinschreibung**: Computernamen werden automatisch in Großbuchstaben umgewandelt. Schreiben Sie die Abschnittsnamen am besten auch in Großbuchstaben.
+- Für gemeinsame Daten möglichst UNC-Pfade (`\\server\freigabe\...`) im `default`-Abschnitt verwenden.
+- Persönliche Laufwerksbuchstaben und abweichende Dateipfade gehören in den jeweiligen Abschnitt unter `users`.
+- Die Datei `config.json.lock` wird nur während eines Speichervorgangs angelegt. Bleibt sie nach einem abgestürzten Prozess länger als fünf Minuten bestehen, wird sie beim nächsten Speichern automatisch ersetzt.
+- Wird die Config gerade gespeichert, wartet die App bis zu zwölf Sekunden und zeigt danach eine verständliche Fehlermeldung statt Daten zu überschreiben.
