@@ -48,6 +48,12 @@ if (process.platform === 'win32') {
 const workbookCache = new Map();
 const CACHE_MAX_SIZE = 3; // Maximal 3 Workbooks cachen
 const CACHE_MAX_AGE = 5 * 60 * 1000; // 5 Minuten
+// Der Startablauf braucht dieselbe XLSX-Datei zunächst für die Sheet-Liste
+// und direkt danach für das ausgewählte Sheet. Der Buffer vermeidet dabei den
+// zweiten Netzwerk-Read, ohne Workbooks dauerhaft im Speicher zu halten.
+const excelFileBufferCache = new Map();
+const FILE_BUFFER_CACHE_MAX_SIZE = 4;
+const FILE_BUFFER_CACHE_MAX_AGE = 2 * 60 * 1000;
 
 function getCachedWorkbook(filePath, password = null) {
     const key = `${filePath}:${password || ''}`;
@@ -92,7 +98,62 @@ function setCachedWorkbook(filePath, password = null, workbook) {
 
 function clearWorkbookCache() {
     workbookCache.clear();
+    excelFileBufferCache.clear();
     console.log('[Cache] Cache geleert');
+}
+
+function cacheExcelFileBuffer(filePath, buffer, stat) {
+    if (!Buffer.isBuffer(buffer) || !stat) return;
+
+    // Veraltete Einträge bei jeder Aktualisierung leichtgewichtig aufräumen.
+    const now = Date.now();
+    for (const [key, entry] of excelFileBufferCache) {
+        if (now - entry.timestamp > FILE_BUFFER_CACHE_MAX_AGE) {
+            excelFileBufferCache.delete(key);
+        }
+    }
+
+    if (!excelFileBufferCache.has(filePath) && excelFileBufferCache.size >= FILE_BUFFER_CACHE_MAX_SIZE) {
+        let oldestKey = null;
+        let oldestTime = Infinity;
+        for (const [key, entry] of excelFileBufferCache) {
+            if (entry.timestamp < oldestTime) {
+                oldestTime = entry.timestamp;
+                oldestKey = key;
+            }
+        }
+        if (oldestKey) excelFileBufferCache.delete(oldestKey);
+    }
+
+    excelFileBufferCache.set(filePath, {
+        buffer,
+        size: stat.size,
+        mtimeMs: stat.mtimeMs,
+        timestamp: now
+    });
+}
+
+async function getCachedExcelFileBuffer(filePath) {
+    const entry = excelFileBufferCache.get(filePath);
+    if (!entry || Date.now() - entry.timestamp > FILE_BUFFER_CACHE_MAX_AGE) {
+        excelFileBufferCache.delete(filePath);
+        return null;
+    }
+
+    try {
+        // Eine stat-Abfrage ist auf Netzlaufwerken sehr günstig und verhindert,
+        // dass eine inzwischen geänderte Datei mit altem Buffer gelesen wird.
+        const stat = await fs.promises.stat(filePath);
+        if (stat.size !== entry.size || stat.mtimeMs !== entry.mtimeMs) {
+            excelFileBufferCache.delete(filePath);
+            return null;
+        }
+        entry.timestamp = Date.now();
+        return entry.buffer;
+    } catch {
+        excelFileBufferCache.delete(filePath);
+        return null;
+    }
 }
 
 /**
@@ -2296,7 +2357,11 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
             // nur für Sheet-Namen — bei 10000+ Zeilen blockiert das den Event-Loop 10-30s
             // Die workbook.xml ist <10KB, unabhängig von der Dateigrösse
             const AdmZip = require('adm-zip');
-            const fileBuffer = await fs.promises.readFile(filePath);
+            const [fileBuffer, fileStat] = await Promise.all([
+                fs.promises.readFile(filePath),
+                fs.promises.stat(filePath)
+            ]);
+            cacheExcelFileBuffer(filePath, fileBuffer, fileStat);
             const zip = new AdmZip(fileBuffer);
             const workbookEntry = zip.getEntry('xl/workbook.xml');
             
@@ -2373,15 +2438,18 @@ ipcMain.handle('excel:readFile', async (event, filePath, password = null) => {
 });
 
 // Sheet-Daten lesen mit ExcelJS
-ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = null, quickLoad = false) => {
+ipcMain.handle('excel:readSheet', async (event, filePath, sheetName, password = null, options = {}) => {
     // Sicherheitsprüfung: Pfad validieren
     if (!isValidFilePath(filePath)) {
         return { success: false, error: 'Ungültiger Dateipfad' };
     }
 
     try {
-        // Nutze ExcelJS Reader
-        const result = await getReadSheetWithExcelJS()(filePath, sheetName, password);
+        const dataOnly = Boolean(options && options.dataOnly);
+        // readFile und readSheet folgen beim Laden von Datei 1/2 direkt
+        // aufeinander. Wiederverwendung vermeidet einen zweiten Netzwerk-Read.
+        const cachedBuffer = password ? null : await getCachedExcelFileBuffer(filePath);
+        const result = await getReadSheetWithExcelJS()(filePath, sheetName, password, cachedBuffer, { dataOnly });
         
         if (!result.success) {
             return result;

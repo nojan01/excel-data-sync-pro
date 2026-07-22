@@ -1791,6 +1791,161 @@ async function _readSheetStreaming(
 }
 
 /**
+ * Normalisiert einen Zellwert für die Übertragungsansicht. Diese Ansicht
+ * benötigt Werte, aber keine Style-, Formel- oder Rich-Text-Metadaten.
+ */
+function getTransferCellValue(cell, sharedStrings, imageCellSet, colIndex, rowNumber) {
+    const imageKey = `${colIndex}_${rowNumber - 1}`;
+    if (imageCellSet.has(imageKey)) return '🖼️ Bild';
+
+    let value = cell.formula
+        ? (cell.result !== undefined ? cell.result : '')
+        : cell.value;
+
+    if (value && typeof value === 'object' && value.formula) {
+        value = value.result !== undefined ? value.result : '';
+    }
+
+    if (value && typeof value === 'object' && value.sharedString !== undefined) {
+        const sharedString = sharedStrings[value.sharedString];
+        if (sharedString) {
+            value = sharedString.richText
+                ? sharedString.richText.map(part => part.text).join('')
+                : (sharedString.text || '');
+        }
+    }
+
+    if (value instanceof Date) {
+        return formatDateWithNumFmt(value, cell.numFmt || '');
+    }
+
+    if (typeof value === 'number' && cell.numFmt) {
+        return roundNumericByFormat(value, cell.numFmt, 'de-DE');
+    }
+
+    if (value && typeof value === 'object') {
+        if (value.richText) return value.richText.map(part => part.text).join('');
+        if (value.text !== undefined) return value.text;
+        if (value.error) return value.error;
+        if (value.buffer || value.image || value.imageId) return '🖼️ Bild';
+        return '';
+    }
+
+    return value === null || value === undefined ? '' : value;
+}
+
+/**
+ * Liest nur Werte und Header für die Übertragungsansicht. Dadurch werden für
+ * große Dateien keine hunderttausenden Style-/Formelobjekte erzeugt oder per
+ * IPC zum Renderer kopiert.
+ */
+async function readSheetDataOnly(filePath, sheetName, cachedBuffer = null) {
+    const startTime = Date.now();
+    const fileBuffer = cachedBuffer || await fs.promises.readFile(filePath);
+    const zip = new AdmZip(fileBuffer);
+    const metadata = extractSheetMetadata(fileBuffer, sheetName, zip);
+    const sharedStrings = parseSharedStrings(fileBuffer, zip);
+    const imageCellSet = new Set(metadata.imageCells.map(cell => `${cell.col}_${cell.row}`));
+    let actualColumnCount = Math.max(metadata.columnCount || 1, 1);
+    const headers = new Array(actualColumnCount).fill('');
+    const data = [];
+    let sheetFound = false;
+
+    const ensureColumnCount = (columnIndex) => {
+        while (columnIndex >= actualColumnCount) {
+            actualColumnCount++;
+            headers.push('');
+            for (const row of data) row.push('');
+        }
+    };
+
+    try {
+        const { Readable } = require('stream');
+        const readStream = Readable.from(fileBuffer);
+        const workbookReader = new ExcelJS.stream.xlsx.WorkbookReader(readStream, {
+            sharedStrings: 'cache',
+            hyperlinks: 'ignore',
+            // numFmt wird nur für korrekte Datum-/Zahlenwerte vorgehalten;
+            // eigene Style-Objekte werden in diesem Modus nicht erzeugt.
+            styles: 'cache',
+            worksheets: 'emit'
+        });
+
+        for await (const worksheetReader of workbookReader) {
+            if (worksheetReader.name !== sheetName) continue;
+            sheetFound = true;
+            let headerRowNumber = null;
+            let dataRowCounter = 0;
+
+            for await (const row of worksheetReader) {
+                const rowNumber = row.number;
+
+                if (headerRowNumber !== null && rowNumber > headerRowNumber + 1) {
+                    const expectedDataRow = rowNumber - headerRowNumber - 1;
+                    while (dataRowCounter < expectedDataRow) {
+                        data.push(new Array(actualColumnCount).fill(''));
+                        dataRowCounter++;
+                    }
+                }
+
+                if (headerRowNumber === null) {
+                    headerRowNumber = rowNumber;
+                    row.eachCell((cell, colNumber) => {
+                        const colIndex = colNumber - 1;
+                        ensureColumnCount(colIndex);
+                        headers[colIndex] = String(getTransferCellValue(
+                            cell, sharedStrings, imageCellSet, colIndex, rowNumber
+                        ));
+                    });
+                    continue;
+                }
+
+                const rowData = new Array(actualColumnCount).fill('');
+                row.eachCell((cell, colNumber) => {
+                    const colIndex = colNumber - 1;
+                    ensureColumnCount(colIndex);
+                    while (rowData.length < actualColumnCount) rowData.push('');
+                    rowData[colIndex] = getTransferCellValue(
+                        cell, sharedStrings, imageCellSet, colIndex, rowNumber
+                    );
+                });
+                data.push(rowData);
+                dataRowCounter++;
+            }
+            break;
+        }
+    } catch (error) {
+        // Einzelne XLSX-Erzeuger verwenden ZIP-Varianten, die ExcelJS nur im
+        // vollständigen Reader akzeptiert. Der Fallback erhält die bisherige
+        // Kompatibilität und verwendet dabei weiterhin den vorhandenen Buffer.
+        console.warn(`[ExcelJS] Datenmodus fehlgeschlagen: ${error.message} → vollständiger Reader`);
+        return readSheetWithExcelJS(filePath, sheetName, null, fileBuffer, { dataOnly: false });
+    }
+
+    if (!sheetFound) {
+        return { success: false, error: `Sheet "${sheetName}" nicht gefunden` };
+    }
+
+    data.unshift(headers);
+    console.log(`[ExcelJS] Datenmodus fertig: ${data.length} Zeilen, ${headers.length} Spalten in ${Date.now() - startTime}ms`);
+    return {
+        success: true,
+        headers,
+        data,
+        hiddenColumns: [],
+        hiddenRows: [],
+        cellStyles: {},
+        cellFormulas: {},
+        cellHyperlinks: {},
+        richTextCells: {},
+        mergedCells: [],
+        autoFilterRange: null,
+        rowHighlights: [],
+        isDataOnly: true
+    };
+}
+
+/**
  * Liest ein Excel-Sheet mit ExcelJS Streaming Reader (nicht-blockierend)
  * 
  * @param {string} filePath - Pfad zur Excel-Datei
@@ -1798,13 +1953,17 @@ async function _readSheetStreaming(
  * @param {string|null} password - Optional: Passwort für geschützte Dateien
  * @returns {Promise<Object>} Sheet-Daten im gleichen Format wie xlsx-populate
  */
-async function readSheetWithExcelJS(filePath, sheetName, password = null, cachedBuffer = null) {
+async function readSheetWithExcelJS(filePath, sheetName, password = null, cachedBuffer = null, options = {}) {
     const startTime = Date.now();
     let tempFilePath = null; // Für entschlüsselte Dateien
     const timings = {}; // Detaillierte Zeitmessungen
     
     try {
         console.log(`[ExcelJS] === START readSheetWithExcelJS === Datei: ${path.basename(filePath)}, Sheet: ${sheetName}`);
+
+        if (options.dataOnly && !password) {
+            return await readSheetDataOnly(filePath, sheetName, cachedBuffer);
+        }
         
         // Bei passwortgeschützten Dateien: xlsx-populate zum Entschlüsseln verwenden
         // ExcelJS hat bekannte Probleme mit Passwort-Entschlüsselung

@@ -1685,60 +1685,30 @@
                 updateMappingPreview();
             }
             
-            // Quelldatei wiederherstellen
+            // Die Wiederherstellung beider Dateien ist unabhängig. Parallel
+            // laden, damit die Startzeit nicht die Summe beider Dateien ist.
+            const restoreTasks = [];
             if (data.file1?.filePath) {
-                try {
-                    console.log('[Auto-Save] Lade Quelldatei:', data.file1.filePath);
-                    const result = await window.electronAPI.readExcelFile(data.file1.filePath);
-                    if (result.success) {
-                        state.file1.name = result.fileName;
-                        state.file1.filePath = data.file1.filePath;
-                        state.file1.sheets = result.sheets;
-                        state.file1.workbook = { SheetNames: result.sheets };
-                        
-                        elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
-                        elements.selectSheet1.disabled = false;
-                        elements.file1Info.textContent = `✓ ${result.fileName}`;
-                        elements.file1Info.classList.add('loaded');
-                        
-                        const sheetToLoad = data.file1.selectedSheet || result.sheets[0];
-                        elements.selectSheet1.value = sheetToLoad;
-                        await loadSheet1Electron(sheetToLoad);
-                        console.log('[Auto-Save] Quelldatei wiederhergestellt');
-                    }
-                } catch (e) {
-                    console.warn('[Auto-Save] Quelldatei konnte nicht geladen werden:', e);
-                }
+                console.log('[Auto-Save] Lade Quelldatei:', data.file1.filePath);
+                restoreTasks.push(
+                    loadMainFileFromPath(1, data.file1.filePath, data.file1.selectedSheet)
+                        .then(result => result.success
+                            ? console.log('[Auto-Save] Quelldatei wiederhergestellt')
+                            : console.warn('[Auto-Save] Quelldatei konnte nicht geladen werden:', result.error))
+                        .catch(error => console.warn('[Auto-Save] Quelldatei konnte nicht geladen werden:', error))
+                );
             }
-            
-            // Zieldatei wiederherstellen
             if (data.file2?.filePath) {
-                try {
-                    console.log('[Auto-Save] Lade Zieldatei:', data.file2.filePath);
-                    const result = await window.electronAPI.readExcelFile(data.file2.filePath);
-                    if (result.success) {
-                        state.file2.name = result.fileName;
-                        state.file2.filePath = data.file2.filePath;
-                        state.file2.sheets = result.sheets;
-                        state.file2.workbook = { SheetNames: result.sheets };
-                        
-                        // Change-Request-Cache invalidieren (neues Verzeichnis)
-                        invalidateChangeRequestCache();
-                        
-                        elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
-                        elements.selectSheet2.disabled = false;
-                        elements.file2Info.textContent = `✓ ${result.fileName}`;
-                        elements.file2Info.classList.add('loaded');
-                        
-                        const sheetToLoad = data.file2.selectedSheet || result.sheets[0];
-                        elements.selectSheet2.value = sheetToLoad;
-                        await loadSheet2Electron(sheetToLoad);
-                        console.log('[Auto-Save] Zieldatei wiederhergestellt');
-                    }
-                } catch (e) {
-                    console.warn('[Auto-Save] Zieldatei konnte nicht geladen werden:', e);
-                }
+                console.log('[Auto-Save] Lade Zieldatei:', data.file2.filePath);
+                restoreTasks.push(
+                    loadMainFileFromPath(2, data.file2.filePath, data.file2.selectedSheet)
+                        .then(result => result.success
+                            ? console.log('[Auto-Save] Zieldatei wiederhergestellt')
+                            : console.warn('[Auto-Save] Zieldatei konnte nicht geladen werden:', result.error))
+                        .catch(error => console.warn('[Auto-Save] Zieldatei konnte nicht geladen werden:', error))
+                );
             }
+            await Promise.all(restoreTasks);
             
             // Warteschlange wiederherstellen
             if (data.transferQueue?.length > 0) {
@@ -4393,6 +4363,44 @@
         }
         
         // ==================== Electron-Specific Functions ====================
+        async function loadMainFileFromPath(fileNumber, filePath, preferredSheetName = null, { createSessionLock = false } = {}) {
+            const result = await window.electronAPI.readExcelFile(filePath);
+            if (!result.success) return result;
+
+            const isSource = fileNumber === 1;
+            const fileState = isSource ? state.file1 : state.file2;
+            const sheetSelect = isSource ? elements.selectSheet1 : elements.selectSheet2;
+            const fileInfo = isSource ? elements.file1Info : elements.file2Info;
+
+            fileState.name = result.fileName;
+            fileState.filePath = filePath;
+            fileState.sheets = result.sheets;
+            fileState.workbook = { SheetNames: result.sheets };
+
+            if (!isSource) invalidateChangeRequestCache();
+
+            sheetSelect.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+            sheetSelect.disabled = false;
+            fileInfo.textContent = `✓ ${result.fileName}`;
+            fileInfo.classList.add('loaded');
+
+            if (createSessionLock) {
+                await window.electronAPI.createSessionLock(filePath);
+            }
+
+            const sheetToLoad = preferredSheetName && result.sheets.includes(preferredSheetName)
+                ? preferredSheetName
+                : result.sheets[0];
+            sheetSelect.value = sheetToLoad;
+            const sheetLoaded = isSource
+                ? await loadSheet1Electron(sheetToLoad)
+                : await loadSheet2Electron(sheetToLoad);
+
+            return sheetLoaded
+                ? { success: true, fileName: result.fileName }
+                : { success: false, error: 'Arbeitsblatt konnte nicht geladen werden' };
+        }
+
         async function loadFile1Electron() {
             const filePath = await window.electronAPI.openFileDialog({
                 title: 'Quelldatei öffnen',
@@ -4405,26 +4413,10 @@
             const conflictCheck = await checkAndWarnNetworkConflict(filePath);
             if (!conflictCheck.proceed) return;
             
-            const result = await window.electronAPI.readExcelFile(filePath);
+            const result = await loadMainFileFromPath(1, filePath, null, { createSessionLock: true });
             if (!result.success) {
                 showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
-                return;
             }
-            
-            state.file1.name = result.fileName;
-            state.file1.filePath = filePath;
-            state.file1.sheets = result.sheets;
-            state.file1.workbook = { SheetNames: result.sheets };
-            
-            elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
-            elements.selectSheet1.disabled = false;
-            elements.file1Info.textContent = `✓ ${result.fileName}`;
-            elements.file1Info.classList.add('loaded');
-            
-            // Session-Lock erstellen
-            await window.electronAPI.createSessionLock(filePath);
-            
-            await loadSheet1Electron(result.sheets[0]);
         }
         
         async function loadFile2Electron() {
@@ -4439,38 +4431,19 @@
             const conflictCheck = await checkAndWarnNetworkConflict(filePath);
             if (!conflictCheck.proceed) return;
             
-            const result = await window.electronAPI.readExcelFile(filePath);
+            const result = await loadMainFileFromPath(2, filePath, null, { createSessionLock: true });
             if (!result.success) {
                 showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
-                return;
             }
-            
-            state.file2.name = result.fileName;
-            state.file2.filePath = filePath;
-            state.file2.sheets = result.sheets;
-            state.file2.workbook = { SheetNames: result.sheets };
-            
-            // Change-Request-Cache invalidieren (neues Verzeichnis)
-            invalidateChangeRequestCache();
-            
-            elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
-            elements.selectSheet2.disabled = false;
-            elements.file2Info.textContent = `✓ ${result.fileName}`;
-            elements.file2Info.classList.add('loaded');
-            
-            // Session-Lock erstellen
-            await window.electronAPI.createSessionLock(filePath);
-            
-            await loadSheet2Electron(result.sheets[0]);
         }
         
         async function loadSheet1Electron(sheetName) {
             if (!state.file1.filePath || !sheetName) return;
             
-            const result = await window.electronAPI.readExcelSheet(state.file1.filePath, sheetName);
+            const result = await window.electronAPI.readExcelSheet(state.file1.filePath, sheetName, null, { dataOnly: true });
             if (!result.success) {
                 showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
-                return;
+                return false;
             }
             
             state.file1.selectedSheet = sheetName;
@@ -4479,15 +4452,16 @@
             
             saveConfig();
             checkReadyState();
+            return true;
         }
         
         async function loadSheet2Electron(sheetName) {
             if (!state.file2.filePath || !sheetName) return;
             
-            const result = await window.electronAPI.readExcelSheet(state.file2.filePath, sheetName);
+            const result = await window.electronAPI.readExcelSheet(state.file2.filePath, sheetName, null, { dataOnly: true });
             if (!result.success) {
                 showStatus(elements.transferStatus, `Fehler: ${result.error}`, 'error');
-                return;
+                return false;
             }
             
             state.file2.selectedSheet = sheetName;
@@ -4496,6 +4470,7 @@
             
             saveConfig();
             checkReadyState();
+            return true;
         }
         
         async function loadTemplateElectron() {
@@ -4695,57 +4670,22 @@
                 return;
             }
             
-            // Lade Dateien aus Pfaden
+            // Datei 1 und Datei 2 sind unabhängig. Beide Metadaten- und
+            // Sheet-Ladevorgänge dürfen deshalb gleichzeitig laufen.
+            const mainFileLoads = [];
             if (config.file1Path) {
-                try {
-                    const result = await window.electronAPI.readExcelFile(config.file1Path);
-                    if (result.success) {
-                        state.file1.name = result.fileName;
-                        state.file1.filePath = config.file1Path;
-                        state.file1.sheets = result.sheets;
-                        state.file1.workbook = { SheetNames: result.sheets };
-                        
-                        elements.selectSheet1.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
-                        elements.selectSheet1.disabled = false;
-                        elements.file1Info.textContent = `✓ ${result.fileName}`;
-                        elements.file1Info.classList.add('loaded');
-                        
-                        const sheetToLoad = config.file1SheetName && result.sheets.includes(config.file1SheetName) 
-                            ? config.file1SheetName : result.sheets[0];
-                        elements.selectSheet1.value = sheetToLoad;
-                        await loadSheet1Electron(sheetToLoad);
-                    }
-                } catch (e) {
-                    console.warn('Konnte Datei 1 nicht laden:', e);
-                }
+                mainFileLoads.push(
+                    loadMainFileFromPath(1, config.file1Path, config.file1SheetName)
+                        .catch(error => console.warn('Konnte Datei 1 nicht laden:', error))
+                );
             }
-            
             if (config.file2Path) {
-                try {
-                    const result = await window.electronAPI.readExcelFile(config.file2Path);
-                    if (result.success) {
-                        state.file2.name = result.fileName;
-                        state.file2.filePath = config.file2Path;
-                        state.file2.sheets = result.sheets;
-                        state.file2.workbook = { SheetNames: result.sheets };
-                        
-                        // Change-Request-Cache invalidieren (neues Verzeichnis)
-                        invalidateChangeRequestCache();
-            
-                        elements.selectSheet2.innerHTML = result.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
-                        elements.selectSheet2.disabled = false;
-                        elements.file2Info.textContent = `✓ ${result.fileName}`;
-                        elements.file2Info.classList.add('loaded');
-                        
-                        const sheetToLoad = config.file2SheetName && result.sheets.includes(config.file2SheetName) 
-                            ? config.file2SheetName : result.sheets[0];
-                        elements.selectSheet2.value = sheetToLoad;
-                        await loadSheet2Electron(sheetToLoad);
-                    }
-                } catch (e) {
-                    console.warn('Konnte Datei 2 nicht laden:', e);
-                }
+                mainFileLoads.push(
+                    loadMainFileFromPath(2, config.file2Path, config.file2SheetName)
+                        .catch(error => console.warn('Konnte Datei 2 nicht laden:', error))
+                );
             }
+            await Promise.all(mainFileLoads);
             
             if (config.templatePath) {
                 try {
