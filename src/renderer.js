@@ -3357,7 +3357,11 @@
         }
         
         // ==================== New Row Functions ====================
-        function addNewRowToQueue() {
+        async function addNewRowToQueue() {
+            // Change-Request-Dateien vor der Duplikatprüfung laden. Dies ist
+            // insbesondere für manuell eingegebene Seriennummern notwendig.
+            await loadChangeRequestFiles();
+
             const data = getNewRowData();
             const flag = elements.newRowFlag.value;
             const comment = elements.newRowComment.value;
@@ -3368,7 +3372,10 @@
                 const duplicate = checkForDuplicate(checkValue);
                 if (duplicate) {
                     const rowInfo = duplicate.firstMatch ? duplicate.firstMatch.rowIndex : '?';
-                    const errorMsg = `⚠️ Zeile bereits in Zieldatei vorhanden (Zeile ${rowInfo})`;
+                    const source = duplicate.inTarget
+                        ? 'Zieldatei'
+                        : `Change-Request-Datei (${duplicate.inChangeRequests.join(', ')})`;
+                    const errorMsg = `⚠️ Zeile bereits in ${source} vorhanden (Zeile ${rowInfo})`;
                     showStatus(elements.transferStatus, errorMsg, 'warning');
                     showStatus(elements.newRowStatus, errorMsg, 'warning');
                     return;
@@ -3443,6 +3450,10 @@
                 showStatus(elements.newRowStatus, errorMsg, 'error');
                 return;
             }
+
+            // Change-Request-Dateien vor der Duplikatprüfung laden. Dies ist
+            // insbesondere für manuell eingegebene Seriennummern notwendig.
+            await loadChangeRequestFiles();
             
             // Zur Warteschlange hinzufügen und direkt übertragen
             if (state.file2.filePath) {
@@ -3453,7 +3464,10 @@
                     const duplicate = checkForDuplicate(checkValue);
                     if (duplicate) {
                         const rowInfo = duplicate.firstMatch ? duplicate.firstMatch.rowIndex : '?';
-                        const errorMsg = `⚠️ Zeile bereits in Zieldatei vorhanden (Zeile ${rowInfo})`;
+                        const source = duplicate.inTarget
+                            ? 'Zieldatei'
+                            : `Change-Request-Datei (${duplicate.inChangeRequests.join(', ')})`;
+                        const errorMsg = `⚠️ Zeile bereits in ${source} vorhanden (Zeile ${rowInfo})`;
                         showStatus(elements.transferStatus, errorMsg, 'warning');
                         showStatus(elements.newRowStatus, errorMsg, 'warning');
                         return;
@@ -3581,17 +3595,37 @@
                 if (!pattern) {
                     return;
                 }
-                const result = await window.electronAPI.findFiles(directory, pattern);
+                // Die aktuelle Zieldatei wird unten separat durchsucht. Die
+                // übrigen Change Requests liegen sowohl im Arbeitsordner als
+                // auch optional im Archivunterordner.
+                const pathSeparator = directory.includes('\\') ? '\\' : '/';
+                const archiveDirectory = directory.endsWith('/') || directory.endsWith('\\')
+                    ? `${directory}Change_Requests_old`
+                    : `${directory}${pathSeparator}Change_Requests_old`;
+                const [currentDirectoryResult, archiveDirectoryResult] = await Promise.all([
+                    window.electronAPI.findFiles(directory, pattern),
+                    window.electronAPI.findFiles(archiveDirectory, pattern)
+                ]);
                 
-                if (!result.success) {
-                    console.error('[ChangeRequest] Fehler bei Dateisuche:', result.error);
+                if (!currentDirectoryResult.success) {
+                    console.error('[ChangeRequest] Fehler bei Dateisuche:', currentDirectoryResult.error);
                     return;
                 }
+
+                // Der Archivordner ist optional. Andere Fehler (z. B. fehlende
+                // Berechtigung auf einem Netzlaufwerk) werden weiterhin protokolliert.
+                if (!archiveDirectoryResult.success && archiveDirectoryResult.error !== 'Verzeichnis nicht gefunden') {
+                    console.warn('[ChangeRequest] Fehler bei Suche im Archivordner:', archiveDirectoryResult.error);
+                }
                 
-                // Zieldatei selbst ausschließen (wird separat geprüft)
-                const files = result.files.filter(f => f !== state.file2.filePath);
+                // Zieldatei selbst nicht erneut als Change Request laden: Sie
+                // wird in checkForDuplicate() separat und immer geprüft.
+                const files = [...new Set([
+                    ...currentDirectoryResult.files,
+                    ...(archiveDirectoryResult.success ? archiveDirectoryResult.files : [])
+                ])].filter(f => f !== state.file2.filePath);
                 
-                console.log(`[ChangeRequest] Suchmuster "${pattern}" → ${files.length} Dateien gefunden in ${directory}`);
+                console.log(`[ChangeRequest] Suchmuster "${pattern}" → ${files.length} Dateien gefunden in ${directory} und ${archiveDirectory}`);
                 
                 // Cache zurücksetzen
                 state.changeRequestCache.files = files;
@@ -3619,7 +3653,7 @@
                             
                             if (sheetResult.success) {
                                 state.changeRequestCache.data.set(filePath, {
-                                    fileName: filePath.substring(filePath.lastIndexOf('/') + 1),
+                                    fileName: filePath.substring(Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')) + 1),
                                     headers: sheetResult.headers || [],
                                     data: sheetResult.data || [],
                                     sheetName: sheetToLoad
