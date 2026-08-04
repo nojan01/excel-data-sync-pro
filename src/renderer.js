@@ -74,7 +74,8 @@
                 
                 // Search
                 searchPlaceholder: 'Suche... (Platzhalter: * = beliebig, ? = ein Zeichen)',
-                search: '🔍 Suchen',
+                search: '🔍 Durchsuchen Quelldatei',
+                searchChangeRequests: '📋 Durchsuchen Change Requests',
                 newRow: '➕ Neue Zeile',
                 
                 // Results
@@ -403,7 +404,8 @@
                 
                 // Search
                 searchPlaceholder: 'Search... (Wildcards: * = any, ? = one character)',
-                search: '🔍 Search',
+                search: '🔍 Search Source File',
+                searchChangeRequests: '📋 Search Change Requests',
                 newRow: '➕ New Row',
                 
                 // Results
@@ -724,6 +726,7 @@
             // Search section
             document.getElementById('searchInput').placeholder = t('searchPlaceholder');
             document.getElementById('btnSearch').innerHTML = t('search');
+            document.getElementById('btnSearchChangeRequests').innerHTML = t('searchChangeRequests');
             document.getElementById('btnNewRow').innerHTML = t('newRow');
             
             // Empty state
@@ -1933,6 +1936,9 @@
             selectedRow: null,
             selectedRows: [],
             searchResults: [],
+            searchMode: 'source', // 'source' oder 'changeRequests'
+            searchResultHeaders: [],
+            searchHasSpecialSyntax: false,
             history: [],
             transferQueue: [],
             template: {
@@ -1986,6 +1992,7 @@
             searchInput: document.getElementById('searchInput'),
             searchHistoryDropdown: document.getElementById('searchHistoryDropdown'),
             btnSearch: document.getElementById('btnSearch'),
+            btnSearchChangeRequests: document.getElementById('btnSearchChangeRequests'),
             btnNewRow: document.getElementById('btnNewRow'),
             searchResultsInfo: document.getElementById('searchResultsInfo'),
             
@@ -2497,8 +2504,9 @@
             const hasMapping = state.mapping.sourceColumns && state.mapping.sourceColumns.length > 0;
             elements.btnConfigMapping.disabled = !bothLoaded && !hasMapping;
             
-            elements.searchInput.disabled = !state.file1.selectedSheet;
+            elements.searchInput.disabled = !state.file1.selectedSheet && !state.file2.filePath;
             elements.btnSearch.disabled = !state.file1.selectedSheet;
+            elements.btnSearchChangeRequests.disabled = !state.file2.filePath;
             
             // "Neue Zeile" Button aktivieren wenn Mapping vorhanden und Datei 2 geladen
             elements.btnNewRow.disabled = !hasMapping || !hasFile2;
@@ -2832,49 +2840,107 @@
             return false;
         }
         
+        function createSearchMatcher(query) {
+            const hasWildcards = query.includes('*') || query.includes('?');
+            const hasOperators = / (AND|OR) /i.test(query);
+            const parsedQuery = hasOperators ? parseSearchQuery(query) : null;
+            const wildcardRegex = hasWildcards ? wildcardToRegex(query) : null;
+            const lowerQuery = query.toLowerCase();
+
+            return {
+                hasSpecialSyntax: hasWildcards || hasOperators,
+                matches(row) {
+                    if (parsedQuery) return rowMatchesQuery(row, parsedQuery);
+                    if (wildcardRegex) {
+                        return row.some(cell => cell && wildcardRegex.test(String(cell)));
+                    }
+                    return row.some(cell => cell && String(cell).toLowerCase().includes(lowerQuery));
+                }
+            };
+        }
+
         function search() {
             const query = elements.searchInput.value.trim();
             if (!query || !state.file1.data.length) return;
-            
-            const hasWildcards = query.includes('*') || query.includes('?');
-            const hasOperators = / (AND|OR) /i.test(query);
-            state.searchResults = [];
-            
-            if (hasOperators) {
-                // Erweiterte Suche mit AND/OR
-                const parsed = parseSearchQuery(query);
-                state.file1.data.forEach((row, rowIndex) => {
-                    if (rowMatchesQuery(row, parsed)) {
-                        state.searchResults.push({ rowIndex: rowIndex, data: row });
-                    }
-                });
-            } else if (hasWildcards) {
-                const regex = wildcardToRegex(query);
-                state.file1.data.forEach((row, rowIndex) => {
-                    for (let col of row) {
-                        if (col && regex.test(String(col))) {
-                            state.searchResults.push({ rowIndex: rowIndex, data: row });
-                            break;
-                        }
-                    }
-                });
-            } else {
-                const lowerQuery = query.toLowerCase();
-                state.file1.data.forEach((row, rowIndex) => {
-                    for (let col of row) {
-                        if (col && String(col).toLowerCase().includes(lowerQuery)) {
-                            state.searchResults.push({ rowIndex: rowIndex, data: row });
-                            break;
-                        }
-                    }
-                });
-            }
-            
+
+            const matcher = createSearchMatcher(query);
+            state.searchMode = 'source';
+            state.searchResultHeaders = state.file1.headers;
+            state.searchHasSpecialSyntax = matcher.hasSpecialSyntax;
+            state.searchResults = state.file1.data
+                .map((row, rowIndex) => ({ rowIndex, data: row }))
+                .filter(result => matcher.matches(result.data));
+
             // Such-Historie aktualisieren
             addToSearchHistory(query, state.searchResults.length);
             hideSearchHistoryDropdown();
-            
-            displaySearchResults(query, hasWildcards || hasOperators);
+
+            displaySearchResults(query, matcher.hasSpecialSyntax);
+        }
+
+        /**
+         * Durchsucht die zwischengespeicherten Change-Request-Dateien mit
+         * exakt derselben Suchsyntax wie die Quelldatei. Die Treffer sind
+         * bewusst schreibgeschützt, damit archivierte Requests nicht in die
+         * Übertragungs-Warteschlange gelangen.
+         */
+        async function searchChangeRequests() {
+            const query = elements.searchInput.value.trim();
+            if (!query) return;
+            if (!state.file2.filePath) {
+                showStatus(elements.transferStatus, 'Bitte zuerst eine Zieldatei laden', 'error');
+                return;
+            }
+
+            await loadChangeRequestFiles();
+            const matcher = createSearchMatcher(query);
+            const records = [];
+            const columnNames = [];
+            const columnIndexByName = new Map();
+
+            for (const [, fileData] of state.changeRequestCache.data) {
+                const headers = fileData.headers || [];
+                for (let colIndex = 0; colIndex < headers.length; colIndex++) {
+                    const baseName = String(headers[colIndex] || `Spalte ${getColumnLetter(colIndex + 1)}`);
+                    const occurrence = headers.slice(0, colIndex)
+                        .filter(header => String(header || '') === String(headers[colIndex] || '')).length;
+                    const columnName = occurrence > 0 ? `${baseName} (${getColumnLetter(colIndex + 1)})` : baseName;
+                    if (!columnIndexByName.has(columnName)) {
+                        columnIndexByName.set(columnName, columnNames.length);
+                        columnNames.push(columnName);
+                    }
+                }
+
+                for (let rowIndex = 0; rowIndex < (fileData.data || []).length; rowIndex++) {
+                    const row = fileData.data[rowIndex];
+                    if (matcher.matches(row)) {
+                        records.push({ fileData, headers, rowIndex, row });
+                    }
+                }
+            }
+
+            state.searchMode = 'changeRequests';
+            state.searchResultHeaders = ['Datei', 'Arbeitsblatt', 'Zeile', ...columnNames];
+            state.searchHasSpecialSyntax = matcher.hasSpecialSyntax;
+            state.searchResults = records.map(record => {
+                const data = new Array(state.searchResultHeaders.length).fill('');
+                data[0] = record.fileData.fileName || 'Change-Request';
+                data[1] = record.fileData.sheetName || '';
+                data[2] = record.rowIndex + 2;
+                record.row.forEach((value, colIndex) => {
+                    const baseName = String(record.headers[colIndex] || `Spalte ${getColumnLetter(colIndex + 1)}`);
+                    const occurrence = record.headers.slice(0, colIndex)
+                        .filter(header => String(header || '') === String(record.headers[colIndex] || '')).length;
+                    const columnName = occurrence > 0 ? `${baseName} (${getColumnLetter(colIndex + 1)})` : baseName;
+                    const targetIndex = columnIndexByName.get(columnName);
+                    if (targetIndex !== undefined) data[targetIndex + 3] = value;
+                });
+                return { rowIndex: record.rowIndex, data };
+            });
+
+            addToSearchHistory(query, state.searchResults.length);
+            hideSearchHistoryDropdown();
+            displaySearchResults(query, matcher.hasSpecialSyntax);
         }
         
         function displaySearchResults(query, hasWildcards = false) {
@@ -2972,8 +3038,13 @@
             elements.emptyState.style.display = 'none';
             elements.resultsTableContainer.style.display = 'block';
             
-            let headerHtml = '<tr><th style="width: 40px;"><input type="checkbox" id="selectAllCheckbox" title="Alle auf dieser Seite auswählen"></th>';
-            state.file1.headers.forEach((header, i) => {
+            const isChangeRequestSearch = state.searchMode === 'changeRequests';
+            const headers = state.searchResultHeaders.length > 0 ? state.searchResultHeaders : state.file1.headers;
+            let headerHtml = '<tr>';
+            if (!isChangeRequestSearch) {
+                headerHtml += '<th style="width: 40px;"><input type="checkbox" id="selectAllCheckbox" title="Alle auf dieser Seite auswählen"></th>';
+            }
+            headers.forEach((header, i) => {
                 headerHtml += `<th>${escapeHtml(header || `Spalte ${getColumnLetter(i + 1)}`)}</th>`;
             });
             headerHtml += '</tr>';
@@ -2984,11 +3055,17 @@
             pageResults.forEach((result, pageIndex) => {
                 const globalIndex = startIndex + pageIndex;
                 bodyHtml += `<tr data-index="${globalIndex}">`;
-                bodyHtml += `<td><input type="checkbox" class="row-checkbox" data-index="${globalIndex}" onclick="event.stopPropagation()"></td>`;
-                state.file1.headers.forEach((_, colIndex) => {
+                if (!isChangeRequestSearch) {
+                    bodyHtml += `<td><input type="checkbox" class="row-checkbox" data-index="${globalIndex}" onclick="event.stopPropagation()"></td>`;
+                }
+                headers.forEach((_, colIndex) => {
                     const cell = result.data[colIndex];
                     const cellStr = String(cell ?? '');
-                    bodyHtml += `<td contenteditable="true" data-row="${globalIndex}" data-col="${colIndex}" data-original="${escapeHtml(cellStr)}" onclick="event.stopPropagation()">${escapeHtml(cellStr)}</td>`;
+                    if (isChangeRequestSearch) {
+                        bodyHtml += `<td>${escapeHtml(cellStr)}</td>`;
+                    } else {
+                        bodyHtml += `<td contenteditable="true" data-row="${globalIndex}" data-col="${colIndex}" data-original="${escapeHtml(cellStr)}" onclick="event.stopPropagation()">${escapeHtml(cellStr)}</td>`;
+                    }
                 });
                 bodyHtml += '</tr>';
             });
@@ -3002,24 +3079,26 @@
             // Event Delegation für Search Results (einmalig)
             setupSearchResultsDelegation();
             
-            document.getElementById('selectAllCheckbox').addEventListener('change', (e) => {
-                selectAllRows(e.target.checked);
-            });
-            
-            document.querySelectorAll('.row-checkbox').forEach(cb => {
-                cb.addEventListener('change', (e) => {
-                    toggleRowSelection(parseInt(e.target.dataset.index), e.target.checked);
+            if (!isChangeRequestSearch) {
+                document.getElementById('selectAllCheckbox').addEventListener('change', (e) => {
+                    selectAllRows(e.target.checked);
                 });
-            });
+
+                document.querySelectorAll('.row-checkbox').forEach(cb => {
+                    cb.addEventListener('change', (e) => {
+                        toggleRowSelection(parseInt(e.target.dataset.index), e.target.checked);
+                    });
+                });
+            }
             
             // Pagination UI aktualisieren
             updateSearchPagination(totalPages);
             
             // Erste Zeile auf der aktuellen Seite auswählen
-            if (pageResults.length > 0) {
+            if (!isChangeRequestSearch && pageResults.length > 0) {
                 toggleRowSelection(startIndex, true);
             }
-            elements.transferPanel.classList.remove('hidden');
+            elements.transferPanel.classList.toggle('hidden', isChangeRequestSearch);
         }
         
         function updateSearchPagination(totalPages) {
@@ -3048,7 +3127,7 @@
         function searchGoToPage(page) {
             const totalPages = Math.ceil(state.searchResults.length / state.searchPagination.pageSize);
             state.searchPagination.currentPage = Math.max(1, Math.min(page, totalPages));
-            renderSearchResultsPage(elements.searchInput.value.trim());
+            renderSearchResultsPage(elements.searchInput.value.trim(), state.searchHasSpecialSyntax);
             
             // Zum Tabellenanfang scrollen
             elements.resultsTableContainer.scrollTop = 0;
@@ -3057,7 +3136,7 @@
         function searchChangePageSize(newSize) {
             state.searchPagination.pageSize = parseInt(newSize);
             state.searchPagination.currentPage = 1;
-            renderSearchResultsPage(elements.searchInput.value.trim());
+            renderSearchResultsPage(elements.searchInput.value.trim(), state.searchHasSpecialSyntax);
         }
         
         function getEditedRowData(rowIndex) {
@@ -3372,9 +3451,7 @@
                 const duplicate = checkForDuplicate(checkValue);
                 if (duplicate) {
                     const rowInfo = duplicate.firstMatch ? duplicate.firstMatch.rowIndex : '?';
-                    const source = duplicate.inTarget
-                        ? 'Zieldatei'
-                        : `Change-Request-Datei (${duplicate.inChangeRequests.join(', ')})`;
+                    const source = getDuplicateSourceDescription(duplicate);
                     const errorMsg = `⚠️ Zeile bereits in ${source} vorhanden (Zeile ${rowInfo})`;
                     showStatus(elements.transferStatus, errorMsg, 'warning');
                     showStatus(elements.newRowStatus, errorMsg, 'warning');
@@ -3464,9 +3541,7 @@
                     const duplicate = checkForDuplicate(checkValue);
                     if (duplicate) {
                         const rowInfo = duplicate.firstMatch ? duplicate.firstMatch.rowIndex : '?';
-                        const source = duplicate.inTarget
-                            ? 'Zieldatei'
-                            : `Change-Request-Datei (${duplicate.inChangeRequests.join(', ')})`;
+                        const source = getDuplicateSourceDescription(duplicate);
                         const errorMsg = `⚠️ Zeile bereits in ${source} vorhanden (Zeile ${rowInfo})`;
                         showStatus(elements.transferStatus, errorMsg, 'warning');
                         showStatus(elements.newRowStatus, errorMsg, 'warning');
@@ -3748,6 +3823,49 @@
             }
             return null;
         }
+
+        /**
+         * Liefert eine für die Statusanzeige geeignete Beschreibung aller
+         * Fundorte eines Duplikats. Dateinamen werden escaped, da sie direkt
+         * als HTML im Statusbereich ausgegeben werden.
+         */
+        function getDuplicateSourceDescription(duplicate) {
+            const locations = [];
+            if (duplicate.inTarget) {
+                locations.push('Zieldatei');
+            }
+
+            const changeRequestFiles = [...new Set(duplicate.inChangeRequests || [])]
+                .filter(Boolean)
+                .map(fileName => escapeHtml(fileName));
+            if (changeRequestFiles.length > 0) {
+                const label = changeRequestFiles.length === 1
+                    ? 'Change-Request-Datei'
+                    : 'Change-Request-Dateien';
+                locations.push(`${label} (${changeRequestFiles.join(', ')})`);
+            }
+
+            return locations.join(' sowie ') || 'unbekannter Datei';
+        }
+
+        /**
+         * Sammelt die Dateinamen der Change Requests, die bei einem
+         * Mehrfachtransfer zum Überspringen geführt haben.
+         */
+        function addDuplicateChangeRequestFiles(fileNames, duplicate) {
+            for (const fileName of duplicate.inChangeRequests || []) {
+                if (fileName) fileNames.add(fileName);
+            }
+        }
+
+        function formatDuplicateChangeRequestFiles(fileNames) {
+            if (fileNames.size === 0) return '';
+            const files = [...fileNames].map(fileName => escapeHtml(fileName));
+            const label = files.length === 1
+                ? 'Gefunden in Change-Request-Datei'
+                : 'Gefunden in Change-Request-Dateien';
+            return `<br><small>${label}: ${files.join(', ')}</small>`;
+        }
         
         /**
          * Cache der Change-Request-Dateien invalidieren
@@ -3784,6 +3902,7 @@
                 let skippedTarget = 0;
                 let skippedChangeRequest = 0;
                 let alsoInChangeRequest = 0;
+                const skippedChangeRequestFiles = new Set();
                 
                 for (const rowIndex of state.selectedRows) {
                     const row = state.searchResults[rowIndex];
@@ -3803,6 +3922,7 @@
                     if (checkValue) {
                         const duplicate = checkForDuplicate(checkValue);
                         if (duplicate) {
+                            addDuplicateChangeRequestFiles(skippedChangeRequestFiles, duplicate);
                             if (duplicate.inTarget) {
                                 skippedTarget++;
                                 if (duplicate.inChangeRequests.length > 0) {
@@ -3837,6 +3957,7 @@
                         skipMsg += ', ';
                     }
                     if (skippedChangeRequest > 0) skipMsg += `${skippedChangeRequest} nur in Change-Request`;
+                    skipMsg += formatDuplicateChangeRequestFiles(skippedChangeRequestFiles);
                     showStatus(elements.transferStatus, `⚠️ Übersprungen: ${skipMsg}`, 'warning');
                     await new Promise(r => setTimeout(r, 1500));
                 }
@@ -3963,6 +4084,7 @@
             let skippedTarget = 0;
             let skippedChangeRequest = 0;
             let alsoInChangeRequest = 0; // Zusätzlich in Change-Request (wenn auch in Zieldatei)
+            const skippedChangeRequestFiles = new Set();
             
             for (const rowIndex of state.selectedRows) {
                 const row = state.searchResults[rowIndex];
@@ -3984,6 +4106,7 @@
                 if (checkValue) {
                     const duplicate = checkForDuplicate(checkValue);
                     if (duplicate) {
+                        addDuplicateChangeRequestFiles(skippedChangeRequestFiles, duplicate);
                         if (duplicate.inTarget) {
                             skippedTarget++;
                             // Auch in Change-Requests?
@@ -4035,6 +4158,7 @@
                 message += ` 📋 ${skippedChangeRequest} nur in Change-Request!`;
                 status = 'warning';
             }
+            message += formatDuplicateChangeRequestFiles(skippedChangeRequestFiles);
             
             showStatus(elements.transferStatus, message, status);
             
@@ -17878,6 +18002,7 @@
             });
             
             elements.btnSearch.onclick = search;
+            elements.btnSearchChangeRequests.onclick = searchChangeRequests;
             
             elements.btnNewRow.onclick = openNewRowPanel;
             elements.btnCloseNewRow.onclick = closeNewRowPanel;
