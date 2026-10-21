@@ -8,7 +8,8 @@
     "start": "electron --max-old-space-size=4096 .",
     "dev": "electron --max-old-space-size=4096 . --dev",
     "build:win": "electron-builder --win nsis --x64",
-    "build:win-arm64": "electron-builder --win nsis --arm64"
+    "build:win-arm64": "electron-builder --win nsis --arm64",
+    "lint": "eslint ."
   },
   "build": {
     "appId": "de.excelsync.pro",
@@ -84,10 +85,12 @@
   },
   "author": "Norbert Jander",
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "electron": "^43.8.3",
     "electron-builder": "^26.15.3",
     "electron-reload": "^2.0.0-alpha.1",
-    "eslint": "^10.13.0"
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0"
   },
   "dependencies": {
     "adm-zip": "^0.6.1",

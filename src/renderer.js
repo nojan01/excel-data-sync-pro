@@ -35,7 +35,6 @@
                 file2Target: '📄 Datei 2 (Ziel)',
                 loadSourceFile: '📂 Quelldatei laden',
                 loadTargetFile: '📂 Zieldatei laden',
-                noFileLoaded: 'Keine Datei geladen',
                 worksheet: 'Arbeitsblatt:',
                 loadFileFirst: '-- Erst Datei laden --',
                 
@@ -56,8 +55,6 @@
                 sourceFileLabel: 'Quelldatei:',
                 selectSheets: 'Arbeitsblätter auswählen:',
                 loadSourceFirst: 'Laden Sie zuerst eine Quelldatei',
-                selectAll: '✓ Alle auswählen',
-                deselectAll: '✗ Alle abwählen',
                 templateInfoText: '💡 Die Header-Zeile wird behalten, alle Datenzeilen werden gelöscht. CF-Regeln werden auf ganze Spalten erweitert.',
                 createAndSave: '🔧 Template erstellen & speichern',
                 templateCreated: 'Template erfolgreich erstellt',
@@ -192,7 +189,6 @@
                 columnShown: 'Spalte eingeblendet',
                 allColumnsShown: 'Alle Spalten eingeblendet',
                 showColumn: 'Spalte einblenden',
-                showAllColumns: 'Alle Spalten einblenden',
                 insertColumnBefore: 'Spalte links einfügen',
                 insertColumnAfter: 'Spalte rechts einfügen',
                 deleteColumn: 'Spalte löschen',
@@ -364,7 +360,6 @@
                 file2Target: '📄 File 2 (Target)',
                 loadSourceFile: '📂 Load Source File',
                 loadTargetFile: '📂 Load Target File',
-                noFileLoaded: 'No file loaded',
                 worksheet: 'Worksheet:',
                 loadFileFirst: '-- Load file first --',
                 
@@ -385,8 +380,6 @@
                 sourceFileLabel: 'Source file:',
                 selectSheets: 'Select worksheets:',
                 loadSourceFirst: 'Load a source file first',
-                selectAll: '✓ Select all',
-                deselectAll: '✗ Deselect all',
                 templateInfoText: '💡 The header row is kept, all data rows are deleted. CF rules are extended to entire columns.',
                 createAndSave: '🔧 Create & save template',
                 templateCreated: 'Template created successfully',
@@ -522,7 +515,6 @@
                 columnShown: 'Column shown',
                 allColumnsShown: 'All columns shown',
                 showColumn: 'Show column',
-                showAllColumns: 'Show all columns',
                 insertColumnBefore: 'Insert column left',
                 insertColumnAfter: 'Insert column right',
                 deleteColumn: 'Delete column',
@@ -2437,18 +2429,15 @@
                         console.log('LocalStorage zu klein für Dateien, nur Mapping gespeichert');
                     }
                     
-                    // Lade eingebettete Excel-Dateien
-                    if (config.file1Data) {
-                        await loadWorkbookFromBase64(config.file1Data, config.file1Name, 1, config.file1SheetName);
-                    } else if (config.file1SheetName) {
+                    // Eingebettete Dateien (alte Browser-Exporte) werden im Electron-Modus nicht geladen;
+                    // nur das Arbeitsblatt wird für das nächste Laden vorgemerkt
+                    if (config.file1SheetName) {
                         state.file1.pendingSheet = config.file1SheetName;
                         elements.file1Info.textContent = `⏳ Arbeitsblatt: ${config.file1SheetName}`;
                         elements.file1Info.style.color = 'var(--warning)';
                     }
                     
-                    if (config.file2Data) {
-                        await loadWorkbookFromBase64(config.file2Data, config.file2Name, 2, config.file2SheetName);
-                    } else if (config.file2SheetName) {
+                    if (config.file2SheetName) {
                         state.file2.pendingSheet = config.file2SheetName;
                         elements.file2Info.textContent = `⏳ Arbeitsblatt: ${config.file2SheetName}`;
                         elements.file2Info.style.color = 'var(--warning)';
@@ -2469,10 +2458,8 @@
                     // Zeige geladene Konfig-Details
                     const date = config.exportDate ? new Date(config.exportDate).toLocaleString('de-DE') : 'unbekannt';
                     const mappingCount = state.mapping.sourceColumns?.length || 0;
-                    const filesIncluded = (config.file1Data ? 1 : 0) + (config.file2Data ? 1 : 0);
-
                     showStatus(elements.transferStatus, 
-                        `✓ Konfiguration importiert! (${mappingCount} Spalten, ${filesIncluded} Datei(en), vom ${date})`, 'success');
+                        `✓ Konfiguration importiert! (${mappingCount} Spalten, vom ${date})`, 'success');
 
                     elements.mappingInfo.textContent = `${mappingCount} Spalte(n) konfiguriert`;
                     
@@ -12637,7 +12624,7 @@
                     showDateFilterDialog(contextMenuColumn, 'dateOverdueDays');
                     break;
                 case 'hide-column':
-                    toggleExplorerColumn(contextMenuColumn, false);
+                    window.toggleExplorerColumn(contextMenuColumn, false);
                     break;
                 case 'delete-column':
                     deleteExplorerColumn(contextMenuColumn);

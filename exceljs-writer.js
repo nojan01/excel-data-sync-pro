@@ -589,15 +589,6 @@ function applyMergedCellsAfterColumnDelete(worksheet, mergeInfos, cellStyles) {
     
     mergeInfos.forEach(mergeInfo => {
         try {
-            worksheet.unMergeCells(mergeRange);
-        } catch (e) {
-            // Ignorieren wenn Bereich nicht existiert
-        }
-    });
-    
-    // Alle alten Merges entfernen VOR spliceColumns
-    oldMerges.forEach(mergeRange => {
-        try {
             const range = mergeInfo.range;
             const value = mergeInfo.value;
             const fill = mergeInfo.fill;
