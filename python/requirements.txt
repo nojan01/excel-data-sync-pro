@@ -1,3 +1,4 @@
 openpyxl==3.1.5
-xlwings==0.36.10
+xlwings==0.37.7
 pywin32==312; platform_system == "Windows"
+lxml==6.1.3
