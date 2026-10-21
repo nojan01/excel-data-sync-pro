@@ -3,7 +3,7 @@ const globals = require('globals');
 
 module.exports = [
     {
-        ignores: ['node_modules/**', 'dist/**', 'build/**', 'python/**', 'python-embed/**', 'docs/**']
+        ignores: ['node_modules/**', 'dist/**', 'build/**', 'python/**', 'python-embed/**', 'docs/**', '**/.venv/**', '**/venv/**']
     },
     js.configs.recommended,
     {
