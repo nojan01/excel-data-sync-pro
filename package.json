@@ -81,7 +81,8 @@
     },
     "portable": {
       "artifactName": "Excel-Data-Sync-Pro-${arch}.exe"
-    }
+    },
+    "publish": null
   },
   "author": "Norbert Jander",
   "devDependencies": {
