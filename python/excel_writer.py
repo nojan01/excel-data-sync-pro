@@ -81,8 +81,63 @@ def _patched_from_tree(cls, node):
 _OriginalPatternFill.from_tree = _patched_from_tree
 # ============================================================================
 
-from openpyxl import load_workbook
+from openpyxl import load_workbook as _openpyxl_load_workbook
 from openpyxl.utils import get_column_letter, column_index_from_string
+from openpyxl.worksheet.dimensions import DimensionHolder as _DimensionHolder
+
+
+# ============================================================================
+# FIX: Gruppierte <col min="10" max="11"> Bereiche einzeln adressierbar machen
+# ============================================================================
+# openpyxl speichert gruppierte Spalten unter dem Buchstaben der ersten Spalte.
+# Ein späterer Zugriff auf column_dimensions['K'] legt dann ein zweites,
+# überlappendes Element an → Excel meldet "Reparierter Teil: sheetX.xml".
+# Daher werden Bereiche nach dem Laden (und vor dem Schreiben) in einzelne
+# Spalten aufgeteilt; eigene Einträge einer Spalte haben dabei Vorrang.
+def _split_grouped_column_dimensions(dims):
+    import copy
+    for key, dim in list(dims.items()):
+        if not dim.min or not dim.max or dim.max <= dim.min:
+            continue
+        start = column_index_from_string(key)
+        lo, hi = dim.min, dim.max
+        for c in range(lo, hi + 1):
+            if c == start:
+                continue
+            letter = get_column_letter(c)
+            if letter in dims:
+                continue
+            new_dim = copy.copy(dim)
+            new_dim.index = letter
+            new_dim.min = new_dim.max = c
+            dims[letter] = new_dim
+        dim.min = dim.max = start
+
+
+def load_workbook(*args, **kwargs):
+    wb = _openpyxl_load_workbook(*args, **kwargs)
+    for ws in wb.worksheets:
+        dims = getattr(ws, 'column_dimensions', None)
+        if dims is not None:
+            try:
+                _split_grouped_column_dimensions(dims)
+            except Exception as e:
+                sys.stderr.write(f"[COLS] Split fehlgeschlagen für {ws.title}: {e}\n")
+    return wb
+
+
+_original_dimension_to_tree = _DimensionHolder.to_tree
+
+
+def _patched_dimension_to_tree(self):
+    try:
+        _split_grouped_column_dimensions(self)
+    except Exception as e:
+        sys.stderr.write(f"[COLS] Split vor Speichern fehlgeschlagen: {e}\n")
+    return _original_dimension_to_tree(self)
+
+
+_DimensionHolder.to_tree = _patched_dimension_to_tree
 from openpyxl.utils.cell import range_boundaries, coordinate_from_string
 from openpyxl.styles import PatternFill, Font, Alignment, Border
 from openpyxl.styles.colors import Color
@@ -4309,6 +4364,11 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
                     modified = True
             
             # 6. Hidden Columns/Rows direkt im XML setzen
+            from excel_xml_ops import _normalize_cols_xml
+            _normalized = _normalize_cols_xml(sheet_content)
+            if _normalized is not sheet_content:
+                sheet_content = _normalized
+                modified = True
             if hidden_columns is not None:
                 sheet_content = _set_hidden_cols_in_xml(sheet_content, hidden_columns, MAIN_NS)
                 modified = True
