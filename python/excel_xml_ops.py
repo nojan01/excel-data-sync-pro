@@ -200,6 +200,55 @@ def _remap_row_range_ref(range_ref, row_map):
     return f"{new_start_ref}:{new_end_ref}"
 
 
+def _remap_row_sqref_precise(sqref, row_map):
+    """
+    Wie _remap_row_sqref, aber zeilengenau: jede Zeile eines Bereichs wird einzeln
+    gemappt und danach zu zusammenhängenden Bereichen gruppiert. Dadurch folgen
+    zellgebundene Formate (CF, Datenüberprüfung) den Daten auch bei Verschieben
+    und Einfügen von Zeilen. Zeilen jenseits des Mappings werden mit dem Offset
+    der letzten gemappten Zeile verschoben.
+    """
+    if not row_map:
+        return sqref
+    max_key = max(row_map)
+    tail_delta = row_map[max_key] - max_key
+    new_ranges = []
+    for r in sqref.split():
+        parts = r.split(':')
+        d1s, col_s, d2s, row_s = _parse_cell_ref(parts[0])
+        if len(parts) == 2:
+            d1e, col_e, d2e, row_e = _parse_cell_ref(parts[1])
+        else:
+            d1e, col_e, d2e, row_e = d1s, col_s, d2s, row_s
+        if col_s is None or col_e is None or row_s is None or row_e is None:
+            new_ranges.append(r)
+            continue
+        mapped = []
+        for row in range(row_s, min(row_e, max_key) + 1):
+            nr = row_map.get(row)
+            if nr is not None:
+                mapped.append(nr)
+        mapped.sort()
+        runs = []
+        for nr in mapped:
+            if runs and nr == runs[-1][1] + 1:
+                runs[-1][1] = nr
+            else:
+                runs.append([nr, nr])
+        if row_e > max_key:
+            t_start = max(row_s, max_key + 1) + tail_delta
+            t_end = row_e + tail_delta
+            if runs and t_start <= runs[-1][1] + 1:
+                runs[-1][1] = max(runs[-1][1], t_end)
+            else:
+                runs.append([t_start, t_end])
+        for a, b in runs:
+            start = f"{d1s}{col_s}{d2s}{a}"
+            end = f"{d1e}{col_e}{d2e}{b}"
+            new_ranges.append(start if start == end else f"{start}:{end}")
+    return ' '.join(new_ranges) if new_ranges else None
+
+
 def _remap_row_sqref(sqref, row_map):
     """
     Wendet ein Zeilen-Mapping auf sqref an (Space-separated Ranges).
@@ -1048,7 +1097,7 @@ def _apply_row_map_to_sheet_xml(sheet_xml, data_row_map, meta_row_map, insert_po
     def _remap_row_cf(m):
         sqref = m.group(1)
         rest = m.group(2)
-        new_sqref = _remap_row_sqref(sqref, meta_row_map)
+        new_sqref = _remap_row_sqref_precise(sqref, data_row_map)
         if new_sqref is None:
             return '<conditionalFormatting sqref=""'
         return f'<conditionalFormatting sqref="{new_sqref}"{rest}'
@@ -1080,7 +1129,7 @@ def _apply_row_map_to_sheet_xml(sheet_xml, data_row_map, meta_row_map, insert_po
     def _remap_row_dv(m):
         full = m.group(0)
         sqref = m.group(1)
-        new_sqref = _remap_row_sqref(sqref, meta_row_map)
+        new_sqref = _remap_row_sqref_precise(sqref, data_row_map)
         if new_sqref is None:
             return ''
         return full.replace(f'sqref="{sqref}"', f'sqref="{new_sqref}"')
@@ -1097,7 +1146,7 @@ def _apply_row_map_to_sheet_xml(sheet_xml, data_row_map, meta_row_map, insert_po
     # ---- 7. <xm:sqref> in <extLst> (x14 CF, Sparklines etc.) ----
     def _remap_row_xm_sqref(m):
         sqref = m.group(1)
-        new_sqref = _remap_row_sqref(sqref, meta_row_map)
+        new_sqref = _remap_row_sqref_precise(sqref, data_row_map)
         if new_sqref is None:
             return ''
         return f'<xm:sqref>{new_sqref}</xm:sqref>'
