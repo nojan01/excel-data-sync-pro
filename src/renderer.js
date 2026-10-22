@@ -16734,6 +16734,7 @@
                     
                 } else {
                     elements.explorerStatus.textContent = `Fehler: ${result.error}`;
+                    showNotification(`Speichern fehlgeschlagen – Änderungen bleiben erhalten. ${result.error || ''}`, 'error');
                 }
             }
         }

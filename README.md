@@ -104,7 +104,7 @@ Das eingebettete Python (inkl. openpyxl, xlwings, lxml) ist in der Installation 
 ### v1.3.0 *(aktuell)*
 - **Runtime:** Electron 45.0.0 (Chromium 156, Node.js 24.22.0 – Sicherheitsupdates); benötigt macOS 13+ bzw. Windows 64-bit
 - **Sicherheit:** npm-Abhängigkeiten aktualisiert (0 bekannte Schwachstellen in Produktionspaketen)
-- **Python:** xlwings 0.36.10 und pywin32 312; openpyxl 3.1.5 reproduzierbar festgeschrieben
+- **Python:** xlwings 0.37.7, lxml 6.1.3 (Sicherheitsfix XXE) und pywin32 312; openpyxl 3.1.5 reproduzierbar festgeschrieben
 - **Stabilität:** Change-Request-Archivordner wird bei der Duplikatprüfung einbezogen
 
 - **Neu:** Fehlende Seriennummern finden (Soll-Ist-Abgleich über mehrere Dateien)

@@ -25,6 +25,11 @@ import os
 import re
 from datetime import datetime, date
 from copy import copy
+# Embedded Python (._pth) nimmt das Skriptverzeichnis nicht automatisch in sys.path auf
+_EXCEL_WRITER_DIR = os.path.dirname(os.path.abspath(__file__))
+if _EXCEL_WRITER_DIR not in sys.path:
+    sys.path.insert(0, _EXCEL_WRITER_DIR)
+from excel_xml_ops import _resolve_wb_target
 
 # ============================================================================
 # MONKEY-PATCH: openpyxl PatternFill um extLst zu ignorieren
@@ -1201,7 +1206,7 @@ def _strip_pivot_tables_for_sheet(xlsx_path, sheet_name, source_bytes=None, retu
                     return source_bytes
                 return False
 
-            sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+            sheet_zip_path = _resolve_wb_target(sheet_file)
             parts = sheet_zip_path.split('/')
             normalized = []
             for p in parts:
@@ -1217,6 +1222,10 @@ def _strip_pivot_tables_for_sheet(xlsx_path, sheet_name, source_bytes=None, retu
 
             if sheet_rels_path not in namelist:
                 sys.stderr.write(f"[PIVOT_STRIP] Keine Sheet-Rels gefunden: {sheet_rels_path}\n")
+                if return_bytes:
+                    if source_bytes is not None:
+                        source_bytes.seek(0)
+                    return source_bytes
                 return False
 
             # --- Finde PivotTable-Relationships vom Sheet ---
@@ -1326,7 +1335,7 @@ def _strip_pivot_tables_for_sheet(xlsx_path, sheet_name, source_bytes=None, retu
                     if rel_m:
                         target_m = re.search(r'Target="([^"]+)"', rel_m.group(0))
                         if target_m:
-                            cache_def_path = 'xl/' + target_m.group(1).lstrip('/')
+                            cache_def_path = _resolve_wb_target(target_m.group(1))
                             # Normalisiere Pfad
                             norm = []
                             for p in cache_def_path.split('/'):
@@ -3938,7 +3947,7 @@ def _apply_vm_cell_map_to_xlsx(xlsx_path, sheet_name, vm_cell_map):
             return
         
         sheet_target = m2.group(1)
-        sheet_xml_path = 'xl/' + sheet_target if not sheet_target.startswith('xl/') else sheet_target
+        sheet_xml_path = _resolve_wb_target(sheet_target)
         
         sheet_xml = zin.read(sheet_xml_path).decode('utf-8')
     
@@ -4093,10 +4102,7 @@ def _apply_auto_filter_xml(xlsx_path, sheet_name, auto_filter_range):
         
         sheet_target = m2.group(1)
         # Relativer Pfad: worksheets/sheet1.xml → xl/worksheets/sheet1.xml
-        if not sheet_target.startswith('xl/'):
-            sheet_xml_path = 'xl/' + sheet_target
-        else:
-            sheet_xml_path = sheet_target
+        sheet_xml_path = _resolve_wb_target(sheet_target)
         
         sheet_xml = zin.read(sheet_xml_path).decode('utf-8')
     
@@ -4246,7 +4252,7 @@ def _direct_xml_cell_edit(file_path, output_path, sheet_name, real_edits,
                 raise ValueError(f"Relationship {sheet_rid} nicht in workbook.xml.rels gefunden")
             
             # Sheet-Pfad normalisieren (Target ist relativ zu xl/)
-            sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+            sheet_zip_path = _resolve_wb_target(sheet_file)
             # Normalisiere ../ etc.
             parts = sheet_zip_path.split('/')
             normalized = []
@@ -4968,7 +4974,7 @@ def _apply_hidden_rows_to_xlsx(xlsx_path, sheet_name, hidden_rows, source_bytes=
                     return source_bytes
                 return
 
-            sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+            sheet_zip_path = _resolve_wb_target(sheet_file)
             parts = sheet_zip_path.split('/')
             normalized = []
             for p in parts:
@@ -5067,7 +5073,7 @@ def _apply_highlights_to_xlsx(xlsx_path, sheet_name, row_highlights, source_byte
         if not sheet_file:
             raise ValueError(f"Relationship {sheet_rid} nicht gefunden")
         
-        sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+        sheet_zip_path = _resolve_wb_target(sheet_file)
         parts = sheet_zip_path.split('/')
         normalized = []
         for p in parts:
@@ -5183,7 +5189,7 @@ def _clear_row_highlights_xml(xlsx_path, sheet_name, cleared_row_indices, source
                 return source_bytes
             return
         
-        sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+        sheet_zip_path = _resolve_wb_target(sheet_file)
         parts = sheet_zip_path.split('/')
         normalized = [p for p in parts if p != '.' and p != '..']
         sheet_zip_path = '/'.join(normalized)
@@ -5636,8 +5642,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
             # EINZIGER Disk-Write am Ende (wie FAST-PATH pipeline)
             _fp_zip_bytes = result.get('zip_bytes')
             if _fp_zip_bytes is not None:
+                # Bytes vor dem Öffnen der Zieldatei holen, damit diese bei Fehlern nicht geleert wird
+                _fp_zip_bytes_data = _fp_zip_bytes.getvalue()
                 with open(output_path, 'wb') as _fp_out_f:
-                    _fp_out_f.write(_fp_zip_bytes.getvalue())
+                    _fp_out_f.write(_fp_zip_bytes_data)
                 sys.stderr.write(f"[FAST-PATH] FALL 3a Erfolgreich (in-memory pipeline)\n")
             else:
                 sys.stderr.write(f"[FAST-PATH] FALL 3a Erfolgreich (keine Änderungen)\n")
@@ -5772,8 +5780,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         sys.stderr.write(f"[XML-DIREKT-COMBINED] WARNUNG: cleared_highlights Fehler: {cl_err}\n")
                 
                 # EINZIGER Disk-Write am Ende
+                # Bytes vor dem Öffnen der Zieldatei holen, damit diese bei Fehlern nicht geleert wird
+                _fp_zip_bytes_data = _fp_zip_bytes.getvalue()
                 with open(output_path, 'wb') as _fp_out_f:
-                    _fp_out_f.write(_fp_zip_bytes.getvalue())
+                    _fp_out_f.write(_fp_zip_bytes_data)
                 
                 sys.stderr.write(f"[XML-DIREKT-COMBINED] Erfolgreich (in-memory pipeline)\n")
                 # AutoFilter vom Frontend anwenden
@@ -5953,8 +5963,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         sys.stderr.write(f"[XML-DIREKT-FAST] WARNUNG: cleared_row_highlights Fehler: {cl_err}\n")
                 
                 # EINZIGER Disk-Write am Ende
+                # Bytes vor dem Öffnen der Zieldatei holen, damit diese bei Fehlern nicht geleert wird
+                _fp_zip_bytes_data = _fp_zip_bytes.getvalue()
                 with open(output_path, 'wb') as _fp_out_f:
-                    _fp_out_f.write(_fp_zip_bytes.getvalue())
+                    _fp_out_f.write(_fp_zip_bytes_data)
                 
                 sys.stderr.write(f"[XML-DIREKT-FAST] Erfolgreich (in-memory pipeline): {_fp_result.get('method', 'unknown')}\n")
                 # AutoFilter vom Frontend anwenden
@@ -6066,8 +6078,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             sys.stderr.write(f"[XML-DIREKT-ROW] WARNUNG: cleared_row_highlights Fehler: {cl_err}\n")
                     
                     # EINZIGER Disk-Write am Ende
+                    # Bytes vor dem Öffnen der Zieldatei holen, damit diese bei Fehlern nicht geleert wird
+                    _fp_zip_bytes_data = _fp_zip_bytes.getvalue()
                     with open(output_path, 'wb') as _fp_out_f:
-                        _fp_out_f.write(_fp_zip_bytes.getvalue())
+                        _fp_out_f.write(_fp_zip_bytes_data)
                     
                     sys.stderr.write(f"[XML-DIREKT-ROW] Erfolgreich (in-memory pipeline): {_fp_row_result.get('method', 'unknown')}\n")
                     # AutoFilter vom Frontend anwenden
@@ -6318,8 +6332,10 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                             sys.stderr.write(f"[XML-DIREKT] WARNUNG: cleared_row_highlights Fehler: {cl_err}\n")
                     
                     # EINZIGER Disk-Write am Ende
+                    # Bytes vor dem Öffnen der Zieldatei holen, damit diese bei Fehlern nicht geleert wird
+                    _fb_zip_bytes_data = _fb_zip_bytes.getvalue()
                     with open(output_path, 'wb') as _fb_out_f:
-                        _fb_out_f.write(_fb_zip_bytes.getvalue())
+                        _fb_out_f.write(_fb_zip_bytes_data)
                     
                     sys.stderr.write(f"[XML-DIREKT] Erfolgreich (in-memory pipeline): {result.get('method', 'unknown')}\n")
                     # Backup aufräumen (wird für XML-DIREKT nicht gebraucht)

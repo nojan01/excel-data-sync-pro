@@ -17,6 +17,29 @@ import shutil
 from xml.etree import ElementTree as ET
 
 
+def _resolve_wb_target(target):
+    """Löst ein Relationship-Target aus xl/_rels/workbook.xml.rels in einen ZIP-Pfad auf.
+
+    Relative Targets (Excel: "worksheets/sheet1.xml") liegen unter "xl/",
+    absolute Targets (openpyxl: "/xl/worksheets/sheet1.xml") sind ab Paket-Root.
+    """
+    target = (target or '').replace('\\', '/')
+    if target.startswith('/'):
+        path = target.lstrip('/')
+    elif target.startswith('xl/'):
+        path = target
+    else:
+        path = 'xl/' + target
+    normalized = []
+    for part in path.split('/'):
+        if part == '..':
+            if normalized:
+                normalized.pop()
+        elif part not in ('.', ''):
+            normalized.append(part)
+    return '/'.join(normalized)
+
+
 # =============================================================================
 # SPALTEN-HILFSFUNKTIONEN
 # =============================================================================
@@ -1471,7 +1494,7 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
             if not sheet_file:
                 raise ValueError(f"Relationship {sheet_rid} nicht gefunden")
             
-            sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+            sheet_zip_path = _resolve_wb_target(sheet_file)
             parts = sheet_zip_path.split('/')
             normalized = []
             for p in parts:
@@ -2012,7 +2035,7 @@ def direct_xml_row_operations(file_path, output_path, sheet_name,
             if not sheet_file:
                 raise ValueError(f"Relationship {sheet_rid} nicht gefunden")
             
-            sheet_zip_path = 'xl/' + sheet_file.lstrip('/')
+            sheet_zip_path = _resolve_wb_target(sheet_file)
             parts = sheet_zip_path.split('/')
             normalized = []
             for p in parts:

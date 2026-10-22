@@ -7,6 +7,9 @@ out/
 
 # Electron Builder
 *.exe
+# Eingebettetes Python MUSS mit eingecheckt werden (sonst fehlt python.exe im Installer)
+!python-embed/win-x64/python.exe
+!python-embed/win-x64/pythonw.exe
 *.dmg
 *.AppImage
 
