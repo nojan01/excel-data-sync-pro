@@ -1108,6 +1108,7 @@ async function applyPendingSheetOperations(filePath, operations) {
 async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}) {
     const results = [];
     let hasError = false;
+    const failedSheets = [];
     let errorMessage = '';
     let actualMethod = null; // Track the ACTUAL method used, not what was planned
     
@@ -1344,6 +1345,7 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
             if (!sheetResult.success) {
                 hasError = true;
                 errorMessage = sheetResult.error;
+                failedSheets.push(sheet.sheetName);
                 safeError(`[Python] Sheet "${sheet.sheetName}" fehlgeschlagen:`, sheetResult.error);
             } else {
                 results.push(sheet.sheetName);
@@ -1354,12 +1356,20 @@ async function exportMultipleSheets(sourcePath, targetPath, sheets, options = {}
         } catch (error) {
             hasError = true;
             errorMessage = error.message;
+            failedSheets.push(sheet.sheetName);
             safeError(`[Python] Sheet "${sheet.sheetName}" exception:`, error.message);
         }
     }
     
-    if (hasError && results.length === 0) {
-        return { success: false, error: errorMessage };
+    // Ungeänderte Sheets landen ebenfalls in results – ein Fehler in einem geänderten
+    // Sheet darf daher nie als Erfolg gemeldet werden (sonst gehen Änderungen still verloren).
+    if (hasError) {
+        return {
+            success: false,
+            error: `Speichern fehlgeschlagen für Sheet(s) ${failedSheets.map(n => `"${n}"`).join(', ')}: ${errorMessage}`,
+            failedSheets,
+            sheetsExported: results
+        };
     }
     
     // Passwortschutz anwenden
