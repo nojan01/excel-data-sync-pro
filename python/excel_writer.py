@@ -2093,6 +2093,15 @@ def restore_external_links_from_original(output_path, original_path, structural_
                 if not os.path.exists(dest_ws_rels_dir):
                     os.makedirs(dest_ws_rels_dir)
                 
+                def _norm_ws_rel_target(target):
+                    # Relative (../tables/x.xml) und absolute (/xl/tables/x.xml) Targets vergleichbar machen
+                    import posixpath
+                    t = target.replace('\\', '/')
+                    if '://' in t:
+                        return t.lower()
+                    t = t.lstrip('/') if t.startswith('/') else posixpath.join('xl/worksheets', t)
+                    return posixpath.normpath(t).lower()
+                
                 rels_files = [f for f in os.listdir(orig_ws_rels_dir) if f.endswith('.rels')]
                 sys.stderr.write(f"[restore_ext] xl/worksheets/_rels MERGE: {len(rels_files)} Dateien: {rels_files}\n")
                 
@@ -2105,23 +2114,30 @@ def restore_external_links_from_original(output_path, original_path, structural_
                     
                     # Parse Original-Rels
                     orig_rels = {}
-                    for m in re.finditer(r'(<Relationship\s[^>]*?Id="([^"]+)"[^>]*?Target="([^"]+)"[^>]*?/>)', orig_rels_xml):
-                        orig_rels[m.group(2)] = {'target': m.group(3), 'el': m.group(1)}
+                    # Attribut-Reihenfolge variiert (Excel: Id zuerst, openpyxl: Id zuletzt)
+                    for m in re.finditer(r'<Relationship\s[^>]*/>', orig_rels_xml):
+                        id_m = re.search(r'\bId="([^"]+)"', m.group(0))
+                        tgt_m = re.search(r'\bTarget="([^"]+)"', m.group(0))
+                        if id_m and tgt_m:
+                            orig_rels[id_m.group(1)] = {'target': tgt_m.group(1), 'el': m.group(0)}
                     
                     # Parse Dest-Rels (openpyxl's)
                     dest_rels = {}
                     if os.path.exists(dest_rels_fp):
                         with open(dest_rels_fp, 'r', encoding='utf-8') as f:
                             dest_rels_xml = f.read()
-                        for m in re.finditer(r'<Relationship\s[^>]*?Id="([^"]+)"[^>]*?Target="([^"]+)"[^>]*?/>', dest_rels_xml):
-                            dest_rels[m.group(1)] = m.group(2)
+                        for m in re.finditer(r'<Relationship\s[^>]*/>', dest_rels_xml):
+                            id_m = re.search(r'\bId="([^"]+)"', m.group(0))
+                            tgt_m = re.search(r'\bTarget="([^"]+)"', m.group(0))
+                            if id_m and tgt_m:
+                                dest_rels[id_m.group(1)] = tgt_m.group(1)
                     else:
                         dest_rels_xml = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>'
                     
                     # Target→dest_rId Lookup (normalisiert)
                     target_to_dest_rid = {}
                     for rid, target in dest_rels.items():
-                        norm = target.replace('\\', '/').lower()
+                        norm = _norm_ws_rel_target(target)
                         target_to_dest_rid[norm] = rid
                     
                     # Mapping bauen und fehlende Rels finden
@@ -2135,7 +2151,7 @@ def restore_external_links_from_original(output_path, original_path, structural_
                             max_rid_num = max(max_rid_num, int(num_m.group(0)))
                     
                     for orig_rid, orig_info in orig_rels.items():
-                        norm_target = orig_info['target'].replace('\\', '/').lower()
+                        norm_target = _norm_ws_rel_target(orig_info['target'])
                         
                         # Bei structural_change: Slicer-Rels NICHT ergänzen!
                         # SlicerCaches/Slicers referenzieren Tabellenspalten die sich
