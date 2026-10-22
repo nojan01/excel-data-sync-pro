@@ -608,6 +608,7 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map, skip_sort=False):
     sheet_xml = re.sub(r' spans="[^"]*"', '', sheet_xml)
     
     # ---- 3. <col min="1" max="1" ...> ----
+    sheet_xml = _normalize_cols_xml(sheet_xml)
     cols_match = re.search(r'<cols>(.*?)</cols>', sheet_xml, re.DOTALL)
     if cols_match:
         cols_content = cols_match.group(1)
@@ -917,6 +918,48 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map, skip_sort=False):
     return sheet_xml
 
 
+def _normalize_cols_xml(sheet_xml):
+    """Entfernt Überlappungen zwischen <col>-Elementen (Excel meldet sonst Reparatur).
+
+    Pro Spalte gewinnt das spezifischere (schmalere) Element, bei Gleichstand das
+    spätere. Nicht überlappende Elemente bleiben unverändert.
+    """
+    cols_match = re.search(r'<cols>(.*?)</cols>', sheet_xml, re.DOTALL)
+    if not cols_match:
+        return sheet_xml
+    elements = []  # (min, max, attrs)
+    for el in re.findall(r'<col\s[^>]*/>', cols_match.group(1)):
+        min_m = re.search(r'\bmin="(\d+)"', el)
+        max_m = re.search(r'\bmax="(\d+)"', el)
+        if not min_m or not max_m:
+            continue
+        attrs = re.sub(r'\s*\b(?:min|max)="[^"]*"', '', el[4:-2])
+        attrs = ' '.join(attrs.split())
+        elements.append((int(min_m.group(1)), int(max_m.group(1)), (' ' + attrs) if attrs else ''))
+
+    spans = sorted((mn, mx) for mn, mx, _ in elements)
+    if all(spans[i][1] < spans[i + 1][0] for i in range(len(spans) - 1)) \
+            and all(mn <= mx for mn, mx in spans):
+        return sheet_xml
+
+    per_col = {}  # col -> (span, element_idx)
+    for idx, (mn, mx, _) in enumerate(elements):
+        for c in range(mn, mx + 1):
+            if c not in per_col or (mx - mn) <= per_col[c][0]:
+                per_col[c] = (mx - mn, idx)
+
+    runs = []  # [min, max, element_idx]
+    for c in sorted(per_col):
+        idx = per_col[c][1]
+        if runs and runs[-1][1] == c - 1 and runs[-1][2] == idx:
+            runs[-1][1] = c
+        else:
+            runs.append([c, c, idx])
+    new_inner = ''.join(f'<col min="{mn}" max="{mx}"{elements[idx][2]}/>' for mn, mx, idx in runs)
+    sys.stderr.write(f"[XML_OPS] <cols> normalisiert: {len(elements)} → {len(runs)} Elemente (Überlappungen entfernt)\n")
+    return sheet_xml[:cols_match.start(1)] + new_inner + sheet_xml[cols_match.end(1):]
+
+
 def _apply_hidden_cols_exact(sheet_xml, hidden_columns):
     """Setzt den hidden-Status aller Spalten exakt gemäß hidden_columns (0-basiert).
 
@@ -924,6 +967,7 @@ def _apply_hidden_cols_exact(sheet_xml, hidden_columns):
     für versteckte Spalten angelegt und alle übrigen hidden-Attribute entfernt.
     """
     hidden_set = {int(h) for h in hidden_columns}
+    sheet_xml = _normalize_cols_xml(sheet_xml)
     cols_match = re.search(r'<cols>(.*?)</cols>', sheet_xml, re.DOTALL)
     if not cols_match and not hidden_set:
         return sheet_xml
@@ -1021,6 +1065,7 @@ def _apply_row_map_to_sheet_xml(sheet_xml, data_row_map, meta_row_map, insert_po
         meta_row_map: {old_excel_row: after_delete_excel_row}
         insert_positions: set of final Excel-Zeilennummern für eingefügte leere Zeilen
     """
+    sheet_xml = _normalize_cols_xml(sheet_xml)
     
     # ---- 0. <dimension ref="A1:J100"> aktualisieren ----
     def _remap_dim(m):
