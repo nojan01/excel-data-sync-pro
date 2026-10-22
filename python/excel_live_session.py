@@ -360,6 +360,9 @@ class ExcelLiveSession:
                 self._log(f"visible-Setzen fehlgeschlagen: {vis_err}")
                 return {'success': False, 'error': str(vis_err)}
             
+            if visible:
+                self._ensure_workbook_window_visible()
+            
             # Interactive-Schutz: Wenn sichtbar → Benutzerinteraktion sperren
             # Verhindert versehentliches Schließen/Bearbeiten von Excel
             try:
@@ -378,6 +381,65 @@ class ExcelLiveSession:
         except Exception as e:
             self._log(f"Fehler bei set_visible: {e}")
             return {'success': False, 'error': str(e)}
+    
+    def _ensure_workbook_window_visible(self):
+        """Stellt sicher, dass beim Einblenden die Arbeitsmappe angezeigt wird.
+        Excel kann nach dem versteckten Öffnen sichtbar werden, ohne dass das
+        Workbook-Fenster sichtbar/aktiv ist (leeres Excel mit ausgegrautem Menüband)."""
+        if not self.app:
+            return
+        # Workbook noch offen? Sonst neu öffnen
+        alive = False
+        if self.workbook is not None:
+            try:
+                _ = self.workbook.name
+                alive = any(b.name == self.workbook.name for b in self.app.books)
+            except Exception:
+                alive = False
+        if not alive and self.file_path and os.path.exists(self.file_path):
+            self._log("Einblenden: Workbook nicht offen → neu öffnen")
+            try:
+                if self.file_password:
+                    self.workbook = self.app.books.open(self.file_path, update_links=False, password=self.file_password)
+                else:
+                    self.workbook = self.app.books.open(self.file_path, update_links=False)
+                if self.sheet_name:
+                    try:
+                        self.worksheet = self.workbook.sheets[self.sheet_name]
+                    except Exception:
+                        self.worksheet = self.workbook.sheets[0]
+                        self.sheet_name = self.worksheet.name
+            except Exception as open_err:
+                self._log(f"Einblenden: Neu öffnen fehlgeschlagen: {open_err}")
+                return
+        if self.workbook is None:
+            return
+        try:
+            if platform.system() == 'Windows':
+                api = self.app.api
+                try:
+                    api.ScreenUpdating = True
+                except Exception:
+                    pass
+                if api.WindowState == -4140:  # xlMinimized
+                    api.WindowState = -4143  # xlNormal
+                wb_api = self.workbook.api
+                for i in range(1, wb_api.Windows.Count + 1):
+                    win = wb_api.Windows(i)
+                    if not win.Visible:
+                        win.Visible = True
+                        self._log(f"Einblenden: Workbook-Fenster {i} war unsichtbar → sichtbar")
+                    if win.WindowState == -4140:
+                        win.WindowState = -4137  # xlMaximized
+                wb_api.Activate()
+                if self.worksheet is not None:
+                    self.worksheet.api.Activate()
+            else:
+                self.workbook.activate()
+                if self.worksheet is not None:
+                    self.worksheet.activate()
+        except Exception as e:
+            self._log(f"Einblenden: Workbook-Fenster aktivieren fehlgeschlagen: {e}")
     
     def set_interactive(self, interactive: bool = False) -> Dict[str, Any]:
         """Schaltet die Excel-Interaktivität temporär um.
