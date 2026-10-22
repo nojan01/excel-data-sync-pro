@@ -2148,14 +2148,9 @@ def direct_xml_row_operations(file_path, output_path, sheet_name,
             
             # 7. Hidden Rows anwenden (auf die neuen Zeilennummern)
             if hidden_rows:
-                # hidden_rows sind 0-basierte Daten-Indizes → Excel-Zeilen = idx + 2
-                # Wir müssen sie durch data_row_map auf finale Positionen mappen
-                hidden_excel_rows = set()
-                for idx in hidden_rows:
-                    old_excel = idx + 2
-                    new_excel = data_row_map.get(old_excel)
-                    if new_excel is not None:
-                        hidden_excel_rows.add(new_excel)
+                # hidden_rows sind 0-basierte Indizes in den FINALEN Daten
+                # (Frontend-State nach Löschen/Einfügen/Verschieben) → Excel-Zeile = idx + 2
+                hidden_excel_rows = {int(idx) + 2 for idx in hidden_rows}
                 
                 if hidden_excel_rows:
                     def _set_row_hidden(m):

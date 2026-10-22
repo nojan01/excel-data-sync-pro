@@ -1105,6 +1105,9 @@
                 if (action.previousHighlights) {
                     explorerState.rowHighlights = new Map(action.previousHighlights);
                 }
+                if (action.previousHiddenRows) {
+                    explorerState.hiddenRows = new Set(action.previousHiddenRows);
+                }
                 // EditedCells wiederherstellen
                 if (action.previousEditedCells) {
                     explorerState.editedCells = new Map(action.previousEditedCells);
@@ -14486,6 +14489,9 @@
             });
             explorerState.rowHighlights = newHighlights;
             
+            // Versteckte Zeilen für Undo sichern (Anpassung erfolgt weiter unten)
+            const previousHiddenRows = new Set(explorerState.hiddenRows || []);
+            
             // cellStyles anpassen (Key ist "styleRowIdx-colIdx" wobei styleRowIdx = dataRowIdx + 1)
             const newCellStyles = {};
             for (const [key, value] of Object.entries(explorerState.cellStyles || {})) {
@@ -14723,6 +14729,7 @@
                 type: 'deleteRows',
                 deletedRows: deletedRows,
                 previousHighlights: previousHighlights,
+                previousHiddenRows: previousHiddenRows,
                 previousEditedCells: previousEditedCells,
                 deletedIndices: selectedIndices
             });
