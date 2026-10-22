@@ -4840,6 +4840,7 @@ def _set_hidden_cols_in_xml(sheet_content, hidden_columns, main_ns):
         for s, e in ranges:
             new_col_strs.append(f'<col min="{s+1}" max="{e+1}" hidden="1"/>')
     
+    new_col_strs.sort(key=lambda s: int(re.search(r'min="(\d+)"', s).group(1)) if re.search(r'min="(\d+)"', s) else 0)
     new_cols_inner = ''.join(new_col_strs)
     sheet_content = sheet_content[:cols_match.start(2)] + new_cols_inner + sheet_content[cols_match.end(2):]
     return sheet_content
@@ -6060,6 +6061,20 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         return {'success': False, 'error': f'XML-DIREKT-ROW Cell-Edit fehlgeschlagen: {edit_err}', 'method': 'xml-row-ops-fast'}
                 
                 if True:  # Cell-Edits erfolgreich oder keine vorhanden
+                    # Versteckte Spalten ohne Cell-Edits (sonst bereits via _direct_xml_cell_edit gesetzt)
+                    if _fp_hidden_cols and not _fp_all_edits:
+                        from excel_xml_ops import direct_xml_column_operations
+                        _fp_hide_result = direct_xml_column_operations(
+                            file_path=output_path,
+                            output_path=output_path,
+                            sheet_name=sheet_name,
+                            hidden_columns=_fp_hidden_cols,
+                            source_bytes=_fp_zip_bytes,
+                            return_bytes=True
+                        )
+                        _fp_zip_bytes = _fp_hide_result['zip_bytes']
+                        sys.stderr.write(f"[XML-DIREKT-ROW] {len(_fp_hidden_cols)} versteckte Spalten gesetzt\n")
+                    
                     # Row Highlights (in-memory)
                     if _fp_row_highlights:
                         sys.stderr.write(f"[XML-DIREKT-ROW] {len(_fp_row_highlights)} row_highlights via XML anwenden\n")
