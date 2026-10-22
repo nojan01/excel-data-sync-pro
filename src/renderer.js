@@ -15718,7 +15718,10 @@
                         // Filter als versteckte Zeilen abbilden (KEINE strukturelle Änderung!)
                         // Alle Zeilen bleiben in der Datei, nur nicht-passende bekommen hidden="1".
                         // Zusammen mit autoFilterRange ergibt das korrekte Excel-Filter.
-                        if (isFiltered && !hasStructuralChanges) {
+                        // Gilt auch bei strukturellen Änderungen: Das Backend arbeitet auf der vollen
+                        // Datei (Spalten-/Zeilen-Ops per XML), gefilterte Teilmengen würden dort
+                        // Zeilen-verschoben geschrieben (z.B. Werte neuer Spalten in falschen Zeilen).
+                        if (isFiltered) {
                             const filteredOriginalIndices = new Set(
                                 explorerState.filteredData.map(item => item.originalIndex)
                             );
@@ -15741,15 +15744,8 @@
                             // Strukturelle Änderung: FULL REWRITE
                             // Bei Filter: Nur gefilterte Zeilen exportieren
                             // Bei versteckten Zeilen (ohne Filter): Alle Zeilen exportieren
-                            let allData;
-                            if (isFiltered) {
-                                // Filter aktiv: Nur die sichtbaren/gefilterten Zeilen exportieren
-                                allData = explorerState.filteredData.map(item => item.row);
-                                console.log(`[Export] Filter aktiv: Exportiere ${allData.length} von ${explorerState.data.length} Zeilen`);
-                            } else {
-                                // Kein Filter: Alle Zeilen (inkl. versteckte)
-                                allData = explorerState.data;
-                            }
+                            // Immer alle Zeilen exportieren; Filter wird über hiddenRows abgebildet
+                            let allData = explorerState.data;
                             
                             let exportHeaders = [...explorerState.headers];
                             // WICHTIG: cellStyles werden normalerweise NICHT mitgesendet!
@@ -15782,85 +15778,8 @@
                             let exportVisibleColumns = [...(explorerState.visibleColumns || [])];
                             let exportHiddenCols = [...hiddenCols];
                             
-                            // Bei gefilterten Daten: Styles/Formeln/Hyperlinks auf neue Zeilen-Indizes mappen
-                            // originalIndex -> neuer Index in filteredData
-                            if (isFiltered) {
-                                console.log(`[Export] Filter aktiv: Mappe ${explorerState.filteredData.length} von ${explorerState.data.length} Zeilen`);
-                                
-                                // Erstelle Mapping: originalIndex -> newIndex (0-basiert in exportierten Daten)
-                                const rowIndexMap = new Map();
-                                explorerState.filteredData.forEach((item, newIdx) => {
-                                    rowIndexMap.set(item.originalIndex, newIdx);
-                                });
-                                
-                                // Styles remappen
-                                const remappedStyles = {};
-                                for (const [key, style] of Object.entries(exportCellStyles)) {
-                                    const [rowStr, colStr] = key.split('-');
-                                    const originalRowIdx = parseInt(rowStr);
-                                    const colIdx = parseInt(colStr);
-                                    const newRowIdx = rowIndexMap.get(originalRowIdx);
-                                    if (newRowIdx !== undefined) {
-                                        remappedStyles[`${newRowIdx}-${colIdx}`] = style;
-                                    }
-                                }
-                                exportCellStyles = remappedStyles;
-                                
-                                // Formeln remappen
-                                const remappedFormulas = {};
-                                for (const [key, formula] of Object.entries(exportCellFormulas)) {
-                                    const [rowStr, colStr] = key.split('-');
-                                    const originalRowIdx = parseInt(rowStr);
-                                    const colIdx = parseInt(colStr);
-                                    const newRowIdx = rowIndexMap.get(originalRowIdx);
-                                    if (newRowIdx !== undefined) {
-                                        remappedFormulas[`${newRowIdx}-${colIdx}`] = formula;
-                                    }
-                                }
-                                exportCellFormulas = remappedFormulas;
-                                
-                                // Hyperlinks remappen
-                                const remappedHyperlinks = {};
-                                for (const [key, link] of Object.entries(exportCellHyperlinks)) {
-                                    const [rowStr, colStr] = key.split('-');
-                                    const originalRowIdx = parseInt(rowStr);
-                                    const colIdx = parseInt(colStr);
-                                    const newRowIdx = rowIndexMap.get(originalRowIdx);
-                                    if (newRowIdx !== undefined) {
-                                        remappedHyperlinks[`${newRowIdx}-${colIdx}`] = link;
-                                    }
-                                }
-                                exportCellHyperlinks = remappedHyperlinks;
-                                
-                                // RichText remappen
-                                const remappedRichText = {};
-                                for (const [key, rt] of Object.entries(exportRichTextCells)) {
-                                    const [rowStr, colStr] = key.split('-');
-                                    const originalRowIdx = parseInt(rowStr);
-                                    const colIdx = parseInt(colStr);
-                                    const newRowIdx = rowIndexMap.get(originalRowIdx);
-                                    if (newRowIdx !== undefined) {
-                                        remappedRichText[`${newRowIdx}-${colIdx}`] = rt;
-                                    }
-                                }
-                                exportRichTextCells = remappedRichText;
-                            }
-                            
-                            // Bei Filter: rowMapping erstellen für physische Zeilen-Umordnung
-                            // rowMapping[newPos] = originalPos (0-basiert für Datenzeilen)
-                            // Nutzt den schnellen ZIP/REGEX-Pfad der direkt auf XML arbeitet
-                            // und alle Cell-Styles (Fill, Font, Alignment, Border) preserviert.
-                            let filterRowMapping = null;
-                            if (isFiltered && !hasRowMoves) {
-                                filterRowMapping = explorerState.filteredData.map(item => item.originalIndex);
-                                
-                                // Bei Filter-Mapping: KEINE Frontend-Styles senden
-                                // Die Excel-Styles werden durch physische XML-Umordnung übernommen
-                                exportCellStyles = {};
-                                exportCellFormulas = {};
-                                exportCellHyperlinks = {};
-                                exportRichTextCells = {};
-                            }
+                            // Filter: keine Zeilen-Umordnung/Remap nötig (alle Zeilen + hiddenRows)
+                            const filterRowMapping = null;
                             
                             // Bei Row-Move: ExcelJS ordnet die Zeilen direkt um (mit allen Styles)
                             // Kein Frontend-Remapping nötig!

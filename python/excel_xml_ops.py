@@ -1971,10 +1971,12 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
                     # 0-basiert in hidden_rows, Datenzeilen ab row 2 (row 1 = Header)
                     row_idx = row_num - 2
                     
+                    # Vorhandenes hidden-Attribut immer entfernen (sonst doppeltes
+                    # Attribut → Excel-Reparatur); Zielzustand = exakt hidden_rows
+                    row_tag = re.sub(r'\s+hidden="[^"]*"', '', row_tag)
                     if row_idx not in _hr_set:
                         return row_tag
                     
-                    # hidden="1" einfügen (Attribut wurde bereits in 2b gestrippt)
                     if row_tag.rstrip().endswith('/>'):
                         base = row_tag.rstrip()[:-2].rstrip()
                         result = base + ' hidden="1"/>'

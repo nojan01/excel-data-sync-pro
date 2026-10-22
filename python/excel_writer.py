@@ -5959,11 +5959,9 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     _fp_zip_bytes = _io_col.BytesIO(_fp_src_f.read())
                 sys.stderr.write(f"[XML-DIREKT-FAST] Quelldatei in Speicher geladen\n")
                 
-                # Hidden Rows: NICHT strip/re-apply!
-                # Der FAST-PATH arbeitet auf der ORIGINAL-Datei, die bereits
-                # die korrekten hidden-Attribute hat. Strip+Re-Apply verursacht
-                # "Zellinformationen"-Reparaturfehler in Excel.
-                # Die originalen hidden-Attribute werden 1:1 durchgereicht.
+                # Hidden Rows: Zeilen bleiben bei Spalten-Ops unverändert, daher werden
+                # hiddenRows (inkl. GUI-Filter) direkt als Zielzustand gesetzt.
+                # Ohne hiddenRows bleiben die originalen hidden-Attribute erhalten.
                 _fp_result = direct_xml_column_operations(
                     file_path=file_path,
                     output_path=output_path,
@@ -5975,7 +5973,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                     headers=_fp_headers,
                     data=_fp_data,
                     strip_row_hidden=False,
-                    hidden_rows=None,
+                    hidden_rows=_fp_hidden_rows or None,
                     source_bytes=_fp_zip_bytes,
                     return_bytes=True
                 )
@@ -6004,7 +6002,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                 
                 # Hidden Rows: Originale Attribute aus Quelldatei durchgereicht
                 if _fp_hidden_rows:
-                    sys.stderr.write(f"[XML-DIREKT-FAST] {len(_fp_hidden_rows)} hidden rows aus Original-XML beibehalten (kein strip/re-apply)\n")
+                    sys.stderr.write(f"[XML-DIREKT-FAST] {len(_fp_hidden_rows)} hidden rows gesetzt\n")
                 
                 # Cell-Edits via XML anwenden (in-memory, nach Col-Ops)
                 if _fp_has_cell_edits and not _fp_edits_in_inserted_only:
@@ -6370,6 +6368,7 @@ def write_sheet(file_path, output_path, sheet_name, changes, original_path=None)
                         hidden_columns=hidden_columns,
                         headers=headers,
                         data=data,
+                        hidden_rows=changes.get('hiddenRows') or None,
                         source_bytes=_fb_zip_bytes,
                         return_bytes=True
                     )
