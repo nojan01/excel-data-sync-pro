@@ -868,6 +868,58 @@ def _apply_col_map_to_sheet_xml(sheet_xml, col_map, skip_sort=False):
     return sheet_xml
 
 
+def _apply_hidden_cols_exact(sheet_xml, hidden_columns):
+    """Setzt den hidden-Status aller Spalten exakt gemäß hidden_columns (0-basiert).
+
+    <col>-Ranges mit gemischtem Status werden gesplittet, fehlende <col>-Elemente
+    für versteckte Spalten angelegt und alle übrigen hidden-Attribute entfernt.
+    """
+    hidden_set = {int(h) for h in hidden_columns}
+    cols_match = re.search(r'<cols>(.*?)</cols>', sheet_xml, re.DOTALL)
+    if not cols_match and not hidden_set:
+        return sheet_xml
+
+    entries = []  # (min, max, attrs_ohne_min_max_hidden, hidden)
+    covered = set()
+    if cols_match:
+        for el in re.findall(r'<col\s[^>]*/>', cols_match.group(1)):
+            min_m = re.search(r'\bmin="(\d+)"', el)
+            max_m = re.search(r'\bmax="(\d+)"', el)
+            if not min_m or not max_m:
+                continue
+            c_min, c_max = int(min_m.group(1)), int(max_m.group(1))
+            attrs = el[4:-2]
+            attrs = re.sub(r'\s*\b(?:min|max|hidden)="[^"]*"', '', attrs)
+            attrs = ' '.join(attrs.split())
+            attrs = (' ' + attrs) if attrs else ''
+            run_start = c_min
+            run_hidden = (c_min - 1) in hidden_set
+            for c in range(c_min, c_max + 2):
+                c_hidden = (c - 1) in hidden_set if c <= c_max else None
+                if c_hidden != run_hidden:
+                    entries.append((run_start, c - 1, attrs, run_hidden))
+                    run_start, run_hidden = c, c_hidden
+            covered.update(range(c_min - 1, c_max))
+
+    for h in sorted(hidden_set - covered):
+        if entries and entries[-1][3] and entries[-1][2] == '' and entries[-1][1] == h:
+            entries[-1] = (entries[-1][0], h + 1, '', True)
+        else:
+            entries.append((h + 1, h + 1, '', True))
+
+    entries.sort(key=lambda e: e[0])
+    hidden_attr = ' hidden="1"'
+    new_inner = ''.join(
+        f'<col min="{mn}" max="{mx}"{attrs}{hidden_attr if hid else ""}/>'
+        for mn, mx, attrs, hid in entries)
+
+    if cols_match:
+        if not new_inner:
+            return sheet_xml[:cols_match.start()] + sheet_xml[cols_match.end():]
+        return sheet_xml[:cols_match.start(1)] + new_inner + sheet_xml[cols_match.end(1):]
+    return re.sub(r'(<sheetData\b)', f'<cols>{new_inner}</cols>' + r'\1', sheet_xml, count=1)
+
+
 def _sort_cells_in_rows(sheet_xml):
     """
     Sortiert <c> Elemente innerhalb jeder <row> nach Spaltennummer.
@@ -1806,26 +1858,8 @@ def direct_xml_column_operations(file_path, output_path, sheet_name,
             
             # Hidden Columns
             if hidden_columns is not None:
-                hidden_set = set(hidden_columns)
-                
-                def _fix_col_hidden(m):
-                    col_el = m.group(0)
-                    min_m2 = re.search(r'min="(\d+)"', col_el)
-                    max_m2 = re.search(r'max="(\d+)"', col_el)
-                    if not min_m2 or not max_m2:
-                        return col_el
-                    col_min2 = int(min_m2.group(1))
-                    col_max2 = int(max_m2.group(1))
-                    all_hidden = all((c - 1) in hidden_set
-                                     for c in range(col_min2, col_max2 + 1))
-                    if all_hidden:
-                        if 'hidden="1"' not in col_el:
-                            col_el = col_el.replace('/>', ' hidden="1"/>')
-                    else:
-                        col_el = re.sub(r'\s*hidden="1"', '', col_el)
-                    return col_el
-                
-                sheet_content = re.sub(r'<col\s[^>]*/>', _fix_col_hidden, sheet_content)
+                sheet_content = _apply_hidden_cols_exact(sheet_content, hidden_columns)
+                sys.stderr.write(f"[XML_COL_OPS] Hidden columns gesetzt: {sorted(set(hidden_columns))}\n")
             
             # 6b. Hidden Rows direkt im selben Durchgang anwenden
             # Statt separatem ZIP-to-ZIP Pass (_apply_hidden_rows_to_xlsx)
