@@ -7,6 +7,7 @@
   "scripts": {
     "start": "electron --max-old-space-size=4096 .",
     "dev": "electron --max-old-space-size=4096 . --dev",
+    "prebuild:win": "node -e \"if(!require('fs').existsSync('python-embed/win-x64/python.exe')){console.error('FEHLER: python-embed/win-x64/python.exe fehlt');process.exit(1)}\"",
     "build:win": "electron-builder --win nsis --x64",
     "build:win-arm64": "electron-builder --win nsis --arm64",
     "lint": "eslint ."
